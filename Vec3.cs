@@ -1,3 +1,5 @@
+using System.IO;
+
 namespace OpenEQ {
     public class Vec3 {
         public float x, y, z;
@@ -56,6 +58,16 @@ namespace OpenEQ {
         }
         public static Vec3 operator /(float a, Vec3 b) {
             return new Vec3(a / b.x, a / b.y, a / b.z);
+        }
+
+        public override string ToString() {
+            return $"Vec3({x}, {y}, {z})";
+        }
+    }
+
+    public static class Vec3Extensions {
+        public static Vec3 ReadVec3(this BinaryReader reader) {
+            return new Vec3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
         }
     }
 }
