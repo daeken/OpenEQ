@@ -1,9 +1,11 @@
-﻿using System.IO;
+﻿using System;
+using OpenEQ.Engine;
 
 namespace OpenEQ
 {
-    public class Program
+    public class MainProgram
     {
+        [STAThread]
         public static void Main(string[] args)
         {
             var s3d = new S3DReader("eqdata/gfaydark.s3d");
@@ -16,6 +18,8 @@ namespace OpenEQ
             }*/
 
             var wld = new WLDReader(s3d.Open("gfaydark.wld"));
+            var engine = new CoreEngine(wld.Vertices.ToArray(), wld.Normals.ToArray(), wld.Polygons.ToArray());
+            engine.Run();
         }
     }
 }

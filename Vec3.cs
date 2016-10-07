@@ -1,10 +1,14 @@
 using System.IO;
+using static System.Math;
 
 namespace OpenEQ {
     public class Vec3 {
         public float x, y, z;
         public Vec3() {
             x = y = z = 0.0f;
+        }
+        public Vec3(float a) {
+            x = y = z = a;
         }
         public Vec3(float _x, float _y, float _z) {
             x = _x;
@@ -14,6 +18,14 @@ namespace OpenEQ {
 
         public float dot(Vec3 b) {
             return x * b.x + y * b.y + z * b.z;
+        }
+        public float length {
+            get {
+                return (float) Sqrt(x*x + y*y + z*z);
+            }
+        }
+        public Vec3 normalize() {
+            return this / length;
         }
         public static float operator %(Vec3 a, Vec3 b) {
             return a.dot(b);
@@ -31,6 +43,9 @@ namespace OpenEQ {
         }
         public static Vec3 operator +(float a, Vec3 b) {
             return new Vec3(a + b.x, a + b.y, a + b.z);
+        }
+        public static Vec3 operator -(Vec3 a) {
+            return new Vec3(-a.x, -a.y, -a.z);
         }
         public static Vec3 operator -(Vec3 a, Vec3 b) {
             return new Vec3(a.x - b.x, a.y - b.y, a.z - b.z);
