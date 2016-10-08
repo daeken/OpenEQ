@@ -1,3 +1,4 @@
+using OpenTK;
 using OpenTK.Graphics.ES20;
 using static System.Console;
 using System.Diagnostics;
@@ -28,9 +29,10 @@ namespace OpenEQ.Engine {
             GL.UseProgram(id);
             GL.EnableVertexAttribArray(GL.GetAttribLocation(id, "vPosition"));
             GL.EnableVertexAttribArray(GL.GetAttribLocation(id, "vNormal"));
+            GL.EnableVertexAttribArray(GL.GetAttribLocation(id, "vTexCoord"));
         }
 
-        public void Uniform(string name, float[] vals) {
+        public void Uniform(string name, Matrix4 mat) {
             int uniform;
             if(uniforms.ContainsKey(name)) {
                 uniform = uniforms[name];
@@ -38,11 +40,7 @@ namespace OpenEQ.Engine {
                 uniform = uniforms[name] = GL.GetUniformLocation(id, name);
                 WriteLine(GL.GetUniformLocation(id, name));
             }
-            if(vals.Length == 16) {
-                GL.UniformMatrix4(uniform, 1, true, vals);
-            } else {
-                WriteLine($"Unknown uniform length {vals.Length} for uniform {name}");
-            }
+            GL.UniformMatrix4(uniform, false, ref mat);
         }
     }
 }

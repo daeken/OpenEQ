@@ -4,3 +4,4 @@ obj
 eqdata
 s3data
 project.lock.json
+*.pyc

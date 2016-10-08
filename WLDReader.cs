@@ -9,7 +9,12 @@ using System.Linq;
 namespace OpenEQ {
     public class WLDReader : IDisposable {
         public List<Vec3> Vertices, Normals;
-        public List<Tuple<bool, int, int, int>> Polygons;
+        public List<Tuple<float, float>> TexCoords;
+        public Dictionary<WldMaterial, List<Tuple<bool, int, int, int>>> PolygonsByMaterial;
+
+        List<Tuple<bool, int, int, int, int, int>> Polygons;
+        Dictionary<int, int[]> Frag31Map; // Arrays of frag references
+        Dictionary<int, Tuple<uint, int>> Frag30Map; // Flags * reference to 0x05
 
         Stream stream;
         BinaryReader reader;
@@ -21,7 +26,10 @@ namespace OpenEQ {
         public WLDReader(Stream _stream) {
             Vertices = new List<Vec3>();
             Normals = new List<Vec3>();
-            Polygons = new List<Tuple<bool, int, int, int>>();
+            TexCoords = new List<Tuple<float, float>>();
+            Polygons = new List<Tuple<bool, int, int, int, int, int>>();
+
+            Frag31Map = new Dictionary<int, int[]>();
 
             stream = _stream;
             reader = new BinaryReader(_stream);
@@ -42,13 +50,18 @@ namespace OpenEQ {
                 var type = reader.ReadInt32();
                 var nameoff = reader.ReadInt32();
                 var name = nameoff != -16777216 ? GetString(-Math.Min(nameoff, 0)) : "";
+                if(name == "")
+                    WriteLine($"null name of type {type:X02}");
                 var epos = stream.Position + size - 4;
                 switch(type) {
                     case 0x35: // First fragment
                         break;
-                    /*case 0x21: // BSP Tree
-                        Frag21(name);
-                        break;*/
+                    case 0x30: // Texture
+                        Frag30(i);
+                        break;
+                    case 0x31: // Texture list
+                        Frag31(i);
+                        break;
                     case 0x36: // Mesh
                         Frag36(name);
                         break;
@@ -62,22 +75,31 @@ namespace OpenEQ {
             Debug.Assert(reader.ReadUInt32() == 0xFFFFFFFF);
         }
 
-        void Frag21(string name) {
-            var count = reader.ReadUInt32();
-            for(var i = 0; i < count; ++i) {
-                var normal = reader.ReadVec3();
-                var dist = reader.ReadSingle();
-                var center = normal * dist;
-                WriteLine($"{normal}*{dist} == {center}");
-                var region = reader.ReadInt32();
-                var left = reader.ReadInt32();
-                var right = reader.ReadInt32();
-            }
+        void Frag30(int id) {
+            var start = stream.Position;
+            var pairflags = reader.ReadUInt32();
+            var flags = reader.ReadUInt32();
+            stream.Position += 12;
+            if((pairflags & 2) == 2)
+                stream.Position += 8;
+            var refid = reader.ReadInt32();
+        }
+
+        void Frag31(int id) {
+            stream.Position += 4;
+            var size = reader.ReadUInt32();
+            var list = new int[size];
+            for(var i = 0; i < size; ++i)
+                list[i] = reader.ReadInt32();
+            Frag31Map[id] = list;
+            WriteLine(id);
         }
 
         void Frag36(string name) {
             var flags = reader.ReadUInt32();
-            var tlistref = reader.ReadUInt32();
+            var tlistref = reader.ReadInt32();
+            if(!Frag31Map.ContainsKey(tlistref - 1))
+                WriteLine("Foo");
             var aniref = reader.ReadUInt32();
             stream.Position += 8; // Skip two fields
             var center = reader.ReadVec3();
@@ -98,9 +120,15 @@ namespace OpenEQ {
             var verts = new Vec3[vertcount];
             for(var i = 0; i < vertcount; ++i)
                 verts[i] = new Vec3(reader.ReadInt16() / scale, reader.ReadInt16() / scale, reader.ReadInt16() / scale) + center;
-            var texcoords = new Tuple<int, int>[texcoordcount];
-            for(var i = 0; i < texcoordcount; ++i)
-                texcoords[i] = new Tuple<int, int>(old ? reader.ReadInt16() : reader.ReadInt32(), old ? reader.ReadInt16() : reader.ReadInt32());
+            var texcoords = new Tuple<float, float>[texcoordcount];
+            if(texcoordcount == 0) {
+                texcoords = new Tuple<float, float>[vertcount];
+                for(var i = 0; i < vertcount; ++i)
+                    texcoords[i] = new Tuple<float, float>(0, 0);
+            } else {
+                for(var i = 0; i < texcoordcount; ++i)
+                    texcoords[i] = new Tuple<float, float>(old ? reader.ReadInt16() : reader.ReadInt32(), old ? reader.ReadInt16() : reader.ReadInt32());
+            }
             var normals = new Vec3[normalcount];
             for(var i = 0; i < normalcount; ++i)
                 normals[i] = new Vec3(reader.ReadSByte() / 127f, reader.ReadSByte() / 127f, reader.ReadSByte() / 127f);
@@ -111,14 +139,22 @@ namespace OpenEQ {
             for(var i = 0; i < polycount; ++i)
                 polys[i] = new Tuple<bool, int, int, int>(reader.ReadUInt16() != 0x0010, reader.ReadUInt16(), reader.ReadUInt16(), reader.ReadUInt16());
             stream.Position += 4 * vertpiececount; // Skip vertex piece stuff
-            stream.Position += 4 * polytexcount; // Skip polygon texture IDs
+            var polytex = new int[polycount];
+            var off = 0;
+            for(var i = 0; i < polytexcount; ++i) {
+                var count = reader.ReadUInt16();
+                var texindex = reader.ReadUInt16();
+                for(var j = 0; j < count; ++j)
+                    polytex[off++] = texindex;
+            }
             stream.Position += 4 * verttexcount; // Skip vertex texture IDs
             stream.Position += 12 * size9; // Skip animation
 
             var vstart = Vertices.Count;
             Vertices.AddRange(verts);
             Normals.AddRange(normals);
-            Polygons.AddRange(polys.Select(v => new Tuple<bool, int, int, int>(v.Item1, v.Item2 + vstart, v.Item3 + vstart, v.Item4 + vstart)));
+            TexCoords.AddRange(texcoords);
+            Polygons.AddRange(polys.Select((v, i) => new Tuple<bool, int, int, int, int, int>(v.Item1, v.Item2 + vstart, v.Item3 + vstart, v.Item4 + vstart, tlistref, polytex[i])));
         }
 
         string GetString(int off) {

@@ -10,54 +10,15 @@ namespace OpenEQ.Engine {
 
         Program program;
         Mesh mesh;
-        Matrix4x4 model, view, perspective;
+        Matrix4 model, view, perspective;
 
-        public CoreEngine(Vec3[] verts, Vec3[] normals, Tuple<bool, int, int, int>[] polys) {
-            verts = new Vec3[]{
-                new Vec3(-1, -1,  1),
-                new Vec3( 1, -1,  1),
-                new Vec3( 1,  1,  1),
-                new Vec3(-1,  1,  1),
-                new Vec3(-1, -1, -1),
-                new Vec3( 1, -1, -1),
-                new Vec3( 1,  1, -1),
-                new Vec3(-1,  1, -1),
-            };
-            normals = new Vec3[]{
-                new Vec3(0, 0, 0), 
-                new Vec3(0, 0, 1), 
-                new Vec3(0, 1, 0), 
-                new Vec3(0, 1, 1), 
-                new Vec3(1, 0, 0), 
-                new Vec3(1, 0, 1), 
-                new Vec3(1, 1, 0), 
-                new Vec3(1, 1, 1)
-            };
-            polys = new Tuple<bool, int, int, int>[]{
-                new Tuple<bool, int, int, int>(false, 0, 1, 2), 
-                new Tuple<bool, int, int, int>(false, 2, 3, 0), 
-
-                new Tuple<bool, int, int, int>(false, 1, 5, 6),  
-                new Tuple<bool, int, int, int>(false, 6, 2, 1), 
-
-                new Tuple<bool, int, int, int>(false, 7, 6, 5), 
-                new Tuple<bool, int, int, int>(false, 5, 4, 7),
-
-                new Tuple<bool, int, int, int>(false, 4, 0, 3),
-                new Tuple<bool, int, int, int>(false, 3, 7, 4),
-
-                new Tuple<bool, int, int, int>(false, 4, 5, 1),
-                new Tuple<bool, int, int, int>(false, 1, 0, 4),
-
-                new Tuple<bool, int, int, int>(false, 3, 2, 6), 
-                new Tuple<bool, int, int, int>(false, 6, 7, 3)
-            };
+        public CoreEngine(Vec3[] verts, Vec3[] normals, Tuple<float, float>[] texcoords, Tuple<bool, int, int, int>[] polys) {
             window = new GameWindow(1280, 720, GraphicsMode.Default, "OpenEQ");
-            mesh = new Mesh(verts, normals, polys);
+            mesh = new Mesh(verts, normals, texcoords, polys);
 
-            model = Matrix4x4.Translation(new Vec3(0, -4, 0));
-            view = Matrix4x4.LookAt(new Vec3(0, 0, 2), new Vec3(0, -4, 0), new Vec3(0, 0, 1));
-            perspective = Matrix4x4.Perspective(45, ((float) window.Width) / window.Height, 1f, 10);
+            model = Matrix4.CreateTranslation(0, -1000, -1000);
+            view = Matrix4.LookAt(new Vector3(0, 100, 150), new Vector3(0, 0, 0), new Vector3(0, 0, 1));
+            perspective = Matrix4.CreatePerspectiveFieldOfView((float) (75 * Math.PI / 180), ((float) window.Width) / window.Height, .1f, 100000);
             
             window.Load += (sender, e) => Load();
             window.Resize += (sender, e) => Resize();
@@ -66,29 +27,34 @@ namespace OpenEQ.Engine {
 
         void Load() {
             GL.ClearColor(Color.MidnightBlue);
-
+            
             var vertshader = new Shader(@"
                     uniform mat4 MVPMatrix;
-                    attribute vec4 vPosition;
+                    attribute vec3 vPosition;
                     attribute vec3 vNormal;
+                    attribute vec2 vTexCoord;
                     varying vec3 normal;
+                    varying vec2 texcoord;
                     void main() {
-                        gl_Position = MVPMatrix * vPosition;
+                        gl_Position = MVPMatrix * vec4(vPosition, 1.0);
                         normal = vNormal;
+                        texcoord = vTexCoord;
                     }
                 ", ShaderType.VertexShader);
             
             var fragshader = new Shader(@"
                     varying vec3 normal;
+                    varying vec2 texcoord;
                     void main() {
-                        gl_FragColor = vec4(abs(normal), 1.0);
+                        gl_FragColor = vec4(abs(texcoord / 256.), 0.0, 1.0);
                     }
                 ", ShaderType.FragmentShader);
             
             program = new Program(vertshader, fragshader);
 
             GL.CullFace(CullFaceMode.Back);
-            //GL.Enable(EnableCap.CullFace);
+            GL.FrontFace(FrontFaceDirection.Cw);
+            GL.Enable(EnableCap.CullFace);
         }
 
         void Resize() {
@@ -99,16 +65,18 @@ namespace OpenEQ.Engine {
             GL.BindRenderbuffer(RenderbufferTarget.Renderbuffer, depthbuffer);
             GL.RenderbufferStorage(RenderbufferTarget.Renderbuffer, RenderbufferInternalFormat.DepthComponent16, window.Width, window.Height);
             GL.FramebufferRenderbuffer(FramebufferTarget.Framebuffer, All.DepthAttachment, RenderbufferTarget.Renderbuffer, depthbuffer);
-            GL.Enable(EnableCap.DepthTest);
+            //GL.DepthFunc(DepthFunction.Lequal);
+            //GL.DepthMask(false); // Makes a wireframe stippled object.  Odd.
         }
 
         void Render() {
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+            GL.Enable(EnableCap.DepthTest);
 
             program.Use();
-            //view *= Matrix4x4.Translation(new Vec3(0, .02f, 0));
-            var mvp = perspective * view * model;
-            program.Uniform("MVPMatrix", mvp.ToArray());
+            //model *= Matrix4.CreateTranslation(0, -5, 0);
+            var mvp = model * (view * perspective);
+            program.Uniform("MVPMatrix", mvp);
             mesh.Draw();
 
             window.SwapBuffers();

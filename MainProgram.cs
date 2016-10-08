@@ -18,8 +18,8 @@ namespace OpenEQ
             }*/
 
             var wld = new WLDReader(s3d.Open("gfaydark.wld"));
-            var engine = new CoreEngine(wld.Vertices.ToArray(), wld.Normals.ToArray(), wld.Polygons.ToArray());
-            engine.Run();
+            //var engine = new CoreEngine(wld.Vertices.ToArray(), wld.Normals.ToArray(), wld.TexCoords.ToArray(), wld.Polygons.ToArray());
+            //engine.Run();
         }
     }
 }
