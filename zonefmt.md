@@ -15,11 +15,10 @@ Structure
     - string name
     - uint32 meshes
         - uint32 material_id
-        - uint32 buffer_count
-            - uint32 vertices
-                - vec3 vertex
-                - vec3 normal
-                - vec2 texcoord
-            - uint32 polygons [arrays in sequence.  one array of intvec3s, one array of bools]
-                - intvec3 indices
-                - bool collidable
+        - uint32 vertices
+            - vec3 vertex
+            - vec3 normal
+            - vec2 texcoord
+        - uint32 polygons [arrays in sequence.  one array of intvec3s, one array of bools]
+            - intvec3 indices
+            - bool collidable

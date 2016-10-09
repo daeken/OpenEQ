@@ -1,4 +1,4 @@
-import hashlib
+import hashlib, struct, tempfile
 
 class VertexBuffer(object):
     def __init__(self, data, count):
@@ -92,3 +92,41 @@ class Zone(object):
         
         for obj in self.objects:
             obj.meshes = [x for m in obj.meshes for x in m.optimize()]
+        
+        def ouint(*x):
+            zout.write(struct.pack('<' + 'I'*len(x), *x))
+        def ofloat(*x):
+            zout.write(struct.pack('<' + 'f'*len(x), *x))
+        def ostring(x):
+            sl = len(x)
+            while sl:
+                zout.write(chr((sl & 0x7F) | (0x80 if sl > 127 else 0x00)))
+                sl >>= 7
+            zout.write(x)
+        with tempfile.TemporaryFile() as zout:
+            materials = {}
+            for obj in self.objects:
+                for mesh in obj.meshes:
+                    mat = mesh.material.flags, mesh.material.filename
+                    if mat not in materials:
+                        materials[mat] = len(materials)
+            ouint(len(materials))
+            for (flags, filename), id in sorted(materials.items(), cmp=lambda a, b: cmp(a[1], b[1])):
+                ouint(mesh.material.flags)
+                ostring(mesh.material.filename)
+            for obj in self.objects:
+                ostring(obj.name)
+                ouint(len(obj.meshes))
+                for mesh in obj.meshes:
+                    matid = materials[(mesh.material.flags, mesh.material.filename)]
+                    ouint(matid)
+                    ouint(len(mesh.vertbuffer))
+                    ofloat(*mesh.vertbuffer.data)
+                    ouint(len(mesh.polygons))
+                    for collidable, x in mesh.polygons:
+                        ouint(*x)
+                    for collidable, x in mesh.polygons:
+                        ouint(int(collidable))
+            
+            zout.seek(0)
+            zip.writestr('zone.oez', zout.read())
