@@ -2,6 +2,8 @@
 # Please send help.
 
 from buffer import Buffer
+from utility import *
+from zonefile import *
 
 fragHandlers = {}
 def fragment(type):
@@ -88,7 +90,7 @@ def frag_mesh(b, ref):
 xorkey = 0x95, 0x3A, 0xC5, 0x2A, 0x95, 0x7A, 0x95, 0x6A
 def decodeString(s):
     return ''.join(chr(ord(x) ^ xorkey[i % len(xorkey)]) for i, x in enumerate(s))
-def readWld(data):
+def readWld(data, zone, s3d, isZone):
     global old
     class FragRef(object):
         def __init__(self, id=None, name=None):
@@ -144,6 +146,8 @@ def readWld(data):
         name = getString(-nameoff) if nameoff != 0x1000000 else None
         epos = b.pos + size - 4
         frag = fragHandlers[type](b, getFrag) if type in fragHandlers else None
+        if isinstance(frag, dict):
+            frag['_name'] = name
         frag = (i, name, type, frag)
         names[name] = frags[i] = frag
         if type not in byType:
@@ -161,8 +165,15 @@ def readWld(data):
     frags = nfrags
     names = nnames
     
-    for meshfrag in byType[0x36]:
-        print meshfrag['textures']
-        break
-    
-    return ''
+    if isZone:
+        print 'building zone ...'
+        for meshfrag in byType[0x36]:
+            vbuf = VertexBuffer(flatten(interleave(meshfrag['vertices'], meshfrag['normals'], meshfrag['texcoords'])), len(meshfrag['vertices']))
+
+            off = 0
+            for count, index in meshfrag['polytex']:
+                texflags, ((texname, ), ) = meshfrag['textures'][index] 
+                material = Material(texflags, s3d[texname.lower()])
+                mesh = Mesh(material, vbuf, meshfrag['polys'][off:off+count])
+                zone.zoneobj.addMesh(mesh)
+                off += count

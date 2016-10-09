@@ -32,5 +32,5 @@ def readS3D(fp):
     files = {}
     for (_, data) in filelist:
         fn = b.read(b.uint()).strip('\0')
-        files[fn] = data
+        files[fn.lower()] = data
     return files
