@@ -1,5 +1,5 @@
 using OpenTK;
-using OpenTK.Graphics.ES20;
+using OpenTK.Graphics.OpenGL4;
 using static System.Console;
 using System.Diagnostics;
 using System.Collections.Generic;
@@ -12,8 +12,7 @@ namespace OpenEQ.Engine {
             id = GL.CreateProgram();
             foreach(var shader in shaders)
                 GL.AttachShader(id, shader.ShaderId);
-            
-            GL.BindAttribLocation(id, 0, "vPosition");
+            GL.BindAttribLocation(id, 0, "vPosition");            
             GL.LinkProgram(id);
             int linked;
             GL.GetProgram(id, GetProgramParameterName.LinkStatus, out linked);
@@ -27,9 +26,8 @@ namespace OpenEQ.Engine {
 
         public void Use() {
             GL.UseProgram(id);
-            GL.EnableVertexAttribArray(GL.GetAttribLocation(id, "vPosition"));
-            GL.EnableVertexAttribArray(GL.GetAttribLocation(id, "vNormal"));
-            GL.EnableVertexAttribArray(GL.GetAttribLocation(id, "vTexCoord"));
+            GL.ActiveTexture(TextureUnit.Texture0);
+            GL.Uniform1(GL.GetUniformLocation(id, "tex"), 0);
         }
 
         public void Uniform(string name, Matrix4 mat) {

@@ -1,40 +1,70 @@
 using OpenTK;
 using OpenTK.Graphics;
-using OpenTK.Graphics.ES20;
+using OpenTK.Graphics.OpenGL4;
 using System;
 using static System.Console;
+using System.Collections.Generic;
+using OpenTK.Input;
 
 namespace OpenEQ.Engine {
     public class CoreEngine {
         GameWindow window;
 
         Program program;
-        Mesh mesh;
-        Matrix4 model, view, perspective;
+        List<Object> objects;
+        Matrix4 model, perspective;
 
-        public CoreEngine(Vec3[] verts, Vec3[] normals, Tuple<float, float>[] texcoords, Tuple<bool, int, int, int>[] polys) {
-            window = new GameWindow(1280, 720, GraphicsMode.Default, "OpenEQ");
-            mesh = new Mesh(verts, normals, texcoords, polys);
+        Camera camera;
+        Vector3 movement;
+        Vector2 mouselast, keylook;
+        bool mouselook = false;
 
-            model = Matrix4.CreateTranslation(0, -1000, -1000);
-            view = Matrix4.LookAt(new Vector3(0, 100, 150), new Vector3(0, 0, 0), new Vector3(0, 0, 1));
+        public CoreEngine() {
+            objects = new List<Object>();
+            window = new GameWindow(1280, 720, GraphicsMode.Default, "OpenEQ", GameWindowFlags.Default, null, 4, 1, GraphicsContextFlags.ForwardCompatible);
+
+            camera = new Camera(new Vector3(100, 0, 0));
+            model = Matrix4.CreateTranslation(0, -800, -100);
+            //view = Matrix4.LookAt(new Vector3(0, 100, 150), new Vector3(0, 0, 0), new Vector3(0, 0, 1));
             perspective = Matrix4.CreatePerspectiveFieldOfView((float) (75 * Math.PI / 180), ((float) window.Width) / window.Height, .1f, 100000);
+
+            movement = new Vector3();
+            keylook = new Vector2();
             
             window.Load += (sender, e) => Load();
             window.Resize += (sender, e) => Resize();
+            window.UpdateFrame += (sender, e) => Update();
             window.RenderFrame += (sender, e) => Render();
+            window.KeyDown += (sender, e) => KeyDown(e);
+            window.KeyUp += (sender, e) => KeyUp(e);
+            window.MouseDown += (sender, e) => {
+                if(e.Button != MouseButton.Right)
+                    return;
+                mouselook = true;
+                mouselast = new Vector2(-1, -1);
+            };
+            window.MouseUp += (sender, e) => {
+                if(e.Button != MouseButton.Right)
+                    return;
+                mouselook = false;
+            };
+        }
+
+        public void AddObject(Object obj) {
+            objects.Add(obj);
         }
 
         void Load() {
             GL.ClearColor(Color.MidnightBlue);
             
             var vertshader = new Shader(@"
+                    #version 410
                     uniform mat4 MVPMatrix;
-                    attribute vec3 vPosition;
-                    attribute vec3 vNormal;
-                    attribute vec2 vTexCoord;
-                    varying vec3 normal;
-                    varying vec2 texcoord;
+                    in vec3 vPosition;
+                    in vec3 vNormal;
+                    in vec2 vTexCoord;
+                    out vec3 normal;
+                    out vec2 texcoord;
                     void main() {
                         gl_Position = MVPMatrix * vec4(vPosition, 1.0);
                         normal = vNormal;
@@ -43,10 +73,14 @@ namespace OpenEQ.Engine {
                 ", ShaderType.VertexShader);
             
             var fragshader = new Shader(@"
-                    varying vec3 normal;
-                    varying vec2 texcoord;
+                    #version 410
+                    in vec3 normal;
+                    in vec2 texcoord;
+                    out vec4 outputColor;
+                    uniform sampler2D tex;
                     void main() {
-                        gl_FragColor = vec4(abs(texcoord / 256.), 0.0, 1.0);
+                        vec3 tc = texture(tex, (texcoord / textureSize(tex, 0))).rgb;
+                        outputColor = vec4(tc.rgb, 1.0);
                     }
                 ", ShaderType.FragmentShader);
             
@@ -60,13 +94,6 @@ namespace OpenEQ.Engine {
         void Resize() {
             WriteLine($"resizing {window.Width}x{window.Height}");
             GL.Viewport(0, 0, window.Width, window.Height);
-
-            var depthbuffer = GL.GenRenderbuffer();
-            GL.BindRenderbuffer(RenderbufferTarget.Renderbuffer, depthbuffer);
-            GL.RenderbufferStorage(RenderbufferTarget.Renderbuffer, RenderbufferInternalFormat.DepthComponent16, window.Width, window.Height);
-            GL.FramebufferRenderbuffer(FramebufferTarget.Framebuffer, All.DepthAttachment, RenderbufferTarget.Renderbuffer, depthbuffer);
-            //GL.DepthFunc(DepthFunction.Lequal);
-            //GL.DepthMask(false); // Makes a wireframe stippled object.  Odd.
         }
 
         void Render() {
@@ -74,12 +101,100 @@ namespace OpenEQ.Engine {
             GL.Enable(EnableCap.DepthTest);
 
             program.Use();
-            //model *= Matrix4.CreateTranslation(0, -5, 0);
-            var mvp = model * (view * perspective);
+            var mvp = model * (camera.Matrix * perspective);
             program.Uniform("MVPMatrix", mvp);
-            mesh.Draw();
+            foreach(var obj in objects)
+                obj.Draw();
 
             window.SwapBuffers();
+        }
+
+        void Update() {
+            if(movement.Length != 0)
+                camera.Translate(movement);
+            if(keylook.Length != 0)
+                camera.Rotate(keylook);
+            // if(mouselook) {
+            //     var mouse = Mouse.GetState();
+            //     WriteLine($"{mouse.X}, {mouse.Y}");
+            //     return;
+            //     camera.Rotate(new Vector2(mouse.X, mouse.Y) - mouselast);
+            //     var middle = new Vector2(window.Bounds.Left + window.Bounds.Width / 2, window.Bounds.Top + window.Bounds.Height / 2);
+            //     mouselast = middle;
+            //     Mouse.SetPosition(middle.X, middle.Y);
+            //     mouse = Mouse.GetState();
+            //     WriteLine($"{window.Bounds.Left} {window.Bounds.Top}");
+            // }
+        }
+
+        void KeyDown(KeyboardKeyEventArgs e) {
+            if(e.IsRepeat) return;
+            switch(e.Key) {
+                case Key.W:
+                    movement.Y += 1;
+                    break;
+                case Key.S:
+                    movement.Y -= 1;
+                    break;
+                case Key.A:
+                    movement.X -= 1;
+                    break;
+                case Key.D:
+                    movement.X += 1;
+                    break;
+                case Key.ShiftLeft:
+                    movement.Z += 1;
+                    break;
+                case Key.ControlLeft:
+                    movement.Z -= 1;
+                    break;
+                case Key.Up:
+                    keylook.Y += 1;
+                    break;
+                case Key.Down:
+                    keylook.Y -= 1;
+                    break;
+                case Key.Left:
+                    keylook.X -= 1;
+                    break;
+                case Key.Right:
+                    keylook.X += 1;
+                    break;
+            }
+        }
+        void KeyUp(KeyboardKeyEventArgs e) {
+            switch(e.Key) {
+                case Key.W:
+                    movement.Y -= 1;
+                    break;
+                case Key.S:
+                    movement.Y += 1;
+                    break;
+                case Key.A:
+                    movement.X += 1;
+                    break;
+                case Key.D:
+                    movement.X -= 1;
+                    break;
+                case Key.ShiftLeft:
+                    movement.Z -= 1;
+                    break;
+                case Key.ControlLeft:
+                    movement.Z += 1;
+                    break;
+                case Key.Up:
+                    keylook.Y -= 1;
+                    break;
+                case Key.Down:
+                    keylook.Y += 1;
+                    break;
+                case Key.Left:
+                    keylook.X += 1;
+                    break;
+                case Key.Right:
+                    keylook.X -= 1;
+                    break;
+            }
         }
 
         public void Run() {

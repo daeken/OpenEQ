@@ -99,6 +99,8 @@ class Zone(object):
             zout.write(struct.pack('<' + 'f'*len(x), *x))
         def ostring(x):
             sl = len(x)
+            if sl == 0:
+                zout.write(chr(0))
             while sl:
                 zout.write(chr((sl & 0x7F) | (0x80 if sl > 127 else 0x00)))
                 sl >>= 7
@@ -112,8 +114,10 @@ class Zone(object):
                         materials[mat] = len(materials)
             ouint(len(materials))
             for (flags, filename), id in sorted(materials.items(), cmp=lambda a, b: cmp(a[1], b[1])):
-                ouint(mesh.material.flags)
-                ostring(mesh.material.filename)
+                ouint(flags)
+                ostring(filename)
+            ouint(len(self.objects))
+            #print 'solid zone'
             for obj in self.objects:
                 ostring(obj.name)
                 ouint(len(obj.meshes))
@@ -124,9 +128,17 @@ class Zone(object):
                     ofloat(*mesh.vertbuffer.data)
                     ouint(len(mesh.polygons))
                     for collidable, x in mesh.polygons:
+                        # print 'facet normal 0 0 0'
+                        # print 'outer loop'
+                        # print 'vertex %f %f %f' % tuple(mesh.vertbuffer[x[0]][:3])
+                        # print 'vertex %f %f %f' % tuple(mesh.vertbuffer[x[1]][:3])
+                        # print 'vertex %f %f %f' % tuple(mesh.vertbuffer[x[2]][:3])
+                        # print 'endloop'
+                        # print 'endfacet'
                         ouint(*x)
                     for collidable, x in mesh.polygons:
                         ouint(int(collidable))
+            #print 'endsolid zone'
             
             zout.seek(0)
             zip.writestr('zone.oez', zout.read())

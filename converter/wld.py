@@ -166,7 +166,6 @@ def readWld(data, zone, s3d, isZone):
     names = nnames
     
     if isZone:
-        print 'building zone ...'
         for meshfrag in byType[0x36]:
             vbuf = VertexBuffer(flatten(interleave(meshfrag['vertices'], meshfrag['normals'], meshfrag['texcoords'])), len(meshfrag['vertices']))
 
