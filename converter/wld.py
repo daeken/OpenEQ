@@ -171,7 +171,8 @@ def readWld(data, zone, s3d, isZone):
 
             off = 0
             for count, index in meshfrag['polytex']:
-                texflags, ((texname, ), ) = meshfrag['textures'][index] 
+                texflags, mtex = meshfrag['textures'][index]
+                texname = mtex[0][0] 
                 material = Material(texflags, s3d[texname.lower()])
                 mesh = Mesh(material, vbuf, meshfrag['polys'][off:off+count])
                 zone.zoneobj.addMesh(mesh)
