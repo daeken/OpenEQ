@@ -78,7 +78,7 @@ def frag_mesh(b, ref):
     if texcoordcount == 0:
         out['texcoords'] = [(0, 0)] * vertcount
     else:
-        out['texcoords'] = [b.ushort(2) if old else b.uint(2) for i in xrange(texcoordcount)]
+        out['texcoords'] = [b.short(2) if old else b.int(2) for i in xrange(texcoordcount)]
     out['normals'] = [(b.char() / 127., b.char() / 127., b.char() / 127.) for i in xrange(normalcount)]
     out['colors'] = b.uint(colorcount)
     out['polys'] = [(b.ushort() != 0x0010, b.ushort(3)) for i in xrange(polycount)]

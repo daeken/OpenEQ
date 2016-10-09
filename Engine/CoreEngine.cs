@@ -5,6 +5,7 @@ using System;
 using static System.Console;
 using System.Collections.Generic;
 using OpenTK.Input;
+using System.IO;
 
 namespace OpenEQ.Engine {
     public class CoreEngine {
@@ -25,8 +26,7 @@ namespace OpenEQ.Engine {
 
             camera = new Camera(new Vector3(100, 0, 0));
             model = Matrix4.CreateTranslation(0, -800, -100);
-            //view = Matrix4.LookAt(new Vector3(0, 100, 150), new Vector3(0, 0, 0), new Vector3(0, 0, 1));
-            perspective = Matrix4.CreatePerspectiveFieldOfView((float) (75 * Math.PI / 180), ((float) window.Width) / window.Height, .1f, 100000);
+            perspective = Matrix4.CreatePerspectiveFieldOfView((float) (60 * Math.PI / 180), ((float) window.Width) / window.Height, 1, 1000);
 
             movement = new Vector3();
             keylook = new Vector2();
@@ -37,7 +37,7 @@ namespace OpenEQ.Engine {
             window.RenderFrame += (sender, e) => Render();
             window.KeyDown += (sender, e) => KeyDown(e);
             window.KeyUp += (sender, e) => KeyUp(e);
-            window.MouseDown += (sender, e) => {
+            /*window.MouseDown += (sender, e) => {
                 if(e.Button != MouseButton.Right)
                     return;
                 mouselook = true;
@@ -47,7 +47,7 @@ namespace OpenEQ.Engine {
                 if(e.Button != MouseButton.Right)
                     return;
                 mouselook = false;
-            };
+            };*/
         }
 
         public void AddObject(Object obj) {
@@ -57,33 +57,8 @@ namespace OpenEQ.Engine {
         void Load() {
             GL.ClearColor(Color.MidnightBlue);
             
-            var vertshader = new Shader(@"
-                    #version 410
-                    uniform mat4 MVPMatrix;
-                    in vec3 vPosition;
-                    in vec3 vNormal;
-                    in vec2 vTexCoord;
-                    out vec3 normal;
-                    out vec2 texcoord;
-                    void main() {
-                        gl_Position = MVPMatrix * vec4(vPosition, 1.0);
-                        normal = vNormal;
-                        texcoord = vTexCoord;
-                    }
-                ", ShaderType.VertexShader);
-            
-            var fragshader = new Shader(@"
-                    #version 410
-                    in vec3 normal;
-                    in vec2 texcoord;
-                    out vec4 outputColor;
-                    uniform sampler2D tex;
-                    void main() {
-                        vec3 tc = texture(tex, (texcoord / textureSize(tex, 0))).rgb;
-                        outputColor = vec4(tc.rgb, 1.0);
-                    }
-                ", ShaderType.FragmentShader);
-            
+            var vertshader = new Shader(File.ReadAllText("shaders/basevert.glsl"), ShaderType.VertexShader);
+            var fragshader = new Shader(File.ReadAllText("shaders/basefrag.glsl"), ShaderType.FragmentShader);
             program = new Program(vertshader, fragshader);
 
             GL.CullFace(CullFaceMode.Back);
@@ -142,17 +117,17 @@ namespace OpenEQ.Engine {
                 case Key.D:
                     movement.X += 1;
                     break;
-                case Key.ShiftLeft:
+                case Key.Space:
                     movement.Z += 1;
                     break;
                 case Key.ControlLeft:
                     movement.Z -= 1;
                     break;
                 case Key.Up:
-                    keylook.Y += 1;
+                    keylook.Y -= 1;
                     break;
                 case Key.Down:
-                    keylook.Y -= 1;
+                    keylook.Y += 1;
                     break;
                 case Key.Left:
                     keylook.X -= 1;
@@ -176,17 +151,17 @@ namespace OpenEQ.Engine {
                 case Key.D:
                     movement.X -= 1;
                     break;
-                case Key.ShiftLeft:
+                case Key.Space:
                     movement.Z -= 1;
                     break;
                 case Key.ControlLeft:
                     movement.Z += 1;
                     break;
                 case Key.Up:
-                    keylook.Y -= 1;
+                    keylook.Y += 1;
                     break;
                 case Key.Down:
-                    keylook.Y += 1;
+                    keylook.Y -= 1;
                     break;
                 case Key.Left:
                     keylook.X += 1;
