@@ -22,10 +22,10 @@ namespace OpenEQ.Engine {
 
         public CoreEngine() {
             placeables = new List<Placeable>();
-            window = new GameWindow(1280, 720, GraphicsMode.Default, "OpenEQ", GameWindowFlags.Default, null, 4, 1, GraphicsContextFlags.ForwardCompatible);
+            window = new GameWindow(1280, 720, new GraphicsMode(new ColorFormat(32), 32), "OpenEQ", GameWindowFlags.Default, null, 4, 1, GraphicsContextFlags.ForwardCompatible);
 
             camera = new Camera(new Vector3(100, 0, 0));
-            perspective = Matrix4.CreatePerspectiveFieldOfView((float) (60 * Math.PI / 180), ((float) window.Width) / window.Height, 1, 1000);
+            perspective = Matrix4.CreatePerspectiveFieldOfView((float) (60 * Math.PI / 180), ((float) window.Width) / window.Height, 1, 10000);
 
             movement = new Vector3();
             keylook = new Vector2();
