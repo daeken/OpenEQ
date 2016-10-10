@@ -27,7 +27,8 @@ class Mesh(object):
     
     def add(self, mesh):
         offset = self.vertbuffer.count
-        self.vertbuffer = VertexBuffer(self.vertbuffer.data + mesh.vertbuffer.data, self.vertbuffer.count + mesh.vertbuffer.count)
+        self.vertbuffer.data += mesh.vertbuffer.data
+        self.vertbuffer.count += mesh.vertbuffer.count
         self.polygons += [(collidable, (a+offset, b+offset, c+offset)) for collidable, (a, b, c) in mesh.polygons]
         return self
     
