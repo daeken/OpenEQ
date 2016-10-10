@@ -17,6 +17,7 @@ def convertOld(name):
 
 def main(name):
     convertOld(name)
+    print 'Done'
 
 if __name__=='__main__':
     import sys

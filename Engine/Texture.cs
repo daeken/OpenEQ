@@ -54,7 +54,7 @@ namespace OpenEQ.Engine {
                     format = PixelInternalFormat.CompressedRgbaS3tcDxt5Ext;
                     break;
             }
-
+            
             id = GL.GenTexture();
             GL.ActiveTexture(TextureUnit.Texture0);
             GL.BindTexture(TextureTarget.Texture2D, id);
@@ -62,9 +62,11 @@ namespace OpenEQ.Engine {
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int) All.Repeat);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int) All.Repeat);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int) All.Nearest);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int) All.Nearest);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int) All.NearestMipmapNearest);
 
-            var offset = 0;
+            GL.CompressedTexImage2D(TextureTarget.Texture2D, 0, format, width, height, 0, (int) linearSize, pdata);
+            GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
+            /*var offset = 0;
             for(var level = 0; level <= mipMapCount && (width != 0 || height != 0); ++level) {
                 var size = ((width + 3) / 4) * ((height + 3) / 4) * blockSize;
                 var sub = new byte[size];
@@ -73,7 +75,7 @@ namespace OpenEQ.Engine {
                 offset += size;
                 width /= 2;
                 height /= 2;
-            }
+            }*/
         }
 
         public void Enable() {

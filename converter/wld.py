@@ -95,7 +95,7 @@ def frag_mesh(b, ref):
     if texcoordcount == 0:
         out['texcoords'] = [(0, 0)] * vertcount
     else:
-        out['texcoords'] = [b.short(2) if old else b.int(2) for i in xrange(texcoordcount)]
+        out['texcoords'] = [b.short(2) if old else (b.int() / 512., b.int() / 512.) for i in xrange(texcoordcount)]
     out['normals'] = [(b.char() / 127., b.char() / 127., b.char() / 127.) for i in xrange(normalcount)]
     out['colors'] = b.uint(colorcount)
     out['polys'] = [(b.ushort() != 0x0010, b.ushort(3)) for i in xrange(polycount)]
@@ -110,25 +110,22 @@ def decodeString(s):
 def readWld(data, zone, s3d, isZone):
     global old
     class FragRef(object):
-        def __init__(self, id=None, name=None):
+        def __init__(self, id=None, name=None, value=None):
             self.id = id
             self.name = name
-        def resolve(self):
+            self.value = value
+        def __call__(self):
             if self.id is not None:
                 return frags[self.id][3]
-            return names[self.name][3]
+            elif self.name is not None:
+                return names[self.name][3]
+            return self.value
         def __repr__(self):
             if self.id is not None:
                 return 'FragRef(id=%r)' % self.id
-            return 'FragRef(name=%r)' % self.name
-    def dereference(val):
-        if isinstance(val, dict):
-            return {k : dereference(v) for k, v in val.items()}
-        elif isinstance(val, tuple) or isinstance(val, list):
-            return map(dereference, val)
-        elif isinstance(val, FragRef):
-            return val.resolve()
-        return val
+            elif self.name is not None:
+                return 'FragRef(name=%r)' % self.name
+            return 'FragRef(value=%r)' % self.value
     
     def getString(i):
         return stringTable[i:].split('\0', 1)[0]
@@ -136,11 +133,11 @@ def readWld(data, zone, s3d, isZone):
         if ref > 0:
             ref -= 1
             if ref in frags:
-                return frags[ref][3]
+                return FragRef(value=frags[ref][3])
             return FragRef(id=ref)
         name = getString(-ref)
         if name in names:
-            return names[name][3]
+            return FragRef(value=names[name][3])
         return FragRef(name=name)
 
     b = Buffer(data)
@@ -176,7 +173,6 @@ def readWld(data, zone, s3d, isZone):
     nfrags = {}
     nnames = {}
     for i, name, type, frag in frags.values():
-        frag = dereference(frag)
         nfrags[i] = nnames[name] = frag
         byType[type].append(frag)
     frags = nfrags
@@ -190,8 +186,8 @@ def readWld(data, zone, s3d, isZone):
 
             off = 0
             for count, index in meshfrag['polytex']:
-                texflags, mtex = meshfrag['textures'][index]
-                texnames = [x[0] for x in mtex] 
+                texflags, mtex = meshfrag['textures']()[index]()
+                texnames = [x()[0] for x in mtex()()] 
                 material = Material(texflags, [s3d[texname.lower()] for texname in texnames])
                 mesh = Mesh(material, vbuf, meshfrag['polys'][off:off+count])
                 zone.zoneobj.addMesh(mesh)
@@ -204,8 +200,8 @@ def readWld(data, zone, s3d, isZone):
 
                 off = 0
                 for count, index in meshfrag['polytex']:
-                    texflags, mtex = meshfrag['textures'][index]
-                    texnames = [x[0] for x in mtex]
+                    texflags, mtex = meshfrag['textures']()[index]()
+                    texnames = [x()[0] for x in mtex()()]
                     material = Material(texflags, [s3d[texname.lower()] for texname in texnames])
                     mesh = Mesh(material, vbuf, meshfrag['polys'][off:off+count])
                     obj.addMesh(mesh)
