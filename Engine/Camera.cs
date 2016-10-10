@@ -27,7 +27,7 @@ namespace OpenEQ.Engine {
         }
 
         public void Rotate(Vector2 rot) {
-            rotation += rot / 50;
+            rotation += rot;
             Update();
         }
 

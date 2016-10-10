@@ -77,7 +77,9 @@ namespace OpenEQ.Engine {
 
             program.Use();
             var mvp = model * (camera.Matrix * perspective);
+            var mv = model * camera.Matrix;
             program.Uniform("MVPMatrix", mvp);
+            program.Uniform("MVMatrix", mv);
             foreach(var obj in objects)
                 obj.Draw();
 
@@ -86,9 +88,9 @@ namespace OpenEQ.Engine {
 
         void Update() {
             if(movement.Length != 0)
-                camera.Translate(movement);
+                camera.Translate(movement * 2);
             if(keylook.Length != 0)
-                camera.Rotate(keylook);
+                camera.Rotate(keylook / 50);
             // if(mouselook) {
             //     var mouse = Mouse.GetState();
             //     WriteLine($"{mouse.X}, {mouse.Y}");

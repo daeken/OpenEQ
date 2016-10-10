@@ -29,7 +29,8 @@ namespace OpenEQ.Engine {
         }
 
         public void Draw() {
-            material.Enable();
+            if(!material.Enable())
+                return;
             GL.BindVertexArray(vao);
             GL.DrawElements(BeginMode.Triangles, indexCount, DrawElementsType.UnsignedShort, 0);
         }

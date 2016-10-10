@@ -1,4 +1,5 @@
 using System;
+using OpenTK.Graphics.OpenGL4;
 
 namespace OpenEQ.Engine {
     [Flags]
@@ -15,8 +16,12 @@ namespace OpenEQ.Engine {
             texture = _texture;
         }
 
-        public void Enable() {
+        public bool Enable() {
+            GL.Enable(EnableCap.Blend);
+            GL.BlendFunc(BlendingFactorSrc.SrcAlpha, BlendingFactorDest.OneMinusSrcAlpha);
             texture.Enable();
+
+            return (flags & MaterialFlags.Transparent) == 0;
         }
     }
 }
