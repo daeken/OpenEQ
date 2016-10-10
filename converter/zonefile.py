@@ -25,6 +25,12 @@ class Mesh(object):
         self.vertbuffer = vertbuffer
         self.polygons = polygons
     
+    def add(self, mesh):
+        offset = self.vertbuffer.count
+        self.vertbuffer = VertexBuffer(self.vertbuffer.data + mesh.vertbuffer.data, self.vertbuffer.count + mesh.vertbuffer.count)
+        self.polygons += [(collidable, (a+offset, b+offset, c+offset)) for collidable, (a, b, c) in mesh.polygons]
+        return self
+    
     def subset(self, cpoly):
         vbuffer = [[]]
         npoly = []
@@ -98,7 +104,28 @@ class Zone(object):
         self.placeables.append(placeable)
         return placeable
     
+    def coalesceObjectMeshes(self):
+        for obj in self.objects:
+            startmeshcount = len(obj.meshes)
+            matmeshes = {}
+            for mesh in obj.meshes:
+                mat = mesh.material.filename, mesh.material.flags
+                if mat not in matmeshes:
+                    matmeshes[mat] = []
+                matmeshes[mat].append(mesh)
+            obj.meshes = []
+            poss = 0
+            for meshlist in matmeshes.values():
+                if len(meshlist) == 1:
+                    obj.meshes.append(meshlist[0])
+                    continue
+                gmesh = reduce(lambda a, b: a.add(b), meshlist)
+                obj.meshes += gmesh.optimize()
+            print '%i meshes -> %i' % (startmeshcount, len(obj.meshes))
+    
     def output(self, zip):
+        self.coalesceObjectMeshes()
+
         assets = {}
         for obj in self.objects:
             for mesh in obj.meshes:
