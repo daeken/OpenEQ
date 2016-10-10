@@ -95,7 +95,7 @@ def frag_mesh(b, ref):
     if texcoordcount == 0:
         out['texcoords'] = [(0, 0)] * vertcount
     else:
-        out['texcoords'] = [b.short(2) if old else (b.int() / 512., b.int() / 512.) for i in xrange(texcoordcount)]
+        out['texcoords'] = [(b.short() / 256., b.short() / 256.) if old else b.float(2) for i in xrange(texcoordcount)]
     out['normals'] = [(b.char() / 127., b.char() / 127., b.char() / 127.) for i in xrange(normalcount)]
     out['colors'] = b.uint(colorcount)
     out['polys'] = [(b.ushort() != 0x0010, b.ushort(3)) for i in xrange(polycount)]
@@ -114,12 +114,20 @@ def readWld(data, zone, s3d, isZone):
             self.id = id
             self.name = name
             self.value = value
-        def __call__(self):
+        def resolve(self):
+            if self.value is not None:
+                return self.value
             if self.id is not None:
-                return frags[self.id][3]
+                self.value = frags[self.id][3]
             elif self.name is not None:
-                return names[self.name][3]
+                self.value = names[self.name][3]
+            if isinstance(self.value, FragRef):
+                self.value = self.value.resolve()
             return self.value
+        def __getitem__(self, index):
+            return self.resolve()[index]
+        def __len__(self):
+            return len(self.resolve())
         def __repr__(self):
             if self.id is not None:
                 return 'FragRef(id=%r)' % self.id
@@ -186,8 +194,8 @@ def readWld(data, zone, s3d, isZone):
 
             off = 0
             for count, index in meshfrag['polytex']:
-                texflags, mtex = meshfrag['textures']()[index]()
-                texnames = [x()[0] for x in mtex()()] 
+                texflags, mtex = meshfrag['textures'][index]
+                texnames = [x[0] for x in mtex]
                 material = Material(texflags, [s3d[texname.lower()] for texname in texnames])
                 mesh = Mesh(material, vbuf, meshfrag['polys'][off:off+count])
                 zone.zoneobj.addMesh(mesh)
@@ -200,8 +208,8 @@ def readWld(data, zone, s3d, isZone):
 
                 off = 0
                 for count, index in meshfrag['polytex']:
-                    texflags, mtex = meshfrag['textures']()[index]()
-                    texnames = [x()[0] for x in mtex()()]
+                    texflags, mtex = meshfrag['textures'][index]
+                    texnames = [x[0] for x in mtex]
                     material = Material(texflags, [s3d[texname.lower()] for texname in texnames])
                     mesh = Mesh(material, vbuf, meshfrag['polys'][off:off+count])
                     obj.addMesh(mesh)
