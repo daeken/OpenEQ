@@ -10,7 +10,8 @@ Structure
 
 - uint32 material_count
     - uint32 flags
-    - string texturename
+    - uint32 texture_count
+        - string texturename
 - uint32 object_count -- First is always the zone itself
     - uint32 meshes
         - uint32 material_id -- index into material array

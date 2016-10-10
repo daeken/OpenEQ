@@ -17,12 +17,16 @@ namespace OpenEQ {
             var materials = new Dictionary<int, Material>();
             for(var i = 0; i < nummats; ++i) {
                 var flags = reader.ReadUInt32();
-                var fn = reader.ReadString();
-                var entry = zip.GetEntry(fn);
-                var zfp = new BinaryReader(entry.Open());
-                var faux = new MemoryStream(zfp.ReadBytes((int) entry.Length)); // Getting around the lack of seeking...
-                var tex = new Texture(faux);
-                materials[i] = new Material((MaterialFlags) flags, tex);
+                var numtex = reader.ReadUInt32();
+                var textures = new Texture[numtex];
+                for(var j = 0; j < numtex; ++j) {
+                    var fn = reader.ReadString();
+                    var entry = zip.GetEntry(fn);
+                    var zfp = new BinaryReader(entry.Open());
+                    var faux = new MemoryStream(zfp.ReadBytes((int) entry.Length)); // Getting around the lack of seeking...
+                    textures[j] = new Texture(faux);
+                } 
+                materials[i] = new Material((MaterialFlags) flags, textures);
             }
 
             var objects = new List<Object>();

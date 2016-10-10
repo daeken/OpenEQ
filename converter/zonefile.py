@@ -14,10 +14,10 @@ class VertexBuffer(object):
         return self.count
 
 class Material(object):
-    def __init__(self, flags, data):
+    def __init__(self, flags, textures):
         self.flags = flags
-        self.filename = hashlib.sha256(data).hexdigest() + '.dds' 
-        self.data = data
+        self.filenames = tuple(hashlib.sha256(data).hexdigest() + '.dds' for data in textures) 
+        self.textures = textures
 
 class Mesh(object):
     def __init__(self, material, vertbuffer, polygons):
@@ -109,7 +109,7 @@ class Zone(object):
             startmeshcount = len(obj.meshes)
             matmeshes = {}
             for mesh in obj.meshes:
-                mat = mesh.material.filename, mesh.material.flags
+                mat = mesh.material.filenames, mesh.material.flags
                 if mat not in matmeshes:
                     matmeshes[mat] = []
                 matmeshes[mat].append(mesh)
@@ -121,7 +121,6 @@ class Zone(object):
                     continue
                 gmesh = reduce(lambda a, b: a.add(b), meshlist)
                 obj.meshes += gmesh.optimize()
-            print '%i meshes -> %i' % (startmeshcount, len(obj.meshes))
     
     def output(self, zip):
         self.coalesceObjectMeshes()
@@ -130,8 +129,9 @@ class Zone(object):
         for obj in self.objects:
             for mesh in obj.meshes:
                 material = mesh.material
-                if material.filename not in assets:
-                    assets[material.filename] = material.data
+                for i, filename in enumerate(material.filenames):
+                    if filename not in assets:
+                        assets[filename] = material.textures[i]
         for k, v in assets.items():
             zip.writestr(k, v)
         
@@ -154,20 +154,22 @@ class Zone(object):
             materials = {}
             for obj in self.objects:
                 for mesh in obj.meshes:
-                    mat = mesh.material.flags, mesh.material.filename
+                    mat = mesh.material.flags, mesh.material.filenames
                     if mat not in materials:
                         materials[mat] = len(materials)
             ouint(len(materials))
-            for (flags, filename), id in sorted(materials.items(), cmp=lambda a, b: cmp(a[1], b[1])):
+            for (flags, filenames), id in sorted(materials.items(), cmp=lambda a, b: cmp(a[1], b[1])):
                 ouint(flags)
-                ostring(filename)
+                ouint(len(filenames))
+                for filename in filenames:
+                    ostring(filename)
             ouint(len(self.objects))
             objrefs = {}
             for i, obj in enumerate(self.objects):
                 objrefs[obj] = i
                 ouint(len(obj.meshes))
                 for mesh in obj.meshes:
-                    matid = materials[(mesh.material.flags, mesh.material.filename)]
+                    matid = materials[(mesh.material.flags, mesh.material.filenames)]
                     ouint(matid)
                     ouint(len(mesh.vertbuffer))
                     ofloat(*mesh.vertbuffer.data)

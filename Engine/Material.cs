@@ -1,5 +1,5 @@
 using System;
-using OpenTK.Graphics.OpenGL4;
+using static System.Console;
 
 namespace OpenEQ.Engine {
     [Flags]
@@ -10,14 +10,21 @@ namespace OpenEQ.Engine {
     }
     public class Material {
         MaterialFlags flags;
-        Texture texture;
-        public Material(MaterialFlags _flags, Texture _texture) {
+        Texture[] textures;
+        bool isStatic;
+        const float frameDuration = 7.5f/60f;
+        public Material(MaterialFlags _flags, Texture[] _textures) {
             flags = _flags;
-            texture = _texture;
+            textures = _textures;
+            isStatic = textures.Length == 1;
         }
 
         public bool Enable() {
-            texture.Enable();
+            if(isStatic)
+                textures[0].Enable();
+            else {
+                textures[(int) (Time.Now / frameDuration) % textures.Length].Enable();
+            }
 
             return (flags & MaterialFlags.Transparent) == 0;
         }
