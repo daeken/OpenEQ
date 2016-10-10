@@ -36,17 +36,17 @@ namespace OpenEQ.Engine {
             window.RenderFrame += (sender, e) => Render();
             window.KeyDown += (sender, e) => KeyDown(e);
             window.KeyUp += (sender, e) => KeyUp(e);
-            /*window.MouseDown += (sender, e) => {
-                if(e.Button != MouseButton.Right)
+            window.MouseDown += (sender, e) => {
+                if(e.Button != MouseButton.Left)
                     return;
                 mouselook = true;
-                mouselast = new Vector2(-1, -1);
+                mouselast = new Vector2(0, 0);
             };
             window.MouseUp += (sender, e) => {
-                if(e.Button != MouseButton.Right)
+                if(e.Button != MouseButton.Left)
                     return;
                 mouselook = false;
-            };*/
+            };
         }
 
         public void AddPlaceable(Placeable placeable) {
@@ -95,17 +95,14 @@ namespace OpenEQ.Engine {
                 camera.Translate(movement * 2);
             if(keylook.Length != 0)
                 camera.Rotate(keylook / 50);
-            // if(mouselook) {
-            //     var mouse = Mouse.GetState();
-            //     WriteLine($"{mouse.X}, {mouse.Y}");
-            //     return;
-            //     camera.Rotate(new Vector2(mouse.X, mouse.Y) - mouselast);
-            //     var middle = new Vector2(window.Bounds.Left + window.Bounds.Width / 2, window.Bounds.Top + window.Bounds.Height / 2);
-            //     mouselast = middle;
-            //     Mouse.SetPosition(middle.X, middle.Y);
-            //     mouse = Mouse.GetState();
-            //     WriteLine($"{window.Bounds.Left} {window.Bounds.Top}");
-            // }
+            if(mouselook) {
+                var mouse = Mouse.GetState();
+                var mousepos = new Vector2(mouse.X, mouse.Y);
+                var delta = (mousepos - mouselast) / 100;
+                if(mouselast.X != 0 && mouselast.Y != 0 && (delta.X != 0 || delta.Y != 0))
+                    camera.Rotate(delta);
+                mouselast = mousepos;
+            }
         }
 
         void KeyDown(KeyboardKeyEventArgs e) {

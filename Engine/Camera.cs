@@ -28,6 +28,7 @@ namespace OpenEQ.Engine {
 
         public void Rotate(Vector2 rot) {
             rotation += rot;
+            rotation.Y = (float) Min(Max(rotation.Y, -PI / 2), PI / 2);
             Update();
         }
 
