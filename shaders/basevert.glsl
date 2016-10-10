@@ -12,5 +12,5 @@ void main() {
     gl_Position = MVPMatrix * vec4(vPosition, 1.);
     pos = (MVMatrix * vec4(vPosition, 1.)).xyz;
     normal = normalize(MVMatrix * vec4(vNormal, 0.)).xyz;
-    texcoord = vTexCoord / textureSize(tex, 0);
+    texcoord = vTexCoord / textureSize(tex, 0).x;
 }
