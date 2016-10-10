@@ -8,26 +8,6 @@ namespace OpenEQ.Engine {
         int id;
 
         public Texture(Stream data) {
-            /*id = GL.GenTexture();
-            GL.ActiveTexture(TextureUnit.Texture0);
-            GL.BindTexture(TextureTarget.Texture2D, id);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int) All.ClampToEdge);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int) All.ClampToEdge);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int) All.Linear);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int) All.Linear);
-
-            var temp = new byte[256*256*3];
-            for(var i = 0; i < 256*256*3; i += 3) {
-                temp[0] = 255;
-                temp[1] = (byte) (i & 0xFF);
-                temp[2] = 0;
-            }
-            //GL.ActiveTexture(TextureUnit.Texture0);
-            //GL.BindTexture(TextureTarget.Texture2D, id);
-            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba8, 256, 256, 0, PixelFormat.Rgb, PixelType.UnsignedByte, temp);
-            //GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
-
-            return;*/
             var reader = new BinaryReader(data);
             data.Position = 12;
             var height = reader.ReadInt32();
@@ -66,16 +46,6 @@ namespace OpenEQ.Engine {
 
             GL.CompressedTexImage2D(TextureTarget.Texture2D, 0, format, width, height, 0, (int) linearSize, pdata);
             GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
-            /*var offset = 0;
-            for(var level = 0; level <= mipMapCount && (width != 0 || height != 0); ++level) {
-                var size = ((width + 3) / 4) * ((height + 3) / 4) * blockSize;
-                var sub = new byte[size];
-                Array.Copy(pdata, offset, sub, 0, size);
-                GL.CompressedTexImage2D(TextureTarget.Texture2D, level, format, width, height, 0, size, sub);
-                offset += size;
-                width /= 2;
-                height /= 2;
-            }*/
         }
 
         public void Enable() {

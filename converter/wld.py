@@ -42,7 +42,7 @@ def frag_objloc(b, ref):
     rot = b.float(3)
     rot = (rot[2] / 512. * 360. * math.pi / 180., rot[1] / 512. * 360. * math.pi / 180., rot[0] / 512. * 360. * math.pi / 180.)
     scale = b.float(3)
-    scale = (scale[2], scale[1], 1.) # Why is the last scale never different?
+    scale = (scale[2], scale[2], scale[2]) if scale[2] > 0.0001 else (1, 1, 1)
     frag2_unk = b.uint()
     params2 = b.uint()
 

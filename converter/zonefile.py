@@ -1,5 +1,16 @@
 import hashlib, struct, tempfile
 
+resample = False
+if resample:
+    from PIL import Image
+    from cStringIO import StringIO
+    def resampleTexture(data):
+        fp = StringIO(data)
+        im = Image.open(fp)
+        outfp = StringIO()
+        im.save(outfp, 'png')
+        return outfp.getvalue()
+
 class VertexBuffer(object):
     def __init__(self, data, count):
         self.data = data
@@ -133,8 +144,15 @@ class Zone(object):
                 for i, filename in enumerate(material.filenames):
                     if filename not in assets:
                         assets[filename] = material.textures[i]
+        if resample:
+            print 'Resampling textures'
         for k, v in assets.items():
+            if resample:
+                v = resampleTexture(v)
+                k = k.replace('.dds', '.png')
             zip.writestr(k, v)
+        if resample:
+            print 'Done'
         
         for obj in self.objects:
             obj.meshes = [x for m in obj.meshes for x in m.optimize()]
