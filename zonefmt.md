@@ -12,9 +12,8 @@ Structure
     - uint32 flags
     - string texturename
 - uint32 object_count -- First is always the zone itself
-    - string name
     - uint32 meshes
-        - uint32 material_id
+        - uint32 material_id -- index into material array
         - uint32 vertices
             - vec3 vertex
             - vec3 normal
@@ -22,3 +21,8 @@ Structure
         - uint32 polygons [arrays in sequence.  one array of intvec3s, one array of bools]
             - intvec3 indices
             - bool collidable
+- uint placeable_count
+    - uint32 id -- index into object array
+    - vec3 position
+    - vec3 rotation -- radians around axis
+    - vec3 scale

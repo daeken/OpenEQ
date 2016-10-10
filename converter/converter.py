@@ -8,8 +8,11 @@ from zonefile import *
 def convertOld(name):
     with ZipFile('%s.zip' % name, 'w') as zip:
         zone = Zone()
-        files = readS3D(file('eqdata/%s.s3d' % name, 'rb'))
-        readWld(files['%s.wld' % name], zone, files, isZone=True)
+        ofiles = readS3D(file('eqdata/%s_obj.s3d' % name, 'rb'))
+        readWld(ofiles['%s_obj.wld' % name], zone, ofiles, isZone=False)
+        zfiles = readS3D(file('eqdata/%s.s3d' % name, 'rb'))
+        readWld(zfiles['objects.wld'], zone, zfiles, isZone=False)
+        readWld(zfiles['%s.wld' % name], zone, zfiles, isZone=True)
         zone.output(zip)
 
 def main(name):

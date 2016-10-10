@@ -21,7 +21,7 @@ namespace OpenEQ.Engine {
             GL.BlendFunc(BlendingFactorSrc.SrcAlpha, BlendingFactorDest.OneMinusSrcAlpha);
             texture.Enable();
 
-            return (flags & MaterialFlags.Transparent) == 0;
+            return true;//(flags & MaterialFlags.Transparent) == 0;
         }
     }
 }

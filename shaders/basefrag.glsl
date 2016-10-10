@@ -10,7 +10,7 @@ void main() {
     vec3 L = normalize(lightpos - pos);
     float diff = dot(normal, L);
     diff = abs(diff) * mix(0.3, 1., sign(diff) / 2. + .5);
-    float amb = 0;
+    float amb = .2;
 
     vec4 tcol = textureLod(tex, texcoord, textureQueryLod(tex, texcoord).x);
     outputColor = vec4(tcol.rgb * clamp(diff + amb, 0.0, 1.0), tcol.a);

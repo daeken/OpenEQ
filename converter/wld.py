@@ -1,6 +1,7 @@
 # This is genuinely some of the ugliest code I've ever written.
 # Please send help.
 
+import math
 from buffer import Buffer
 from utility import *
 from zonefile import *
@@ -30,6 +31,22 @@ def frag_texbitinfo(b, ref):
 @fragment(0x05)
 def frag_texunk(b, ref):
     return ref(b.int())
+
+
+@fragment(0x15)
+def frag_objloc(b, ref):
+    sref = b.int()
+    flags = b.uint()
+    frag1_unk = b.uint()
+    pos = b.float(3)
+    rot = b.float(3)
+    rot = (rot[2] / 512. * 360. * math.pi / 180., rot[1] / 512. * 360. * math.pi / 180., rot[0] / 512. * 360. * math.pi / 180.)
+    scale = b.float(3)
+    scale = (scale[2], scale[1], 1.) # Why is the last scale never different?
+    frag2_unk = b.uint()
+    params2 = b.uint()
+
+    return dict(position=pos, rotation=rot, scale=scale, nameoff=sref)
 
 FLAG_NORMAL = 0
 FLAG_MASKED = 1 << 1
@@ -164,6 +181,8 @@ def readWld(data, zone, s3d, isZone):
         byType[type].append(frag)
     frags = nfrags
     names = nnames
+
+    print 'fragtypes:', ['%02x' % x for x in byType.keys()]
     
     if isZone:
         for meshfrag in byType[0x36]:
@@ -177,3 +196,21 @@ def readWld(data, zone, s3d, isZone):
                 mesh = Mesh(material, vbuf, meshfrag['polys'][off:off+count])
                 zone.zoneobj.addMesh(mesh)
                 off += count
+    else:
+        if 0x36 in byType:
+            for meshfrag in byType[0x36]:
+                obj = zone.addObject(meshfrag['_name'].replace('_DMSPRITEDEF', ''))
+                vbuf = VertexBuffer(flatten(interleave(meshfrag['vertices'], meshfrag['normals'], meshfrag['texcoords'])), len(meshfrag['vertices']))
+
+                off = 0
+                for count, index in meshfrag['polytex']:
+                    texflags, mtex = meshfrag['textures'][index]
+                    texname = mtex[0][0] 
+                    material = Material(texflags, s3d[texname.lower()])
+                    mesh = Mesh(material, vbuf, meshfrag['polys'][off:off+count])
+                    obj.addMesh(mesh)
+                    off += count
+        if 0x15 in byType:
+            for objfrag in byType[0x15]:
+                objname = getString(-objfrag['nameoff']).replace('_ACTORDEF', '')
+                zone.addPlaceable(objname, objfrag['position'], objfrag['rotation'], objfrag['scale'])

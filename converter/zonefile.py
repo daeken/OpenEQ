@@ -70,15 +70,33 @@ class Object(object):
         self.meshes.append(mesh)
         return self
 
+class Placeable(object):
+    def __init__(self, obj, position, rotation, scale):
+        self.obj = obj
+        self.position = position
+        self.rotation = rotation
+        self.scale = scale
+
 class Zone(object):
     def __init__(self):
         self.objects = [Object()]
+        self.objnames = {}
         self.zoneobj = self.objects[0]
+        self.placeables = []
     
     def addObject(self, name):
         obj = Object(name)
         self.objects.append(obj)
+        self.objnames[name] = obj
         return obj
+    
+    def addPlaceable(self, objname, position, rotation, scale):
+        if objname not in self.objnames:
+            print 'Could not place object %r' % objname
+            return
+        placeable = Placeable(self.objnames[objname], position, rotation, scale)
+        self.placeables.append(placeable)
+        return placeable
     
     def output(self, zip):
         assets = {}
@@ -117,9 +135,9 @@ class Zone(object):
                 ouint(flags)
                 ostring(filename)
             ouint(len(self.objects))
-            #print 'solid zone'
-            for obj in self.objects:
-                ostring(obj.name)
+            objrefs = {}
+            for i, obj in enumerate(self.objects):
+                objrefs[obj] = i
                 ouint(len(obj.meshes))
                 for mesh in obj.meshes:
                     matid = materials[(mesh.material.flags, mesh.material.filename)]
@@ -128,17 +146,16 @@ class Zone(object):
                     ofloat(*mesh.vertbuffer.data)
                     ouint(len(mesh.polygons))
                     for collidable, x in mesh.polygons:
-                        # print 'facet normal 0 0 0'
-                        # print 'outer loop'
-                        # print 'vertex %f %f %f' % tuple(mesh.vertbuffer[x[0]][:3])
-                        # print 'vertex %f %f %f' % tuple(mesh.vertbuffer[x[1]][:3])
-                        # print 'vertex %f %f %f' % tuple(mesh.vertbuffer[x[2]][:3])
-                        # print 'endloop'
-                        # print 'endfacet'
                         ouint(*x)
                     for collidable, x in mesh.polygons:
                         ouint(int(collidable))
-            #print 'endsolid zone'
+
+            ouint(len(self.placeables))
+            for placeable in self.placeables:
+                ouint(objrefs[placeable.obj])
+                ofloat(*placeable.position)
+                ofloat(*placeable.rotation)
+                ofloat(*placeable.scale)
             
             zout.seek(0)
             zip.writestr('zone.oez', zout.read())

@@ -36,7 +36,6 @@ namespace OpenEQ.Engine {
                 uniform = uniforms[name];
             } else {
                 uniform = uniforms[name] = GL.GetUniformLocation(id, name);
-                WriteLine(GL.GetUniformLocation(id, name));
             }
             GL.UniformMatrix4(uniform, false, ref mat);
         }

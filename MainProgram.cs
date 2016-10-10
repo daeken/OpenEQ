@@ -10,9 +10,9 @@ namespace OpenEQ
         public static void Main(string[] args)
         {
             var engine = new CoreEngine();
-            var zoneObjects = OEQZoneReader.Read("gfaydark.zip");
-            foreach(var obj in zoneObjects) {
-                engine.AddObject(obj);
+            var zonePlaceables = OEQZoneReader.Read("gfaydark.zip");
+            foreach(var placeable in zonePlaceables) {
+                engine.AddPlaceable(placeable);
             }
             engine.Run();
         }

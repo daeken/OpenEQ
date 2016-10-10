@@ -4,10 +4,11 @@ using System.IO.Compression;
 using System.Linq;
 using static System.Console;
 using OpenEQ.Engine;
+using OpenTK;
 
 namespace OpenEQ {
     public class OEQZoneReader {
-        public static List<Object> Read(string path) {
+        public static List<Placeable> Read(string path) {
             var zip = ZipFile.OpenRead(path);
             var zonefile = zip.GetEntry("zone.oez").Open();
             var reader = new BinaryReader(zonefile);
@@ -30,7 +31,6 @@ namespace OpenEQ {
                 var obj = new Object();
                 objects.Add(obj);
 
-                var name = reader.ReadString();
                 var nummeshes = reader.ReadUInt32();
                 for(var j = 0; j < nummeshes; ++j) {
                     var matid = reader.ReadInt32();
@@ -45,7 +45,21 @@ namespace OpenEQ {
                 }
             }
 
-            return objects;
+            var placeables = new List<Placeable>();
+            placeables.Add(new Placeable(objects[0], new Vector3(), new Vector3(), new Vector3(1, 1, 1)));
+            var numplace = reader.ReadUInt32();
+            for(var i = 0; i < numplace; ++i) {
+                placeables.Add(
+                    new Placeable(
+                        objects[reader.ReadInt32()], 
+                        new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()), 
+                        new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()), 
+                        new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle())
+                    )
+                );
+            }
+
+            return placeables;
         }
     }
 }

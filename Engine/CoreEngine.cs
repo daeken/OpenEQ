@@ -12,8 +12,8 @@ namespace OpenEQ.Engine {
         GameWindow window;
 
         Program program;
-        List<Object> objects;
-        Matrix4 model, perspective;
+        List<Placeable> placeables;
+        Matrix4 perspective;
 
         Camera camera;
         Vector3 movement;
@@ -21,11 +21,10 @@ namespace OpenEQ.Engine {
         bool mouselook = false;
 
         public CoreEngine() {
-            objects = new List<Object>();
+            placeables = new List<Placeable>();
             window = new GameWindow(1280, 720, GraphicsMode.Default, "OpenEQ", GameWindowFlags.Default, null, 4, 1, GraphicsContextFlags.ForwardCompatible);
 
             camera = new Camera(new Vector3(100, 0, 0));
-            model = Matrix4.CreateTranslation(0, -800, -100);
             perspective = Matrix4.CreatePerspectiveFieldOfView((float) (60 * Math.PI / 180), ((float) window.Width) / window.Height, 1, 1000);
 
             movement = new Vector3();
@@ -50,8 +49,8 @@ namespace OpenEQ.Engine {
             };*/
         }
 
-        public void AddObject(Object obj) {
-            objects.Add(obj);
+        public void AddPlaceable(Placeable placeable) {
+            placeables.Add(placeable);
         }
 
         void Load() {
@@ -76,12 +75,15 @@ namespace OpenEQ.Engine {
             GL.Enable(EnableCap.DepthTest);
 
             program.Use();
-            var mvp = model * (camera.Matrix * perspective);
-            var mv = model * camera.Matrix;
-            program.Uniform("MVPMatrix", mvp);
-            program.Uniform("MVMatrix", mv);
-            foreach(var obj in objects)
-                obj.Draw();
+            var vp = camera.Matrix * perspective;
+            foreach(var placeable in placeables) {
+                var model = placeable.Mat;
+                var mvp = model * vp;
+                var mv = model * camera.Matrix;
+                program.Uniform("MVPMatrix", mvp);
+                program.Uniform("MVMatrix", mv);
+                placeable.Draw();
+            }
 
             window.SwapBuffers();
         }
