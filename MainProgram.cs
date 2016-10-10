@@ -10,7 +10,7 @@ namespace OpenEQ
         public static void Main(string[] args)
         {
             var engine = new CoreEngine();
-            var zonePlaceables = OEQZoneReader.Read("gfaydark.zip");
+            var zonePlaceables = OEQZoneReader.Read(args[0]);
             foreach(var placeable in zonePlaceables) {
                 engine.AddPlaceable(placeable);
             }
