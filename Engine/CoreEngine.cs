@@ -90,9 +90,12 @@ namespace OpenEQ.Engine {
             window.SwapBuffers();
         }
 
+        Vector3 movementScale = new Vector3(4.0f, 4.0f, 1.0f);
+        float runSpeed = 4;
+
         void Update() {
             if(movement.Length != 0)
-                camera.Translate(movement * 2);
+                camera.Translate(movement * movementScale);
             if(keylook.Length != 0)
                 camera.Rotate(keylook / 50);
             if(mouselook) {
@@ -138,6 +141,9 @@ namespace OpenEQ.Engine {
                 case Key.Right:
                     keylook.X += 1;
                     break;
+                case Key.ShiftLeft:
+                    movementScale *= runSpeed;
+                    break;
             }
         }
         void KeyUp(KeyboardKeyEventArgs e) {
@@ -171,6 +177,9 @@ namespace OpenEQ.Engine {
                     break;
                 case Key.Right:
                     keylook.X -= 1;
+                    break;
+                case Key.ShiftLeft:
+                    movementScale /= runSpeed;
                     break;
             }
         }

@@ -1,5 +1,6 @@
 from buffer import Buffer
 from ter import readTer
+from mod import readMod
 
 def readZon(data, zone, s3d):
     def getString(pos):
@@ -18,6 +19,9 @@ def readZon(data, zone, s3d):
     for fn in files:
         if fn.endswith('.ter'):
             readTer(s3d[fn], zone, s3d)
+        elif fn.endswith('.mod'):
+            print 'reading mod', fn
+            readMod(s3d[fn], zone, s3d)
     
     for i in xrange(numplaceable):
         fileid = files[b.uint()]
