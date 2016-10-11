@@ -16,17 +16,19 @@ namespace OpenEQ.Engine {
         public Material(MaterialFlags _flags, Texture[] _textures) {
             flags = _flags;
             textures = _textures;
-            isStatic = textures.Length == 1;
+            isStatic = textures.Length <= 1;
         }
 
         public bool Enable() {
+            if((flags & MaterialFlags.Transparent) != 0)
+                return false;
+            
             if(isStatic)
                 textures[0].Enable();
-            else {
+            else
                 textures[(int) (Time.Now / frameDuration) % textures.Length].Enable();
-            }
 
-            return (flags & MaterialFlags.Transparent) == 0;
+            return true;
         }
     }
 }

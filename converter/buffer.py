@@ -15,6 +15,13 @@ class Buffer(object):
     def pos(self, pos):
         self.fp.seek(pos)
     
+    def __len__(self):
+        temp = self.pos
+        self.fp.seek(0, 2)
+        ret = self.pos
+        self.pos = temp
+        return ret
+    
     def __iadd__(self, o):
         self.pos += o
         return self

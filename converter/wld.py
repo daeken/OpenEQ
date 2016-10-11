@@ -48,11 +48,6 @@ def frag_objloc(b, ref):
 
     return dict(position=pos, rotation=rot, scale=scale, nameoff=sref)
 
-FLAG_NORMAL = 0
-FLAG_MASKED = 1 << 0
-FLAG_TRANSLUCENT = 1 << 1
-FLAG_TRANSPARENT = 1 << 2
-
 @fragment(0x30)
 def frag_texref(b, ref):
     pairflags = b.uint()

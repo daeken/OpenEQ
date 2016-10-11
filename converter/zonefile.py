@@ -24,6 +24,11 @@ class VertexBuffer(object):
     def __len__(self):
         return self.count
 
+FLAG_NORMAL = 0
+FLAG_MASKED = 1 << 0
+FLAG_TRANSLUCENT = 1 << 1
+FLAG_TRANSPARENT = 1 << 2
+
 class Material(object):
     def __init__(self, flags, textures):
         self.flags = flags
