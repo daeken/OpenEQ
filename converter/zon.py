@@ -1,6 +1,7 @@
 from buffer import Buffer
 from ter import readTer
 from mod import readMod
+from zonefile import *
 
 def readZon(data, zone, s3d):
     def getString(pos):
@@ -16,20 +17,26 @@ def readZon(data, zone, s3d):
     strs = b.read(strlen)
 
     files = [getString(b.uint()).lower() for i in xrange(numfiles)]
+    objects = []
     for fn in files:
         if fn.endswith('.ter'):
             readTer(s3d[fn], zone, s3d)
+            objects.append(None) # Shouldn't be placing zones...
         elif fn.endswith('.mod'):
             print 'reading mod', fn
-            readMod(s3d[fn], zone, s3d)
+            obj = zone.addObject(name=fn)
+            readMod(s3d[fn], obj, s3d)
+            objects.append(obj)
     
     for i in xrange(numplaceable):
-        fileid = files[b.uint()]
+        objname = files[b.uint()]
         name = getString(b.uint())
         pos = b.float(3)
-        rot = b.float(3)
+        ra, rb, rc = b.float(3)
+        rot = (rc, rb, ra)
         scale = b.float()
-        #print fileid, name, pos, rot, scale
+
+        zone.addPlaceable(objname, pos, rot, (scale, scale, scale))
     
     for i in xrange(numunk3):
         u1 = b.uint()

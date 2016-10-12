@@ -45,8 +45,8 @@ def readTer(data, zone, s3d):
 
     matpolys = {k : [] for k in zmats}
     for (c, b, a), matid, flags in polygons:
-        if flags == 0x00050000:
-            matpolys[matid].append((flags != 0, (a, b, c)))
+        #if flags == 0x00050000:
+        matpolys[matid].append((flags != 0, (a, b, c)))
     # 0x0, 0x00010000, 0x00020000, 0x00040000 -- normal?
     # 0x1, 0x2 -- invisible
     # 0x00030000, 0x00050000 -- non-collidable?
