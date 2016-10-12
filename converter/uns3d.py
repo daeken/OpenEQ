@@ -17,7 +17,7 @@ def main():
         return 1
     
     if args.outdir is None:
-        args.outdir = args.file.rsplit('.', 1)[0].rsplit('/', 1)[-1]
+        args.outdir = '_'.join(args.file.rsplit('.', 1))
     
     try:
         os.mkdir(args.outdir)
