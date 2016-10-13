@@ -3,7 +3,7 @@ from zipfile import ZipFile
 
 from buffer import Buffer
 from s3d import readS3D
-from wld import readWld
+from wld import Wld
 from zon import readZon
 from zonefile import *
 
@@ -25,10 +25,13 @@ def convertOld(name):
         zfiles = readS3D(file('eqdata/%s.s3d' % name, 'rb'))
         ofiles, zfiles = s3dFallback(ofiles, zfiles)
 
-        readWld(ofiles['%s_obj.wld' % name], zone, ofiles, isZone=False)
-        readWld(zfiles['objects.wld'], zone, zfiles, isZone=False)
-        readWld(zfiles['%s.wld' % name], zone, zfiles, isZone=True)
+        Wld(ofiles['%s_obj.wld' % name], ofiles).convertObjects(zone)
+        Wld(zfiles['objects.wld'], zfiles).convertObjects(zone)
+        Wld(zfiles['%s.wld' % name], zfiles).convertZone(zone)
         zone.output(zip)
+
+def convertChr(name):
+    pass
 
 def convertNew(name):
     with ZipFile('%s.zip' % name, 'w') as zip:
@@ -43,7 +46,9 @@ def convertNew(name):
         zone.output(zip)
 
 def main(name):
-    if isfile('eqdata/%s.s3d' % name):
+    if '_chr' in name:
+        convertChr(name)
+    elif isfile('eqdata/%s.s3d' % name):
         convertOld(name)
     elif isfile('eqdata/%s.eqg' % name):
         convertNew(name)
