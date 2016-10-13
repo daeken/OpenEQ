@@ -71,7 +71,7 @@ namespace OpenEQ.Engine {
             GL.Viewport(0, 0, window.Width, window.Height);
         }
 
-        float[] frameTime = new float[60];
+        float[] frameTime = new float[240];
         float lastTime = -1;
         void Render() {
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
@@ -92,11 +92,11 @@ namespace OpenEQ.Engine {
 
             window.SwapBuffers();
 
-            for(var i = 0; i < 59; ++i)
+            for(var i = 0; i < frameTime.Length - 1; ++i)
                 frameTime[i] = frameTime[i+1];
             var now = Time.Now;
             if(lastTime != -1)
-                frameTime[59] = now - lastTime;
+                frameTime[frameTime.Length - 1] = now - lastTime;
             lastTime = now;
             var fps = 1 / (frameTime.Sum() / frameTime.Length);
             if(frameTime[0] != 0.0)
