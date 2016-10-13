@@ -4,6 +4,7 @@ using OpenTK.Graphics.OpenGL4;
 using System;
 using static System.Console;
 using System.Collections.Generic;
+using System.Linq;
 using OpenTK.Input;
 using System.IO;
 
@@ -70,6 +71,8 @@ namespace OpenEQ.Engine {
             GL.Viewport(0, 0, window.Width, window.Height);
         }
 
+        float[] frameTime = new float[60];
+        float lastTime = -1;
         void Render() {
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
             GL.Enable(EnableCap.DepthTest);
@@ -88,6 +91,16 @@ namespace OpenEQ.Engine {
             }
 
             window.SwapBuffers();
+
+            for(var i = 0; i < 59; ++i)
+                frameTime[i] = frameTime[i+1];
+            var now = Time.Now;
+            if(lastTime != -1)
+                frameTime[59] = now - lastTime;
+            lastTime = now;
+            var fps = 1 / (frameTime.Sum() / frameTime.Length);
+            if(frameTime[0] != 0.0)
+                window.Title = $"OpenEQ (FPS: {fps})";
         }
 
         Vector3 movementScale = new Vector3(4.0f, 4.0f, 1.0f);
