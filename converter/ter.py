@@ -9,7 +9,6 @@ def readTer(data, zone, s3d):
     assert b.read(4) == 'EQGT'
 
     version, strlen, nummat, numvert, numtri = b.uint(5)
-    assert version == 2
     strs = b.read(strlen)
 
     materials = {}
@@ -17,7 +16,7 @@ def readTer(data, zone, s3d):
         index = b.uint()
         matname, shader = getString(b.uint()), getString(b.uint())
         numprop = b.uint()
-        materials[index] = matname, shader, {}
+        materials[i] = matname, shader, {}
         for j in xrange(numprop):
             pname = getString(b.uint())
             type = b.uint()
@@ -32,16 +31,23 @@ def readTer(data, zone, s3d):
                 return
             materials[index][2][pname] = value
     
-    vertices = b.float(numvert * 8)
+    if version == 3:
+        vertices = []
+        for i in xrange(numvert):
+            vertices += b.float(6)
+            b += 12 # ignore 3 floats
+            vertices += b.float(2)
+    else:
+        vertices = b.float(numvert * 8)
     polygons = [(b.uint(3), b.uint(), b.uint()) for i in xrange(numtri)]
 
-    assert b.uint() == 0 and b.pos == len(b)
+    assert (version == 3 or b.uint() == 0) and b.pos == len(b)
 
-    vertbuffer = VertexBuffer(vertices, numvert)
     invisible = Material(FLAG_TRANSPARENT, [])
     zmats = {0xFFFFFFFF : invisible}
     for index, (name, shader, props) in materials.items():
-        zmats[index] = Material(FLAG_NORMAL, [s3d[props['e_TextureDiffuse0'].lower()]])
+        visible = 'e_TextureDiffuse0' in props
+        zmats[index] = Material(FLAG_NORMAL if visible else FLAG_TRANSPARENT, [s3d[props['e_TextureDiffuse0'].lower()]] if visible else [])
 
     matpolys = {k : [] for k in zmats}
     for (c, b, a), matid, flags in polygons:
@@ -56,4 +62,4 @@ def readTer(data, zone, s3d):
     # '20000000', '40000000', '80000000'
     
     for index, polys in matpolys.items():
-        zone.zoneobj.addMesh(Mesh(zmats[index], vertbuffer, polys))
+        zone.zoneobj.addMesh(Mesh(zmats[index], VertexBuffer(vertices, numvert), polys))

@@ -43,9 +43,12 @@ class Mesh(object):
     
     def add(self, mesh):
         offset = self.vertbuffer.count
-        self.vertbuffer.data += mesh.vertbuffer.data
-        self.vertbuffer.count += mesh.vertbuffer.count
-        self.polygons += [(collidable, (a+offset, b+offset, c+offset)) for collidable, (a, b, c) in mesh.polygons]
+        if self.vertbuffer is not mesh.vertbuffer:
+            self.vertbuffer.data += mesh.vertbuffer.data
+            self.vertbuffer.count += mesh.vertbuffer.count
+            self.polygons += [(collidable, (a+offset, b+offset, c+offset)) for collidable, (a, b, c) in mesh.polygons]
+        else:
+            self.polygons += mesh.polygons
         return self
     
     def subset(self, cpoly):
@@ -72,10 +75,6 @@ class Mesh(object):
         cpoly, cverts = [], set()
         for collidable, (a, b, c) in self.polygons:
             na, nb, nc = a in cverts, b in cverts, c in cverts
-            if len(cverts) + na + nb + nc > 65536:
-                pushmesh()
-                cpoly, cverts = [], set()
-                na = nb = nc = True
             if na: cverts.add(a)
             if nb: cverts.add(b)
             if nc: cverts.add(c)

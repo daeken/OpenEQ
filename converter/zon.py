@@ -10,7 +10,7 @@ def readZon(data, zone, s3d):
     b = Buffer(data)
     assert b.read(4) == 'EQGZ'
 
-    flags, strlen = b.uint(2)
+    version, strlen = b.uint(2)
     numfiles, numplaceable, numunk3 = b.uint(3)
     numlights = b.uint()
 
@@ -25,18 +25,19 @@ def readZon(data, zone, s3d):
         elif fn.endswith('.mod'):
             print 'reading mod', fn
             obj = zone.addObject(name=fn)
-            readMod(s3d[fn], obj, s3d)
+            #readMod(s3d[fn], obj, s3d)
             objects.append(obj)
     
     for i in xrange(numplaceable):
-        objname = files[b.uint()]
+        #objname = files[b.uint()]
+        objname = ''
         name = getString(b.uint())
         pos = b.float(3)
         ra, rb, rc = b.float(3)
         rot = (rc, rb, ra)
         scale = b.float()
 
-        zone.addPlaceable(objname, pos, rot, (scale, scale, scale))
+        #zone.addPlaceable(objname, pos, rot, (scale, scale, scale))
     
     for i in xrange(numunk3):
         u1 = b.uint()

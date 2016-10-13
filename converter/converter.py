@@ -36,7 +36,10 @@ def convertNew(name):
         zfiles = readS3D(file('eqdata/%s.eqg' % name, 'rb'))
         #for fn, data in zfiles.items():
         #    file('s3data/%s' % fn, 'wb').write(data)
-        readZon(zfiles['%s.zon' % name], zone, zfiles)
+        if '%s.zon' % name in zfiles:
+            readZon(zfiles['%s.zon' % name], zone, zfiles)
+        else:
+            readZon(file('eqdata/%s.zon' % name, 'rb').read(), zone, zfiles)
         zone.output(zip)
 
 def main(name):

@@ -41,7 +41,7 @@ namespace OpenEQ {
                     var numvert = reader.ReadInt32();
                     var vertbuffer = Enumerable.Range(0, numvert * 8).Select(_ => reader.ReadSingle()).ToArray();
                     var numpoly = reader.ReadInt32();
-                    var indices = Enumerable.Range(0, numpoly * 3).Select(_ => (ushort) reader.ReadUInt32()).ToArray();
+                    var indices = Enumerable.Range(0, numpoly * 3).Select(_ => reader.ReadUInt32()).ToArray();
                     var collidable = Enumerable.Range(0, numpoly).Select(_ => reader.ReadUInt32() == 1).ToArray();
 
                     var mesh = new Mesh(materials[matid], vertbuffer, indices);

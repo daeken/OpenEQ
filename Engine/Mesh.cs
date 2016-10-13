@@ -5,7 +5,7 @@ namespace OpenEQ.Engine {
     public class Mesh {
         Material material;
         int vao, vertexBuffer, indexBuffer, indexCount;
-        public Mesh(Material mat, float[] vertices, ushort[] indices) {
+        public Mesh(Material mat, float[] vertices, uint[] indices) {
             material = mat;
 
             vao = GL.GenVertexArray();
@@ -24,7 +24,7 @@ namespace OpenEQ.Engine {
 
             indexBuffer = GL.GenBuffer();
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, indexBuffer);
-            GL.BufferData(BufferTarget.ElementArrayBuffer, indices.Length * sizeof(ushort), indices, BufferUsageHint.StaticDraw);
+            GL.BufferData(BufferTarget.ElementArrayBuffer, indices.Length * sizeof(uint), indices, BufferUsageHint.StaticDraw);
             indexCount = indices.Length;
         }
 
@@ -32,7 +32,7 @@ namespace OpenEQ.Engine {
             if(!material.Enable())
                 return;
             GL.BindVertexArray(vao);
-            GL.DrawElements(BeginMode.Triangles, indexCount, DrawElementsType.UnsignedShort, 0);
+            GL.DrawElements(BeginMode.Triangles, indexCount, DrawElementsType.UnsignedInt, 0);
         }
     }
 }
