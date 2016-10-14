@@ -104,7 +104,7 @@ namespace OpenEQ.Engine {
         }
 
         Vector3 movementScale = new Vector3(4.0f, 4.0f, 1.0f);
-        float runSpeed = 4;
+        float runSpeed = 4, crawlSpeed = .1f;
 
         void Update() {
             if(movement.Length != 0)
@@ -136,10 +136,11 @@ namespace OpenEQ.Engine {
                 case Key.D:
                     movement.X += 1;
                     break;
+                case Key.E:
                 case Key.Space:
                     movement.Z += 1;
                     break;
-                case Key.ControlLeft:
+                case Key.Q:
                     movement.Z -= 1;
                     break;
                 case Key.Up:
@@ -157,6 +158,9 @@ namespace OpenEQ.Engine {
                 case Key.ShiftLeft:
                     movementScale *= runSpeed;
                     break;
+                case Key.AltLeft:
+                    movementScale *= crawlSpeed;
+                    break;
             }
         }
         void KeyUp(KeyboardKeyEventArgs e) {
@@ -173,10 +177,11 @@ namespace OpenEQ.Engine {
                 case Key.D:
                     movement.X -= 1;
                     break;
+                case Key.E:
                 case Key.Space:
                     movement.Z -= 1;
                     break;
-                case Key.ControlLeft:
+                case Key.Q:
                     movement.Z += 1;
                     break;
                 case Key.Up:
@@ -193,6 +198,9 @@ namespace OpenEQ.Engine {
                     break;
                 case Key.ShiftLeft:
                     movementScale /= runSpeed;
+                    break;
+                case Key.AltLeft:
+                    movementScale /= crawlSpeed;
                     break;
             }
         }
