@@ -31,7 +31,9 @@ def convertOld(name):
         zone.output(zip)
 
 def convertChr(name):
-    pass
+    name = name[:-4]
+    files = readS3D(file('eqdata/%s_chr.s3d' % name, 'rb'))
+    Wld(files['%s_chr.wld' % name], files).convertCharacters()
 
 def convertNew(name):
     with ZipFile('%s.zip' % name, 'w') as zip:

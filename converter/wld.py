@@ -112,6 +112,11 @@ class Wld(object):
                 objname = self.getString(-objfrag['nameoff']).replace('_ACTORDEF', '')
                 zone.addPlaceable(objname, objfrag['position'], objfrag['rotation'], objfrag['scale'])
     
+    def convertCharacters(self):
+        return
+        for modelref in self.byType[0x14]:
+            print modelref
+    
     def getString(self, i):
         return self.stringTable[i:].split('\0', 1)[0]
     
@@ -123,11 +128,11 @@ class Wld(object):
         if ref > 0:
             ref -= 1
             if ref in self.frags:
-                return FragRef(self, value=self.frags[ref][3])
+                return self.frags[ref][3]
             return FragRef(self, id=ref)
         name = self.getString(-ref)
         if name in self.names:
-            return FragRef(self, value=self.names[name][3])
+            return self.names[name][3]
         return FragRef(self, name=name)
     
     @fragment(0x03)
@@ -148,7 +153,72 @@ class Wld(object):
     @fragment(0x05)
     def frag_texunk(self):
         return self.getFrag(self.b.int())
+    
+    @fragment(0x10)
+    def frag_skeltrackset(self):
+        flags = self.b.uint()
+        trackcount = self.b.uint()
+        frag1ref = self.getFrag(self.b.int())
+        params1 = self.b.uint(3) if flags & 1 else None
+        params2 = self.b.float() if flags & 2 else None
 
+        tracks = []
+        for i in xrange(trackcount):
+            track = {}
+            track['name'] = self.getString(-self.b.int())
+            track['flags'] = self.b.uint()
+            track['piecetrack'] = self.getFrag(self.b.int())
+            track['meshref'] = self.getFrag(self.b.int())
+            track['nextpieces'] = self.b.int(self.b.uint())
+            tracks.append(track)
+        
+        return tracks
+    
+    @fragment(0x11)
+    def frag_skeltracksetref(self):
+        return self.getFrag(self.b.uint())
+    
+    @fragment(0x12)
+    def frag_skelpiecetrack(self):
+        flags = self.b.uint()
+        large = bool(flags & 8)
+
+        size = self.b.uint()
+        rotw, rotx, roty, rotz = map(float, self.b.short(4))
+        shiftx, shifty, shiftz, shiftden = map(float, self.b.short(4))
+
+        rotx, roty, rotz, rotw = (rotx / 16384., roty / 16384., rotz / 16384., rotw / 16384.) if rotw != 0 else (0, 0, 0, 0)
+        shiftx, shifty, shiftz = (shiftx / shiftden, shifty / shiftden, shiftz / shiftden) if shiftden != 0 else (0, 0, 0)
+
+        return dict(position=(shiftx, shifty, shiftz), rotation=(rotx, roty, rotz, rotw))
+
+    @fragment(0x13)
+    def frag_skelpiecetrackref(self):
+        skelpiecetrack = self.getFrag(self.b.uint())
+        flags = self.b.uint()
+        unk = self.b.uint() if flags & 1 else None
+        return skelpiecetrack
+
+    @fragment(0x14)
+    def frag_modelref(self):
+        flags = self.b.uint()
+        frag1 = self.b.uint()
+        size1, size2 = self.b.uint(2)
+        frag2 = self.b.uint()
+        if flags & 1:
+            params1 = self.b.uint()
+        if flags & 2:
+            params2 = self.b.uint()
+        
+        for i in xrange(size1):
+            e1size = self.b.uint()
+            e1data = [(self.b.uint(), self.b.float()) for i in xrange(e1size)]
+        
+        frags3 = self.b.uint(size2)
+        name3 = self.decodeString(self.b.read(self.b.uint()))
+
+        return {'skeleton' : map(self.getFrag, frags3)}
+    
     @fragment(0x15)
     def frag_objloc(self):
         sref = self.b.int()
@@ -163,6 +233,10 @@ class Wld(object):
         params2 = self.b.uint()
 
         return dict(position=pos, rotation=rot, scale=scale, nameoff=sref)
+    
+    @fragment(0x2D)
+    def frag_meshref(self):
+        return self.getFrag(self.b.int())
 
     @fragment(0x30)
     def frag_texref(self):
@@ -210,7 +284,7 @@ class Wld(object):
         out['normals'] = [(self.b.char() / 127., self.b.char() / 127., self.b.char() / 127.) for i in xrange(normalcount)]
         out['colors'] = self.b.uint(colorcount)
         out['polys'] = [(self.b.ushort() != 0x0010, self.b.ushort(3)) for i in xrange(polycount)]
-        self.b += 4 * vertpiececount
+        out['bonevertices'] = [self.b.ushort(2) for i in xrange(vertpiececount)]
         out['polytex'] = [self.b.ushort(2) for i in xrange(polytexcount)]
-
+        
         return out
