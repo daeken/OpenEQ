@@ -1,6 +1,6 @@
 import math
 from pprint import pprint
-from pyrr import Matrix44, Quaternion, Vector3
+from pyrr import Matrix44, Quaternion, Vector3, Vector4
 
 from buffer import Buffer
 from utility import *
@@ -137,9 +137,8 @@ class Wld(object):
         def buildBoneMatrices(tree, parentmat):
             trans = tree['transform']
             translate = Matrix44.from_translation(trans['position'])
-            rotate = Quaternion(trans['rotation'])
-            print trans['rotation']
-            mat = mats[tree['bone']] = parentmat * rotate * translate
+            rotate = Quaternion(trans['rotation']).matrix44
+            mat = mats[tree['bone']] = rotate * translate * parentmat
 
             for x in tree['children']:
                 buildBoneMatrices(x, mat)
@@ -161,15 +160,22 @@ class Wld(object):
             for prefix in prefixes:
                 aniTrees[prefix] = invertTree(buildAniTree(prefix, 0))
             
+            output = {}
             meshes = skeleton['meshes']
+            outpolys = []
+            off = 0
+            for mesh in meshes:
+                for _, (a, b, c) in mesh['polys']:
+                    outpolys += [off+a, off+b, off+c]
+                off += len(mesh['vertices'])
+            output['polys'] = outpolys
             for name, frames in aniTrees.items():
+                ani = output['ani_' + name] = dict(frames=[])
                 for i, frame in enumerate(frames):
                     mats = {}
                     buildBoneMatrices(frame, Matrix44.identity())
 
-                    fp = file('ani_%s_%i.stl' % (name, i), 'w')
-                    print >>fp, 'solid frame'
-
+                    outbuffer = []
                     for mesh in meshes:
                         inverts = mesh['vertices']
                         innorms = mesh['normals']
@@ -180,20 +186,13 @@ class Wld(object):
                             vertices += transform(inverts[off:off+count], mats[matid])
                             normals += transform(innorms[off:off+count], mats[matid])
                             off += count
-                        for _, (a, b, c) in mesh['polys']:
-                            print >>fp, 'facet normal 0 0 0'
-                            print >>fp, 'outer loop'
-                            print >>fp, 'vertex %f %f %f' % vertices[a]
-                            print >>fp, 'vertex %f %f %f' % vertices[b]
-                            print >>fp, 'vertex %f %f %f' % vertices[c]
-                            print >>fp, 'endloop'
-                            print >>fp, 'endfacet'
-                    
-                    print >>fp, 'endsolid frame'
-                    break
-                break
-            
-            #pprint(aniTrees)
+                        
+                        outbuffer += flatten(interleave(vertices, normals))
+                    ani['frames'].append(outbuffer)
+
+            with file('character.json', 'w') as fp:
+                import json
+                json.dump(output, fp)
     
     def getString(self, i):
         return self.stringTable[i:].split('\0', 1)[0]
