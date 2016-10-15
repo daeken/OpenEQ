@@ -1,4 +1,7 @@
 import math
+from pprint import pprint
+from pyrr import Matrix44, Quaternion, Vector3
+
 from buffer import Buffer
 from utility import *
 from zonefile import *
@@ -113,9 +116,84 @@ class Wld(object):
                 zone.addPlaceable(objname, objfrag['position'], objfrag['rotation'], objfrag['scale'])
     
     def convertCharacters(self):
-        return
+        def buildAniTree(prefix, idx):
+            track = skeleton['tracks'][idx]
+            piecetrack = track['piecetrack']
+            if prefix != '' and (prefix + piecetrack['_name']) in self.names:
+                piecetrack = self.names[prefix + piecetrack['_name']]
+            return dict(bone=idx, frames=piecetrack['track']['frames'], children=[buildAniTree(prefix, x) for x in track['nextpieces']])
+        
+        def invertTree(atree):
+            def getMaxFrames(elem):
+                return max([len(elem['frames'])] + map(getMaxFrames, elem['children']))
+            framecount = getMaxFrames(atree)
+            def sub(elem, i):
+                return dict(bone=elem['bone'], transform=elem['frames'][i if len(elem['frames']) > 1 else 0], children=[sub(x, i) for x in elem['children']])
+            frames = []
+            for i in xrange(framecount):
+                frames.append(sub(atree, i))
+            return frames
+        
+        def buildBoneMatrices(tree, parentmat):
+            trans = tree['transform']
+            translate = Matrix44.from_translation(trans['position'])
+            rotate = Quaternion(trans['rotation'])
+            print trans['rotation']
+            mat = mats[tree['bone']] = parentmat * rotate * translate
+
+            for x in tree['children']:
+                buildBoneMatrices(x, mat)
+        
+        def transform(elems, mat):
+            return [tuple(mat * Vector3(elem)) for elem in elems]
+
         for modelref in self.byType[0x14]:
-            print modelref
+            assert len(modelref['skeleton']) == 1
+            skeleton = modelref['skeleton'][0]
+            roottrackname = skeleton['tracks'][0]['piecetrack']['_name']
+            prefixes = ['']
+            for x in self.byType[0x13]:
+                name = x['_name']
+                if name != roottrackname and name.endswith(roottrackname):
+                    prefixes.append(name[:-len(roottrackname)])
+            
+            aniTrees = {}
+            for prefix in prefixes:
+                aniTrees[prefix] = invertTree(buildAniTree(prefix, 0))
+            
+            meshes = skeleton['meshes']
+            for name, frames in aniTrees.items():
+                for i, frame in enumerate(frames):
+                    mats = {}
+                    buildBoneMatrices(frame, Matrix44.identity())
+
+                    fp = file('ani_%s_%i.stl' % (name, i), 'w')
+                    print >>fp, 'solid frame'
+
+                    for mesh in meshes:
+                        inverts = mesh['vertices']
+                        innorms = mesh['normals']
+                        vertices = []
+                        normals = []
+                        off = 0
+                        for count, matid in mesh['bonevertices']:
+                            vertices += transform(inverts[off:off+count], mats[matid])
+                            normals += transform(innorms[off:off+count], mats[matid])
+                            off += count
+                        for _, (a, b, c) in mesh['polys']:
+                            print >>fp, 'facet normal 0 0 0'
+                            print >>fp, 'outer loop'
+                            print >>fp, 'vertex %f %f %f' % vertices[a]
+                            print >>fp, 'vertex %f %f %f' % vertices[b]
+                            print >>fp, 'vertex %f %f %f' % vertices[c]
+                            print >>fp, 'endloop'
+                            print >>fp, 'endfacet'
+                    
+                    print >>fp, 'endsolid frame'
+                    break
+                break
+            
+            #pprint(aniTrees)
     
     def getString(self, i):
         return self.stringTable[i:].split('\0', 1)[0]
@@ -163,16 +241,30 @@ class Wld(object):
         params2 = self.b.float() if flags & 2 else None
 
         tracks = []
+        allmeshes = set()
         for i in xrange(trackcount):
             track = {}
             track['name'] = self.getString(-self.b.int())
             track['flags'] = self.b.uint()
             track['piecetrack'] = self.getFrag(self.b.int())
-            track['meshref'] = self.getFrag(self.b.int())
+            allmeshes.add(self.b.int())
             track['nextpieces'] = self.b.int(self.b.uint())
             tracks.append(track)
         
-        return tracks
+        if flags & 0x200:
+            meshes = map(self.getFrag, self.b.int(self.b.uint()))
+        else:
+            meshes = [self.getFrag(x) for x in allmeshes if x != 0]
+        
+        # print 'digraph bones {'
+        # for i in xrange(trackcount):
+        #     print '_%i [label="%s"];' % (i, tracks[i]['name'])
+        # for i, track in enumerate(tracks):
+        #     for n in track['nextpieces']:
+        #         print '_%i -> _%i;' % (i, n)
+        # print '}'
+        
+        return dict(meshes=meshes, tracks=tracks)
     
     @fragment(0x11)
     def frag_skeltracksetref(self):
@@ -183,21 +275,24 @@ class Wld(object):
         flags = self.b.uint()
         large = bool(flags & 8)
 
-        size = self.b.uint()
-        rotw, rotx, roty, rotz = map(float, self.b.short(4))
-        shiftx, shifty, shiftz, shiftden = map(float, self.b.short(4))
+        framecount = self.b.uint()
+        frames = []
+        for i in xrange(framecount):
+            rotw, rotx, roty, rotz = map(float, self.b.short(4))
+            shiftx, shifty, shiftz, shiftden = map(float, self.b.short(4))
 
-        rotx, roty, rotz, rotw = (rotx / 16384., roty / 16384., rotz / 16384., rotw / 16384.) if rotw != 0 else (0, 0, 0, 0)
-        shiftx, shifty, shiftz = (shiftx / shiftden, shifty / shiftden, shiftz / shiftden) if shiftden != 0 else (0, 0, 0)
-
-        return dict(position=(shiftx, shifty, shiftz), rotation=(rotx, roty, rotz, rotw))
+            rotx, roty, rotz, rotw = (rotx / 16384., roty / 16384., rotz / 16384., rotw / 16384.) if rotw != 0 else (0, 0, 0, 1)
+            shiftx, shifty, shiftz = (shiftx / shiftden, shifty / shiftden, shiftz / shiftden) if shiftden != 0 else (0, 0, 0)
+            frames.append(dict(position=(shiftx, shifty, shiftz), rotation=(-rotx, -roty, -rotz, rotw)))
+        
+        return dict(frames=frames)
 
     @fragment(0x13)
     def frag_skelpiecetrackref(self):
         skelpiecetrack = self.getFrag(self.b.uint())
         flags = self.b.uint()
         unk = self.b.uint() if flags & 1 else None
-        return skelpiecetrack
+        return {'track' : skelpiecetrack}
 
     @fragment(0x14)
     def frag_modelref(self):
@@ -286,5 +381,5 @@ class Wld(object):
         out['polys'] = [(self.b.ushort() != 0x0010, self.b.ushort(3)) for i in xrange(polycount)]
         out['bonevertices'] = [self.b.ushort(2) for i in xrange(vertpiececount)]
         out['polytex'] = [self.b.ushort(2) for i in xrange(polytexcount)]
-        
+
         return out
