@@ -22,8 +22,9 @@ namespace OpenEQ.Engine {
         }
 
         public void Translate(Vector3 trans) {
-            trans = new Vector3(-trans.X, -trans.Z, trans.Y);
-            Position += Vector3.Transform(trans, RotationMatrix().Inverted());
+            var strans = new Vector4(-trans.X, -trans.Z, trans.Y, 1.0f);
+            strans = Vector4.Transform(strans, RotationMatrix().Inverted());
+            Position += new Vector3(strans.X, strans.Y, strans.Z);
         }
 
         public void Rotate(Vector2 rot) {

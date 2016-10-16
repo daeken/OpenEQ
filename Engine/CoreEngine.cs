@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Linq;
 using OpenTK.Input;
 using System.IO;
+using System.Drawing;
 
 namespace OpenEQ.Engine {
     public class CoreEngine {

@@ -1,9 +1,10 @@
 .vscode
+.vs
 bin
 obj
+packages
 converter/eqdata/*
 !converter/eqdata/README.md
 s3data
-project.lock.json
 *.pyc
 *.zip

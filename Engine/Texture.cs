@@ -21,11 +21,9 @@ namespace OpenEQ.Engine {
             var pdata = reader.ReadBytes((int) (mipMapCount > 1 ? linearSize * 2 : linearSize));
 
             PixelInternalFormat format = PixelInternalFormat.Rgba; // Just to shut up the compiler
-            var blockSize = 16;
             switch(fourcc) {
                 case 0x31545844: // DXT1
                     format = PixelInternalFormat.CompressedRgbaS3tcDxt1Ext;
-                    blockSize = 8;
                     break;
                 case 0x33545844: // DXT3
                     format = PixelInternalFormat.CompressedRgbaS3tcDxt3Ext;
