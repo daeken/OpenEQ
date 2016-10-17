@@ -9,8 +9,14 @@ using OpenTK.Input;
 using System.IO;
 using System.Drawing;
 
+using OpenEQ.GUI;
+
 namespace OpenEQ.Engine {
     public class CoreEngine {
+        public static Queue<Action> GLTaskQueue = new Queue<Action>();
+
+        public CoreGUI Gui;
+
         GameWindow window;
 
         Program program;
@@ -26,6 +32,8 @@ namespace OpenEQ.Engine {
             placeables = new List<Placeable>();
             window = new GameWindow(1280, 720, new GraphicsMode(new ColorFormat(32), 32), "OpenEQ", GameWindowFlags.Default, null, 4, 1, GraphicsContextFlags.ForwardCompatible);
 
+            Gui = new CoreGUI(this, window, window.Width / 1280);
+
             camera = new Camera(new Vector3(100, 0, 0));
             perspective = Matrix4.CreatePerspectiveFieldOfView((float) (60 * Math.PI / 180), ((float) window.Width) / window.Height, 1, 10000);
 
@@ -36,8 +44,6 @@ namespace OpenEQ.Engine {
             window.Resize += (sender, e) => Resize();
             window.UpdateFrame += (sender, e) => Update();
             window.RenderFrame += (sender, e) => Render();
-            window.KeyDown += (sender, e) => KeyDown(e);
-            window.KeyUp += (sender, e) => KeyUp(e);
             window.MouseDown += (sender, e) => {
                 if(e.Button != MouseButton.Left)
                     return;
@@ -54,10 +60,11 @@ namespace OpenEQ.Engine {
         public void AddPlaceable(Placeable placeable) {
             placeables.Add(placeable);
         }
+        public void DeleteAll() {
+            placeables = new List<Placeable>();
+        }
 
         void Load() {
-            GL.ClearColor(Color.MidnightBlue);
-            
             var vertshader = new Shader(File.ReadAllText("shaders/basevert.glsl"), ShaderType.VertexShader);
             var fragshader = new Shader(File.ReadAllText("shaders/basefrag.glsl"), ShaderType.FragmentShader);
             program = new Program(vertshader, fragshader);
@@ -70,11 +77,14 @@ namespace OpenEQ.Engine {
         void Resize() {
             WriteLine($"resizing {window.Width}x{window.Height}");
             GL.Viewport(0, 0, window.Width, window.Height);
+
+            Gui.Resize(window.Width, window.Height);
         }
 
         float[] frameTime = new float[240];
         float lastTime = -1;
         void Render() {
+            GL.ClearColor(Color.MidnightBlue);
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
             GL.Enable(EnableCap.DepthTest);
             GL.Enable(EnableCap.Blend);
@@ -90,6 +100,8 @@ namespace OpenEQ.Engine {
                 program.Uniform("MVMatrix", mv);
                 placeable.Draw();
             }
+
+            Gui.Render();
 
             window.SwapBuffers();
 
@@ -108,21 +120,24 @@ namespace OpenEQ.Engine {
         float runSpeed = 4, crawlSpeed = .1f;
 
         void Update() {
+            while(GLTaskQueue.Count > 0)
+                GLTaskQueue.Dequeue()();
+
             if(movement.Length != 0)
                 camera.Translate(movement * movementScale);
             if(keylook.Length != 0)
                 camera.Rotate(keylook / 50);
-            if(mouselook) {
+            /*if(mouselook) {
                 var mouse = Mouse.GetState();
                 var mousepos = new Vector2(mouse.X, mouse.Y);
                 var delta = (mousepos - mouselast) / 100;
                 if(mouselast.X != 0 && mouselast.Y != 0 && (delta.X != 0 || delta.Y != 0))
                     camera.Rotate(delta);
                 mouselast = mousepos;
-            }
+            }*/
         }
 
-        void KeyDown(KeyboardKeyEventArgs e) {
+        public void KeyDown(KeyboardKeyEventArgs e) {
             if(e.IsRepeat) return;
             switch(e.Key) {
                 case Key.W:
@@ -164,7 +179,7 @@ namespace OpenEQ.Engine {
                     break;
             }
         }
-        void KeyUp(KeyboardKeyEventArgs e) {
+        public void KeyUp(KeyboardKeyEventArgs e) {
             switch(e.Key) {
                 case Key.W:
                     movement.Y -= 1;
