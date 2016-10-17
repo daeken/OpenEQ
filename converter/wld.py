@@ -71,7 +71,7 @@ class Wld(object):
                 self.byType[type] = []
             self.byType[type].append(frag)
             b.pos = epos
-        
+
         self.byType = {k : [] for k in self.byType}
         nfrags = {}
         nnames = {}
@@ -205,11 +205,11 @@ class Wld(object):
         if ref > 0:
             ref -= 1
             if ref in self.frags:
-                return self.frags[ref][3]
+                return FragRef(self, value=self.frags[ref][3])
             return FragRef(self, id=ref)
         name = self.getString(-ref)
         if name in self.names:
-            return self.names[name][3]
+            return FragRef(self, value=self.names[name][3])
         return FragRef(self, name=name)
     
     @fragment(0x03)
