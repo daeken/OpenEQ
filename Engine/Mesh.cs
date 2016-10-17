@@ -28,6 +28,17 @@ namespace OpenEQ.Engine {
             indexCount = indices.Length;
         }
 
+        ~Mesh() {
+            CoreEngine.GLTaskQueue.Enqueue(() => {
+                //GL.BindBuffer(BufferTarget.ElementArrayBuffer, 0);
+                //GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
+                //GL.BindVertexArray(0);
+                GL.DeleteBuffer(indexBuffer);
+                GL.DeleteBuffer(vertexBuffer);
+                GL.DeleteVertexArray(vao);
+            });
+        }
+
         public void Draw() {
             if(!material.Enable())
                 return;

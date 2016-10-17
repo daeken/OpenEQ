@@ -39,12 +39,16 @@ namespace OpenEQ.Engine {
 
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int) All.Repeat);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int) All.Repeat);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int) All.Nearest);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int) All.NearestMipmapNearest);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int) All.Linear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int) All.LinearMipmapLinear);
             GL.TexParameter(TextureTarget.Texture2D, (TextureParameterName) All.TextureMaxAnisotropyExt, 4f);
 
             GL.CompressedTexImage2D(TextureTarget.Texture2D, 0, format, width, height, 0, (int) linearSize, pdata);
             GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
+        }
+
+        ~Texture() {
+            CoreEngine.GLTaskQueue.Enqueue(() => GL.DeleteTexture(id));
         }
 
         public void Enable() {
