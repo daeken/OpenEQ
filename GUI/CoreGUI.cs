@@ -47,6 +47,13 @@ namespace OpenEQ.GUI {
             }
         }
 
+        public unsafe bool WantMouse {
+            get {
+                var np = ImGui.GetIO().GetNativePointer();
+                return np->WantCaptureMouse != 0;
+            }
+        }
+
         void MapInput() {
             var io = ImGui.GetIO();
             io.KeyMap[GuiKey.Tab] = (int)Key.Tab;
@@ -208,7 +215,7 @@ namespace OpenEQ.GUI {
             var cstate = Mouse.GetCursorState();
             var mstate = Mouse.GetState();
 
-            if(window.Bounds.Contains(cstate.X, cstate.Y)) {
+            if(!engine.MouseLook && window.Bounds.Contains(cstate.X, cstate.Y)) {
                 var wpoint = window.PointToClient(new Point(cstate.X, cstate.Y));
                 io.MousePosition = new System.Numerics.Vector2(wpoint.X / io.DisplayFramebufferScale.X, wpoint.Y / io.DisplayFramebufferScale.Y);
             } else {

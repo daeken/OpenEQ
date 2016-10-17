@@ -26,7 +26,7 @@ namespace OpenEQ.Engine {
         Camera camera;
         Vector3 movement;
         Vector2 mouselast, keylook;
-        bool mouselook = false;
+        public bool MouseLook = false;
 
         public CoreEngine() {
             placeables = new List<Placeable>();
@@ -45,15 +45,17 @@ namespace OpenEQ.Engine {
             window.UpdateFrame += (sender, e) => Update();
             window.RenderFrame += (sender, e) => Render();
             window.MouseDown += (sender, e) => {
-                if(e.Button != MouseButton.Left)
+                if(Gui.WantMouse || e.Button != MouseButton.Left)
                     return;
-                mouselook = true;
+                MouseLook = true;
                 mouselast = new Vector2(0, 0);
+                window.CursorVisible = false;
             };
             window.MouseUp += (sender, e) => {
-                if(e.Button != MouseButton.Left)
+                if(Gui.WantMouse || e.Button != MouseButton.Left)
                     return;
-                mouselook = false;
+                MouseLook = false;
+                window.CursorVisible = true;
             };
         }
 
@@ -127,14 +129,14 @@ namespace OpenEQ.Engine {
                 camera.Translate(movement * movementScale);
             if(keylook.Length != 0)
                 camera.Rotate(keylook / 50);
-            /*if(mouselook) {
+            if(MouseLook) {
                 var mouse = Mouse.GetState();
                 var mousepos = new Vector2(mouse.X, mouse.Y);
                 var delta = (mousepos - mouselast) / 100;
                 if(mouselast.X != 0 && mouselast.Y != 0 && (delta.X != 0 || delta.Y != 0))
                     camera.Rotate(delta);
                 mouselast = mousepos;
-            }*/
+            }
         }
 
         public void KeyDown(KeyboardKeyEventArgs e) {
