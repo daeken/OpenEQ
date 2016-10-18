@@ -5,6 +5,7 @@ from pyrr import Matrix44, Quaternion, Vector3, Vector4
 from buffer import Buffer
 from utility import *
 from zonefile import *
+from charfile import *
 
 class FragRef(object):
     def __init__(self, wld, id=None, name=None, value=None):
@@ -115,7 +116,7 @@ class Wld(object):
                 objname = self.getString(-objfrag['nameoff']).replace('_ACTORDEF', '')
                 zone.addPlaceable(objname, objfrag['position'], objfrag['rotation'], objfrag['scale'])
     
-    def convertCharacters(self):
+    def convertCharacters(self, zip):
         def buildAniTree(prefix, idx):
             track = skeleton['tracks'][idx]
             piecetrack = track['piecetrack']
@@ -147,6 +148,7 @@ class Wld(object):
             return [tuple(mat * Vector3(elem)) for elem in elems]
 
         for modelref in self.byType[0x14]:
+            charfile = Charfile(modelref['_name'])
             assert len(modelref['skeleton']) == 1
             skeleton = modelref['skeleton'][0]
             roottrackname = skeleton['tracks'][0]['piecetrack']['_name']
@@ -160,17 +162,21 @@ class Wld(object):
             for prefix in prefixes:
                 aniTrees[prefix] = invertTree(buildAniTree(prefix, 0))
             
-            output = {}
             meshes = skeleton['meshes']
-            outpolys = []
-            off = 0
+            voff = 0
             for mesh in meshes:
-                for _, (a, b, c) in mesh['polys']:
-                    outpolys += [off+a, off+b, off+c]
-                off += len(mesh['vertices'])
-            output['polys'] = outpolys
+                off = 0
+                for count, index in mesh['polytex']:
+                    texflags, mtex = mesh['textures'][index]
+                    texnames = [x[0] for x in mtex]
+                    material = Material(texflags, [self.s3d[texname.lower()] for texname in texnames])
+                    outpolys = []
+                    for _, (a, b, c) in mesh['polys'][off:off+count]:
+                        outpolys += [voff+a, voff+b, voff+c]
+                    charfile.addMaterial(material, outpolys)
+                    off += count
+                voff += len(mesh['vertices'])
             for name, frames in aniTrees.items():
-                ani = output['ani_' + name] = dict(frames=[])
                 for i, frame in enumerate(frames):
                     mats = {}
                     buildBoneMatrices(frame, Matrix44.identity())
@@ -179,20 +185,19 @@ class Wld(object):
                     for mesh in meshes:
                         inverts = mesh['vertices']
                         innorms = mesh['normals']
+                        texcoords = mesh['texcoords']
                         vertices = []
                         normals = []
+                        texcoords = []
                         off = 0
                         for count, matid in mesh['bonevertices']:
                             vertices += transform(inverts[off:off+count], mats[matid])
                             normals += transform(innorms[off:off+count], mats[matid])
                             off += count
                         
-                        outbuffer += flatten(interleave(vertices, normals))
-                    ani['frames'].append(outbuffer)
-
-            with file('character.json', 'w') as fp:
-                import json
-                json.dump(output, fp)
+                        outbuffer += flatten(interleave(vertices, normals, texcoords))
+                    charfile.addFrame(name, outbuffer)
+            charfile.out(zip)
     
     def getString(self, i):
         return self.stringTable[i:].split('\0', 1)[0]

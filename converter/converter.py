@@ -36,7 +36,8 @@ def convertOld(name):
 def convertChr(name):
     name = name[:-4]
     files = readS3D(file(eqPath('%s_chr.s3d' % name), 'rb'))
-    Wld(files['%s_chr.wld' % name], files).convertCharacters()
+    with ZipFile('%s_chr.zip' % name, 'w') as zip:
+        Wld(files['%s_chr.wld' % name], files).convertCharacters(zip)
 
 def convertNew(name):
     with ZipFile('%s.zip' % name, 'w') as zip:
