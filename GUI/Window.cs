@@ -6,19 +6,14 @@ using static System.Console;
 
 namespace OpenEQ.GUI {
     [MoonSharpUserData]
-    public class Window : IWidget {
+    public class Window : BaseWidget {
         public string Title;
         public bool Closable = false;
         List<IWidget> widgets;
         bool open = true;
         public bool Open {
-            get { return open || !Closable; }
+            get { return Visible && (open || !Closable); }
             set { open = value; }
-        }
-
-        public Window ParentWindow {
-            get { return null; }
-            set { }
         }
 
         public Window(string title) {
@@ -39,7 +34,7 @@ namespace OpenEQ.GUI {
             return Add(new Textbox(label, maxLength));
         }
 
-        public void Render() {
+        public override void Render() {
             if(Open) {
                 ImGui.GetStyle().WindowRounding = 10;
                 ImGui.BeginWindow(Title, ref open, WindowFlags.AlwaysAutoResize);

@@ -7,10 +7,8 @@ using static System.Console;
 
 namespace OpenEQ.GUI {
     [MoonSharpUserData]
-    public unsafe class Textbox : IWidget {
+    public unsafe class Textbox : BaseWidget {
         public string Label;
-        public event EventHandler<Window> Click;
-        public Window ParentWindow { get; set; }
 
         int maxLength;
         byte* textBuffer;
@@ -33,8 +31,9 @@ namespace OpenEQ.GUI {
             textBuffer[0] = 0;
         }
 
-        public void Render() {
-            ImGui.InputText(Label, new IntPtr(textBuffer), (uint) maxLength * sizeof(long), InputTextFlags.Default, null);
+        public override void Render() {
+            if(Visible)
+                ImGui.InputText(Label, new IntPtr(textBuffer), (uint) maxLength * sizeof(long), InputTextFlags.Default, null);
         }
     }
 }

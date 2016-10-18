@@ -27,6 +27,7 @@ namespace OpenEQ
             var script = new Script();
             script.Globals["gui"] = gui;
             script.DoString(code);*/
+
             var window = gui.CreateWindow("The Zone Zone");
             var zoneinput = window.CreateTextbox(maxLength: 50);
             var button = window.CreateButton("Load");
@@ -38,6 +39,17 @@ namespace OpenEQ
                     engine.AddPlaceable(placeable);
                 }
             };
+
+            window = gui.CreateWindow("Model Loader");
+            var modelinput = window.CreateTextbox(maxLength: 50);
+            button = window.CreateButton("Load");
+            button.Click += () => {
+                WriteLine($"Loading model file {modelinput.Text}");
+                var mf = OEQCharReader.Read($"{modelinput.Text}.zip");
+                foreach(var mn in mf.Keys)
+                    WriteLine(mn);
+            };
+
             engine.Run();
         }
     }

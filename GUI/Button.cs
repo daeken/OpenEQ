@@ -8,19 +8,18 @@ using System.Threading.Tasks;
 
 namespace OpenEQ.GUI {
     [MoonSharpUserData]
-    public class Button : IWidget {
+    public class Button : BaseWidget {
         public string Label;
         public event Action Click;
-        public Window ParentWindow { get; set; }
 
         public Button(string label) {
             Label = label;
         }
 
-        public void Render() {
-            if(ImGui.Button(Label) && Click != null) {
-                Click();
-            }
+        public override void Render() {
+            if(Visible)
+                if(ImGui.Button(Label) && Click != null)
+                    Click();
         }
     }
 }
