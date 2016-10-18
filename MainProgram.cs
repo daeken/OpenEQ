@@ -2,6 +2,7 @@
 using static System.Console;
 using OpenEQ.Engine;
 using OpenEQ.GUI;
+using MoonSharp.Interpreter;
 
 namespace OpenEQ
 {
@@ -12,11 +13,24 @@ namespace OpenEQ
         {
             var engine = new CoreEngine();
             var gui = engine.Gui;
-            var window = new Window("The Zone Zone");
-            var zoneinput = new Textbox(maxLength: 50);
-            window.Add(zoneinput);
-            var button = new Button("Load");
-            button.Click += (sender, win) => {
+            /*var code = @"
+                function testfunc()
+                    print(""Test"")
+                    print(textbox.Text)
+                end
+                win = gui.CreateWindow('Test')
+                textbox = win.CreateTextbox()
+                button = win.CreateButton('Test button')
+                button.Click.add(testfunc)
+            ";
+            UserData.RegisterAssembly();
+            var script = new Script();
+            script.Globals["gui"] = gui;
+            script.DoString(code);*/
+            var window = gui.CreateWindow("The Zone Zone");
+            var zoneinput = window.CreateTextbox(maxLength: 50);
+            var button = window.CreateButton("Load");
+            button.Click += () => {
                 WriteLine($"Loading zone {zoneinput.Text}");
                 engine.DeleteAll();
                 var zonePlaceables = OEQZoneReader.Read($"{zoneinput.Text}.zip");
@@ -24,8 +38,6 @@ namespace OpenEQ
                     engine.AddPlaceable(placeable);
                 }
             };
-            window.Add(button);
-            gui.Add(window);
             engine.Run();
         }
     }

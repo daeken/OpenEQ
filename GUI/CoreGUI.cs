@@ -11,8 +11,10 @@ using OpenTK;
 using OpenTK.Input;
 using System.Drawing;
 using System.Collections.Generic;
+using MoonSharp.Interpreter;
 
 namespace OpenEQ.GUI {
+    [MoonSharpUserData]
     public class CoreGUI {
         CoreEngine engine;
         GameWindow window;
@@ -34,6 +36,12 @@ namespace OpenEQ.GUI {
             scale = graphicsScale;
             ImGui.LoadDefaultFont();
             MapInput();
+        }
+
+        public Window CreateWindow(string title) {
+            var win = new Window(title);
+            Add(win);
+            return win;
         }
 
         public void Add(Window window) {

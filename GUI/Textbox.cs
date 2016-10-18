@@ -1,11 +1,13 @@
 ﻿using ImGuiNET;
+using MoonSharp.Interpreter;
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
 using static System.Console;
 
 namespace OpenEQ.GUI {
-    unsafe class Textbox : IWidget {
+    [MoonSharpUserData]
+    public unsafe class Textbox : IWidget {
         public string Label;
         public event EventHandler<Window> Click;
         public Window ParentWindow { get; set; }
