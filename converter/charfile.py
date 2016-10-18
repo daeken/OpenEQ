@@ -47,6 +47,7 @@ class Charfile(object):
 				ouint(*polys)
 
 			ouint(len(self.animations[self.animations.keys()[0]][0]) / 8) # Number of vertices
+			ouint(len(self.animations))
 			for name, frames in self.animations.items():
 				ostring(name)
 				ouint(len(frames))

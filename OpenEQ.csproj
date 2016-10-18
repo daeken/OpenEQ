@@ -109,6 +109,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Engine\Camera.cs" />
+    <Compile Include="Engine\CharacterModel.cs" />
     <Compile Include="Engine\CoreEngine.cs" />
     <Compile Include="Engine\Material.cs" />
     <Compile Include="Engine\Mesh.cs" />
@@ -124,6 +125,7 @@
     <Compile Include="GUI\Textbox.cs" />
     <Compile Include="GUI\Window.cs" />
     <Compile Include="MainProgram.cs" />
+    <Compile Include="OEQCharReader.cs" />
     <Compile Include="OEQZoneReader.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <None Include="OpenTK.dll.config" />
