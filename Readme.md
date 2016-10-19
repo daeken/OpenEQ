@@ -1,3 +1,4 @@
+[![Stories in Ready](https://badge.waffle.io/daeken/OpenEQ.png?label=ready&title=Ready)](https://waffle.io/daeken/OpenEQ)
 [![Build Status](https://travis-ci.org/daeken/OpenEQ.svg?branch=master)](https://travis-ci.org/daeken/OpenEQ)
 
 Purpose
