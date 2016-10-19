@@ -28,11 +28,15 @@ class FragRef(object):
     def __len__(self):
         return len(self.resolve())
     def __repr__(self):
-        if self.id is not None:
-            return 'FragRef(id=%r)' % self.id
+        if self.value is not None:
+            if self.id is not None:
+                return 'FragRef(id=%r, value=%r)' % (self.id, self.value)
+            else:
+                return 'FragRef(name=%r, value=%r)' % (self.name, self.value)
+        elif self.id is not None:
+            return 'FragRef(id=%r)' % (self.id, )
         elif self.name is not None:
-            return 'FragRef(name=%r)' % self.name
-        return 'FragRef(value=%r)' % self.value
+            return 'FragRef(name=%r)' % (self.name, )
 
 fragHandlers = {}
 def fragment(type):
@@ -67,7 +71,9 @@ class Wld(object):
             if isinstance(frag, dict):
                 frag['_name'] = name
             frag = (i, name, type, frag)
-            self.names[name] = self.frags[i] = frag
+            self.frags[i] = frag
+            if name != '' or type == 0x05:
+                self.names[name] = frag
             if type not in self.byType:
                 self.byType[type] = []
             self.byType[type].append(frag)
@@ -210,11 +216,11 @@ class Wld(object):
         if ref > 0:
             ref -= 1
             if ref in self.frags:
-                return FragRef(self, value=self.frags[ref][3])
+                return FragRef(self, id=ref, value=self.frags[ref][3])
             return FragRef(self, id=ref)
         name = self.getString(-ref)
         if name in self.names:
-            return FragRef(self, value=self.names[name][3])
+            return FragRef(self, name=name, value=self.names[name][3])
         return FragRef(self, name=name)
     
     @fragment(0x03)
