@@ -119,6 +119,7 @@
     <Compile Include="Engine\Shader.cs" />
     <Compile Include="Engine\Texture.cs" />
     <Compile Include="Engine\Time.cs" />
+    <Compile Include="GUI\BaseWidget.cs" />
     <Compile Include="GUI\Button.cs" />
     <Compile Include="GUI\CoreGUI.cs" />
     <Compile Include="GUI\IWidget.cs" />
