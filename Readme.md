@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/daeken/OpenEQ.svg?branch=master)](https://travis-ci.org/daeken/OpenEQ)
+
 Purpose
 =======
 
