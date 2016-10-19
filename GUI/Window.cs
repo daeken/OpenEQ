@@ -33,6 +33,12 @@ namespace OpenEQ.GUI {
         public Textbox CreateTextbox(string label = "", int maxLength = 256) {
             return Add(new Textbox(label, maxLength));
         }
+        public Label CreateLabel(string text) {
+            return Add(new Label(text));
+        }
+        public Label CreateLabel(Func<string> update) {
+            return Add(new Label(update));
+        }
 
         public override void Render() {
             if(Open) {

@@ -44,6 +44,7 @@ namespace OpenEQ.Engine {
                 return;
             GL.BindVertexArray(vao);
             GL.DrawElements(BeginMode.Triangles, indexCount, DrawElementsType.UnsignedInt, 0);
+            GL.BindVertexArray(0);
         }
     }
 }

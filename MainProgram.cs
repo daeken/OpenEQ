@@ -3,6 +3,7 @@ using static System.Console;
 using OpenEQ.Engine;
 using OpenEQ.GUI;
 using MoonSharp.Interpreter;
+using OpenTK;
 
 namespace OpenEQ
 {
@@ -40,15 +41,12 @@ namespace OpenEQ
                 }
             };
 
-            window = gui.CreateWindow("Model Loader");
-            var modelinput = window.CreateTextbox(maxLength: 50);
-            button = window.CreateButton("Load");
-            button.Click += () => {
-                WriteLine($"Loading model file {modelinput.Text}");
-                var mf = OEQCharReader.Read($"{modelinput.Text}.zip");
-                foreach(var mn in mf.Keys)
-                    WriteLine(mn);
-            };
+            window = gui.CreateWindow("Debug");
+            window.CreateLabel(() => $"Position: {engine.Camera.Position.X} {engine.Camera.Position.Y} {engine.Camera.Position.Z}");
+
+            var charmodel = OEQCharReader.Read("orc_chr.zip")["ORC_ACTORDEF"];
+            charmodel.Animation = "L02";
+            engine.AddMob(new Mob(charmodel));
 
             engine.Run();
         }

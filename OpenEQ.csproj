@@ -118,6 +118,7 @@
     <Compile Include="Engine\CoreEngine.cs" />
     <Compile Include="Engine\Material.cs" />
     <Compile Include="Engine\Mesh.cs" />
+    <Compile Include="Engine\Mob.cs" />
     <Compile Include="Engine\Object.cs" />
     <Compile Include="Engine\Placeable.cs" />
     <Compile Include="Engine\Program.cs" />
@@ -128,6 +129,7 @@
     <Compile Include="GUI\Button.cs" />
     <Compile Include="GUI\CoreGUI.cs" />
     <Compile Include="GUI\IWidget.cs" />
+    <Compile Include="GUI\Label.cs" />
     <Compile Include="GUI\Textbox.cs" />
     <Compile Include="GUI\Window.cs" />
     <Compile Include="MainProgram.cs" />

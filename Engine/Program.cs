@@ -39,5 +39,9 @@ namespace OpenEQ.Engine {
             }
             GL.UniformMatrix4(uniform, false, ref mat);
         }
+
+        public int GetAttributeLocation(string name) {
+            return GL.GetAttribLocation(id, name);
+        }
     }
 }

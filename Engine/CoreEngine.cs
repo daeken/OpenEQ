@@ -19,22 +19,24 @@ namespace OpenEQ.Engine {
 
         GameWindow window;
 
-        Program program;
+        Program zoneProgram, charProgram;
         List<Placeable> placeables;
+        List<Mob> mobs;
         Matrix4 perspective;
 
-        Camera camera;
+        public Camera Camera;
         Vector3 movement;
         Vector2 mouselast, keylook;
         public bool MouseLook = false;
 
         public CoreEngine() {
             placeables = new List<Placeable>();
+            mobs = new List<Mob>();
             window = new GameWindow(1280, 720, new GraphicsMode(new ColorFormat(32), 32), "OpenEQ", GameWindowFlags.Default, null, 4, 1, GraphicsContextFlags.ForwardCompatible);
 
             Gui = new CoreGUI(this, window, window.Width / 1280);
 
-            camera = new Camera(new Vector3(100, 0, 0));
+            Camera = new Camera(new Vector3(0, 15, 0));
             perspective = Matrix4.CreatePerspectiveFieldOfView((float) (60 * Math.PI / 180), ((float) window.Width) / window.Height, 1, 10000);
 
             movement = new Vector3();
@@ -62,14 +64,23 @@ namespace OpenEQ.Engine {
         public void AddPlaceable(Placeable placeable) {
             placeables.Add(placeable);
         }
+        public void AddMob(Mob mob) {
+            mobs.Add(mob);
+        }
         public void DeleteAll() {
             placeables = new List<Placeable>();
+            //mobs = new List<Mob>();
         }
 
         void Load() {
-            var vertshader = new Shader(File.ReadAllText("shaders/basevert.glsl"), ShaderType.VertexShader);
-            var fragshader = new Shader(File.ReadAllText("shaders/basefrag.glsl"), ShaderType.FragmentShader);
-            program = new Program(vertshader, fragshader);
+            zoneProgram = new Program(
+                new Shader(File.ReadAllText("shaders/basevert.glsl"), ShaderType.VertexShader), 
+                new Shader(File.ReadAllText("shaders/basefrag.glsl"), ShaderType.FragmentShader)
+            );
+            charProgram = new Program(
+                new Shader(File.ReadAllText("shaders/charvert.glsl"), ShaderType.VertexShader),
+                new Shader(File.ReadAllText("shaders/charfrag.glsl"), ShaderType.FragmentShader)
+            );
 
             GL.CullFace(CullFaceMode.Back);
             GL.FrontFace(FrontFaceDirection.Cw);
@@ -92,15 +103,25 @@ namespace OpenEQ.Engine {
             GL.Enable(EnableCap.Blend);
             GL.BlendFunc(BlendingFactorSrc.SrcAlpha, BlendingFactorDest.OneMinusSrcAlpha);
 
-            program.Use();
-            var vp = camera.Matrix * perspective;
+            zoneProgram.Use();
+            var vp = Camera.Matrix * perspective;
             foreach(var placeable in placeables) {
                 var model = placeable.Mat;
                 var mvp = model * vp;
-                var mv = model * camera.Matrix;
-                program.Uniform("MVPMatrix", mvp);
-                program.Uniform("MVMatrix", mv);
+                var mv = model * Camera.Matrix;
+                zoneProgram.Uniform("MVPMatrix", mvp);
+                zoneProgram.Uniform("MVMatrix", mv);
                 placeable.Draw();
+            }
+
+            charProgram.Use();
+            foreach(var mob in mobs) {
+                var model = Matrix4.Identity;
+                var mvp = model * vp;
+                var mv = model * Camera.Matrix;
+                charProgram.Uniform("MVPMatrix", mvp);
+                charProgram.Uniform("MVMatrix", mv);
+                mob.Draw(charProgram);
             }
 
             Gui.Render();
@@ -126,15 +147,15 @@ namespace OpenEQ.Engine {
                 GLTaskQueue.Dequeue()();
 
             if(movement.Length != 0)
-                camera.Translate(movement * movementScale);
+                Camera.Translate(movement * movementScale);
             if(keylook.Length != 0)
-                camera.Rotate(keylook / 50);
+                Camera.Rotate(keylook / 50);
             if(MouseLook) {
                 var mouse = Mouse.GetState();
                 var mousepos = new Vector2(mouse.X, mouse.Y);
                 var delta = (mousepos - mouselast) / 100;
                 if(mouselast.X != 0 && mouselast.Y != 0 && (delta.X != 0 || delta.Y != 0))
-                    camera.Rotate(delta);
+                    Camera.Rotate(delta);
                 mouselast = mousepos;
             }
         }

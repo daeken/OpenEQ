@@ -188,14 +188,14 @@ class Wld(object):
                         texcoords = mesh['texcoords']
                         vertices = []
                         normals = []
-                        texcoords = []
                         off = 0
                         for count, matid in mesh['bonevertices']:
                             vertices += transform(inverts[off:off+count], mats[matid])
                             normals += transform(innorms[off:off+count], mats[matid])
                             off += count
                         
-                        outbuffer += flatten(interleave(vertices, normals, texcoords))
+                        temp = flatten(interleave(vertices, normals, texcoords))
+                        outbuffer += temp
                     charfile.addFrame(name, outbuffer)
             charfile.out(zip)
     
