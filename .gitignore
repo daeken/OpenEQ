@@ -8,3 +8,5 @@ converter/eqdata/*
 s3data
 *.pyc
 *.zip
+OpenEQ.csproj.user
+imgui.ini
