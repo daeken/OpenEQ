@@ -30,6 +30,7 @@ def convertOld(name):
 
         Wld(ofiles['%s_obj.wld' % name], ofiles).convertObjects(zone)
         Wld(zfiles['objects.wld'], zfiles).convertObjects(zone)
+        Wld(zfiles['lights.wld'], zfiles).convertLights(zone)
         Wld(zfiles['%s.wld' % name], zfiles).convertZone(zone)
         zone.output(zip)
 

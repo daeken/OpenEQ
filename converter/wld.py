@@ -15,11 +15,15 @@ class FragRef(object):
         self.value = value
     def resolve(self):
         if self.value is not None:
-            return self.value
-        if self.id is not None:
-            self.value = self.wld.frags[self.id][3]
+            pass
+        elif self.id is not None:
+            self.value = self.wld.frags[self.id]
+            if not self.wld.baked:
+                self.value = self.value[3]
         elif self.name is not None:
-            self.value = self.wld.names[self.name][3]
+            self.value = self.wld.names[self.name]
+            if not self.wld.baked:
+                self.value = self.value[3]
         if isinstance(self.value, FragRef):
             self.value = self.value.resolve()
         return self.value
@@ -58,6 +62,7 @@ class Wld(object):
         b += 4
         self.stringTable = self.decodeString(b.read(hashlen))
         
+        self.baked = False
         self.frags = {}
         self.names = {}
         self.byType = {}
@@ -87,6 +92,7 @@ class Wld(object):
             self.byType[type].append(frag)
         self.frags = nfrags
         self.names = nnames
+        self.baked = True
 
         print 'fragtypes:', ['%02x' % x for x in self.byType.keys()]
     
@@ -122,6 +128,12 @@ class Wld(object):
                 objname = self.getString(-objfrag['nameoff']).replace('_ACTORDEF', '')
                 zone.addPlaceable(objname, objfrag['position'], objfrag['rotation'], objfrag['scale'])
     
+    def convertLights(self, zone):
+        pass
+        # for light in self.byType[0x28]:
+        #     light['light'] = light['light'].resolve()
+        #     print light
+
     def convertCharacters(self, zip):
         def buildAniTree(prefix, idx):
             track = skeleton['tracks'][idx]
@@ -338,7 +350,43 @@ class Wld(object):
         params2 = self.b.uint()
 
         return dict(position=pos, rotation=rot, scale=scale, nameoff=sref)
-    
+
+    @fragment(0x1B)
+    def frag_light_source(self):
+        flags = self.b.uint()
+        params2 = self.b.uint()
+        attenuation = 200.0
+        if flags & (1 << 4):
+            if flags & (1 << 3):
+                attenuation = self.b.uint()
+            unk = self.b.float()
+            color = self.b.float(3)
+        else:
+            params3a = self.b.float()
+            color = (params3a, params3a, params3a)
+        return dict(attenuation=attenuation, color=color)
+
+    @fragment(0x1C)
+    def frag_light_sourceref(self):
+        return self.getFrag(self.b.int())
+
+    @fragment(0x28)
+    def frag_light_info(self):
+        lref = self.getFrag(self.b.int())
+        flags = self.b.uint()
+        pos = self.b.float(3)
+        radius = self.b.float()
+
+        return dict(light=lref, flags=flags, position=pos, radius=radius)
+
+    @fragment(0x2A)
+    def frag_ambient(self):
+        lref = self.getFrag(self.b.int())
+        flags = self.b.uint()
+        regions = self.b.uint(self.b.uint())
+
+        #print lref, flags, regions
+
     @fragment(0x2D)
     def frag_meshref(self):
         return self.getFrag(self.b.int())
