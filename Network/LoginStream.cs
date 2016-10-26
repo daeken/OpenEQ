@@ -7,6 +7,7 @@ namespace OpenEQ.Network {
         }
         protected override void HandleSessionResponse(Packet packet) {
             WriteLine("Got session response in login.");
+            Send(AppPacket.Create(LoginOp.SessionReady, new SessionReady()));
         }
     }
 }

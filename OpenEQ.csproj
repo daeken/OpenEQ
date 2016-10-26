@@ -135,6 +135,7 @@
     <Compile Include="MainProgram.cs" />
     <Compile Include="Network\AsyncUDPConnection.cs" />
     <Compile Include="Network\EQStream.cs" />
+    <Compile Include="Network\LoginPackets.cs" />
     <Compile Include="Network\LoginStream.cs" />
     <Compile Include="Network\Opcodes.cs" />
     <Compile Include="Network\Packet.cs" />

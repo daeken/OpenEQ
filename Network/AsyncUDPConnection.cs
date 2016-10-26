@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using static System.Console;
+using static OpenEQ.Utility;
 
 namespace OpenEQ.Network {
     public class AsyncUDPConnection : IDisposable {
@@ -27,7 +28,6 @@ namespace OpenEQ.Network {
         }
 
         public void Send(byte[] packet) {
-            WriteLine("Sending packet");
             client.Send(packet, packet.Length);
         }
 

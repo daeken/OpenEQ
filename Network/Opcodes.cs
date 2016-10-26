@@ -16,4 +16,18 @@ namespace OpenEQ.Network {
         Fragment = 0x000d, 
         Combined = 0x0003
     }
+
+    public enum LoginOp : ushort {
+        SessionReady = 0x0001,
+        Login = 0x0002,
+        ServerListRequest = 0x0004,
+        PlayEverquestRequest = 0x000d,
+        PlayEverquestResponse = 0x0021,
+        ChatMessage = 0x0016,
+        LoginAccepted = 0x0017,
+        ServerListResponse = 0x0018,
+        Poll = 0x0029,
+        EnterChat = 0x000f,
+        PollResponse = 0x0011
+    }
 }
