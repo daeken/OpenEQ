@@ -71,6 +71,10 @@ namespace OpenEQ.Network {
                     lastAcked = packet.Sequence;
                     WriteLine($"Acked up to {packet.Sequence}");
                     break;
+                case SessionOp.Single:
+                    WriteLine("Got single packet!");
+                    Hexdump(packet.Data);
+                    break;
                 default:
                     WriteLine($"Unknown packet received: {op} (0x{packet.Opcode:X04})");
                     break;
@@ -91,8 +95,8 @@ namespace OpenEQ.Network {
 
             } else {
                 var data = new byte[packet.Size];
-                data[0] = (byte) (packet.Opcode >> 8);
-                data[1] = (byte) packet.Opcode;
+                data[1] = (byte) (packet.Opcode >> 8);
+                data[0] = (byte) packet.Opcode;
                 Array.Copy(packet.Data, 0, data, 2, packet.Data.Length);
                 Send(new Packet(SessionOp.Single, data));
             }

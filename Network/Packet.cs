@@ -59,7 +59,8 @@ namespace OpenEQ.Network {
                             plen--;
                             Data = packet.Sub(off, off + plen);
                         }
-                    }
+                    } else
+                        Data = packet.Sub(off, off + plen);
                     Bare = false;
                     break;
                 default:
