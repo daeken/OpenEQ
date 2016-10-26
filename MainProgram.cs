@@ -4,6 +4,7 @@ using OpenEQ.Engine;
 using OpenEQ.GUI;
 using MoonSharp.Interpreter;
 using OpenTK;
+using OpenEQ.Network;
 
 namespace OpenEQ
 {
@@ -12,6 +13,9 @@ namespace OpenEQ
         [STAThread]
         public static void Main(string[] args)
         {
+            var ls = new LoginStream("127.0.0.1", 5998, "daeken", "testing");
+            ls.Connect();
+
             var engine = new CoreEngine();
             var gui = engine.Gui;
             /*var code = @"
