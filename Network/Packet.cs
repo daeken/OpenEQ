@@ -9,6 +9,8 @@ namespace OpenEQ.Network {
         public bool Bare;
         public ushort Opcode;
         public byte[] Data;
+        public bool Acked = false;
+        public float SentTime;
         protected byte[] baked;
         bool sequenced;
         ushort sequence;
@@ -41,6 +43,8 @@ namespace OpenEQ.Network {
                 case 0x0d:
                 case 0x03:
                 case 0x19:
+                    Sequence = packet.NetU16(off);
+                    off += 2;
                     var plen = packet.Length - off;
                     if(stream.Validating) {
                         plen -= 2;
