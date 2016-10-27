@@ -30,10 +30,51 @@ namespace OpenEQ {
         }
 
         public static ushort NetU16(this byte[] data, int off) {
-            return (ushort)(
+            return (ushort) (
                 (data[off] << 8) |
                 data[off + 1]
             );
+        }
+
+        public static uint NetU32(this byte[] data, int off) {
+            return (uint) (
+                (data[off] << 24) |
+                (data[off + 1] << 16) |
+                (data[off + 2] << 8) |
+                 data[off + 3]
+            );
+        }
+
+        public static ushort U16(this byte[] data, int off) {
+            return (ushort) (
+                (data[off + 1] << 8) |
+                data[off]
+            );
+        }
+
+        public static uint U32(this byte[] data, int off) {
+            return (uint) (
+                (data[off + 3] << 24) |
+                (data[off + 2] << 16) |
+                (data[off + 1] << 8) |
+                 data[off]
+            );
+        }
+        public static uint U32(this byte[] data, ref int off) {
+            var temp = data.U32(off);
+            off += 4;
+            return temp;
+        }
+
+        public static string Str(this byte[] data, ref int off) {
+            var ret = "";
+            for(; data[off] != 0; ++off)
+                ret += (char) data[off];
+            off++;
+            return ret;
+        }
+        public static string Str(this byte[] data, int off) {
+            return data.Str(ref off);
         }
 
         public static T[] Sub<T>(this T[] arr, int start, int end=-1) {

@@ -31,26 +31,27 @@ namespace OpenEQ.Network {
 
         public Packet(SessionOp opcode, byte[] data, bool bare = false) : this((ushort) opcode, data, bare) { }
 
-        public Packet(EQStream stream, byte[] packet) {
+        public Packet(EQStream stream, byte[] packet, bool combined = false) {
             baked = packet;
 
             Opcode = packet.NetU16(0);
             var off = 2;
-            switch(Opcode) {
-                case 0x15:
-                case 0x11:
-                case 0x09:
-                case 0x0d:
-                case 0x03:
-                case 0x19:
-                    Sequence = packet.NetU16(off);
-                    off += 2;
+            switch((SessionOp) Opcode) {
+                case SessionOp.Ack:
+                case SessionOp.OutOfOrder:
+                case SessionOp.Single:
+                case SessionOp.Fragment:
+                case SessionOp.Combined:
+                    if((SessionOp) Opcode != SessionOp.Combined) {
+                        Sequence = packet.NetU16(off);
+                        off += 2;
+                    }
                     var plen = packet.Length - off;
-                    if(stream.Validating) {
+                    if(!combined && stream.Validating) {
                         plen -= 2;
                         // XXX: Check CRC
                     }
-                    if(stream.Compressing) {
+                    if(!combined && stream.Compressing) {
                         if(packet[off] == 0x5a) {
                             WriteLine("Compressed packet :(");
                         } else {
@@ -70,25 +71,25 @@ namespace OpenEQ.Network {
             }
         }
 
-        public static Packet Create<T>(ushort opcode, T data, bool bare = false) {
-            int size = Marshal.SizeOf(data);
-            byte[] arr = new byte[size];
+        public static Packet Create<OpT>(OpT opcode, ushort sequence = 0) {
+            return new Packet((ushort) (object) opcode, new byte[0]) { Sequence = sequence };
+        }
 
-            IntPtr ptr = Marshal.AllocHGlobal(size);
+        public static Packet Create<OpT, DataT>(OpT opcode, DataT data, bool bare = false) {
+            var size = Marshal.SizeOf(data);
+            var arr = new byte[size];
+
+            var ptr = Marshal.AllocHGlobal(size);
             Marshal.StructureToPtr(data, ptr, true);
             Marshal.Copy(ptr, arr, 0, size);
             Marshal.FreeHGlobal(ptr);
-            return new Packet((ushort) opcode, arr, bare);
+            return new Packet((ushort) (object) opcode, arr, bare);
         }
-
-        public static Packet Create<T>(SessionOp opcode, T data, bool bare = false) {
-            return Create((ushort) opcode, data, bare);
-        }
-
+        
         public T Get<T>() where T : struct {
             var val = new T();
             int len = Marshal.SizeOf(val);
-            IntPtr i = Marshal.AllocHGlobal(len);
+            var i = Marshal.AllocHGlobal(len);
             Marshal.Copy(Data, 0, i, len);
             val = (T) Marshal.PtrToStructure(i, val.GetType());
             Marshal.FreeHGlobal(i);
@@ -126,6 +127,9 @@ namespace OpenEQ.Network {
                     var crc = CalculateCRC(baked.Sub(0, off), stream.CRCKey);
                     baked[off++] = (byte) (crc >> 8);
                     baked[off++] = (byte) crc;
+                } else {
+                    baked[off++] = 0;
+                    baked[off++] = 0;
                 }
             }
             return baked;
@@ -136,25 +140,45 @@ namespace OpenEQ.Network {
         public ushort Opcode;
         public byte[] Data;
 
-        public int Size => Data.Length + 2;
+        public int Size => (Data != null ? Data.Length : 0) + 2;
 
-        public AppPacket(ushort opcode, byte[] data) {
+        public AppPacket(ushort opcode, byte[] data = null) {
             Opcode = opcode;
             Data = data;
         }
-        public AppPacket(LoginOp opcode, byte[] data) : this((ushort) opcode, data) { }
-        public static AppPacket Create<T>(ushort opcode, T data) {
-            int size = Marshal.SizeOf(data);
-            byte[] arr = new byte[size];
 
-            IntPtr ptr = Marshal.AllocHGlobal(size);
+        public AppPacket(byte[] data) {
+            Opcode = (ushort) (data[0] | (data[1] << 8));
+            Data = data.Sub(2);
+        }
+
+        public static AppPacket Create<OpT>(OpT opcode, byte[] data = null) {
+            return new AppPacket((ushort) (object) opcode, data);
+        }
+
+        public static AppPacket Create<OpT, DataT>(OpT opcode, DataT data, byte[] extraData = null) {
+            var size = Marshal.SizeOf(data);
+            var arr = new byte[size + (extraData != null ? extraData.Length : 0)];
+
+            var ptr = Marshal.AllocHGlobal(size);
             Marshal.StructureToPtr(data, ptr, true);
             Marshal.Copy(ptr, arr, 0, size);
             Marshal.FreeHGlobal(ptr);
-            return new AppPacket((ushort) opcode, arr);
+
+            if(extraData != null)
+                Array.Copy(extraData, 0, arr, size, extraData.Length);
+
+            return new AppPacket((ushort) (object) opcode, arr);
         }
-        public static AppPacket Create<T>(LoginOp opcode, T data) {
-            return Create((ushort) opcode, data);
+
+        public T Get<T>() where T : struct {
+            var val = new T();
+            int len = Marshal.SizeOf(val);
+            var i = Marshal.AllocHGlobal(len);
+            Marshal.Copy(Data, 0, i, len);
+            val = (T) Marshal.PtrToStructure(i, val.GetType());
+            Marshal.FreeHGlobal(i);
+            return val;
         }
     }
 }

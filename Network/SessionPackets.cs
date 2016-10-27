@@ -4,14 +4,14 @@ using System.Runtime.InteropServices;
 namespace OpenEQ.Network {
     [StructLayout(LayoutKind.Sequential, Pack = 0)]
     public struct SessionRequest {
-        uint Unknown;
-        public uint SessionID;
-        uint MaxLength;
+        uint unknown;
+        public uint sessionID;
+        uint maxLength;
 
         public SessionRequest(uint sessID) {
-            Unknown = 2;
-            SessionID = sessID;
-            MaxLength = 512;
+            unknown = 2;
+            sessionID = sessID;
+            maxLength = 512;
         }
     }
 
