@@ -52,7 +52,8 @@ namespace OpenEQ.Network {
 
         void Receive(object sender, byte[] data) {
             var packet = new Packet(this, data);
-            ProcessSessionPacket(packet);
+            if(packet.Valid)
+                ProcessSessionPacket(packet);
         }
 
         void ProcessSessionPacket(Packet packet) {

@@ -11,6 +11,7 @@ namespace OpenEQ.Network {
         public byte[] Data;
         public bool Acked = false;
         public float SentTime;
+        public bool Valid = true;
         protected byte[] baked;
         bool sequenced;
         ushort sequence;
@@ -49,7 +50,9 @@ namespace OpenEQ.Network {
                     var plen = packet.Length - off;
                     if(!combined && stream.Validating) {
                         plen -= 2;
-                        // XXX: Check CRC
+                        var mcrc = CalculateCRC(packet.Sub(0, packet.Length - 2), stream.CRCKey);
+                        var pcrc = packet.NetU16(packet.Length - 2);
+                        Valid = mcrc == pcrc;
                     }
                     if(!combined && stream.Compressing) {
                         if(packet[off] == 0x5a) {
