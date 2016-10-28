@@ -2,7 +2,7 @@
 using System.Runtime.InteropServices;
 
 namespace OpenEQ.Network {
-    [StructLayout(LayoutKind.Sequential, Pack = 0)]
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct SessionRequest {
         uint unknown;
         public uint sessionID;
@@ -28,7 +28,7 @@ namespace OpenEQ.Network {
         Encoded = 4
     };
 
-    [StructLayout(LayoutKind.Sequential, Pack = 0)]
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct SessionResponse {
         public uint sessionId;
         public uint crcKey;

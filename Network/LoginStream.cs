@@ -68,6 +68,10 @@ namespace OpenEQ.Network {
                         serverList.Add(new ServerListElement(data, ref off));
                     ServerList?.Invoke(this, serverList);
                     break;
+                case LoginOp.PlayEverquestResponse:
+                    var resp = packet.Get<PlayResponse>();
+                    WriteLine($"{resp.allowed}");
+                    break;
                 default:
                     WriteLine($"Unhandled packet in LoginStream: {(LoginOp) packet.Opcode} (0x{packet.Opcode:X04})");
                     Hexdump(packet.Data);
@@ -77,6 +81,10 @@ namespace OpenEQ.Network {
 
         public void RequestServerList() {
             Send(AppPacket.Create(LoginOp.ServerListRequest));
+        }
+
+        public void Play(ServerListElement server) {
+            Send(AppPacket.Create(LoginOp.PlayEverquestRequest, new PlayRequest(server.runtimeID)));
         }
     }
 }

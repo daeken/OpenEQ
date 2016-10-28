@@ -8,24 +8,24 @@ namespace OpenEQ.Network {
         Locked = 2
     }
 
-    [StructLayout(LayoutKind.Sequential, Pack = 0)]
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct SessionReady {
         uint unk1, unk2, unk3;
     }
 
-    [StructLayout(LayoutKind.Sequential, Pack = 0)]
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct Login {
         ushort unk1, unk2, unk3, unk4, unk5;
         // Crypto blob comes after this
     }
 
-    [StructLayout(LayoutKind.Sequential, Pack = 0)]
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct ServerListHeader {
         uint unk1, unk2, unk3, unk4;
         public uint serverCount;
     }
 
-    [StructLayout(LayoutKind.Sequential, Pack = 0)]
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct ServerListElement {
         public string worldIP;
         public uint serverListID;
@@ -56,5 +56,32 @@ namespace OpenEQ.Network {
             }
             playersOnline = data.U32(ref off);
         }
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct PlayRequest {
+        ushort sequence;
+        uint unknown1, unknown2;
+        uint serverRuntimeID;
+        
+        public PlayRequest(uint id) {
+            sequence = 5;
+            unknown1 = unknown2 = 0;
+            serverRuntimeID = id;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct PlayResponse {
+        byte sequence;
+        uint unknown1, unknown2;
+        byte unknown3;
+        byte allowedFlag;
+        ushort message;
+        ushort unknown4;
+        byte unknown5;
+        public uint serverRuntimeID;
+
+        public bool allowed => allowedFlag == 1;
     }
 }
