@@ -86,9 +86,8 @@
     <StartupObject />
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="ImGui.NET, Version=0.1.5.0, Culture=neutral, processorArchitecture=MSIL">
-      <HintPath>packages\ImGui.NET.0.1.5\lib\netstandard1.1\ImGui.NET.dll</HintPath>
-      <Private>True</Private>
+    <Reference Include="LibRocketNet">
+      <HintPath>..\LibRocket.Net\x64\Debug\LibRocketNet.dll</HintPath>
     </Reference>
     <Reference Include="MoonSharp.Interpreter, Version=2.0.0.0, Culture=neutral, PublicKeyToken=921e73ce94aa17f8, processorArchitecture=MSIL">
       <HintPath>packages\MoonSharp.2.0.0.0\lib\net40-client\MoonSharp.Interpreter.dll</HintPath>
@@ -125,13 +124,6 @@
     <Compile Include="Engine\Shader.cs" />
     <Compile Include="Engine\Texture.cs" />
     <Compile Include="Engine\Time.cs" />
-    <Compile Include="GUI\BaseWidget.cs" />
-    <Compile Include="GUI\Button.cs" />
-    <Compile Include="GUI\CoreGUI.cs" />
-    <Compile Include="GUI\IWidget.cs" />
-    <Compile Include="GUI\Label.cs" />
-    <Compile Include="GUI\Textbox.cs" />
-    <Compile Include="GUI\Window.cs" />
     <Compile Include="MainProgram.cs" />
     <Compile Include="Network\AsyncUDPConnection.cs" />
     <Compile Include="Network\EQStream.cs" />

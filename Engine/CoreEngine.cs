@@ -9,13 +9,9 @@ using OpenTK.Input;
 using System.IO;
 using System.Drawing;
 
-using OpenEQ.GUI;
-
 namespace OpenEQ.Engine {
     public class CoreEngine {
         public static Queue<Action> GLTaskQueue = new Queue<Action>();
-
-        public CoreGUI Gui;
 
         GameWindow window;
 
@@ -34,8 +30,6 @@ namespace OpenEQ.Engine {
             mobs = new List<Mob>();
             window = new GameWindow(1280, 720, new GraphicsMode(new ColorFormat(32), 32), "OpenEQ", GameWindowFlags.Default, null, 4, 1, GraphicsContextFlags.ForwardCompatible);
 
-            Gui = new CoreGUI(this, window, window.Width / 1280);
-
             Camera = new Camera(new Vector3(0, 15, 0));
             perspective = Matrix4.CreatePerspectiveFieldOfView((float) (60 * Math.PI / 180), ((float) window.Width) / window.Height, 1, 10000);
 
@@ -47,14 +41,14 @@ namespace OpenEQ.Engine {
             window.UpdateFrame += (sender, e) => Update();
             window.RenderFrame += (sender, e) => Render();
             window.MouseDown += (sender, e) => {
-                if(Gui.WantMouse || e.Button != MouseButton.Right)
+                if(e.Button != MouseButton.Right)
                     return;
                 MouseLook = true;
                 mouselast = new Vector2(0, 0);
                 window.CursorVisible = false;
             };
             window.MouseUp += (sender, e) => {
-                if(Gui.WantMouse || e.Button != MouseButton.Right)
+                if(e.Button != MouseButton.Right)
                     return;
                 MouseLook = false;
                 window.CursorVisible = true;
@@ -90,8 +84,6 @@ namespace OpenEQ.Engine {
         void Resize() {
             WriteLine($"resizing {window.Width}x{window.Height}");
             GL.Viewport(0, 0, window.Width, window.Height);
-
-            Gui.Resize(window.Width, window.Height);
         }
 
         float[] frameTime = new float[240];
@@ -123,8 +115,6 @@ namespace OpenEQ.Engine {
                 charProgram.Uniform("MVMatrix", mv);
                 mob.Draw(charProgram);
             }
-
-            Gui.Render();
 
             window.SwapBuffers();
 
