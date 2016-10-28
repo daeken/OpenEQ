@@ -47,14 +47,14 @@ namespace OpenEQ.Engine {
             window.UpdateFrame += (sender, e) => Update();
             window.RenderFrame += (sender, e) => Render();
             window.MouseDown += (sender, e) => {
-                if(Gui.WantMouse || e.Button != MouseButton.Left)
+                if(Gui.WantMouse || e.Button != MouseButton.Right)
                     return;
                 MouseLook = true;
                 mouselast = new Vector2(0, 0);
                 window.CursorVisible = false;
             };
             window.MouseUp += (sender, e) => {
-                if(Gui.WantMouse || e.Button != MouseButton.Left)
+                if(Gui.WantMouse || e.Button != MouseButton.Right)
                     return;
                 MouseLook = false;
                 window.CursorVisible = true;
