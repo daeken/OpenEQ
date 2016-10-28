@@ -12,6 +12,7 @@ namespace OpenEQ.GUI {
 
         int maxLength;
         byte* textBuffer;
+        string hash;
 
         unsafe public string Text {
             get {
@@ -29,11 +30,12 @@ namespace OpenEQ.GUI {
             this.maxLength = maxLength;
             textBuffer = (byte *) Marshal.AllocHGlobal(maxLength * 4); // UTF-8 -- could be up to 4 bpc
             textBuffer[0] = 0;
+            hash = $"##{new IntPtr(textBuffer):X}";
         }
 
         public override void Render() {
             if(Visible)
-                ImGui.InputText(Label, new IntPtr(textBuffer), (uint) maxLength * sizeof(long), InputTextFlags.Default, null);
+                ImGui.InputText(Label + hash, new IntPtr(textBuffer), (uint) maxLength * sizeof(long), InputTextFlags.Default, null);
         }
     }
 }

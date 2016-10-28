@@ -12,9 +12,8 @@ namespace OpenEQ.Network {
         AsyncUDPConnection conn;
         uint sessionID;
 
-        ushort lastAckRecieved = 65535, lastAckSent = 0;
-        Packet[] sentPackets = new Packet[65536];
-        Packet[] futurePackets = new Packet[65536];
+        ushort lastAckRecieved, lastAckSent;
+        Packet[] sentPackets, futurePackets;
 
         public EQStream(string host, int port) {
             conn = new AsyncUDPConnection(host, port);
@@ -23,28 +22,38 @@ namespace OpenEQ.Network {
             new Thread(Checker).Start();
         }
 
-        public void Connect() {
+        protected void Connect() {
+            Compressing = Validating = false;
+            OutSequence = InSequence = 0;
+            lastAckRecieved = 65535;
+            lastAckSent = 0;
+            sentPackets = new Packet[65536];
+            futurePackets = new Packet[65536];
+
             var sr = new SessionRequest((uint) new Random().Next());
             sessionID = sr.sessionID;
             Send(Packet.Create(SessionOp.Request, sr, bare: true));
+
+            WriteLine("Sent session request");
         }
 
         void Checker() {
             while(true) {
-                var last = lastAckRecieved + 1; // In case this changes in mid-stream; no need to lock
-                for(var i = last; i < last + 65536; ++i) {
-                    var packet = sentPackets[i % 65536];
-                    if(packet == null || packet.Acked)
-                        break;
-                    if(Time.Now - packet.SentTime > 5) {
-                        WriteLine($"Packet {packet.Sequence} not acked in {Time.Now - packet.SentTime}; resending.");
-                        Send(packet);
+                if(sentPackets != null) {
+                    var last = lastAckRecieved + 1; // In case this changes in mid-stream; no need to lock
+                    for(var i = last; i < last + 65536; ++i) {
+                        var packet = sentPackets[i % 65536];
+                        if(packet == null || packet.Acked)
+                            break;
+                        if(Time.Now - packet.SentTime > 5) {
+                            WriteLine($"Packet {packet.Sequence} not acked in {Time.Now - packet.SentTime}; resending.");
+                            Send(packet);
+                        }
                     }
-                }
-                if(lastAckSent != InSequence) {
-                    WriteLine($"Sending ACK up to {InSequence - 1}");
-                    Send(Packet.Create(SessionOp.Ack, sequence: (ushort) ((InSequence + 65536 - 1) % 65536)));
-                    lastAckSent = InSequence;
+                    if(lastAckSent != InSequence) {
+                        Send(Packet.Create(SessionOp.Ack, sequence: (ushort) ((InSequence + 65536 - 1) % 65536)));
+                        lastAckSent = InSequence;
+                    }
                 }
                 Thread.Sleep(1000);
             }
@@ -52,6 +61,8 @@ namespace OpenEQ.Network {
 
         void Receive(object sender, byte[] data) {
             var packet = new Packet(this, data);
+            WriteLine("Received packet");
+            Hexdump(data);
             if(packet.Valid)
                 ProcessSessionPacket(packet);
         }

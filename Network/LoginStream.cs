@@ -5,12 +5,20 @@ using static OpenEQ.Utility;
 using System;
 using System.IO;
 using System.Reflection;
+using System.Collections.Generic;
 
 namespace OpenEQ.Network {
     public class LoginStream : EQStream {
+        public event EventHandler<bool> LoginSuccess;
+        public event EventHandler<List<ServerListElement>> ServerList;
+
         byte[] cryptoBlob;
-        public LoginStream(string host, int port, string username, string password) : base(host, port) {
+        public LoginStream(string host, int port) : base(host, port) {
+        }
+
+        public void Login(string username, string password) {
             cryptoBlob = Encrypt(username, password);
+            Connect();
         }
 
         byte[] Encrypt(string username, string password) {
@@ -40,42 +48,35 @@ namespace OpenEQ.Network {
         }
 
         protected override void HandleSessionResponse(Packet packet) {
-            WriteLine("Got session response in login.");
             Send(AppPacket.Create(LoginOp.SessionReady, new SessionReady()));
         }
 
         protected override void HandleAppPacket(AppPacket packet) {
             switch((LoginOp) packet.Opcode) {
                 case LoginOp.ChatMessage:
-                    WriteLine($"Got chat message");
-
                     Send(AppPacket.Create(LoginOp.Login, new Login(), cryptoBlob));
                     break;
                 case LoginOp.LoginAccepted:
-                    WriteLine("Got login accepted");
-
-                    if(packet.Data.Length < 80)
-                        WriteLine("Bad login");
-                    else
-                        WriteLine("Good login!");
-
-                    Send(AppPacket.Create(LoginOp.ServerListRequest));
+                    LoginSuccess?.Invoke(this, packet.Data.Length >= 80);
                     break;
                 case LoginOp.ServerListResponse:
-                    WriteLine("Got server list");
                     var header = packet.Get<ServerListHeader>();
                     var off = 5 * 4;
                     var data = packet.Data;
-                    for(var i = 0; i < header.serverCount; ++i) {
-                        var ent = new ServerListElement(data, ref off);
-                        WriteLine(ent.longname);
-                    }
+                    var serverList = new List<ServerListElement>();
+                    for(var i = 0; i < header.serverCount; ++i)
+                        serverList.Add(new ServerListElement(data, ref off));
+                    ServerList?.Invoke(this, serverList);
                     break;
                 default:
                     WriteLine($"Unhandled packet in LoginStream: {(LoginOp) packet.Opcode} (0x{packet.Opcode:X04})");
                     Hexdump(packet.Data);
                     break;
             }
+        }
+
+        public void RequestServerList() {
+            Send(AppPacket.Create(LoginOp.ServerListRequest));
         }
     }
 }
