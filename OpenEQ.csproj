@@ -97,6 +97,10 @@
       <HintPath>packages\OpenTK.2.0.0\lib\net20\OpenTK.dll</HintPath>
       <Private>True</Private>
     </Reference>
+    <Reference Include="Pfim, Version=0.3.1.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>packages\Pfim.0.3.1\lib\net40\Pfim.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.IO.Compression" />
@@ -124,7 +128,13 @@
     <Compile Include="Engine\Shader.cs" />
     <Compile Include="Engine\Texture.cs" />
     <Compile Include="Engine\Time.cs" />
+    <Compile Include="GUI\CoreGUI.cs" />
+    <Compile Include="GUI\MoonRocket\CoreMoonRocket.cs" />
+    <Compile Include="GUI\MoonRocket\OEQEventListenerInstancer.cs" />
+    <Compile Include="GUI\OEQRenderInterface.cs" />
+    <Compile Include="GUI\OEQSystemInterface.cs" />
     <Compile Include="MainProgram.cs" />
+    <Compile Include="GUI\MoonRocket\MoonRocketPlugin.cs" />
     <Compile Include="Network\AsyncUDPConnection.cs" />
     <Compile Include="Network\EQStream.cs" />
     <Compile Include="Network\LoginPackets.cs" />

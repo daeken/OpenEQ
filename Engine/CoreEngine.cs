@@ -8,9 +8,11 @@ using System.Linq;
 using OpenTK.Input;
 using System.IO;
 using System.Drawing;
+using OpenEQ.GUI;
 
 namespace OpenEQ.Engine {
     public class CoreEngine {
+        public CoreGUI Gui;
         public static Queue<Action> GLTaskQueue = new Queue<Action>();
 
         GameWindow window;
@@ -25,34 +27,83 @@ namespace OpenEQ.Engine {
         Vector2 mouselast, keylook;
         public bool MouseLook = false;
 
+        public float DisplayScale;
+
         public CoreEngine() {
             placeables = new List<Placeable>();
             mobs = new List<Mob>();
             window = new GameWindow(1280, 720, new GraphicsMode(new ColorFormat(32), 32), "OpenEQ", GameWindowFlags.Default, null, 4, 1, GraphicsContextFlags.ForwardCompatible);
+            DisplayScale = window.Width / 1280f;
 
             Camera = new Camera(new Vector3(0, 15, 0));
             perspective = Matrix4.CreatePerspectiveFieldOfView((float) (60 * Math.PI / 180), ((float) window.Width) / window.Height, 1, 10000);
 
             movement = new Vector3();
             keylook = new Vector2();
+
+            LibRocketNet.KeyModifier modifiers = 0;
             
             window.Load += (sender, e) => Load();
             window.Resize += (sender, e) => Resize();
             window.UpdateFrame += (sender, e) => Update();
             window.RenderFrame += (sender, e) => Render();
             window.MouseDown += (sender, e) => {
-                if(e.Button != MouseButton.Right)
+                Gui.MouseDown(TranslateMouseButton(e.Button), modifiers);
+                /*if(e.Button != MouseButton.Right)
                     return;
                 MouseLook = true;
                 mouselast = new Vector2(0, 0);
-                window.CursorVisible = false;
+                window.CursorVisible = false;*/
             };
             window.MouseUp += (sender, e) => {
-                if(e.Button != MouseButton.Right)
+                Gui.MouseUp(TranslateMouseButton(e.Button), modifiers);
+                /*if(e.Button != MouseButton.Right)
                     return;
                 MouseLook = false;
-                window.CursorVisible = true;
+                window.CursorVisible = true;*/
             };
+            window.MouseWheel += (sender, e) => {
+                Gui.MouseWheel(-e.Delta, modifiers);
+            };
+            window.MouseMove += (sender, e) => {
+                Gui.MouseMoved(e.X, e.Y, modifiers);
+            };
+
+            window.KeyDown += (sender, e) => {
+                modifiers = TranslateModifiers(e.Modifiers);
+            };
+            window.KeyUp += (sender, e) => {
+                modifiers = TranslateModifiers(e.Modifiers);
+            };
+            window.KeyPress += (sender, e) => {
+                Gui.TextInput(e.KeyChar);
+            };
+
+            window.Closed += (sender, e) => {
+                Gui.Shutdown();
+            };
+
+            Gui = new CoreGUI(this);
+        }
+
+        LibRocketNet.KeyModifier TranslateModifiers(KeyModifiers emod) {
+            var keystate = Keyboard.GetState();
+            var tmod = 0;
+            tmod |= (emod & KeyModifiers.Alt) != 0 ? 1 << 2 : 0;
+            tmod |= (emod & KeyModifiers.Control) != 0 ? 1 << 0 : 0;
+            tmod |= (emod & KeyModifiers.Shift) != 0 ? 1 << 1 : 0;
+            return (LibRocketNet.KeyModifier) tmod;
+        }
+
+        int TranslateMouseButton(MouseButton button) {
+            switch(button) {
+                case MouseButton.Right:
+                    return 1;
+                case MouseButton.Middle:
+                    return 2;
+                default:
+                    return (int) button;
+            }
         }
 
         public void AddPlaceable(Placeable placeable) {
@@ -78,12 +129,11 @@ namespace OpenEQ.Engine {
 
             GL.CullFace(CullFaceMode.Back);
             GL.FrontFace(FrontFaceDirection.Cw);
-            GL.Enable(EnableCap.CullFace);
         }
 
         void Resize() {
-            WriteLine($"resizing {window.Width}x{window.Height}");
             GL.Viewport(0, 0, window.Width, window.Height);
+            Gui.Resize(window.Width, window.Height);
         }
 
         float[] frameTime = new float[240];
@@ -94,6 +144,7 @@ namespace OpenEQ.Engine {
             GL.Enable(EnableCap.DepthTest);
             GL.Enable(EnableCap.Blend);
             GL.BlendFunc(BlendingFactorSrc.SrcAlpha, BlendingFactorDest.OneMinusSrcAlpha);
+            GL.Enable(EnableCap.CullFace);
 
             zoneProgram.Use();
             var vp = Camera.Matrix * perspective;
@@ -115,6 +166,8 @@ namespace OpenEQ.Engine {
                 charProgram.Uniform("MVMatrix", mv);
                 mob.Draw(charProgram);
             }
+
+            Gui.Render();
 
             window.SwapBuffers();
 
@@ -148,6 +201,8 @@ namespace OpenEQ.Engine {
                     Camera.Rotate(delta);
                 mouselast = mousepos;
             }
+
+            Gui.Update();
         }
 
         public void KeyDown(KeyboardKeyEventArgs e) {
