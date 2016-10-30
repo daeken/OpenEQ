@@ -1,5 +1,6 @@
 ﻿using LibRocketNet;
 using OpenEQ.GUI.MoonRocket;
+using System.Text.RegularExpressions;
 using static System.Console;
 
 namespace OpenEQ.GUI.MoonRocket {
@@ -7,15 +8,27 @@ namespace OpenEQ.GUI.MoonRocket {
         CoreMoonRocket moonRocket;
         string code;
         Element element;
+        bool isBareRef;
 
         public MoonListener(CoreMoonRocket moonRocket, string code, Element element) {
             this.moonRocket = moonRocket;
             this.code = code;
             this.element = element;
+
+            isBareRef = IsFunctionReference(code);
+        }
+
+        bool IsFunctionReference(string code) {
+            var parts = code.Split('.', ':');
+            foreach(var part in parts) {
+                if(!Regex.IsMatch(part, @"^[a-zA-Z_][a-zA-Z_0-9]*$"))
+                    return false;
+            }
+            return true;
         }
 
         public override unsafe void ProcessEvent(ElementEventArgs e) {
-            moonRocket.ProcessScriptEvent(element, code, e);
+            moonRocket.ProcessScriptEvent(element, code, e, isBareRef);
         }
     }
 

@@ -13,9 +13,8 @@ namespace OpenEQ
             //var ls = new LoginStream("127.0.0.1", 5998);
             //var ls = new LoginStream("login.eqemulator.net", 5998);
 
-            var engine = new CoreEngine();
-
-            engine.Run();
+            var game = new Game();
+            game.Run();
         }
     }
 }

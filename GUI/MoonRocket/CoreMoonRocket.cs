@@ -3,6 +3,8 @@ using MoonSharp;
 using MoonSharp.Interpreter;
 using System;
 using System.Collections.Generic;
+using System.Reflection;
+using System.Text.RegularExpressions;
 using static System.Console;
 
 namespace OpenEQ.GUI.MoonRocket {
@@ -18,22 +20,51 @@ namespace OpenEQ.GUI.MoonRocket {
             instancer = new MoonListenerInstancer(this);
             instancer.Register();
 
-            UserData.RegisterType<ElementDocument>();
-            UserData.RegisterType<Element>();
-            UserData.RegisterType<ElementEventArgs>();
-            UserData.RegisterType<Color>();
-            UserData.RegisterType<CoreGUI>();
+            UserData.RegisterAssembly(includeExtensionTypes: true);
+            RegisterUnmarkedAssembly(typeof(Element));
         }
 
-        public void ProcessScriptEvent(Element self, string code, ElementEventArgs e) {
+        public void RegisterUnmarkedAssembly(Type _type = null) {
+            var assembly = _type != null ? _type.Assembly : Assembly.GetCallingAssembly();
+
+            foreach(var type in assembly.DefinedTypes) {
+                if(type.IsPublic)
+                    UserData.RegisterType(type);
+            }
+        }
+
+        DynValue FindValue(Script ctx, string code) {
+            DynValue cur = null;
+            foreach(var part in code.Split(':', '.')) {
+                if(cur == null)
+                    cur = ctx.Globals.Get(part);
+                else
+                    cur = cur.Table.Get(part);
+                if(cur == null) {
+                    WriteLine("Could not find part {part} in event reference {code}");
+                    return null;
+                }
+            }
+            return cur;
+        }
+
+        public void ProcessScriptEvent(Element self, string code, ElementEventArgs e, bool isBare = false) {
             var ctx = GetContext(self.OwnerDocument);
-            var oldSelf = ctx.Globals["self"];
-            var oldE = ctx.Globals["e"];
-            ctx.Globals["self"] = self;
-            ctx.Globals["e"] = e;
-            ctx.DoString(code);
-            ctx.Globals["self"] = oldSelf;
-            ctx.Globals["e"] = oldE;
+
+            if(isBare) {
+                var func = FindValue(ctx, code);
+                if(func == null)
+                    return;
+                func.Function.GetDelegate()(self, e);
+            } else {
+                var oldSelf = ctx.Globals["self"];
+                var oldE = ctx.Globals["e"];
+                ctx.Globals["self"] = self;
+                ctx.Globals["e"] = e;
+                ctx.DoString(code);
+                ctx.Globals["self"] = oldSelf;
+                ctx.Globals["e"] = oldE;
+            }
         }
 
         public void RunScript(ElementDocument document, string code) {

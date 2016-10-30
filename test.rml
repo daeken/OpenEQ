@@ -5,7 +5,7 @@
 		<style>
 			body
 			{
-				width: 300px;
+				width: 500px;
 				height: 400px;
 				
 				margin: auto;
@@ -24,12 +24,22 @@
 	</head>
 	<body template="window">
 		<script>
-			document.getElementById('testbutton').inner_rml = 'Bar';
+			function test()
+				print 'test!'
+			end
+			function test2(self, e)
+				print 'wooooooo'
+				print(self)
+				print(e)
+			end
+			button = document.getElementById('testbutton')
+			button.inner_rml = 'Bar'
+			button.bind('click', test)
 		</script>
-		This is a sample.<br/>
-		<img src="transtest.png" width="50" height="50"></img><br/>
-		Hallo from OpenEQ!
-		<button id="testbutton" onclick="print('button clicked', self, e.Type)">Foo</button><br/>
-		<br/>
+		This is a sample.<br>
+		<img src="transtest.png" width="50" height="50"><br>
+		Hallo from OpenEQ!<br>
+		<button id="testbutton" onclick="test2">Foo</button><br>
+		<input id="testinput" type="text" value="foo" size="10"><br>
 	</body>
 </rml>

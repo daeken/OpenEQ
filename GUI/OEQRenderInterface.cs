@@ -21,6 +21,8 @@ namespace OpenEQ.GUI {
         int width, height;
         int shader, uniformProjMtx, uniformTranslation, attribPosition, attribUV, attribColor;
 
+        int whiteTexture;
+
         public OEQRenderInterface(CoreEngine engine) {
             this.engine = engine;
 
@@ -44,6 +46,10 @@ namespace OpenEQ.GUI {
             attribPosition = GL.GetAttribLocation(shader, "Position");
             attribUV = GL.GetAttribLocation(shader, "UV");
             attribColor = GL.GetAttribLocation(shader, "Color");
+
+            var temp = IntPtr.Zero;
+            MakeTexture(ref temp, new byte[] { 255, 255, 255, 255 }, new Vector2i(1, 1), false);
+            whiteTexture = temp.ToInt32();
         }
 
         public void Resize(int width, int height) {
@@ -59,7 +65,9 @@ namespace OpenEQ.GUI {
         }
 
         protected override unsafe void RenderGeometry(Vertex* vertices, int num_vertices, int* indices, int num_indices, IntPtr texture, Vector2f translation) {
-            throw new NotImplementedException();
+            var geom = CompileGeometry(vertices, num_vertices, indices, num_indices, texture, temporary: true);
+            RenderCompiledGeometry(geom, translation);
+            ReleaseCompiledGeometry(geom);
         }
 
         protected override void SetScissorRegion(int x, int y, int width, int height) {
@@ -67,16 +75,22 @@ namespace OpenEQ.GUI {
         }
 
         protected override unsafe IntPtr CompileGeometry(Vertex* vertices, int num_vertices, int* indices, int num_indices, IntPtr texture) {
+            return CompileGeometry(vertices, num_vertices, indices, num_indices, texture, temporary: false);
+        }
+
+        unsafe IntPtr CompileGeometry(Vertex* vertices, int num_vertices, int* indices, int num_indices, IntPtr texture, bool temporary = false) {
             var geom = new RocketGeometry();
             geom.indexCount = num_indices;
             geom.texId = texture.ToInt32();
+            if(geom.texId == 0)
+                geom.texId = whiteTexture;
 
             geom.vao = GL.GenVertexArray();
             GL.BindVertexArray(geom.vao);
 
             var vertexBuffer = geom.vbo = GL.GenBuffer();
             GL.BindBuffer(BufferTarget.ArrayBuffer, vertexBuffer);
-            GL.BufferData(BufferTarget.ArrayBuffer, num_vertices * sizeof(Vertex), new IntPtr(vertices), BufferUsageHint.StaticDraw);
+            GL.BufferData(BufferTarget.ArrayBuffer, num_vertices * sizeof(Vertex), new IntPtr(vertices), temporary ? BufferUsageHint.StreamDraw : BufferUsageHint.StaticDraw);
 
             GL.EnableVertexAttribArray(attribPosition);
             GL.EnableVertexAttribArray(attribUV);
@@ -87,7 +101,7 @@ namespace OpenEQ.GUI {
 
             var indexBuffer = geom.ibo = GL.GenBuffer();
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, indexBuffer);
-            GL.BufferData(BufferTarget.ElementArrayBuffer, num_indices * sizeof(uint), new IntPtr(indices), BufferUsageHint.StaticDraw);
+            GL.BufferData(BufferTarget.ElementArrayBuffer, num_indices * sizeof(uint), new IntPtr(indices), temporary ? BufferUsageHint.StreamDraw : BufferUsageHint.StaticDraw);
 
             GL.BindVertexArray(0);
 
@@ -115,7 +129,7 @@ namespace OpenEQ.GUI {
 
             GL.Disable(EnableCap.CullFace);
             GL.Disable(EnableCap.DepthTest);
-
+            
             context.Render();
 
             GL.Enable(EnableCap.CullFace);
@@ -139,7 +153,7 @@ namespace OpenEQ.GUI {
                 var img = Pfim.Pfim.FromFile(source);
                 texture_dimensions.X = img.Width;
                 texture_dimensions.Y = img.Height;
-                return MakeTexture(ref texture_handle, img.Data, texture_dimensions, false);
+                return MakeTexture(ref texture_handle, img.Data, texture_dimensions, true);
             } else {
                 var img = new Bitmap(source);
                 texture_dimensions.X = img.Width;

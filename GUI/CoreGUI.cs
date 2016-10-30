@@ -13,6 +13,21 @@ namespace OpenEQ.GUI {
         ElementDocument doc;
         CoreEngine engine;
         CoreMoonRocket moonRocket;
+
+        bool debugInitialised = false;
+
+        public bool DebugMode {
+            get {
+                return Core.DebugMode;
+            }
+            set {
+                if(value && !debugInitialised) {
+                    Core.InitDebugger(context);
+                    debugInitialised = true;
+                }
+                Core.DebugMode = value;
+            }
+        }
         
         public CoreGUI(CoreEngine engine) {
             this.engine = engine;
@@ -27,7 +42,7 @@ namespace OpenEQ.GUI {
             Core.LoadFontFace("uiassets/Delicious-Roman.otf");
 
             context = Core.CreateContext("default", new Vector2i(1280, 720));
-            doc = context.LoadDocument("test.rml");
+            doc = context.LoadHtmlDocument("test.rml");
             doc.Show();
         }
 
