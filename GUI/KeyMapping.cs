@@ -1,0 +1,140 @@
+﻿
+using LibRocketNet;
+using OpenTK.Input;
+
+namespace OpenEQ.GUI {
+    public static class KeyMapping {
+        public static KeyIdentifiers TranslateKey(Key key) {
+            switch(key) {
+                case Key.ShiftLeft: return KeyIdentifiers.LShift;
+                case Key.ShiftRight: return KeyIdentifiers.RShift;
+                case Key.ControlLeft: return KeyIdentifiers.LControl;
+                case Key.ControlRight: return KeyIdentifiers.RControl;
+                case Key.AltLeft: return KeyIdentifiers.LMeta;
+                case Key.AltRight: return KeyIdentifiers.RMeta;
+                case Key.WinLeft: return KeyIdentifiers.LWin;
+                case Key.WinRight: return KeyIdentifiers.RWin;
+                case Key.Menu: return KeyIdentifiers.LMenu;
+                case Key.F1: return KeyIdentifiers.F1;
+                case Key.F2: return KeyIdentifiers.F2;
+                case Key.F3: return KeyIdentifiers.F3;
+                case Key.F4: return KeyIdentifiers.F4;
+                case Key.F5: return KeyIdentifiers.F5;
+                case Key.F6: return KeyIdentifiers.F6;
+                case Key.F7: return KeyIdentifiers.F7;
+                case Key.F8: return KeyIdentifiers.F8;
+                case Key.F9: return KeyIdentifiers.F9;
+                case Key.F10: return KeyIdentifiers.F10;
+                case Key.F11: return KeyIdentifiers.F11;
+                case Key.F12: return KeyIdentifiers.F12;
+                case Key.F13: return KeyIdentifiers.F13;
+                case Key.F14: return KeyIdentifiers.F14;
+                case Key.F15: return KeyIdentifiers.F15;
+                case Key.F16: return KeyIdentifiers.F16;
+                case Key.F17: return KeyIdentifiers.F17;
+                case Key.F18: return KeyIdentifiers.F18;
+                case Key.F19: return KeyIdentifiers.F19;
+                case Key.F20: return KeyIdentifiers.F20;
+                case Key.F21: return KeyIdentifiers.F21;
+                case Key.F22: return KeyIdentifiers.F22;
+                case Key.F23: return KeyIdentifiers.F23;
+                case Key.F24: return KeyIdentifiers.F24;
+                case Key.Up: return KeyIdentifiers.Up;
+                case Key.Down: return KeyIdentifiers.Down;
+                case Key.Left: return KeyIdentifiers.Left;
+                case Key.Right: return KeyIdentifiers.Right;
+                case Key.Enter: return KeyIdentifiers.Return;
+                case Key.Escape: return KeyIdentifiers.Escape;
+                case Key.Space: return KeyIdentifiers.Space;
+                case Key.Tab: return KeyIdentifiers.Tab;
+                case Key.BackSpace: return KeyIdentifiers.Back;
+                case Key.Insert: return KeyIdentifiers.Insert;
+                case Key.Delete: return KeyIdentifiers.Delete;
+                case Key.PageUp: return KeyIdentifiers.PageUp;
+                case Key.PageDown: return KeyIdentifiers.PageDown;
+                case Key.Home: return KeyIdentifiers.Home;
+                case Key.End: return KeyIdentifiers.End;
+                case Key.CapsLock: return KeyIdentifiers.Capital;
+                case Key.ScrollLock: return KeyIdentifiers.ScrollLock;
+                case Key.PrintScreen: return KeyIdentifiers.Print;
+                case Key.Pause: return KeyIdentifiers.Pause;
+                case Key.NumLock: return KeyIdentifiers.NumLock;
+                case Key.Clear: return KeyIdentifiers.Clear;
+                case Key.Sleep: return KeyIdentifiers.Sleep;
+                case Key.Keypad0: return KeyIdentifiers.Numpad0;
+                case Key.Keypad1: return KeyIdentifiers.Numpad1;
+                case Key.Keypad2: return KeyIdentifiers.Numpad2;
+                case Key.Keypad3: return KeyIdentifiers.Numpad3;
+                case Key.Keypad4: return KeyIdentifiers.Numpad4;
+                case Key.Keypad5: return KeyIdentifiers.Numpad5;
+                case Key.Keypad6: return KeyIdentifiers.Numpad6;
+                case Key.Keypad7: return KeyIdentifiers.Numpad7;
+                case Key.Keypad8: return KeyIdentifiers.Numpad8;
+                case Key.Keypad9: return KeyIdentifiers.Numpad9;
+                case Key.KeypadDivide: return KeyIdentifiers.Divide;
+                case Key.KeypadMultiply: return KeyIdentifiers.Multiply;
+                case Key.KeypadSubtract: return KeyIdentifiers.Subtract;
+                case Key.KeypadAdd: return KeyIdentifiers.Add;
+                case Key.KeypadDecimal: return KeyIdentifiers.Decimal;
+                case Key.KeypadEnter: return KeyIdentifiers.NumpadENTER;
+                case Key.A: return KeyIdentifiers.A;
+                case Key.B: return KeyIdentifiers.B;
+                case Key.C: return KeyIdentifiers.C;
+                case Key.D: return KeyIdentifiers.D;
+                case Key.E: return KeyIdentifiers.E;
+                case Key.F: return KeyIdentifiers.F;
+                case Key.G: return KeyIdentifiers.G;
+                case Key.H: return KeyIdentifiers.H;
+                case Key.I: return KeyIdentifiers.I;
+                case Key.J: return KeyIdentifiers.J;
+                case Key.K: return KeyIdentifiers.K;
+                case Key.L: return KeyIdentifiers.L;
+                case Key.M: return KeyIdentifiers.M;
+                case Key.N: return KeyIdentifiers.N;
+                case Key.O: return KeyIdentifiers.O;
+                case Key.P: return KeyIdentifiers.P;
+                case Key.Q: return KeyIdentifiers.Q;
+                case Key.R: return KeyIdentifiers.R;
+                case Key.S: return KeyIdentifiers.S;
+                case Key.T: return KeyIdentifiers.T;
+                case Key.U: return KeyIdentifiers.U;
+                case Key.V: return KeyIdentifiers.V;
+                case Key.W: return KeyIdentifiers.W;
+                case Key.X: return KeyIdentifiers.X;
+                case Key.Y: return KeyIdentifiers.Y;
+                case Key.Z: return KeyIdentifiers.Z;
+                case Key.Number0: return KeyIdentifiers.Num0;
+                case Key.Number1: return KeyIdentifiers.Num1;
+                case Key.Number2: return KeyIdentifiers.Num2;
+                case Key.Number3: return KeyIdentifiers.Num3;
+                case Key.Number4: return KeyIdentifiers.Num4;
+                case Key.Number5: return KeyIdentifiers.Num5;
+                case Key.Number6: return KeyIdentifiers.Num6;
+                case Key.Number7: return KeyIdentifiers.Num7;
+                case Key.Number8: return KeyIdentifiers.Num8;
+                case Key.Number9: return KeyIdentifiers.Num9;
+                case Key.Tilde: return KeyIdentifiers.Oem3;
+                case Key.Minus: return KeyIdentifiers.OemMinus;
+                case Key.Plus: return KeyIdentifiers.OemPlus;
+                case Key.BracketLeft: return KeyIdentifiers.Oem4;
+                case Key.BracketRight: return KeyIdentifiers.Oem6;
+                case Key.Semicolon: return KeyIdentifiers.Oem1;
+                case Key.Quote: return KeyIdentifiers.Oem7;
+                case Key.Comma: return KeyIdentifiers.OemComma;
+                case Key.Period: return KeyIdentifiers.OemPeriod;
+                case Key.Slash: return KeyIdentifiers.Oem2;
+                case Key.BackSlash: return KeyIdentifiers.Oem5;
+                default: return 0;
+            }
+        }
+
+        public static KeyModifier TranslateModifiers(KeyModifiers emod) {
+            var keystate = Keyboard.GetState();
+            var tmod = 0;
+            tmod |= (emod & KeyModifiers.Alt) != 0 ? 1 << 2 : 0;
+            tmod |= (emod & KeyModifiers.Control) != 0 ? 1 << 0 : 0;
+            tmod |= (emod & KeyModifiers.Shift) != 0 ? 1 << 1 : 0;
+            return (KeyModifier) tmod;
+        }
+    }
+}

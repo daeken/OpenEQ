@@ -135,6 +135,7 @@
     <Compile Include="Game.cs" />
     <Compile Include="GUI\CoreGUI.cs" />
     <Compile Include="GUI\GuiExtensions.cs" />
+    <Compile Include="GUI\KeyMapping.cs" />
     <Compile Include="GUI\MoonRocket\CoreMoonRocket.cs" />
     <Compile Include="GUI\MoonRocket\EventGlue.cs" />
     <Compile Include="GUI\MoonRocket\MoonListenerInstancer.cs" />

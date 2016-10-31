@@ -29,5 +29,8 @@ namespace OpenEQ.GUI {
         public static List<Element> AppendHtmlChild(this Element elem, string html) {
             return elem.AppendChild(HtmlToXml(html));
         }
+        public static List<Element> PrependHtmlChild(this Element elem, string html) {
+            return elem.AppendChild(HtmlToXml(html));
+        }
     }
 }

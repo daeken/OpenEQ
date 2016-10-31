@@ -21,9 +21,18 @@ namespace OpenEQ.GUI.MoonRocket {
                 return Elements[0].GetAttributeString("value", "");
             }
             set {
-                if(Elements.Count > 0)
-                    foreach(var elem in Elements)
-                        elem.SetAttribute("value", value);
+                foreach(var elem in Elements)
+                    elem.SetAttribute("value", value);
+            }
+        }
+
+        public string this[string key] {
+            get {
+                return Elements[0].GetAttributeString(key, "");
+            }
+            set {
+                foreach(var elem in Elements)
+                    elem.SetAttribute(key, value);
             }
         }
 
@@ -60,6 +69,22 @@ namespace OpenEQ.GUI.MoonRocket {
         public UQuery Append(string html) {
             html = $"<body>{html}</body>";
             return new UQuery(Elements.Select(elem => elem.AppendHtmlChild(html)).SelectMany(i => i).ToList());
+        }
+        public UQuery Prepend(string html) {
+            WriteLine("Prepending elements is currently non-functional.");
+            html = $"<body>{html}</body>";
+            return new UQuery(Elements.Select(elem => elem.PrependHtmlChild(html)).SelectMany(i => i).ToList());
+        }
+
+        public UQuery Remove(string selector = "") {
+            var uq = selector != "" ? Select(selector) : this;
+
+            foreach(var elem in uq.Elements) {
+                elem.ParentNode.RemoveChild(elem);
+                Elements.Remove(elem);
+            }
+
+            return this;
         }
 
         public UQuery Bind(string evt, DynValue callback) {

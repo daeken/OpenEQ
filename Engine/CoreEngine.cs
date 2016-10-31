@@ -41,7 +41,7 @@ namespace OpenEQ.Engine {
             movement = new Vector3();
             keylook = new Vector2();
 
-            LibRocketNet.KeyModifier modifiers = 0;
+            KeyModifiers modifiers = 0;
             
             window.Load += (sender, e) => Load();
             window.Resize += (sender, e) => Resize();
@@ -70,10 +70,12 @@ namespace OpenEQ.Engine {
             };
 
             window.KeyDown += (sender, e) => {
-                modifiers = TranslateModifiers(e.Modifiers);
+                modifiers = e.Modifiers;
+                Gui.KeyDown(e.Key, modifiers);
             };
             window.KeyUp += (sender, e) => {
-                modifiers = TranslateModifiers(e.Modifiers);
+                modifiers = e.Modifiers;
+                Gui.KeyUp(e.Key, modifiers);
             };
             window.KeyPress += (sender, e) => {
                 Gui.TextInput(e.KeyChar);
@@ -84,15 +86,6 @@ namespace OpenEQ.Engine {
             };
 
             Gui = new CoreGUI(this);
-        }
-
-        LibRocketNet.KeyModifier TranslateModifiers(KeyModifiers emod) {
-            var keystate = Keyboard.GetState();
-            var tmod = 0;
-            tmod |= (emod & KeyModifiers.Alt) != 0 ? 1 << 2 : 0;
-            tmod |= (emod & KeyModifiers.Control) != 0 ? 1 << 0 : 0;
-            tmod |= (emod & KeyModifiers.Shift) != 0 ? 1 << 1 : 0;
-            return (LibRocketNet.KeyModifier) tmod;
         }
 
         int TranslateMouseButton(MouseButton button) {

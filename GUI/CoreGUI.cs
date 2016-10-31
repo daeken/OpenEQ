@@ -1,6 +1,7 @@
 ﻿using static System.Console;
 using LibRocketNet;
 using OpenEQ.Engine;
+using OpenTK.Input;
 
 using OpenEQ.GUI.MoonRocket;
 using MoonSharp.Interpreter;
@@ -50,17 +51,24 @@ namespace OpenEQ.GUI {
             doc.Show();
         }
 
-        public void MouseDown(int button, KeyModifier modifiers) {
-            context.ProcessMouseButtonDown(button, modifiers);
+        public void MouseDown(int button, KeyModifiers modifiers) {
+            context.ProcessMouseButtonDown(button, KeyMapping.TranslateModifiers(modifiers));
         }
-        public void MouseUp(int button, KeyModifier modifiers) {
-            context.ProcessMouseButtonUp(button, modifiers);
+        public void MouseUp(int button, KeyModifiers modifiers) {
+            context.ProcessMouseButtonUp(button, KeyMapping.TranslateModifiers(modifiers));
         }
-        public void MouseWheel(int delta, KeyModifier modifiers) {
-            context.ProcessMouseWheel(delta, modifiers);
+        public void MouseWheel(int delta, KeyModifiers modifiers) {
+            context.ProcessMouseWheel(delta, KeyMapping.TranslateModifiers(modifiers));
         }
-        public void MouseMoved(int x, int y, KeyModifier modifiers) {
-            context.ProcessMouseMove((int) (x / engine.DisplayScale), (int) (y / engine.DisplayScale), modifiers);
+        public void MouseMoved(int x, int y, KeyModifiers modifiers) {
+            context.ProcessMouseMove((int) (x / engine.DisplayScale), (int) (y / engine.DisplayScale), KeyMapping.TranslateModifiers(modifiers));
+        }
+
+        public void KeyDown(Key key, KeyModifiers modifiers) {
+            context.ProcessKeyDown(KeyMapping.TranslateKey(key), KeyMapping.TranslateModifiers(modifiers));
+        }
+        public void KeyUp(Key key, KeyModifiers modifiers) {
+            context.ProcessKeyUp(KeyMapping.TranslateKey(key), KeyMapping.TranslateModifiers(modifiers));
         }
 
         public void TextInput(char x) {
