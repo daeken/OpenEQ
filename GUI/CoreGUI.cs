@@ -3,8 +3,10 @@ using LibRocketNet;
 using OpenEQ.Engine;
 
 using OpenEQ.GUI.MoonRocket;
+using MoonSharp.Interpreter;
 
 namespace OpenEQ.GUI {
+    [MoonSharpUserData]
     public class CoreGUI {
         OEQSystemInterface systemInterface;
         OEQRenderInterface renderInterface;
@@ -34,7 +36,9 @@ namespace OpenEQ.GUI {
             systemInterface = new OEQSystemInterface();
             renderInterface = new OEQRenderInterface(engine);
             Core.Initialize();
-            moonRocket = new CoreMoonRocket(this);
+            moonRocket = new CoreMoonRocket();
+            moonRocket.RegisterGlobal("gui", this);
+            moonRocket.RegisterGlobal("game", Game.Instance);
 
             Core.LoadFontFace("uiassets/Delicious-Bold.otf");
             Core.LoadFontFace("uiassets/Delicious-BoldItalic.otf");
@@ -42,7 +46,7 @@ namespace OpenEQ.GUI {
             Core.LoadFontFace("uiassets/Delicious-Roman.otf");
 
             context = Core.CreateContext("default", new Vector2i(1280, 720));
-            doc = context.LoadHtmlDocument("test.rml");
+            doc = context.LoadHtmlDocument("login.rml");
             doc.Show();
         }
 

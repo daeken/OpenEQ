@@ -9,16 +9,19 @@ using static System.Console;
 
 namespace OpenEQ.GUI.MoonRocket {
     public class CoreMoonRocket {
-        public CoreGUI Gui;
         MoonRocketPlugin plugin;
         MoonListenerInstancer instancer;
+        ScriptNodeHandler nodeHandler;
         Queue<Action> updateQueue = new Queue<Action>();
         Dictionary<ElementDocument, Script> contexts = new Dictionary<ElementDocument, Script>();
-        public CoreMoonRocket(CoreGUI gui) {
+        Dictionary<string, object> defaultGlobals = new Dictionary<string, object>();
+        public CoreMoonRocket() {
             plugin = new MoonRocketPlugin(this);
             plugin.Register();
             instancer = new MoonListenerInstancer(this);
             instancer.Register();
+            nodeHandler = new ScriptNodeHandler();
+            nodeHandler.Register("script");
 
             UserData.RegisterAssembly(includeExtensionTypes: true);
             RegisterUnmarkedAssembly(typeof(Element));
@@ -31,6 +34,10 @@ namespace OpenEQ.GUI.MoonRocket {
                 if(type.IsPublic)
                     UserData.RegisterType(type);
             }
+        }
+
+        public void RegisterGlobal<T>(string name, T obj) {
+            defaultGlobals[name] = obj;
         }
 
         DynValue FindValue(Script ctx, string code) {
@@ -78,7 +85,9 @@ namespace OpenEQ.GUI.MoonRocket {
 
             var script = contexts[document] = new Script();
             script.Globals["document"] = document;
-            script.Globals["gui"] = Gui;
+            script.Globals["_"] = (Func<DynValue, UQuery>) new UQuery(document).Global;
+            foreach(var kv in defaultGlobals)
+                script.Globals[kv.Key] = kv.Value;
             return script;
         }
 

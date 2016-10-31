@@ -134,10 +134,12 @@
     <Compile Include="Engine\Time.cs" />
     <Compile Include="Game.cs" />
     <Compile Include="GUI\CoreGUI.cs" />
-    <Compile Include="GUI\HtmlLoader.cs" />
+    <Compile Include="GUI\GuiExtensions.cs" />
     <Compile Include="GUI\MoonRocket\CoreMoonRocket.cs" />
     <Compile Include="GUI\MoonRocket\EventGlue.cs" />
-    <Compile Include="GUI\MoonRocket\OEQEventListenerInstancer.cs" />
+    <Compile Include="GUI\MoonRocket\MoonListenerInstancer.cs" />
+    <Compile Include="GUI\MoonRocket\ScriptNodeHandler.cs" />
+    <Compile Include="GUI\MoonRocket\UQuery.cs" />
     <Compile Include="GUI\OEQRenderInterface.cs" />
     <Compile Include="GUI\OEQSystemInterface.cs" />
     <Compile Include="MainProgram.cs" />

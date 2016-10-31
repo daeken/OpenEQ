@@ -6,7 +6,10 @@ namespace OpenEQ.GUI.MoonRocket {
     [MoonSharpUserData]
     public static class EventGlue {
         public static Element Bind(this Element elem, string evt, DynValue callback) {
-            var cb = callback.Function.GetDelegate();
+            return elem.Bind(evt, callback.Function.GetDelegate());
+        }
+
+        public static Element Bind(this Element elem, string evt, ScriptFunctionDelegate cb) {
             switch(evt) {
                 case "show": elem.Show += (sender, e) => cb(sender, e); break;
                 case "hide": elem.Hide += (sender, e) => cb(sender, e); break;

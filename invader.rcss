@@ -176,7 +176,8 @@ input.submit:active
 
 
 
-input.text
+input.text, 
+input.password
 {
 	height: 31px;
 	padding: 10px 10px 0px;
@@ -187,6 +188,7 @@ input.text
 }
 
 input.text,
+input.password, 
 select,
 dataselect
 {
