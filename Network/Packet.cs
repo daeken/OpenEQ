@@ -43,10 +43,6 @@ namespace OpenEQ.Network {
                 case SessionOp.Single:
                 case SessionOp.Fragment:
                 case SessionOp.Combined:
-                    if((SessionOp) Opcode != SessionOp.Combined) {
-                        Sequence = packet.NetU16(off);
-                        off += 2;
-                    }
                     var plen = packet.Length - off;
                     if(!combined && stream.Validating) {
                         plen -= 2;
@@ -61,10 +57,14 @@ namespace OpenEQ.Network {
                             Debug.Assert(packet[off] == 0xa5);
                             off++;
                             plen--;
-                            Data = packet.Sub(off, off + plen);
                         }
-                    } else
-                        Data = packet.Sub(off, off + plen);
+                    }
+                    if((SessionOp) Opcode != SessionOp.Combined) {
+                        Sequence = packet.NetU16(off);
+                        off += 2;
+                        plen -= 2;
+                    }
+                    Data = packet.Sub(off, off + plen);
                     Bare = false;
                     break;
                 default:

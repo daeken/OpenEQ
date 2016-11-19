@@ -10,6 +10,7 @@ namespace OpenEQ.GUI {
             HtmlNode.ElementsFlags.Remove("script");
             HtmlNode.ElementsFlags.Remove("style");
             HtmlNode.ElementsFlags.Remove("form");
+            HtmlNode.ElementsFlags.Remove("col");
             var doc = new HtmlDocument();
             doc.LoadHtml(html);
             doc.OptionOutputAsXml = true;
@@ -18,6 +19,7 @@ namespace OpenEQ.GUI {
                 ms.Position = 0;
                 var sr = new StreamReader(ms);
                 var xml = sr.ReadToEnd();
+                WriteLine(xml);
                 return xml;
             }
         }

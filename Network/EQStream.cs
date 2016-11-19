@@ -30,11 +30,12 @@ namespace OpenEQ.Network {
             sentPackets = new Packet[65536];
             futurePackets = new Packet[65536];
 
+        }
+
+        public void SendSessionRequest() {
             var sr = new SessionRequest((uint) new Random().Next());
             sessionID = sr.sessionID;
             Send(Packet.Create(SessionOp.Request, sr, bare: true));
-
-            WriteLine("Sent session request");
         }
 
         void Checker() {
@@ -61,8 +62,8 @@ namespace OpenEQ.Network {
 
         void Receive(object sender, byte[] data) {
             var packet = new Packet(this, data);
-            WriteLine("Received packet");
-            Hexdump(data);
+            //WriteLine($"Received packet ({this})");
+            //Hexdump(data);
             if(packet.Valid)
                 ProcessSessionPacket(packet);
         }
@@ -164,12 +165,17 @@ namespace OpenEQ.Network {
                 sentPackets[OutSequence++] = packet;
             }
             packet.SentTime = Time.Now;
-            conn.Send(packet.Bake(this));
+            var data = packet.Bake(this);
+            if(data.Length > 512) {
+                WriteLine("Overlong packet!");
+                Hexdump(data);
+            }
+            conn.Send(data);
         }
 
         protected void Send(AppPacket packet) {
             if(packet.Size > 512 - 7) { // Fragment
-
+                WriteLine("Fragment :(");
             } else {
                 var data = new byte[packet.Size];
                 data[1] = (byte) (packet.Opcode >> 8);

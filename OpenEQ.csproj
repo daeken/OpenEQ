@@ -152,6 +152,8 @@
     <Compile Include="Network\Opcodes.cs" />
     <Compile Include="Network\Packet.cs" />
     <Compile Include="Network\SessionPackets.cs" />
+    <Compile Include="Network\WorldPackets.cs" />
+    <Compile Include="Network\WorldStream.cs" />
     <Compile Include="OEQCharReader.cs" />
     <Compile Include="OEQZoneReader.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

@@ -1,10 +1,9 @@
 ﻿using LibRocketNet;
-using MoonSharp;
 using MoonSharp.Interpreter;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
-using System.Text.RegularExpressions;
 using static System.Console;
 
 namespace OpenEQ.GUI.MoonRocket {
@@ -24,7 +23,9 @@ namespace OpenEQ.GUI.MoonRocket {
             nodeHandler.Register("script");
 
             UserData.RegisterAssembly(includeExtensionTypes: true);
+            RegisterUnmarkedAssembly();
             RegisterUnmarkedAssembly(typeof(Element));
+            RegisterUnmarkedAssembly(typeof(Enumerable));
         }
 
         public void RegisterUnmarkedAssembly(Type _type = null) {

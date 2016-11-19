@@ -1,5 +1,4 @@
-﻿using System;
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 
 namespace OpenEQ.Network {
     public enum ServerStatus {
@@ -17,6 +16,26 @@ namespace OpenEQ.Network {
     public struct Login {
         ushort unk1, unk2, unk3, unk4, unk5;
         // Crypto blob comes after this
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct LoginReply {
+        byte message; //0x01
+        byte unk1, unk2, unk3, unk4, unk5, unk6, unk7; //0x00
+        public uint acctID;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 11)]
+        public string key; //10 char + null term;
+        public uint failedAttempts;
+
+        public static LoginReply Get(byte[] data) {
+            var val = new LoginReply();
+            int len = Marshal.SizeOf(val);
+            var i = Marshal.AllocHGlobal(len);
+            Marshal.Copy(data, 0, i, len);
+            val = (LoginReply) Marshal.PtrToStructure(i, typeof(LoginReply));
+            Marshal.FreeHGlobal(i);
+            return val;
+        }
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]

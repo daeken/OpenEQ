@@ -30,4 +30,8 @@ namespace OpenEQ.Network {
         EnterChat = 0x000f,
         PollResponse = 0x0011
     }
+
+    public enum WorldOp : ushort {
+        SendLoginInfo = 0x13da
+    }
 }
