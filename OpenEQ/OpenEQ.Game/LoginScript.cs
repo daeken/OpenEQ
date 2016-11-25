@@ -1,33 +1,18 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using SiliconStudio.Core.Mathematics;
-using SiliconStudio.Xenko.Input;
-using SiliconStudio.Xenko.Engine;
 using SiliconStudio.Xenko.UI.Controls;
-using SiliconStudio.Xenko.UI.Panels;
-using SiliconStudio.Xenko.UI;
 
 namespace OpenEQ
 {
-    public class LoginScript : SyncScript
+    public class LoginScript : UIScript
     {
         public string LoginServer = "login.eqemulator.net:5998";
 
-        UIComponent ui;
-        UIPage page;
-
-        T Find<T>(string name) where T : UIElement {
-            return page.RootElement.FindVisualChildOfType<T>(name);
-        }
-
-        public override void Start() {
-            ui = Entity.Get<UIComponent>();
-            page = ui.Page;
+        public override void Setup() {
             var loginButton = Find<Button>("loginButton");
             var username = Find<EditText>("username");
+            var password = Find<EditText>("password");
+            var status = Find<TextBlock>("status");
             loginButton.Click += (sender, e) => {
                 loginButton.IsEnabled = false;
                 username.Text = String.Join("", username.Text.Reverse().ToArray());

@@ -2,10 +2,9 @@
 Id: 3acc6730-516f-4bd6-a7a0-27c235b1682f
 SerializedVersion: {Xenko: 1.6.1-alpha01}
 Tags: []
-DefaultScene: ccc34ab7-e063-431a-8f5c-8b5547d3c6c3/22022418-606c-4b76-a6ec-4fa663936beb:LoginScene
+DefaultScene: 22022418-606c-4b76-a6ec-4fa663936beb:LoginScene
 Defaults:
     - !SiliconStudio.Xenko.Graphics.RenderingSettings,SiliconStudio.Xenko.Graphics
-        ~Id: 3105b38b-7eb3-4864-ac3b-087b4ecc6fdb
         DefaultBackBufferWidth: 1920
         DefaultBackBufferHeight: 1080
         AdaptBackBufferToScreen: false
@@ -14,13 +13,10 @@ Defaults:
         DisplayOrientation: LandscapeRight
         PreferredGraphicsPlatform: Direct3D11
     - !SiliconStudio.Xenko.Assets.EditorSettings,SiliconStudio.Xenko.Assets
-        ~Id: f4c78af9-0dd0-4a49-a709-5eaf14e8e3e5
         RenderingMode: HDR
     - !SiliconStudio.Xenko.Assets.Textures.TextureSettings,SiliconStudio.Xenko.Assets
-        ~Id: 8509b6e4-3c51-48e9-8554-977671002323
         TextureQuality: Best
     - !SiliconStudio.Xenko.Physics.PhysicsSettings,SiliconStudio.Xenko.Physics
-        ~Id: a5c8c10a-bd36-4488-8477-d4d3b68d3a93
         Flags: MultiThreaded, UseHardwareWhenPossible, ContinuosCollisionDetection
         MaxSubSteps: 1
         FixedTimeStep: 0.0166666675

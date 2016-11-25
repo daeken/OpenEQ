@@ -26,6 +26,8 @@ Settings:
             FixedSizeGizmos: false
             HiddenGizmos:
                 - Transform
+            NavigationVisible: false
+            NavigationWireframes: false
         7ccd29d8-56b6-4c84-9060-608eda4b4c1d:
             CamPosition: {X: 0.0, Y: 0.0, Z: 500.0}
             CamPitchYaw: {X: 0.0, Y: 0.0}
@@ -51,6 +53,8 @@ Settings:
             FixedSizeGizmos: false
             HiddenGizmos:
                 - Transform
+            NavigationVisible: false
+            NavigationWireframes: false
         7f78dfce-12c3-46d3-a5ba-ad62fd8d5a7f:
             CamPosition: {X: 4.0, Y: 4.0, Z: 4.0}
             CamPitchYaw: {X: -0.5235988, Y: 0.7853982}
@@ -76,6 +80,8 @@ Settings:
             FixedSizeGizmos: false
             HiddenGizmos:
                 - Transform
+            NavigationVisible: false
+            NavigationWireframes: false
         b3135b1e-4c59-44d7-8c24-1689a74e57ab:
             CamPosition: {X: 2.22781348, Y: 20.0297489, Z: -40.7702255}
             CamPitchYaw: {X: -0.198283136, Y: 9.406879}
@@ -101,3 +107,5 @@ Settings:
             FixedSizeGizmos: false
             HiddenGizmos:
                 - Transform
+            NavigationVisible: false
+            NavigationWireframes: false

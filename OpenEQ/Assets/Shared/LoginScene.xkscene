@@ -1,44 +1,35 @@
 !SceneAsset
 Id: 22022418-606c-4b76-a6ec-4fa663936beb
-SerializedVersion: {Xenko: 1.7.0-beta04}
+SerializedVersion: {Xenko: 1.9.0-beta05}
 Tags: []
 SceneSettings:
-    ~Id: 77625024-f016-49e3-b961-dd9df79a47b8
+    Id: 77625024-f016-49e3-b961-dd9df79a47b8
     GraphicsCompositor: !SceneGraphicsCompositorLayers
-        ~Id: 38cd635b-132c-4b23-8618-9ee67d714afd
         Cameras:
-            -   ~Id: d0dd781c-0d92-4557-975e-3f73eecd60aa
+            1c78ddd0920d5745975e3f73eecd60aa:
                 Name: null
                 Camera: c2dbe823-d1ff-4d2e-b690-4112e08ee570/a846008c-09ed-42eb-9e93-b887c4ddbb69
-        Layers: []
+        Layers: {}
         Master:
-            ~Id: 08c84dec-dab3-4c15-91c2-ab4e39fb02a7
             Name: SceneGraphicsLayer
             Output: !MasterRenderFrameProvider {}
             Renderers:
-                - !ClearRenderFrameRenderer
-                    ~Id: 515a4996-a94c-454d-8e3f-d441387e97d0
+                96495a514ca94d458e3fd441387e97d0: !ClearRenderFrameRenderer
                     Color: {R: 0.392156869, G: 0.58431375, B: 0.929411769, A: 1.0}
                     Output: !CurrentRenderFrameProvider {}
-                - !SceneCameraRenderer
-                    ~Id: 93e9a902-d65f-40d4-903d-ad170277fe08
-                    Mode: !CameraRendererModeForward
-                        ~Id: 2493f975-cc54-4b04-92c7-8623bf590640
+                02a9e9935fd6d440903dad170277fe08: !SceneCameraRenderer
+                    Mode: !CameraRendererModeForward {}
                     Camera:
-                        ~Id: b7dbc9b6-eb79-47da-ad18-8d3e5052bf1d
                         Index: 0
                     Output: !CurrentRenderFrameProvider {}
                     Viewport: {X: 0.0, Y: 0.0, Width: 100.0, Height: 100.0}
                     ForceAspectRatio: false
     EditorSettings:
-        ~Id: ab62458a-abaf-402d-890a-9f72c22865c4
         GridColor: {R: 0.7058824, G: 0.7058824, B: 0.7058824}
         SceneUnit: 1.0
         Mode: !SceneEditorGraphicsModeLDRSettings
-            ~Id: 886b3f7b-9a01-4da0-8cef-9a2910f155bb
             BackgroundColor: {R: 0.196078435, G: 0.196078435, B: 0.196078435}
 Hierarchy:
-    ~Id: 4603c1e2-0a02-47fa-8a1f-fad601509259
     RootPartIds:
         - c2dbe823-d1ff-4d2e-b690-4112e08ee570
         - 782092bf-2a7a-4b3d-8094-c01a78fdfab0
@@ -50,91 +41,82 @@ Hierarchy:
                 Id: 3c2df31f-5e08-4ea3-a34f-5605e33161b9
                 Name: Skybox
                 Components:
-                    - !TransformComponent
-                        ~Id: 887a8b33-69c9-4d74-95ae-709869b4ef84
-                        Children: []
+                    338b7a88c969744d95ae709869b4ef84: !TransformComponent
+                        Id: 887a8b33-69c9-4d74-95ae-709869b4ef84
                         Position: {X: 0.0, Y: 2.0, Z: -2.0}
                         Rotation: {X: 0.0, Y: 0.0, Z: 0.0, W: 1.0}
                         Scale: {X: 1.0, Y: 1.0, Z: 1.0}
-                    - !SkyboxComponent
-                        ~Id: 7ccf41fd-8c92-44be-b490-bbaf6eb6911b
+                        Children: {}
+                    fd41cf7c928cbe44b490bbaf6eb6911b: !SkyboxComponent
+                        Id: 7ccf41fd-8c92-44be-b490-bbaf6eb6911b
         -   Entity:
                 Id: 782092bf-2a7a-4b3d-8094-c01a78fdfab0
                 Name: Directional light
                 Components:
-                    - !TransformComponent
-                        ~Id: 22df7323-c6ff-456e-b998-b8c0515143ee
-                        Children: []
+                    2373df22ffc66e45b998b8c0515143ee: !TransformComponent
+                        Id: 22df7323-c6ff-456e-b998-b8c0515143ee
                         Position: {X: 0.0, Y: 2.0, Z: 0.0}
                         Rotation: {X: -0.5540323, Y: 0.212012157, Z: 0.1484525, W: 0.7912401}
                         Scale: {X: 1.0, Y: 1.0, Z: 1.0}
-                    - !LightComponent
-                        ~Id: 287ec4dd-0bba-492d-8814-2c3d4040bf83
+                        Children: {}
+                    ddc47e28ba0b2d4988142c3d4040bf83: !LightComponent
+                        Id: 287ec4dd-0bba-492d-8814-2c3d4040bf83
                         Type: !LightDirectional
-                            ~Id: 6d390555-daf4-4848-ab2d-a972ffefbd63
                             Color: !ColorRgbProvider
-                                ~Id: 009e76dd-f170-4d42-b33e-1cee678cc6dc
                                 Value: {R: 1.0, G: 1.0, B: 1.0}
                             Shadow:
-                                ~Id: bb1255a2-49f4-49bb-b518-a7be7b7c82b2
                                 Enabled: true
                                 Filter: !LightShadowMapFilterTypePcf
-                                    ~Id: bc3a2e64-6470-4b36-9f32-d2d0739edf46
                                     FilterSize: Filter5x5
                                 Size: XLarge
-                                DepthRange:
-                                    ~Id: 6f22612e-4ee6-4903-939d-1ebdb0ee3688
-                                PartitionMode: !LightDirectionalShadowMap.PartitionLogarithmic
-                                    ~Id: b2387a33-f4d5-4d7e-8c87-1c28299ccf00
-                                BiasParameters:
-                                    ~Id: 83204d3d-cb1c-4e6b-8d36-757ca6d55631
+                                DepthRange: {}
+                                PartitionMode: !LightDirectionalShadowMap.PartitionLogarithmic {}
+                                BiasParameters: {}
                         Intensity: 0.8
         -   Entity:
                 Id: a724b6fe-45fd-4953-8325-83cd6c9e0de8
                 Name: UI
                 Components:
-                    - !TransformComponent
-                        ~Id: 3c977a97-dae3-4902-b936-b5afa0822ad8
-                        Children: []
+                    977a973ce3da0249b936b5afa0822ad8: !TransformComponent
+                        Id: 3c977a97-dae3-4902-b936-b5afa0822ad8
                         Position: {X: 0.0, Y: 0.0, Z: 0.0}
                         Rotation: {X: 0.0, Y: 0.0, Z: 0.0, W: 1.0}
                         Scale: {X: 1.0, Y: 1.0, Z: 1.0}
-                    - !OpenEQ.LoginScript,OpenEQ.Game
-                        ~Id: 9fa26508-e46b-4919-9bcb-00565fd522f8
+                        Children: {}
+                    0865a29f6be419499bcb00565fd522f8: !OpenEQ.LoginScript,OpenEQ.Game
+                        Id: 9fa26508-e46b-4919-9bcb-00565fd522f8
                         LoginServer: login.eqemulator.net:5998
-                    - !UIComponent
-                        ~Id: 1721a7bc-075d-4d78-a5c8-1a74787857ab
-                        Page: 796d305e-1896-416e-959a-bf8d466aa21b/bc86d653-eba1-4c44-b206-39ccae29cba1:UI/LoginPage
+                    bca721175d07784da5c81a74787857ab: !UIComponent
+                        Id: 1721a7bc-075d-4d78-a5c8-1a74787857ab
+                        Page: bc86d653-eba1-4c44-b206-39ccae29cba1:UI/LoginPage
                         Resolution: {X: 1280.0, Y: 720.0, Z: 1000.0}
                         Size: {X: 1.0, Y: 1.0, Z: 1.0}
         -   Entity:
                 Id: c2dbe823-d1ff-4d2e-b690-4112e08ee570
                 Name: Camera
                 Components:
-                    - !TransformComponent
-                        ~Id: 74882d3f-afc4-45c7-8e18-17d6fc08d7f0
-                        Children: []
+                    3f2d8874c4afc7458e1817d6fc08d7f0: !TransformComponent
+                        Id: 74882d3f-afc4-45c7-8e18-17d6fc08d7f0
                         Position: {X: -1.0, Y: 1.2, Z: 2.7}
                         Rotation: {X: -0.08583164, Y: -0.1729874, Z: -0.0151344351, W: 0.981060266}
                         Scale: {X: 1.0, Y: 1.0, Z: 1.0}
-                    - !CameraComponent
-                        ~Id: a846008c-09ed-42eb-9e93-b887c4ddbb69
+                        Children: {}
+                    8c0046a8ed09eb429e93b887c4ddbb69: !CameraComponent
+                        Id: a846008c-09ed-42eb-9e93-b887c4ddbb69
                         Projection: Perspective
         -   Entity:
                 Id: eab11d8b-6e5d-4401-bde0-173372c7995d
                 Name: Ambient light
                 Components:
-                    - !TransformComponent
-                        ~Id: 2efd79b5-672d-4dcf-9bd6-d1f1fe41bd90
-                        Children: []
+                    b579fd2e2d67cf4d9bd6d1f1fe41bd90: !TransformComponent
+                        Id: 2efd79b5-672d-4dcf-9bd6-d1f1fe41bd90
                         Position: {X: -2.0, Y: 2.0, Z: 0.0}
                         Rotation: {X: 0.0, Y: 0.0, Z: 0.0, W: 1.0}
                         Scale: {X: 1.0, Y: 1.0, Z: 1.0}
-                    - !LightComponent
-                        ~Id: 9487527b-d529-4baf-8c19-e62aa2082c73
+                        Children: {}
+                    7b52879429d5af4b8c19e62aa2082c73: !LightComponent
+                        Id: 9487527b-d529-4baf-8c19-e62aa2082c73
                         Type: !LightAmbient
-                            ~Id: 92bf746e-9cfe-4ad1-ac84-e8ddfb1f6d12
                             Color: !ColorRgbProvider
-                                ~Id: 54ce79ad-f9ef-4b55-9cc9-b68705ffb15c
                                 Value: {R: 0.768627465, G: 0.843137264, B: 1.0}
                         Intensity: 0.05

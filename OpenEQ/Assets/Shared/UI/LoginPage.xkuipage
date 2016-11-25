@@ -1,17 +1,16 @@
 !UIPageAsset
 Id: bc86d653-eba1-4c44-b206-39ccae29cba1
-SerializedVersion: {Xenko: 0.0.0}
+SerializedVersion: {Xenko: 1.9.0-beta01}
 Tags: []
 Design:
     Resolution: {X: 1280.0, Y: 720.0, Z: 1000.0}
 Hierarchy:
-    ~Id: cf72e897-56c7-4db0-98af-23c605e5008e
     RootPartIds:
         - d366fdf4-43ad-4a8f-a86d-8e3bb41659e9
     Parts:
         -   UIElement: !EditText
                 DependencyProperties:
-                    GridBase.ColumnPropertyKey: 1
+                    86d195a1af02b9b662aa34067ac074a8~GridBase.ColumnPropertyKey: 1
                 Id: 0eb69849-2cf0-4411-a927-a1ec5a575dc1
                 BackgroundColor: {R: 0, G: 0, B: 0, A: 0}
                 ClipToBounds: true
@@ -23,20 +22,17 @@ Hierarchy:
                 Margin: {}
                 Name: username
                 Padding: {Left: 8.0, Top: 4.0, Right: 8.0, Bottom: 8.0}
-                Font: 686d519d-1cc7-4e96-afef-b96cb93e2b10/c90f3988-0544-4cbe-993f-13af7d9c23c6:XenkoDefaultFont
+                Font: c90f3988-0544-4cbe-993f-13af7d9c23c6:XenkoDefaultFont
                 TextSize: 20.0
                 TextColor: {R: 240, G: 240, B: 240, A: 255}
                 ActiveImage: !SpriteFromSheet
-                    ~Id: a37e98bb-d680-4d97-a44d-1c0966e29b30
-                    Sheet: 7ea071b3-8402-4405-8709-deda9f17684b/1be3340c-b797-4557-bff7-d9be92dfdb42:XenkoUIDesigns
+                    Sheet: 1be3340c-b797-4557-bff7-d9be92dfdb42:XenkoUIDesigns
                     CurrentFrame: 3
                 InactiveImage: !SpriteFromSheet
-                    ~Id: 09045830-c3c7-4df7-bf53-4c67d2fca46e
-                    Sheet: 7ea071b3-8402-4405-8709-deda9f17684b/1be3340c-b797-4557-bff7-d9be92dfdb42:XenkoUIDesigns
+                    Sheet: 1be3340c-b797-4557-bff7-d9be92dfdb42:XenkoUIDesigns
                     CurrentFrame: 4
                 MouseOverImage: !SpriteFromSheet
-                    ~Id: 0cec4e6e-b302-4e14-9343-ad2ffb5fd69b
-                    Sheet: 7ea071b3-8402-4405-8709-deda9f17684b/1be3340c-b797-4557-bff7-d9be92dfdb42:XenkoUIDesigns
+                    Sheet: 1be3340c-b797-4557-bff7-d9be92dfdb42:XenkoUIDesigns
                     CurrentFrame: 5
                 CaretColor: {R: 240, G: 240, B: 240, A: 255}
                 CaretWidth: 1.0
@@ -46,8 +42,8 @@ Hierarchy:
                 CaretFrequency: 1.0
         -   UIElement: !Button
                 DependencyProperties:
-                    GridBase.RowPropertyKey: 2
-                    GridBase.ColumnPropertyKey: 1
+                    adcda5d60a12eb590103206de96a367f~GridBase.RowPropertyKey: 2
+                    263ceadc18ccb5b5fb9370c628798839~GridBase.ColumnPropertyKey: 1
                 Id: 47509f1e-f786-4561-9a81-2477dde01e00
                 BackgroundColor: {R: 0, G: 0, B: 0, A: 0}
                 DrawLayerNumber: 2
@@ -59,16 +55,13 @@ Hierarchy:
                 Padding: {Left: 10.0, Top: 5.0, Right: 10.0, Bottom: 7.0}
                 Content: !TextBlock 6c74650c-0afb-4ef7-a97f-e0eb501c733d
                 PressedImage: !SpriteFromSheet
-                    ~Id: 3b207f92-29ce-4fdf-935e-a10d6016718a
-                    Sheet: 7ea071b3-8402-4405-8709-deda9f17684b/1be3340c-b797-4557-bff7-d9be92dfdb42:XenkoUIDesigns
+                    Sheet: 1be3340c-b797-4557-bff7-d9be92dfdb42:XenkoUIDesigns
                     CurrentFrame: 2
                 NotPressedImage: !SpriteFromSheet
-                    ~Id: ae95f586-5e79-48bd-a9b5-3de2810208ca
-                    Sheet: 7ea071b3-8402-4405-8709-deda9f17684b/1be3340c-b797-4557-bff7-d9be92dfdb42:XenkoUIDesigns
+                    Sheet: 1be3340c-b797-4557-bff7-d9be92dfdb42:XenkoUIDesigns
                     CurrentFrame: 1
                 MouseOverImage: !SpriteFromSheet
-                    ~Id: 91cbc845-d171-401a-b9fd-1d128e5f22b4
-                    Sheet: 7ea071b3-8402-4405-8709-deda9f17684b/1be3340c-b797-4557-bff7-d9be92dfdb42:XenkoUIDesigns
+                    Sheet: 1be3340c-b797-4557-bff7-d9be92dfdb42:XenkoUIDesigns
         -   UIElement: !TextBlock
                 DependencyProperties: {}
                 Id: 6c74650c-0afb-4ef7-a97f-e0eb501c733d
@@ -77,33 +70,33 @@ Hierarchy:
                 VerticalAlignment: Center
                 Margin: {}
                 Text: Log In
-                Font: 753e1146-9efb-42b3-8653-aa435c6a8147/c90f3988-0544-4cbe-993f-13af7d9c23c6:XenkoDefaultFont
+                Font: c90f3988-0544-4cbe-993f-13af7d9c23c6:XenkoDefaultFont
                 TextSize: 20.0
                 TextColor: {R: 240, G: 240, B: 240, A: 255}
         -   UIElement: !TextBlock
                 DependencyProperties:
-                    GridBase.RowPropertyKey: 1
+                    a19dfc69793bca9748112c174db25e39~GridBase.RowPropertyKey: 1
                 Id: 72a1c591-2ebf-4799-b1c8-c796c77afea9
                 BackgroundColor: {R: 0, G: 0, B: 0, A: 0}
                 Margin: {}
                 Text: 'Password:'
-                Font: 686d519d-1cc7-4e96-afef-b96cb93e2b10/c90f3988-0544-4cbe-993f-13af7d9c23c6:XenkoDefaultFont
+                Font: c90f3988-0544-4cbe-993f-13af7d9c23c6:XenkoDefaultFont
                 TextSize: 20.0
                 TextColor: {R: 240, G: 240, B: 240, A: 255}
         -   UIElement: !TextBlock
                 DependencyProperties:
-                    Panel.ZIndexPropertyKey: 0
+                    f7df18c1be1c4689b55a19d85abe4ee9~Panel.ZIndexPropertyKey: 0
                 Id: 78dd7154-775c-4963-ae5e-d15c6e60e8d3
                 BackgroundColor: {R: 0, G: 0, B: 0, A: 0}
                 Margin: {}
                 Text: 'Username:'
-                Font: 686d519d-1cc7-4e96-afef-b96cb93e2b10/c90f3988-0544-4cbe-993f-13af7d9c23c6:XenkoDefaultFont
+                Font: c90f3988-0544-4cbe-993f-13af7d9c23c6:XenkoDefaultFont
                 TextSize: 20.0
                 TextColor: {R: 240, G: 240, B: 240, A: 255}
         -   UIElement: !EditText
                 DependencyProperties:
-                    GridBase.RowPropertyKey: 1
-                    GridBase.ColumnPropertyKey: 1
+                    9bf59163cca8f7d6882ed967ff65d4c2~GridBase.RowPropertyKey: 1
+                    221ad444423a6aa438e4e9e0d063e45b~GridBase.ColumnPropertyKey: 1
                 Id: b67e2639-eb26-4624-9d8b-ee484423ccdc
                 BackgroundColor: {R: 0, G: 0, B: 0, A: 0}
                 ClipToBounds: true
@@ -115,20 +108,17 @@ Hierarchy:
                 Margin: {}
                 Name: password
                 Padding: {Left: 8.0, Top: 4.0, Right: 8.0, Bottom: 8.0}
-                Font: 686d519d-1cc7-4e96-afef-b96cb93e2b10/c90f3988-0544-4cbe-993f-13af7d9c23c6:XenkoDefaultFont
+                Font: c90f3988-0544-4cbe-993f-13af7d9c23c6:XenkoDefaultFont
                 TextSize: 20.0
                 TextColor: {R: 240, G: 240, B: 240, A: 255}
                 ActiveImage: !SpriteFromSheet
-                    ~Id: a37e98bb-d680-4d97-a44d-1c0966e29b30
-                    Sheet: 7ea071b3-8402-4405-8709-deda9f17684b/1be3340c-b797-4557-bff7-d9be92dfdb42:XenkoUIDesigns
+                    Sheet: 1be3340c-b797-4557-bff7-d9be92dfdb42:XenkoUIDesigns
                     CurrentFrame: 3
                 InactiveImage: !SpriteFromSheet
-                    ~Id: 09045830-c3c7-4df7-bf53-4c67d2fca46e
-                    Sheet: 7ea071b3-8402-4405-8709-deda9f17684b/1be3340c-b797-4557-bff7-d9be92dfdb42:XenkoUIDesigns
+                    Sheet: 1be3340c-b797-4557-bff7-d9be92dfdb42:XenkoUIDesigns
                     CurrentFrame: 4
                 MouseOverImage: !SpriteFromSheet
-                    ~Id: 0cec4e6e-b302-4e14-9343-ad2ffb5fd69b
-                    Sheet: 7ea071b3-8402-4405-8709-deda9f17684b/1be3340c-b797-4557-bff7-d9be92dfdb42:XenkoUIDesigns
+                    Sheet: 1be3340c-b797-4557-bff7-d9be92dfdb42:XenkoUIDesigns
                     CurrentFrame: 5
                 CaretColor: {R: 240, G: 240, B: 240, A: 255}
                 CaretWidth: 1.0
@@ -143,10 +133,10 @@ Hierarchy:
                 BackgroundColor: {R: 0, G: 0, B: 0, A: 255}
                 Margin: {Left: 100.0, Top: 100.0, Right: 100.0, Bottom: 100.0}
                 Children:
-                    - !TextBlock 78dd7154-775c-4963-ae5e-d15c6e60e8d3
-                    - !TextBlock 72a1c591-2ebf-4799-b1c8-c796c77afea9
-                    - !EditText 0eb69849-2cf0-4411-a927-a1ec5a575dc1
-                    - !EditText b67e2639-eb26-4624-9d8b-ee484423ccdc
-                    - !Button 47509f1e-f786-4561-9a81-2477dde01e00
+                    5471dd785c776349ae5ed15c6e60e8d3: !TextBlock 78dd7154-775c-4963-ae5e-d15c6e60e8d3
+                    91c5a172bf2e9947b1c8c796c77afea9: !TextBlock 72a1c591-2ebf-4799-b1c8-c796c77afea9
+                    4998b60ef02c1144a927a1ec5a575dc1: !EditText 0eb69849-2cf0-4411-a927-a1ec5a575dc1
+                    39267eb626eb24469d8bee484423ccdc: !EditText b67e2639-eb26-4624-9d8b-ee484423ccdc
+                    1e9f504786f761459a812477dde01e00: !Button 47509f1e-f786-4561-9a81-2477dde01e00
                 Rows: 3
                 Columns: 2
