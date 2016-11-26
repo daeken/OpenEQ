@@ -75,7 +75,7 @@ Hierarchy:
                         Intensity: 0.8
         -   Entity:
                 Id: a724b6fe-45fd-4953-8325-83cd6c9e0de8
-                Name: UI
+                Name: LoginDialog
                 Components:
                     977a973ce3da0249b936b5afa0822ad8: !TransformComponent
                         Id: 3c977a97-dae3-4902-b936-b5afa0822ad8

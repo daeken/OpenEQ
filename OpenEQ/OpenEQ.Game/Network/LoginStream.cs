@@ -9,15 +9,14 @@ using System.Collections.Generic;
 
 namespace OpenEQ.Network {
     public class LoginStream : EQStream {
-        public event EventHandler<object> LoginSuccess;
+        public event EventHandler<bool> LoginSuccess;
         public event EventHandler<List<ServerListElement>> ServerList;
         public event EventHandler<ServerListElement?> PlaySuccess;
 
         public uint accountID;
         public string sessionKey;
 
-        ServerListElement curPlay;
-        List<ServerListElement> serverList;
+        ServerListElement? curPlay;
 
         byte[] cryptoBlob;
         bool triedOnce = false;
@@ -49,7 +48,7 @@ namespace OpenEQ.Network {
         byte[] Decrypt(byte[] buffer, int offset = 0) {
             var empty = new byte[] { 0, 0, 0, 0, 0, 0, 0, 0 };
             var des = new DESCrypto(empty, empty);
-            return des.Decrypt(buffer);
+            return des.Decrypt(offset == 0 ? buffer : buffer.Sub(offset));
         }
 
         protected override void HandleSessionResponse(Packet packet) {
@@ -76,7 +75,7 @@ namespace OpenEQ.Network {
                     var header = packet.Get<ServerListHeader>();
                     var off = 5 * 4;
                     var data = packet.Data;
-                    serverList = new List<ServerListElement>();
+                    var serverList = new List<ServerListElement>();
                     for(var i = 0; i < header.serverCount; ++i)
                         serverList.Add(new ServerListElement(data, ref off));
                     ServerList?.Invoke(this, serverList);
@@ -85,9 +84,9 @@ namespace OpenEQ.Network {
                     var resp = packet.Get<PlayResponse>();
 
                     if(!resp.allowed)
-                        PlaySuccess?.Invoke(this, null);
-                    else
-                        PlaySuccess?.Invoke(this, curPlay);
+                        curPlay = null;
+                    
+                    PlaySuccess?.Invoke(this, curPlay);
                     break;
                 default:
                     WriteLine($"Unhandled packet in LoginStream: {(LoginOp) packet.Opcode} (0x{packet.Opcode:X04})");
@@ -100,15 +99,9 @@ namespace OpenEQ.Network {
             Send(AppPacket.Create(LoginOp.ServerListRequest));
         }
 
-        public void Play(uint server) {
-            foreach(var elem in serverList)
-                if(elem.runtimeID == server) {
-                    curPlay = elem;
-                    break;
-                }
-
-            if(curPlay.runtimeID == server) // Just to make sure we actually found it
-                Send(AppPacket.Create(LoginOp.PlayEverquestRequest, new PlayRequest(server)));
+        public void Play(ServerListElement server) {
+            curPlay = server;
+            Send(AppPacket.Create(LoginOp.PlayEverquestRequest, new PlayRequest(server.runtimeID)));
         }
     }
 }

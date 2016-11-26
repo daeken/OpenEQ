@@ -23,6 +23,7 @@
 
 
 using System;
+using System.Diagnostics;
 
 namespace OpenEQ {
     class DESCrypto {
@@ -264,11 +265,49 @@ namespace OpenEQ {
         }
 
         public byte[] Decrypt(byte[] data) {
-            return data;
+            Debug.Assert(data.Length % 8 == 0);
+            return DoCBC(false, data);
         }
 
         public byte[] Encrypt(byte[] data) {
-            return data;
+            return DoCBC(true, Pad(data));
+        }
+
+        byte[] Pad(byte[] data) {
+            if(data.Length % 8 == 0)
+                return data;
+            var temp = new byte[(data.Length / 8 + 1) * 8];
+            Array.Copy(data, temp, data.Length);
+            return temp;
+        }
+
+        byte[] DoCBC(bool encrypt, byte[] data) {
+            var tv = new byte[8];
+            Array.Copy(iv, tv, 8);
+            var od = new byte[data.Length];
+            var iblock = new byte[8];
+            var oblock = new byte[8];
+            for(var i = 0; i < data.Length / 8; ++i) {
+                if(encrypt) {
+                    Array.Copy(data, i * 8, iblock, 0, 8);
+                    Xor(iblock, tv);
+                    ECB(true, iblock, oblock);
+                    Array.Copy(oblock, tv, 8);
+                    Array.Copy(oblock, 0, od, i * 8, 8);
+                } else {
+                    Array.Copy(data, i * 8, iblock, 0, 8);
+                    ECB(true, iblock, oblock);
+                    Xor(oblock, tv);
+                    Array.Copy(iblock, tv, 8);
+                    Array.Copy(oblock, 0, od, i * 8, 8);
+                }
+            }
+            return od;
+        }
+
+        void Xor(byte[] block, byte[] tv) {
+            for(var i = 0; i < block.Length; ++i)
+                block[i] = (byte) (block[i] ^ tv[i % tv.Length]);
         }
 
         internal void SetKey(byte[] key) {

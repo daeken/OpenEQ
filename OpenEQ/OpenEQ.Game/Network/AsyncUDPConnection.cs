@@ -14,7 +14,7 @@ namespace OpenEQ.Network {
         public AsyncUDPConnection(string host, int port) {
             this.host = host;
             this.port = port;
-            client = new UdpClient();
+            client = new UdpClient(host, port);
         }
 
         public async Task<byte[]> Receive() {
@@ -26,7 +26,7 @@ namespace OpenEQ.Network {
         }
 
         public async void Send(byte[] packet) {
-            await client.SendAsync(packet, packet.Length, host, port);
+            await client.SendAsync(packet, packet.Length);
         }
     }
 }
