@@ -5,6 +5,8 @@ using System.Threading.Tasks;
 
 namespace OpenEQ.Network {
     public abstract class EQStream {
+        public static bool Debug = false;
+
         public bool Compressing, Validating;
         public byte[] CRCKey;
         public ushort OutSequence, InSequence;
@@ -47,7 +49,8 @@ namespace OpenEQ.Network {
                         if(packet == null || packet.Acked)
                             break;
                         if(Time.Now - packet.SentTime > 5) {
-                            WriteLine($"Packet {packet.Sequence} not acked in {Time.Now - packet.SentTime}; resending.");
+                            if(Debug)
+                                WriteLine($"Packet {packet.Sequence} not acked in {Time.Now - packet.SentTime}; resending.");
                             Send(packet);
                         }
                     }
@@ -64,8 +67,12 @@ namespace OpenEQ.Network {
             while(true) {
                 var data = await conn.Receive();
                 var packet = new Packet(this, data);
-                //WriteLine($"Received packet ({this})");
-                //Hexdump(data);
+                if(Debug) {
+                    ForegroundColor = ConsoleColor.DarkMagenta;
+                    WriteLine($"Received packet ({this})");
+                    Hexdump(data);
+                    ResetColor();
+                }
                 if(packet.Valid)
                     ProcessSessionPacket(packet);
             }
@@ -108,8 +115,10 @@ namespace OpenEQ.Network {
                     }
                     break;
                 default:
-                    WriteLine($"Unknown packet received: {op} (0x{packet.Opcode:X04})");
-                    Hexdump(packet.Data);
+                    if(Debug) {
+                        WriteLine($"Unknown packet received: {op} (0x{packet.Opcode:X04})");
+                        Hexdump(packet.Data);
+                    }
                     break;
             }
         }
@@ -124,12 +133,26 @@ namespace OpenEQ.Network {
             }
         }
 
+        void HandleAppPacketProxy(AppPacket packet) {
+            if(Debug) {
+                ForegroundColor = ConsoleColor.Magenta;
+                WriteLine($"Received app packet (opcode {packet.Opcode:X04}, {this}):");
+                if(packet.Data == null)
+                    WriteLine("!Null data!");
+                else
+                    Hexdump(packet.Data);
+                ResetColor();
+            }
+
+            HandleAppPacket(packet);
+        }
+
         bool ProcessPacket(Packet packet, bool self = false) {
             switch((SessionOp) packet.Opcode) {
                 case SessionOp.Single:
                     futurePackets[packet.Sequence] = null;
                     var app = new AppPacket(packet.Data);
-                    HandleAppPacket(app);
+                    HandleAppPacketProxy(app);
                     InSequence = (ushort) ((packet.Sequence + 1) % 65536);
                     break;
                 case SessionOp.Fragment:
@@ -153,7 +176,7 @@ namespace OpenEQ.Network {
                         last = i;
                     }
                     InSequence = (ushort) ((last + 1) % 65536);
-                    HandleAppPacket(new AppPacket(tdata));
+                    HandleAppPacketProxy(new AppPacket(tdata));
                     break;
             }
             while(!self && futurePackets[InSequence] != null)
@@ -173,6 +196,14 @@ namespace OpenEQ.Network {
                 WriteLine("Overlong packet!");
                 Hexdump(data);
             }
+
+            if(Debug) {
+                ForegroundColor = ConsoleColor.DarkGreen;
+                WriteLine($"Sending connection packet (from {this}):");
+                Hexdump(data);
+                ResetColor();
+            }
+
             conn.Send(data);
         }
 
@@ -180,6 +211,15 @@ namespace OpenEQ.Network {
             if(packet.Size > 512 - 7) { // Fragment
                 WriteLine("Fragment :(");
             } else {
+                if(Debug) {
+                    ForegroundColor = ConsoleColor.Green;
+                    WriteLine($"Sending app packet (opcode {packet.Opcode:X04}, {this}):");
+                    if(packet.Data == null)
+                        WriteLine("!Null data!");
+                    else
+                        Hexdump(packet.Data);
+                    ResetColor();
+                }
                 var data = new byte[packet.Size];
                 data[1] = (byte) (packet.Opcode >> 8);
                 data[0] = (byte) packet.Opcode;
