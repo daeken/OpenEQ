@@ -5,6 +5,8 @@ using SiliconStudio.Xenko.UI.Panels;
 using SiliconStudio.Xenko.UI;
 using SiliconStudio.Xenko.UI.Events;
 using SiliconStudio.Core.Mathematics;
+using SiliconStudio.Xenko.Engine;
+using System.Linq;
 
 namespace OpenEQ
 {
@@ -76,6 +78,14 @@ namespace OpenEQ
 
             login.PlaySuccess += (sender, server) => {
                 Console.WriteLine($"Play response: { server }");
+                if(server == null)
+                    return;
+
+                SceneSystem.SceneInstance.Scene = Content.Load<Scene>("WorldScene");
+                var wui = SceneSystem.SceneInstance.Scene.Entities.Where(x => x.Name == "WorldDialog").First();
+                foreach(var comp in wui.Components)
+                    if(comp is WorldScript)
+                        ((WorldScript) comp).world = new WorldStream(server.Value.worldIP, 9000, login.accountID, login.sessionKey);
             };
         }
 

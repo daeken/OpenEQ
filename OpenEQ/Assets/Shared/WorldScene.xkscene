@@ -1,5 +1,5 @@
 !SceneAsset
-Id: 22022418-606c-4b76-a6ec-4fa663936beb
+Id: 1fb9b905-2c0f-44b3-a6e3-559e7dc5a810
 SerializedVersion: {Xenko: 1.9.0-beta05}
 Tags: []
 SceneSettings:
@@ -8,7 +8,7 @@ SceneSettings:
         Cameras:
             1c78ddd0920d5745975e3f73eecd60aa:
                 Name: null
-                Camera: c2dbe823-d1ff-4d2e-b690-4112e08ee570/a846008c-09ed-42eb-9e93-b887c4ddbb69
+                Camera: a7d57dc2-6cf6-4272-b87b-84f90911d9fc/a846008c-09ed-42eb-9e93-b887c4ddbb69
         Layers: {}
         Master:
             Name: SceneGraphicsLayer
@@ -31,26 +31,14 @@ SceneSettings:
             BackgroundColor: {R: 0.196078435, G: 0.196078435, B: 0.196078435}
 Hierarchy:
     RootPartIds:
-        - c2dbe823-d1ff-4d2e-b690-4112e08ee570
-        - 782092bf-2a7a-4b3d-8094-c01a78fdfab0
-        - 3c2df31f-5e08-4ea3-a34f-5605e33161b9
-        - eab11d8b-6e5d-4401-bde0-173372c7995d
-        - a724b6fe-45fd-4953-8325-83cd6c9e0de8
+        - a7d57dc2-6cf6-4272-b87b-84f90911d9fc
+        - 2988468a-e652-4681-97d4-46a4229bd0bf
+        - e18f53aa-f0fa-4702-9d5b-4978e999381f
+        - 76076061-ec68-4c10-8bc1-28843735f6d9
+        - d55dda8a-9754-4d0c-8fc7-14402c9a0526
     Parts:
         -   Entity:
-                Id: 3c2df31f-5e08-4ea3-a34f-5605e33161b9
-                Name: Skybox
-                Components:
-                    338b7a88c969744d95ae709869b4ef84: !TransformComponent
-                        Id: 887a8b33-69c9-4d74-95ae-709869b4ef84
-                        Position: {X: 0.0, Y: 2.0, Z: -2.0}
-                        Rotation: {X: 0.0, Y: 0.0, Z: 0.0, W: 1.0}
-                        Scale: {X: 1.0, Y: 1.0, Z: 1.0}
-                        Children: {}
-                    fd41cf7c928cbe44b490bbaf6eb6911b: !SkyboxComponent
-                        Id: 7ccf41fd-8c92-44be-b490-bbaf6eb6911b
-        -   Entity:
-                Id: 782092bf-2a7a-4b3d-8094-c01a78fdfab0
+                Id: 2988468a-e652-4681-97d4-46a4229bd0bf
                 Name: Directional light
                 Components:
                     2373df22ffc66e45b998b8c0515143ee: !TransformComponent
@@ -74,38 +62,7 @@ Hierarchy:
                                 BiasParameters: {}
                         Intensity: 0.8
         -   Entity:
-                Id: a724b6fe-45fd-4953-8325-83cd6c9e0de8
-                Name: LoginDialog
-                Components:
-                    977a973ce3da0249b936b5afa0822ad8: !TransformComponent
-                        Id: 3c977a97-dae3-4902-b936-b5afa0822ad8
-                        Position: {X: 0.0, Y: 0.0, Z: 0.0}
-                        Rotation: {X: 0.0, Y: 0.0, Z: 0.0, W: 1.0}
-                        Scale: {X: 1.0, Y: 1.0, Z: 1.0}
-                        Children: {}
-                    0865a29f6be419499bcb00565fd522f8: !OpenEQ.LoginScript,OpenEQ.Game
-                        Id: 9fa26508-e46b-4919-9bcb-00565fd522f8
-                        LoginServer: 192.168.1.119:5998
-                    bca721175d07784da5c81a74787857ab: !UIComponent
-                        Id: 1721a7bc-075d-4d78-a5c8-1a74787857ab
-                        Page: bc86d653-eba1-4c44-b206-39ccae29cba1:UI/LoginPage
-                        Resolution: {X: 1280.0, Y: 720.0, Z: 1000.0}
-                        Size: {X: 1.0, Y: 1.0, Z: 1.0}
-        -   Entity:
-                Id: c2dbe823-d1ff-4d2e-b690-4112e08ee570
-                Name: Camera
-                Components:
-                    3f2d8874c4afc7458e1817d6fc08d7f0: !TransformComponent
-                        Id: 74882d3f-afc4-45c7-8e18-17d6fc08d7f0
-                        Position: {X: -1.0, Y: 1.2, Z: 2.7}
-                        Rotation: {X: -0.08583164, Y: -0.1729874, Z: -0.0151344351, W: 0.981060266}
-                        Scale: {X: 1.0, Y: 1.0, Z: 1.0}
-                        Children: {}
-                    8c0046a8ed09eb429e93b887c4ddbb69: !CameraComponent
-                        Id: a846008c-09ed-42eb-9e93-b887c4ddbb69
-                        Projection: Perspective
-        -   Entity:
-                Id: eab11d8b-6e5d-4401-bde0-173372c7995d
+                Id: 76076061-ec68-4c10-8bc1-28843735f6d9
                 Name: Ambient light
                 Components:
                     b579fd2e2d67cf4d9bd6d1f1fe41bd90: !TransformComponent
@@ -120,3 +77,45 @@ Hierarchy:
                             Color: !ColorRgbProvider
                                 Value: {R: 0.768627465, G: 0.843137264, B: 1.0}
                         Intensity: 0.05
+        -   Entity:
+                Id: a7d57dc2-6cf6-4272-b87b-84f90911d9fc
+                Name: Camera
+                Components:
+                    3f2d8874c4afc7458e1817d6fc08d7f0: !TransformComponent
+                        Id: 74882d3f-afc4-45c7-8e18-17d6fc08d7f0
+                        Position: {X: -1.0, Y: 1.2, Z: 2.7}
+                        Rotation: {X: -0.08583164, Y: -0.1729874, Z: -0.0151344351, W: 0.981060266}
+                        Scale: {X: 1.0, Y: 1.0, Z: 1.0}
+                        Children: {}
+                    8c0046a8ed09eb429e93b887c4ddbb69: !CameraComponent
+                        Id: a846008c-09ed-42eb-9e93-b887c4ddbb69
+                        Projection: Perspective
+        -   Entity:
+                Id: d55dda8a-9754-4d0c-8fc7-14402c9a0526
+                Name: WorldDialog
+                Components:
+                    977a973ce3da0249b936b5afa0822ad8: !TransformComponent
+                        Id: 3c977a97-dae3-4902-b936-b5afa0822ad8
+                        Position: {X: 0.0, Y: 0.0, Z: 0.0}
+                        Rotation: {X: 0.0, Y: 0.0, Z: 0.0, W: 1.0}
+                        Scale: {X: 1.0, Y: 1.0, Z: 1.0}
+                        Children: {}
+                    49f3589a4c61a25f3264cfe10203f957: !OpenEQ.WorldScript,OpenEQ.Game
+                        Id: b8172031-7d6f-46e9-a10c-cea051e9c8c2
+                    bca721175d07784da5c81a74787857ab: !UIComponent
+                        Id: 1721a7bc-075d-4d78-a5c8-1a74787857ab
+                        Page: 36f5b115-09a9-44f2-8673-4035297c01a2:UI/WorldPage
+                        Resolution: {X: 1280.0, Y: 720.0, Z: 1000.0}
+                        Size: {X: 1.0, Y: 1.0, Z: 1.0}
+        -   Entity:
+                Id: e18f53aa-f0fa-4702-9d5b-4978e999381f
+                Name: Skybox
+                Components:
+                    338b7a88c969744d95ae709869b4ef84: !TransformComponent
+                        Id: 887a8b33-69c9-4d74-95ae-709869b4ef84
+                        Position: {X: 0.0, Y: 2.0, Z: -2.0}
+                        Rotation: {X: 0.0, Y: 0.0, Z: 0.0, W: 1.0}
+                        Scale: {X: 1.0, Y: 1.0, Z: 1.0}
+                        Children: {}
+                    fd41cf7c928cbe44b490bbaf6eb6911b: !SkyboxComponent
+                        Id: 7ccf41fd-8c92-44be-b490-bbaf6eb6911b

@@ -39,6 +39,8 @@ ExplicitFolders: []
 Bundles: []
 TemplateFolders: []
 RootAssets:
+    - 1fb9b905-2c0f-44b3-a6e3-559e7dc5a810:WorldScene
     - 4c67cf49-5959-4842-a40a-7e83dbed1793:DiffuseMaterial
     - 625015ed-c1c5-4d7c-b1b4-7e4b8b55c3d5:DiffuseMaskedMaterial
+    - b3135b1e-4c59-44d7-8c24-1689a74e57ab:ZoneScene
     - cb42242a-4356-48b2-9457-6d16b90ee810:DiffuseTranslucentMaterial

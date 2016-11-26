@@ -1,0 +1,115 @@
+!UIPageAsset
+Id: 36f5b115-09a9-44f2-8673-4035297c01a2
+SerializedVersion: {Xenko: 1.9.0-beta01}
+Tags: []
+Design:
+    Resolution: {X: 1280.0, Y: 720.0, Z: 1000.0}
+Hierarchy:
+    RootPartIds:
+        - 3d816a9a-cca4-4fdd-a522-0ff55ae58853
+    Parts:
+        -   UIElement: !ScrollViewer
+                DependencyProperties: {}
+                Id: 0e7dbfa5-c75f-4d0b-a183-5f57a345fdc5
+                BackgroundColor: {R: 0, G: 0, B: 0, A: 0}
+                ClipToBounds: true
+                CanBeHitByUser: true
+                Height: 496.0
+                Margin: {}
+                Padding: {Right: 10.0}
+                ScrollBarColor: {R: 25, G: 25, B: 25, A: 255}
+                ScrollMode: Vertical
+                Content: !Grid 4caeda60-0bbb-47c3-97d7-8a2302f3babf
+        -   UIElement: !Border
+                DependencyProperties: {}
+                Id: 1bc97fa0-2d17-44d1-9877-4a2fe2b2576f
+                BackgroundColor: {R: 0, G: 0, B: 0, A: 0}
+                Height: 24.0
+                HorizontalAlignment: Left
+                VerticalAlignment: Top
+                Margin: {}
+                Padding: {}
+                Content: !Grid acdc7e4d-58ed-43dd-abd3-71c13ab67bda
+                BorderColor: {R: 240, G: 240, B: 240, A: 255}
+                BorderThickness: {Bottom: 2.0}
+        -   UIElement: !TextBlock
+                DependencyProperties: {}
+                Id: 21443b96-dd14-4d3c-8f4c-939302fac222
+                BackgroundColor: {R: 0, G: 0, B: 0, A: 0}
+                HorizontalAlignment: Left
+                Margin: {}
+                Name: charNameHeader
+                Text: Character Name
+                Font: c90f3988-0544-4cbe-993f-13af7d9c23c6:XenkoDefaultFont
+                TextSize: 20.0
+                TextColor: {R: 240, G: 240, B: 240, A: 255}
+        -   UIElement: !StackPanel
+                DependencyProperties: {}
+                Id: 3d816a9a-cca4-4fdd-a522-0ff55ae58853
+                BackgroundColor: {R: 0, G: 0, B: 0, A: 0}
+                Margin: {Left: 100.0, Top: 100.0, Right: 100.0, Bottom: 100.0}
+                Name: 
+                Children:
+                    0540aed1b87851caa078a00dc2358b85: !Border 1bc97fa0-2d17-44d1-9877-4a2fe2b2576f
+                    5fac09b71b530992f986970f0f893e08: !ScrollViewer 0e7dbfa5-c75f-4d0b-a183-5f57a345fdc5
+        -   UIElement: !TextBlock
+                DependencyProperties:
+                    630b35ac1209f1d0de05ae9d2aa8560c~GridBase.ColumnPropertyKey: 1
+                Id: 4a2c22bc-32e2-43d2-89a3-2c220aaacc57
+                BackgroundColor: {R: 0, G: 0, B: 0, A: 0}
+                HorizontalAlignment: Left
+                Margin: {}
+                Text: Level
+                Font: c90f3988-0544-4cbe-993f-13af7d9c23c6:XenkoDefaultFont
+                TextSize: 20.0
+                TextColor: {R: 240, G: 240, B: 240, A: 255}
+        -   UIElement: !Grid
+                DependencyProperties: {}
+                Id: 4caeda60-0bbb-47c3-97d7-8a2302f3babf
+                BackgroundColor: {R: 0, G: 0, B: 0, A: 0}
+                HorizontalAlignment: Left
+                DepthAlignment: Stretch
+                Margin: {}
+                MinimumWidth: 1080.0
+                MaximumWidth: 1080.0
+                Name: charGrid
+                Children: {}
+                RowDefinitions: {}
+                ColumnDefinitions:
+                    76b09ac802b1dcd119498c13802d6eab:
+                        MaximumSize: 830.0
+                        MinimumSize: 830.0
+                        Type: Fixed
+                    def3d9822d3cff1f89286a81c71f57d6:
+                        MaximumSize: 125.0
+                        MinimumSize: 125.0
+                        Type: Fixed
+                    e64ef5b76dff4ba8d0a75ee6745de573:
+                        MaximumSize: 125.0
+                        MinimumSize: 125.0
+                        Type: Fixed
+                LayerDefinitions: {}
+        -   UIElement: !Grid
+                DependencyProperties: {}
+                Id: acdc7e4d-58ed-43dd-abd3-71c13ab67bda
+                BackgroundColor: {R: 0, G: 0, B: 0, A: 0}
+                VerticalAlignment: Top
+                Margin: {}
+                Children:
+                    d5d982fdd71c02b5f13d99f2cffb5d6f: !TextBlock 21443b96-dd14-4d3c-8f4c-939302fac222
+                    25a3e7be1bf1664e82f2cad6778eb94d: !TextBlock 4a2c22bc-32e2-43d2-89a3-2c220aaacc57
+                RowDefinitions: {}
+                ColumnDefinitions:
+                    21a074b58f16af64c545d50e4a322346:
+                        MaximumSize: 830.0
+                        MinimumSize: 830.0
+                        Type: Fixed
+                    96553e9ded020ca00c97b73c847a2e73:
+                        MaximumSize: 125.0
+                        MinimumSize: 125.0
+                        Type: Fixed
+                    075d387be860f85011bbf9a8e23381ac:
+                        MaximumSize: 125.0
+                        MinimumSize: 125.0
+                        Type: Fixed
+                LayerDefinitions: {}

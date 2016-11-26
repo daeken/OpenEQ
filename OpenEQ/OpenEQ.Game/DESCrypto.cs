@@ -265,7 +265,6 @@ namespace OpenEQ {
         }
 
         public byte[] Decrypt(byte[] data) {
-            Debug.Assert(data.Length % 8 == 0);
             return DoCBC(false, data);
         }
 
