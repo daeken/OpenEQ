@@ -38,6 +38,7 @@ namespace OpenEQ.NetClient {
                 } else {
                     WriteLine("Play request accepted.  Initializing world.");
                     world = new WorldStream(server?.worldIP, 9000, login.accountID, login.sessionKey);
+                    SetupWorld(world);
                 }
             };
 
@@ -48,6 +49,16 @@ namespace OpenEQ.NetClient {
 
             WriteLine("Completed.");
             ReadLine();
+        }
+
+        static void SetupWorld(WorldStream world) {
+            world.CharacterList += (sender, chars) => {
+                WriteLine($"Got {chars.Count} characters:");
+                foreach(var character in chars)
+                    WriteLine($"- {character.Name} - Level {character.Level}");
+                WriteLine($"Entering world with { chars[0].Name }");
+                world.EnterWorld(chars[0].Name, false, false);
+            };
         }
     }
 }

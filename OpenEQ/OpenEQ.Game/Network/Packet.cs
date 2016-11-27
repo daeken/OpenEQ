@@ -201,7 +201,7 @@ namespace OpenEQ.Network {
             var arr = new byte[size + (extraData != null ? extraData.Length : 0)];
 
             var ptr = Marshal.AllocHGlobal(size);
-            Marshal.StructureToPtr(data, ptr, true);
+            Marshal.StructureToPtr(data, ptr, false);
             Marshal.Copy(ptr, arr, 0, size);
             Marshal.FreeHGlobal(ptr);
 

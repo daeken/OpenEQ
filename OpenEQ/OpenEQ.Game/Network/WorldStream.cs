@@ -1,10 +1,14 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Text;
 using static System.Console;
 using static OpenEQ.Utility;
 
 namespace OpenEQ.Network {
     public class WorldStream : EQStream {
+        public event EventHandler<List<CharacterSelectEntry>> CharacterList;
+        public event EventHandler<string> MOTD;
+
         uint accountID;
         string sessionKey;
 
@@ -35,15 +39,21 @@ namespace OpenEQ.Network {
                 case WorldOp.ExpansionInfo:
                     break;
                 case WorldOp.SendCharInfo:
-                    WriteLine($"HANDLED packet in WorldStream: {(WorldOp) packet.Opcode} (0x{packet.Opcode:X04})");
-                    Hexdump(packet.Data);
                     var chars = new CharacterSelect(packet.Data);
+                    CharacterList?.Invoke(this, chars.Characters);
+                    break;
+                case WorldOp.MessageOfTheDay:
+                    MOTD?.Invoke(this, Encoding.ASCII.GetString(packet.Data));
                     break;
                 default:
                     WriteLine($"Unhandled packet in WorldStream: {(WorldOp)packet.Opcode} (0x{packet.Opcode:X04})");
                     Hexdump(packet.Data);
                     break;
             }
+        }
+
+        public void EnterWorld(string name, bool tutorial, bool goHome) {
+            Send(AppPacket.Create(WorldOp.EnterWorld, new EnterWorld(name, tutorial, goHome)));
         }
     }
 }

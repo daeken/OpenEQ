@@ -45,6 +45,10 @@ namespace OpenEQ.Network {
         CharacterCreate = 0x1b85, 
         RandomNameGenerator = 0x647a, 
         ApproveName = 0x4f1f, 
-        MessageOfTheDay = 0x7629
+        MessageOfTheDay = 0x7629, 
+        ZoneServerInfo = 0x1190, 
+        WorldComplete = 0x441c, 
+        SetChatServer = 0x7d90, 
+        SetChatServer2 = 0x158f
     }
 }

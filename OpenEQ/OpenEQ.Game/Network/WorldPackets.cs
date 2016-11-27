@@ -1,10 +1,11 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 
 namespace OpenEQ.Network {
-    struct CharacterSelectEntry {
+    public struct CharacterSelectEntry {
         public int Level, HairStyle, HairColor, Beard, Face, PrimaryID, SecondaryID, Deity, Zone, Instance, Race, Class, EyeColor1, EyeColor2, BeardColor, DrakkinHeritage, DrakkinTattoo, DrakkinDetails;
         public bool Gender; // false/true == male/female
         public bool GoHome, Tutorial;
@@ -29,22 +30,35 @@ namespace OpenEQ.Network {
                     (Class, EyeColor1, BeardColor, EyeColor2) = br.ReadByte(4);
                     (DrakkinHeritage, DrakkinTattoo, DrakkinDetails) = br.ReadInt32(3);
                     br.ReadByte(); // Unknown
+                    offset += (int) ms.Position;
                 }
-                offset += (int) ms.Position;
             }
         }
     }
 
     struct CharacterSelect {
-        public CharacterSelectEntry[] Characters;
+        public List<CharacterSelectEntry> Characters;
 
         public CharacterSelect(byte[] data) {
             var (charcount, totalchars) = (data.U32(0), data.U32(4));
             var off = 8;
-            Characters = new CharacterSelectEntry[charcount];
+            Characters = new List<CharacterSelectEntry>();
             for(var i = 0; i < charcount; ++i) {
-                Characters[i] = new CharacterSelectEntry(data, ref off);
+                Characters.Add(new CharacterSelectEntry(data, ref off));
             }
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct EnterWorld {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)]
+        public string Name;
+        byte tutorial, goHome;
+
+        public EnterWorld(string name, bool tutorial, bool goHome) {
+            Name = name;
+            this.tutorial = (byte) (tutorial ? 1 : 0);
+            this.goHome = (byte) (goHome ? 1 : 0);
         }
     }
 }
