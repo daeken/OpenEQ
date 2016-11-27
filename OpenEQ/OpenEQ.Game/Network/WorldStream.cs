@@ -35,7 +35,9 @@ namespace OpenEQ.Network {
                 case WorldOp.ExpansionInfo:
                     break;
                 case WorldOp.SendCharInfo:
-
+                    WriteLine($"HANDLED packet in WorldStream: {(WorldOp) packet.Opcode} (0x{packet.Opcode:X04})");
+                    Hexdump(packet.Data);
+                    var chars = new CharacterSelect(packet.Data);
                     break;
                 default:
                     WriteLine($"Unhandled packet in WorldStream: {(WorldOp)packet.Opcode} (0x{packet.Opcode:X04})");

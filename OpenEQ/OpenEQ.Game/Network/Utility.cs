@@ -1,6 +1,8 @@
 ﻿using static System.Console;
 using System.Linq;
 using System;
+using System.Collections.Generic;
+using System.IO;
 
 namespace OpenEQ {
     public static class Utility {
@@ -28,6 +30,28 @@ namespace OpenEQ {
             }
             WriteLine($"{data.Length:X04}");
         }
+
+        public static List<byte> ReadByte(this BinaryReader br, int count) {
+            return Enumerable.Range(0, count).Select(x => br.ReadByte()).ToList();
+        }
+        public static List<short> ReadInt16(this BinaryReader br, int count) {
+            return Enumerable.Range(0, count).Select(x => br.ReadInt16()).ToList();
+        }
+        public static List<int> ReadInt32(this BinaryReader br, int count) {
+            return Enumerable.Range(0, count).Select(x => br.ReadInt32()).ToList();
+        }
+
+        public static string ReadNullTermString(this BinaryReader br) {
+            var os = "";
+            while(true) {
+                var ch = (char) br.ReadByte();
+                if(ch == 0)
+                    break;
+                os += ch;
+            }
+            return os;
+        }
+
 
         public static ushort NetU16(this byte[] data, int off) {
             return (ushort)(
