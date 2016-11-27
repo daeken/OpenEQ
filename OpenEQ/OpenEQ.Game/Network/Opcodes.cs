@@ -32,6 +32,19 @@ namespace OpenEQ.Network {
     }
 
     public enum WorldOp : ushort {
-        SendLoginInfo = 0x13da
+        SendLoginInfo = 0x13da, 
+        ApproveWorld = 0x86c7, 
+        LogServer = 0x6f79, 
+        SendCharInfo = 0x4200, 
+        ExpansionInfo = 0x7e4d,
+        GuildsList = 0x5b0b,  
+        EnterWorld = 0x51b9, 
+        PostEnterWorld = 0x5d32, 
+        DeleteCharacter = 0x5ca5, 
+        CharacterCreateRequest = 0x53a3, 
+        CharacterCreate = 0x1b85, 
+        RandomNameGenerator = 0x647a, 
+        ApproveName = 0x4f1f, 
+        MessageOfTheDay = 0x7629
     }
 }

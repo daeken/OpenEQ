@@ -183,8 +183,13 @@ namespace OpenEQ.Network {
         }
 
         public AppPacket(byte[] data) {
-            Opcode = (ushort) (data[0] | (data[1] << 8));
-            Data = data.Sub(2);
+            if(data[0] == 0) {
+                Opcode = (ushort)(data[1] | (data[2] << 8));
+                Data = data.Sub(3);
+            } else {
+                Opcode = (ushort)(data[0] | (data[1] << 8));
+                Data = data.Sub(2);
+            }
         }
 
         public static AppPacket Create<OpT>(OpT opcode, byte[] data = null) {

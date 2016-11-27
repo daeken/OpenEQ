@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Text;
 using static System.Console;
+using static OpenEQ.Utility;
 
 namespace OpenEQ.Network {
     public class WorldStream : EQStream {
@@ -25,7 +26,22 @@ namespace OpenEQ.Network {
         }
 
         protected override void HandleAppPacket(AppPacket packet) {
-            throw new NotImplementedException();
+            switch((WorldOp)packet.Opcode) {
+                case WorldOp.GuildsList:
+                    break;
+                case WorldOp.LogServer:
+                case WorldOp.ApproveWorld:
+                case WorldOp.EnterWorld:
+                case WorldOp.ExpansionInfo:
+                    break;
+                case WorldOp.SendCharInfo:
+
+                    break;
+                default:
+                    WriteLine($"Unhandled packet in WorldStream: {(WorldOp)packet.Opcode} (0x{packet.Opcode:X04})");
+                    Hexdump(packet.Data);
+                    break;
+            }
         }
     }
 }
