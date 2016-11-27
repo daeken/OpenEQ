@@ -85,6 +85,7 @@ namespace OpenEQ.Network {
                     var response = packet.Get<SessionResponse>();
                     Compressing = (response.filterMode & FilterMode.Compressed) != 0;
                     Validating = (response.validationMode & ValidationMode.Crc) != 0;
+
                     CRCKey = new byte[] {
                         (byte) (response.crcKey >> 24),
                         (byte) (response.crcKey >> 16),
@@ -186,7 +187,7 @@ namespace OpenEQ.Network {
         }
 
         protected void Send(Packet packet) {
-            if(packet.SentTime == 0 && !packet.Bare && packet.Opcode != (ushort) SessionOp.Ack && packet.Opcode != (ushort) SessionOp.Stats) {
+            if(packet.Baked == null && packet.SentTime == 0 && !packet.Bare && packet.Opcode != (ushort) SessionOp.Ack && packet.Opcode != (ushort) SessionOp.Stats) {
                 packet.Sequence = OutSequence;
                 sentPackets[OutSequence++] = packet;
             }

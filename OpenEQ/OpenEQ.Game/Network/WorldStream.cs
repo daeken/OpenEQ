@@ -18,7 +18,7 @@ namespace OpenEQ.Network {
         protected override void HandleSessionResponse(Packet packet) {
             Send(packet);
 
-            var data = new byte[488];
+            var data = new byte[464];
             var str = $"{accountID}\0{sessionKey}";
             Array.Copy(Encoding.ASCII.GetBytes(str), data, str.Length);
             Send(AppPacket.Create(WorldOp.SendLoginInfo, data));

@@ -3,6 +3,9 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using static System.Console;
 using static OpenEQ.Utility;
+using System.IO;
+using System.Collections.Generic;
+using Ionic.Zlib;
 
 namespace OpenEQ.Network {
     public class Packet {
@@ -12,7 +15,7 @@ namespace OpenEQ.Network {
         public bool Acked = false;
         public float SentTime;
         public bool Valid = true;
-        protected byte[] baked;
+        public byte[] Baked;
         bool sequenced;
         ushort sequence;
 
@@ -33,7 +36,7 @@ namespace OpenEQ.Network {
         public Packet(SessionOp opcode, byte[] data, bool bare = false) : this((ushort) opcode, data, bare) { }
 
         public Packet(EQStream stream, byte[] packet, bool combined = false) {
-            baked = packet;
+            Baked = packet;
 
             Opcode = packet.NetU16(0);
             var off = 2;
@@ -52,7 +55,16 @@ namespace OpenEQ.Network {
                     }
                     if(!combined && stream.Compressing) {
                         if(packet[off] == 0x5a) {
-                            WriteLine("Compressed packet :(");
+                            using(var ms = new MemoryStream(packet, 3, packet.Length - 3 - 2)) {
+                                using(var ds = new ZlibStream(ms, CompressionMode.Decompress)) {
+                                    using(var tms = new MemoryStream()) {
+                                        ds.CopyTo(tms);
+                                        packet = tms.ToArray();
+                                        plen = packet.Length;
+                                        off = 0;
+                                    }
+                                }
+                            }
                         } else {
                             Debug.Assert(packet[off] == 0xa5);
                             off++;
@@ -100,42 +112,62 @@ namespace OpenEQ.Network {
         }
 
         public virtual byte[] Bake(EQStream stream) {
-            if(baked != null)
-                return baked;
+            if(Baked != null)
+                return Baked;
             
             if(Bare) {
-                baked = new byte[Data.Length + 2];
-                baked[0] = (byte) (Opcode >> 8);
-                baked[1] = (byte) Opcode;
-                Array.Copy(Data, 0, baked, 2, Data.Length);
+                Baked = new byte[Data.Length + 2];
+                Baked[0] = (byte) (Opcode >> 8);
+                Baked[1] = (byte) Opcode;
+                Array.Copy(Data, 0, Baked, 2, Data.Length);
             } else {
                 var len = Data.Length + 2 + 2;
                 if(stream.Compressing)
                     len++;
                 if(sequenced)
                     len += 2;
-                baked = new byte[len];
-                baked[0] = (byte) (Opcode >> 8);
-                baked[1] = (byte) Opcode;
+                Baked = new byte[len];
+                Baked[0] = (byte) (Opcode >> 8);
+                Baked[1] = (byte) Opcode;
                 var off = 2;
-                if(stream.Compressing)
-                    baked[off++] = 0xa5;
+
+                var doCompress = false;
+
+                if(!doCompress && stream.Compressing)
+                    Baked[off++] = 0xa5;
+
                 if(sequenced) {
-                    baked[off++] = (byte) (sequence >> 8);
-                    baked[off++] = (byte) sequence;
+                    Baked[off++] = (byte)(sequence >> 8);
+                    Baked[off++] = (byte)sequence;
                 }
-                Array.Copy(Data, 0, baked, off, Data.Length);
+                Array.Copy(Data, 0, Baked, off, Data.Length);
                 off += Data.Length;
+
+                if(doCompress && stream.Compressing) {
+                    using(var ms = new MemoryStream()) {
+                        using(var ds = new ZlibStream(ms, CompressionMode.Compress)) {
+                            ds.Write(Baked, 2, off - 2);
+                            ds.Flush();
+                        }
+                        var temp = ms.ToArray();
+                        var temp2 = new byte[3 + temp.Length + 2];
+                        Array.Copy(Baked, temp2, 3);
+                        temp2[2] = 0x5a;
+                        Array.Copy(temp, 0, temp2, 3, temp.Length);
+                        Baked = temp2;
+                        off = temp.Length + 3;
+                    }
+                }
                 if(stream.Validating) {
-                    var crc = CalculateCRC(baked.Sub(0, off), stream.CRCKey);
-                    baked[off++] = (byte) (crc >> 8);
-                    baked[off++] = (byte) crc;
+                    var crc = CalculateCRC(Baked.Sub(0, off), stream.CRCKey);
+                    Baked[off++] = (byte) (crc >> 8);
+                    Baked[off++] = (byte) crc;
                 } else {
-                    baked[off++] = 0;
-                    baked[off++] = 0;
+                    Baked[off++] = 0;
+                    Baked[off++] = 0;
                 }
             }
-            return baked;
+            return Baked;
         }
     }
 
