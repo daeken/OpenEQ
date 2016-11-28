@@ -5,12 +5,11 @@ using static System.Console;
 namespace OpenEQ.NetClient {
     class Program {
         static void Main(string[] args) {
-            EQStream.Debug = true;
+            //EQStream.Debug = true;
 
             var running = true;
             var login = new LoginStream("192.168.1.119", 5998);
-            WorldStream world;
-
+            
             login.LoginSuccess += (sender, success) => {
                 if(success) {
                     WriteLine("Login successful. Requesting server list.");
@@ -37,7 +36,7 @@ namespace OpenEQ.NetClient {
                     running = false;
                 } else {
                     WriteLine("Play request accepted.  Initializing world.");
-                    world = new WorldStream(server?.worldIP, 9000, login.accountID, login.sessionKey);
+                    var world = new WorldStream(server?.worldIP, 9000, login.accountID, login.sessionKey);
                     SetupWorld(world);
                 }
             };
@@ -52,13 +51,26 @@ namespace OpenEQ.NetClient {
         }
 
         static void SetupWorld(WorldStream world) {
+            string charname = null;
             world.CharacterList += (sender, chars) => {
                 WriteLine($"Got {chars.Count} characters:");
                 foreach(var character in chars)
                     WriteLine($"- {character.Name} - Level {character.Level}");
-                WriteLine($"Entering world with { chars[0].Name }");
-                world.EnterWorld(chars[0].Name, false, false);
+                charname = chars[0].Name;
+                WriteLine($"Entering world with { charname }");
+                world.EnterWorld(charname, false, false);
             };
+
+            world.ZoneServer += (sender, server) => {
+                WriteLine($"Zone server info: {server.IP}:{server.Port}");
+
+                var zone = new ZoneStream(server.IP, server.Port, charname);
+                SetupZone(zone);
+            };
+        }
+
+        static void SetupZone(ZoneStream zone) {
+
         }
     }
 }

@@ -11,7 +11,7 @@ namespace OpenEQ.Network {
         public SessionRequest(uint sessID) {
             unknown = 2;
             sessionID = sessID;
-            maxLength = 512;
+            maxLength = 0x00020000; //512; // Need network order
         }
     }
 

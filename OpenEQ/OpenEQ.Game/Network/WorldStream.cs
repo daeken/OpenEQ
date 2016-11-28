@@ -8,6 +8,7 @@ namespace OpenEQ.Network {
     public class WorldStream : EQStream {
         public event EventHandler<List<CharacterSelectEntry>> CharacterList;
         public event EventHandler<string> MOTD;
+        public event EventHandler<ZoneServerInfo> ZoneServer;
 
         uint accountID;
         string sessionKey;
@@ -44,6 +45,10 @@ namespace OpenEQ.Network {
                     break;
                 case WorldOp.MessageOfTheDay:
                     MOTD?.Invoke(this, Encoding.ASCII.GetString(packet.Data));
+                    break;
+                case WorldOp.ZoneServerInfo:
+                    var info = packet.Get<ZoneServerInfo>();
+                    ZoneServer?.Invoke(this, info);
                     break;
                 default:
                     WriteLine($"Unhandled packet in WorldStream: {(WorldOp)packet.Opcode} (0x{packet.Opcode:X04})");

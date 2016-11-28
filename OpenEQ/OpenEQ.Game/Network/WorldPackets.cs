@@ -61,4 +61,11 @@ namespace OpenEQ.Network {
             this.goHome = (byte) (goHome ? 1 : 0);
         }
     }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct ZoneServerInfo {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+        public string IP;
+        public ushort Port;
+    }
 }

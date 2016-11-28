@@ -66,13 +66,14 @@ namespace OpenEQ.Network {
         async Task Receiver() {
             while(true) {
                 var data = await conn.Receive();
-                var packet = new Packet(this, data);
+
                 if(Debug) {
                     ForegroundColor = ConsoleColor.DarkMagenta;
                     WriteLine($"Received packet ({this})");
                     Hexdump(data);
                     ResetColor();
                 }
+                var packet = new Packet(this, data);
                 if(packet.Valid)
                     ProcessSessionPacket(packet);
             }
@@ -127,10 +128,12 @@ namespace OpenEQ.Network {
         void QueueOrProcess(Packet packet) {
             if(packet.Sequence == InSequence) // Present
                 ProcessPacket(packet);
-            else if(packet.Sequence > InSequence && packet.Sequence - InSequence < 2048) {// Future
+            else if((packet.Sequence > InSequence && packet.Sequence - InSequence < 2048) || (packet.Sequence + 65536) - InSequence < 2048) {// Future
                 futurePackets[packet.Sequence] = packet;
                 if(futurePackets[InSequence]?.Opcode == (ushort) SessionOp.Fragment) // Maybe we have enough for the current fragment?
                     ProcessPacket(futurePackets[InSequence]);
+            } else if((packet.Sequence < InSequence && InSequence - packet.Sequence < 2048) || packet.Sequence - (InSequence + 65536) < 2048) { // Past
+                WriteLine($"Got packet in the past... expect {InSequence} got {packet.Sequence}");
             }
         }
 

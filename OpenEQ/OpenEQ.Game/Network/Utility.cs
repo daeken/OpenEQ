@@ -8,27 +8,29 @@ namespace OpenEQ {
     public static class Utility {
         const string printable = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-=_+{}[];':\" |\\<>?,./`~!@#$%^&*()1234567890";
         public static void Hexdump(byte[] data) {
-            for(var i = 0; i < data.Length; i += 16) {
-                Write($"{i:X04}  ");
-                var chars = "";
-                for(var j = 0; j < 16; ++j) {
-                    if(i + j < data.Length) {
-                        Write($"{data[i + j]:X02} ");
-                        if(printable.Contains((char)data[i + j]))
-                            chars += (char)data[i + j];
-                        else
-                            chars += ".";
-                    } else
-                        Write("   ");
-                    if(j == 7) {
-                        Write(" ");
-                        chars += " ";
+            lock(printable) {
+                for(var i = 0; i < data.Length; i += 16) {
+                    Write($"{i:X04}  ");
+                    var chars = "";
+                    for(var j = 0; j < 16; ++j) {
+                        if(i + j < data.Length) {
+                            Write($"{data[i + j]:X02} ");
+                            if(printable.Contains((char) data[i + j]))
+                                chars += (char) data[i + j];
+                            else
+                                chars += ".";
+                        } else
+                            Write("   ");
+                        if(j == 7) {
+                            Write(" ");
+                            chars += " ";
+                        }
                     }
+                    Write("| ");
+                    WriteLine(chars);
                 }
-                Write("| ");
-                WriteLine(chars);
+                WriteLine($"{data.Length:X04}");
             }
-            WriteLine($"{data.Length:X04}");
         }
 
         public static List<byte> ReadByte(this BinaryReader br, int count) {

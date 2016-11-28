@@ -65,8 +65,7 @@ namespace OpenEQ.Network {
                                     }
                                 }
                             }
-                        } else {
-                            Debug.Assert(packet[off] == 0xa5);
+                        } else if(packet[off] == 0xa5) {
                             off++;
                             plen--;
                         }
