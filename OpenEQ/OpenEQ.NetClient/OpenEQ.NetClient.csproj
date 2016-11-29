@@ -51,7 +51,7 @@
     <None Include="App.config" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\OpenEQ\OpenEQ.Game\OpenEQ.Game.csproj">
+    <ProjectReference Include="..\OpenEQ.Game\OpenEQ.Game.csproj">
       <Project>{59e1e87e-2af9-4acd-abc1-077fe8cad76b}</Project>
       <Name>OpenEQ.Game</Name>
     </ProjectReference>

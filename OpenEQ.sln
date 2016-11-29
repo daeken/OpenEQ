@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 14
-VisualStudioVersion = 14.0.25420.1
+# Visual Studio 15
+VisualStudioVersion = 15.0.25920.0
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "OpenEQ", "OpenEQ", "{E9471F65-D117-481F-A11A-27535FA6A611}"
 	ProjectSection(SiliconStudioPackage) = preProject
@@ -12,10 +12,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenEQ.Windows", "OpenEQ\Op
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenEQ.Game", "OpenEQ\OpenEQ.Game\OpenEQ.Game.csproj", "{59E1E87E-2AF9-4ACD-ABC1-077FE8CAD76B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenEQ.NetClient", "OpenEQ.NetClient\OpenEQ.NetClient.csproj", "{E87C3F5B-BC2B-4D7D-A483-62A472E501CA}"
-	ProjectSection(ProjectDependencies) = postProject
-		{59E1E87E-2AF9-4ACD-ABC1-077FE8CAD76B} = {59E1E87E-2AF9-4ACD-ABC1-077FE8CAD76B}
-	EndProjectSection
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenEQ.NetClient", "OpenEQ\OpenEQ.NetClient\OpenEQ.NetClient.csproj", "{E87C3F5B-BC2B-4D7D-A483-62A472E501CA}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

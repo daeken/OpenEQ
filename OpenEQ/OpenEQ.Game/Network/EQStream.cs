@@ -59,7 +59,7 @@ namespace OpenEQ.Network {
                         lastAckSent = InSequence;
                     }
                 }
-                await Task.Delay(1000);
+                await Task.Delay(100);
             }
         }
 

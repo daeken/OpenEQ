@@ -31,7 +31,7 @@ namespace OpenEQ.Network {
         }
 
         protected override void HandleAppPacket(AppPacket packet) {
-            switch((WorldOp)packet.Opcode) {
+            switch((WorldOp) packet.Opcode) {
                 case WorldOp.GuildsList:
                     break;
                 case WorldOp.LogServer:

@@ -19,7 +19,7 @@ namespace OpenEQ.Network {
         protected override void HandleSessionResponse(Packet packet) {
             Send(packet);
 
-            Send(AppPacket.Create(ZoneOp.PlayerSpawn, new ClientZoneEntry(charName)));
+            Send(AppPacket.Create(ZoneOp.ZoneEntry, new ClientZoneEntry(charName)));
         }
 
         protected override void HandleAppPacket(AppPacket packet) {
