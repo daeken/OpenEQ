@@ -21,8 +21,8 @@ namespace OpenEQ.Network {
         public EQStream(string host, int port) {
             conn = new AsyncUDPConnection(host, port);
 
-            Task.Factory.StartNew(Checker, TaskCreationOptions.LongRunning);
-            Task.Factory.StartNew(Receiver, TaskCreationOptions.LongRunning);
+            Task.Factory.StartNew(CheckerAsync, TaskCreationOptions.LongRunning);
+            Task.Factory.StartNew(ReceiverAsync, TaskCreationOptions.LongRunning);
         }
 
         protected void Connect() {
@@ -41,7 +41,7 @@ namespace OpenEQ.Network {
             Send(Packet.Create(SessionOp.Request, sr, bare: true));
         }
 
-        async Task Checker() {
+        async Task CheckerAsync() {
             while(true) {
                 if(sentPackets != null) {
                     lock(sentPackets) {
@@ -71,7 +71,7 @@ namespace OpenEQ.Network {
             }
         }
 
-        async Task Receiver() {
+        async Task ReceiverAsync() {
             while(true) {
                 var data = await conn.Receive();
 
@@ -142,7 +142,8 @@ namespace OpenEQ.Network {
                     if(futurePackets[InSequence]?.Opcode == (ushort) SessionOp.Fragment) // Maybe we have enough for the current fragment?
                         ProcessPacket(futurePackets[InSequence]);
                 } else if((packet.Sequence < InSequence && InSequence - packet.Sequence < 2048) || packet.Sequence - (InSequence + 65536) < 2048) { // Past
-                    WriteLine($"Got packet in the past... expect {InSequence} got {packet.Sequence}.  Sending ACK up to {(ushort) ((InSequence + 65536) % 65536)}");
+                    if(Debug)
+                        WriteLine($"Got packet in the past... expect {InSequence} got {packet.Sequence}.  Sending ACK up to {(ushort) ((InSequence + 65536) % 65536)}");
                     resendAck = true;
                 }
             }
