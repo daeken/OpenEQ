@@ -39,7 +39,9 @@ class Type(object):
 		self.base = spec.split('<', 1)[0].split('[', 1)[0]
 
 	def declare(self):
-		if self.base == 'varstring':
+		if self.base == 'skip':
+			return None
+		elif self.base == 'varstring':
 			type = 'string'
 		elif self.base == 'list':
 			assert self.gen is not None
@@ -55,6 +57,10 @@ class Type(object):
 		return type
 
 	def pack(self, name, ws='', array=False):
+		if self.base == 'skip':
+			print '%sbw.Write(new byte[%s]);' % (ws, self.rank)
+			return
+
 		if not array and self.base != 'string' and self.rank is not None:
 			tvar = chr(ord('i') + len(ws) - 3)
 			print '%sfor(var %s = 0; %s < %s; ++%s) {' % (ws, tvar, tvar, self.rank, tvar)
@@ -74,6 +80,10 @@ class Type(object):
 			print '%s%s.Pack(bw);' % (ws, name)
 
 	def unpack(self, name, ws='', array=False):
+		if self.base == 'skip':
+			print '%sbr.ReadBytes(%s);' % (ws, self.rank)
+			return
+
 		if not array and self.base != 'string' and self.rank is not None:
 			if self.base == 'list':
 				print '%s%s = new List<%s>();' % (ws, name, self.gen.declare())
@@ -121,7 +131,10 @@ class Struct(object):
 		print '\tpublic struct %s : IEQStruct {' % self.name
 
 		for name, type in self.elems:
-			print '\t\t%s%s %s;' % ('public ' if name[0].isupper() else '', type.declare(), name)
+			stype = type.declare()
+			if stype is None:
+				continue
+			print '\t\t%s%s %s;' % ('public ' if name[0].isupper() else '', stype, name)
 
 		if len(list(1 for name, type in self.elems if name[0].isupper())):
 			print
@@ -165,6 +178,15 @@ class Struct(object):
 		print '\t\tpublic void Pack(BinaryWriter bw) {'
 		for name, type in self.elems:
 			type.pack(name, '\t\t\t')
+		print '\t\t}'
+
+		print
+		print '\t\tpublic override string ToString() {'
+		print '\t\t\tvar ret = "struct %s {\\n";' % self.name
+		for i, (name, type) in enumerate(self.elems):
+			if type.declare() is not None:
+				print '\t\t\tret += $"\\t%s = { Indentify(%s) }%s\\n";' % (name, name, ',' if i != len(self.elems) - 1 else '')
+		print '\t\t\treturn ret + "}";'
 		print '\t\t}'
 
 		print '\t}'
@@ -240,6 +262,7 @@ for ns, (structs, enums) in sdefs.items():
 */'''
 		print 'using System.Collections.Generic;'
 		print 'using System.IO;'
+		print 'using static OpenEQ.Network.Utility;'
 		print
 		print 'namespace OpenEQ.Network {'
 

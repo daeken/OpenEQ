@@ -15,6 +15,7 @@
 */
 using System.Collections.Generic;
 using System.IO;
+using static OpenEQ.Network.Utility;
 
 namespace OpenEQ.Network {
 	public struct CharacterSelect : IEQStruct {
@@ -63,6 +64,14 @@ namespace OpenEQ.Network {
 				Characters[i].Pack(bw);
 			}
 		}
+
+		public override string ToString() {
+			var ret = "struct CharacterSelect {\n";
+			ret += $"\tcharCount = { Indentify(charCount) },\n";
+			ret += $"\ttotalChars = { Indentify(totalChars) },\n";
+			ret += $"\tCharacters = { Indentify(Characters) }\n";
+			return ret + "}";
+		}
 	}
 
 	public struct EnterWorld : IEQStruct {
@@ -108,6 +117,14 @@ namespace OpenEQ.Network {
 			bw.Write((byte) (Tutorial ? 1 : 0));
 			bw.Write((byte) (GoHome ? 1 : 0));
 		}
+
+		public override string ToString() {
+			var ret = "struct EnterWorld {\n";
+			ret += $"\tName = { Indentify(Name) },\n";
+			ret += $"\tTutorial = { Indentify(Tutorial) },\n";
+			ret += $"\tGoHome = { Indentify(GoHome) }\n";
+			return ret + "}";
+		}
 	}
 
 	public struct ZoneServerInfo : IEQStruct {
@@ -148,6 +165,13 @@ namespace OpenEQ.Network {
 		public void Pack(BinaryWriter bw) {
 			bw.Write(Host.ToBytes(128));
 			bw.Write(Port);
+		}
+
+		public override string ToString() {
+			var ret = "struct ZoneServerInfo {\n";
+			ret += $"\tHost = { Indentify(Host) },\n";
+			ret += $"\tPort = { Indentify(Port) }\n";
+			return ret + "}";
 		}
 	}
 
@@ -286,6 +310,37 @@ namespace OpenEQ.Network {
 			bw.Write(DrakkinTattoo);
 			bw.Write(DrakkinDetails);
 			bw.Write(unknown);
+		}
+
+		public override string ToString() {
+			var ret = "struct CharacterSelectEntry {\n";
+			ret += $"\tLevel = { Indentify(Level) },\n";
+			ret += $"\tHairStyle = { Indentify(HairStyle) },\n";
+			ret += $"\tGender = { Indentify(Gender) },\n";
+			ret += $"\tName = { Indentify(Name) },\n";
+			ret += $"\tBeard = { Indentify(Beard) },\n";
+			ret += $"\tHairColor = { Indentify(HairColor) },\n";
+			ret += $"\tFace = { Indentify(Face) },\n";
+			ret += $"\tequipment = { Indentify(equipment) },\n";
+			ret += $"\tPrimaryID = { Indentify(PrimaryID) },\n";
+			ret += $"\tSecondaryID = { Indentify(SecondaryID) },\n";
+			ret += $"\tunknown15 = { Indentify(unknown15) },\n";
+			ret += $"\tDeity = { Indentify(Deity) },\n";
+			ret += $"\tZone = { Indentify(Zone) },\n";
+			ret += $"\tInstance = { Indentify(Instance) },\n";
+			ret += $"\tGoHome = { Indentify(GoHome) },\n";
+			ret += $"\tunknown19 = { Indentify(unknown19) },\n";
+			ret += $"\tRace = { Indentify(Race) },\n";
+			ret += $"\tTutorial = { Indentify(Tutorial) },\n";
+			ret += $"\tClass = { Indentify(Class) },\n";
+			ret += $"\tEyeColor1 = { Indentify(EyeColor1) },\n";
+			ret += $"\tBeardColor = { Indentify(BeardColor) },\n";
+			ret += $"\tEyeColor2 = { Indentify(EyeColor2) },\n";
+			ret += $"\tDrakkinHeritage = { Indentify(DrakkinHeritage) },\n";
+			ret += $"\tDrakkinTattoo = { Indentify(DrakkinTattoo) },\n";
+			ret += $"\tDrakkinDetails = { Indentify(DrakkinDetails) },\n";
+			ret += $"\tunknown = { Indentify(unknown) }\n";
+			return ret + "}";
 		}
 	}
 }

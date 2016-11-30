@@ -15,6 +15,7 @@
 */
 using System.Collections.Generic;
 using System.IO;
+using static OpenEQ.Network.Utility;
 
 namespace OpenEQ.Network {
 	public enum ServerStatus {
@@ -98,6 +99,19 @@ namespace OpenEQ.Network {
 			bw.Write((uint) Status);
 			bw.Write(PlayersOnline);
 		}
+
+		public override string ToString() {
+			var ret = "struct ServerListElement {\n";
+			ret += $"\tWorldIP = { Indentify(WorldIP) },\n";
+			ret += $"\tServerListID = { Indentify(ServerListID) },\n";
+			ret += $"\tRuntimeID = { Indentify(RuntimeID) },\n";
+			ret += $"\tLongname = { Indentify(Longname) },\n";
+			ret += $"\tLanguage = { Indentify(Language) },\n";
+			ret += $"\tRegion = { Indentify(Region) },\n";
+			ret += $"\tStatus = { Indentify(Status) },\n";
+			ret += $"\tPlayersOnline = { Indentify(PlayersOnline) }\n";
+			return ret + "}";
+		}
 	}
 
 	public struct LoginReply : IEQStruct {
@@ -167,6 +181,22 @@ namespace OpenEQ.Network {
 			bw.Write(Key.ToBytes(11));
 			bw.Write(FailedAttempts);
 		}
+
+		public override string ToString() {
+			var ret = "struct LoginReply {\n";
+			ret += $"\tmessage = { Indentify(message) },\n";
+			ret += $"\tunk1 = { Indentify(unk1) },\n";
+			ret += $"\tunk2 = { Indentify(unk2) },\n";
+			ret += $"\tunk3 = { Indentify(unk3) },\n";
+			ret += $"\tunk4 = { Indentify(unk4) },\n";
+			ret += $"\tunk5 = { Indentify(unk5) },\n";
+			ret += $"\tunk6 = { Indentify(unk6) },\n";
+			ret += $"\tunk7 = { Indentify(unk7) },\n";
+			ret += $"\tAcctID = { Indentify(AcctID) },\n";
+			ret += $"\tKey = { Indentify(Key) },\n";
+			ret += $"\tFailedAttempts = { Indentify(FailedAttempts) }\n";
+			return ret + "}";
+		}
 	}
 
 	public struct SessionReady : IEQStruct {
@@ -205,6 +235,14 @@ namespace OpenEQ.Network {
 			bw.Write(unk1);
 			bw.Write(unk2);
 			bw.Write(unk3);
+		}
+
+		public override string ToString() {
+			var ret = "struct SessionReady {\n";
+			ret += $"\tunk1 = { Indentify(unk1) },\n";
+			ret += $"\tunk2 = { Indentify(unk2) },\n";
+			ret += $"\tunk3 = { Indentify(unk3) }\n";
+			return ret + "}";
 		}
 	}
 
@@ -263,6 +301,17 @@ namespace OpenEQ.Network {
 				Servers[i].Pack(bw);
 			}
 		}
+
+		public override string ToString() {
+			var ret = "struct ServerListHeader {\n";
+			ret += $"\tunk1 = { Indentify(unk1) },\n";
+			ret += $"\tunk2 = { Indentify(unk2) },\n";
+			ret += $"\tunk3 = { Indentify(unk3) },\n";
+			ret += $"\tunk4 = { Indentify(unk4) },\n";
+			ret += $"\tserverCount = { Indentify(serverCount) },\n";
+			ret += $"\tServers = { Indentify(Servers) }\n";
+			return ret + "}";
+		}
 	}
 
 	public struct Login : IEQStruct {
@@ -307,6 +356,16 @@ namespace OpenEQ.Network {
 			bw.Write(unk3);
 			bw.Write(unk4);
 			bw.Write(unk5);
+		}
+
+		public override string ToString() {
+			var ret = "struct Login {\n";
+			ret += $"\tunk1 = { Indentify(unk1) },\n";
+			ret += $"\tunk2 = { Indentify(unk2) },\n";
+			ret += $"\tunk3 = { Indentify(unk3) },\n";
+			ret += $"\tunk4 = { Indentify(unk4) },\n";
+			ret += $"\tunk5 = { Indentify(unk5) }\n";
+			return ret + "}";
 		}
 	}
 
@@ -372,6 +431,20 @@ namespace OpenEQ.Network {
 			bw.Write(unk5);
 			bw.Write(ServerRuntimeID);
 		}
+
+		public override string ToString() {
+			var ret = "struct PlayResponse {\n";
+			ret += $"\tSequence = { Indentify(Sequence) },\n";
+			ret += $"\tunk1 = { Indentify(unk1) },\n";
+			ret += $"\tunk2 = { Indentify(unk2) },\n";
+			ret += $"\tunk3 = { Indentify(unk3) },\n";
+			ret += $"\tAllowed = { Indentify(Allowed) },\n";
+			ret += $"\tMessage = { Indentify(Message) },\n";
+			ret += $"\tunk4 = { Indentify(unk4) },\n";
+			ret += $"\tunk5 = { Indentify(unk5) },\n";
+			ret += $"\tServerRuntimeID = { Indentify(ServerRuntimeID) }\n";
+			return ret + "}";
+		}
 	}
 
 	public struct PlayRequest : IEQStruct {
@@ -418,6 +491,15 @@ namespace OpenEQ.Network {
 			bw.Write(unk1);
 			bw.Write(unk2);
 			bw.Write(ServerRuntimeID);
+		}
+
+		public override string ToString() {
+			var ret = "struct PlayRequest {\n";
+			ret += $"\tSequence = { Indentify(Sequence) },\n";
+			ret += $"\tunk1 = { Indentify(unk1) },\n";
+			ret += $"\tunk2 = { Indentify(unk2) },\n";
+			ret += $"\tServerRuntimeID = { Indentify(ServerRuntimeID) }\n";
+			return ret + "}";
 		}
 	}
 }

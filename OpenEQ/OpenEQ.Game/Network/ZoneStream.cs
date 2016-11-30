@@ -24,6 +24,11 @@ namespace OpenEQ.Network {
 
         protected override void HandleAppPacket(AppPacket packet) {
             switch((ZoneOp) packet.Opcode) {
+                case ZoneOp.PlayerProfile:
+                    var player = packet.Get<PlayerProfile>();
+                    WriteLine(player);
+                    break;
+
                 default:
                     WriteLine($"Unhandled packet in ZoneStream: {(ZoneOp) packet.Opcode} (0x{packet.Opcode:X04})");
                     Hexdump(packet.Data);

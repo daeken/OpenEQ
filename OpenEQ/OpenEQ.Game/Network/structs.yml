@@ -79,7 +79,19 @@ world:
       - uint16: Port
 
 zone:
+  enums:
+    Gender:
+      - Male: 0
+      - Female: 1
+
   structs:
     ClientZoneEntry:
       - uint32: unk
       - string[64]: CharName
+
+    PlayerProfile:
+      - uint32: checksum
+      - Gender: Gender
+      - uint32: Race, Class
+      - skip[40]: unknown00016
+      - uint8: Level, unkLevel
