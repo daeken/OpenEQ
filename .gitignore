@@ -10,3 +10,4 @@ s3data
 *.zip
 OpenEQ.csproj.user
 imgui.ini
+*.user
