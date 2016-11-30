@@ -58,7 +58,7 @@ namespace OpenEQ
                     namefield.SetGridColumn(0);
                     namefield.SetGridRow(i);
                     serverGrid.Children.Add(namefield);
-                    var statusfield = new TextBlock { Text = server.GetStatus() == ServerStatus.Up ? server.PlayersOnline.ToString() : "Down", Font = serverNameHeader.Font, TextSize = serverNameHeader.TextSize, TextColor = serverNameHeader.TextColor };
+                    var statusfield = new TextBlock { Text = server.Status == ServerStatus.Up ? server.PlayersOnline.ToString() : "Down", Font = serverNameHeader.Font, TextSize = serverNameHeader.TextSize, TextColor = serverNameHeader.TextColor };
                     statusfield.SetGridColumn(1);
                     statusfield.SetGridRow(i);
                     serverGrid.Children.Add(statusfield);

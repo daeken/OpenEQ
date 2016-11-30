@@ -17,6 +17,24 @@ using System.Collections.Generic;
 using System.IO;
 
 namespace OpenEQ.Network {
+	public enum ServerStatus {
+		Up = 0, 
+		Locked = 4, 
+		Down = 1
+	}
+	internal static class ServerStatus_Helper {
+		internal static ServerStatus Unpack(this ServerStatus val, BinaryReader br) {
+			switch(br.ReadUInt32()) {
+				case 0: case 2:
+					return ServerStatus.Up;
+				case 4:
+					return ServerStatus.Locked;
+				default:
+					return ServerStatus.Down;
+			}
+		}
+	}
+
 	public struct ServerListElement : IEQStruct {
 		public string WorldIP;
 		public uint ServerListID;
@@ -24,10 +42,10 @@ namespace OpenEQ.Network {
 		public string Longname;
 		public string Language;
 		public string Region;
-		public uint Status;
+		public ServerStatus Status;
 		public uint PlayersOnline;
 
-		public ServerListElement(string WorldIP, uint ServerListID, uint RuntimeID, string Longname, string Language, string Region, uint Status, uint PlayersOnline) : this() {
+		public ServerListElement(string WorldIP, uint ServerListID, uint RuntimeID, string Longname, string Language, string Region, ServerStatus Status, uint PlayersOnline) : this() {
 			this.WorldIP = WorldIP;
 			this.ServerListID = ServerListID;
 			this.RuntimeID = RuntimeID;
@@ -58,7 +76,7 @@ namespace OpenEQ.Network {
 			Longname = br.ReadString(-1);
 			Language = br.ReadString(-1);
 			Region = br.ReadString(-1);
-			Status = br.ReadUInt32();
+			Status = ((ServerStatus) 0).Unpack(br);
 			PlayersOnline = br.ReadUInt32();
 		}
 
@@ -77,7 +95,7 @@ namespace OpenEQ.Network {
 			bw.Write(Longname.ToBytes());
 			bw.Write(Language.ToBytes());
 			bw.Write(Region.ToBytes());
-			bw.Write(Status);
+			bw.Write((uint) Status);
 			bw.Write(PlayersOnline);
 		}
 	}

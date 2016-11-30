@@ -23,7 +23,7 @@ namespace OpenEQ.NetClient {
             login.ServerList += (sender, servers) => {
                 WriteLine($"Got {servers.Count} servers:");
                 foreach(var server in servers) {
-                    WriteLine($"- '{server.Longname}' @ {server.WorldIP} is {server.GetStatus()} with {server.PlayersOnline} players");
+                    WriteLine($"- '{server.Longname}' @ {server.WorldIP} is {server.Status} with {server.PlayersOnline} players");
                 }
                 var chosen = servers[0];
                 WriteLine($"Sending play request for server '{chosen.Longname}' @ {chosen.WorldIP}");

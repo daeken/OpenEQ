@@ -68,6 +68,8 @@ class Type(object):
 			print '%sbw.Write((%s) (%s ? 1 : 0));' % (ws, typemap[self.gen.base], name)
 		elif self.base == 'string' or self.base == 'varstring':
 			print '%sbw.Write(%s.ToBytes(%s));' % (ws, name, self.rank if self.base == 'string' else '')
+		elif self.base in allEnums:
+			print '%sbw.Write((%s) %s);' % (ws, allEnums[self.base].cast, name)
 		else:
 			print '%s%s.Pack(bw);' % (ws, name)
 
@@ -92,6 +94,8 @@ class Type(object):
 			val = 'br.Read%s() != 0' % btypemap[self.gen.base]
 		elif self.base == 'string' or self.base == 'varstring':
 			val = 'br.ReadString(%s)' % ('-1' if self.base == 'varstring' else self.rank)
+		elif self.base in allEnums:
+			val = '((%s) 0).Unpack(br)' % self.base
 		else:
 			val = 'new %s(br)' % self.base
 
@@ -165,9 +169,50 @@ class Struct(object):
 
 		print '\t}'
 
+class Enum(object):
+	def __init__(self, name, ydef):
+		type = Type(name)
+		self.base = (' : ' + type.gen.declare()) if type.gen and type.gen.declare() != 'uint' else ''
+		self.mbase = btypemap[type.gen.base if type.gen else 'uint32']
+		self.cast = type.gen.declare() if type.gen else 'uint'
+		self.name = type.base
+
+		self.elems = []
+		for elem in ydef:
+			if isinstance(elem, dict):
+				(name, values), = elem.items()
+				self.elems.append((name, [values] if isinstance(values, int) else [x.strip() for x in values.split(',')]))
+			else:
+				self.elems.append((elem, []))
+
+	def declare(self):
+		print '\tpublic enum %s%s {' % (self.name, self.base)
+		for i, (name, values) in enumerate(self.elems):
+			print '\t\t%s%s%s' % (name, ' = %s' % values[0] if len(values) else '', ', ' if i != len(self.elems) - 1 else '')
+		print '\t}'
+		print '\tinternal static class %s_Helper {' % (self.name)
+		print '\t\tinternal static %s Unpack(this %s val, BinaryReader br) {' % (self.name, self.name)
+		print '\t\t\tswitch(br.Read%s()) {' % self.mbase
+		for i, (name, values) in enumerate(self.elems):
+			if i == len(self.elems) - 1:
+				print '\t\t\t\tdefault:'
+			else:
+				print '\t\t\t\t%s' % ' '.join('case %s:' % value for value in values)
+			print '\t\t\t\t\treturn %s.%s;' % (self.name, name)
+		print '\t\t\t}'
+		print '\t\t}'
+		print '\t}'
+
+	def pack(self):
+		pass
+
+	def unpack(self):
+		pass
+
 sfile = yaml.load(file('structs.yml'))
 
-sdefs = {top : {name : Struct(name, struct) for name, struct in structs.items()} for top, structs in sfile.items()}
+sdefs = {top : ({name : Struct(name, struct) for name, struct in d['structs'].items()} if 'structs' in d else {}, {name : Enum(name, enum) for name, enum in d['enums'].items()} if 'enums' in d else {}) for top, d in sfile.items()}
+allEnums = {enum.name : enum for ns, (structs, enums) in sdefs.items() for name, enum in enums.items()}
 
 nsfiles = dict(
 	login='OpenEQ/OpenEQ.Game/Network/LoginPackets.cs', 
@@ -175,7 +220,7 @@ nsfiles = dict(
 	zone='OpenEQ/OpenEQ.Game/Network/ZonePackets.cs', 
 )
 
-for ns, structs in sdefs.items():
+for ns, (structs, enums) in sdefs.items():
 	with file(nsfiles[ns], 'w') as fp:
 		sys.stdout = fp
 		print '''/*
@@ -197,6 +242,14 @@ for ns, structs in sdefs.items():
 		print 'using System.IO;'
 		print
 		print 'namespace OpenEQ.Network {'
+
+		if len(enums):
+			for i, (name, enum) in enumerate(enums.items()):
+				enum.declare()
+				if i != len(enums) - 1:
+					print
+		if len(enums) and len(structs):
+			print
 		for i, (name, struct) in enumerate(structs.items()):
 			struct.declare()
 			if i != len(structs) - 1:

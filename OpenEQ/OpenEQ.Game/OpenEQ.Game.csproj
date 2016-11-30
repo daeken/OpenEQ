@@ -110,6 +110,7 @@
     <Compile Include="DESCrypto.cs" />
     <Compile Include="Extensions.cs" />
     <Compile Include="FPSCounter.cs" />
+    <Compile Include="GlobalSuppressions.cs" />
     <Compile Include="ListDeconstructors.cs" />
     <Compile Include="LoginScript.cs" />
     <Compile Include="Network\AsyncUDPConnection.cs" />

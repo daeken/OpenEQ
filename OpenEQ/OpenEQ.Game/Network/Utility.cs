@@ -6,12 +6,6 @@ using System.IO;
 using System.Text;
 
 namespace OpenEQ.Network {
-    public enum ServerStatus {
-        Up = 0,
-        Down = 1,
-        Locked = 2
-    }
-
     public static class Utility {
         const string printable = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-=_+{}[];':\" |\\<>?,./`~!@#$%^&*()1234567890";
         public static void Hexdump(byte[] data) {
@@ -141,17 +135,6 @@ namespace OpenEQ.Network {
                 var tstr = Encoding.ASCII.GetString(data);
                 var off = tstr.IndexOf('\0');
                 return off == -1 ? tstr : tstr.Substring(0, off);
-            }
-        }
-
-        public static ServerStatus GetStatus(this ServerListElement elem) {
-            switch(elem.Status) {
-                case 0: case 2:
-                    return ServerStatus.Up;
-                case 4:
-                    return ServerStatus.Locked;
-                default:
-                    return ServerStatus.Down;
             }
         }
 
