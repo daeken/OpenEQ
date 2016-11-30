@@ -1,0 +1,76 @@
+---
+
+login:
+  SessionReady:
+    - uint32: unk1, unk2, unk3
+
+  Login:
+    - uint16: unk1, unk2, unk3, unk4, unk5
+
+  LoginReply:
+    - uint8: message, unk1, unk2, unk3, unk4, unk5, unk6, unk7
+    - uint32: AcctID
+    - string[11]: Key
+    - uint32: FailedAttempts
+
+  ServerListElement:
+    - varstring: WorldIP
+    - uint32: ServerListID, RuntimeID
+    - varstring: Longname, Language, Region
+    - uint32: Status # 0/2 - Up, 4 - Locked, ? - Down
+    - uint32: PlayersOnline
+
+  ServerListHeader:
+    - uint32: unk1, unk2, unk3, unk4
+    - uint32: serverCount
+    - list<ServerListElement>[serverCount]: Servers
+
+  PlayRequest:
+    - uint16: Sequence
+    - uint32: unk1, unk2
+    - uint32: ServerRuntimeID
+
+  PlayResponse:
+    - uint8: Sequence
+    - uint32: unk1, unk2
+    - uint8: unk3
+    - bool<uint8>: Allowed
+    - uint16: Message, unk4
+    - uint8: unk5
+    - uint32: ServerRuntimeID
+
+world:
+  CharacterSelectEntry:
+    - uint8: Level, HairStyle
+    - bool<uint8>: Gender
+    - varstring: Name
+    - uint8: Beard, HairColor, Face
+    - uint8[9 * 4 * 4]: equipment # XXX - Parse
+    - uint32: PrimaryID, SecondaryID
+    - uint8: unknown15
+    - uint32: Deity
+    - uint16: Zone, Instance
+    - bool<uint8>: GoHome
+    - uint8: unknown19
+    - uint32: Race
+    - bool<uint8>: Tutorial
+    - uint8: Class, EyeColor1, BeardColor, EyeColor2
+    - uint32: DrakkinHeritage, DrakkinTattoo, DrakkinDetails
+    - uint8: unknown
+
+  CharacterSelect:
+    - uint32: charCount, totalChars
+    - list<CharacterSelectEntry>[charCount]: Characters
+
+  EnterWorld:
+    - string[64]: Name
+    - bool<uint8>: Tutorial, GoHome
+
+  ZoneServerInfo:
+    - string[128]: Host
+    - uint16: Port
+
+zone:
+  ClientZoneEntry:
+    - uint32: unk
+    - string[64]: CharName

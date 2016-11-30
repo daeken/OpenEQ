@@ -1,7 +1,7 @@
 ﻿using System.Security.Cryptography;
 using static System.Console;
 using static System.Text.Encoding;
-using static OpenEQ.Utility;
+using static OpenEQ.Network.Utility;
 using System;
 using System.IO;
 using System.Reflection;
@@ -65,25 +65,20 @@ namespace OpenEQ.Network {
                         LoginSuccess?.Invoke(this, false);
                     else {
                         var dec = Decrypt(packet.Data, 10);
-                        var rep = LoginReply.Get(dec);
-                        accountID = rep.acctID;
-                        sessionKey = rep.key;
+                        var rep = new LoginReply(dec);
+                        accountID = rep.AcctID;
+                        sessionKey = rep.Key;
                         LoginSuccess?.Invoke(this, true);
                     }
                     break;
                 case LoginOp.ServerListResponse:
                     var header = packet.Get<ServerListHeader>();
-                    var off = 5 * 4;
-                    var data = packet.Data;
-                    var serverList = new List<ServerListElement>();
-                    for(var i = 0; i < header.serverCount; ++i)
-                        serverList.Add(new ServerListElement(data, ref off));
-                    ServerList?.Invoke(this, serverList);
+                    ServerList?.Invoke(this, header.Servers);
                     break;
                 case LoginOp.PlayEverquestResponse:
                     var resp = packet.Get<PlayResponse>();
 
-                    if(!resp.allowed)
+                    if(!resp.Allowed)
                         curPlay = null;
                     
                     PlaySuccess?.Invoke(this, curPlay);
@@ -101,7 +96,7 @@ namespace OpenEQ.Network {
 
         public void Play(ServerListElement server) {
             curPlay = server;
-            Send(AppPacket.Create(LoginOp.PlayEverquestRequest, new PlayRequest(server.runtimeID)));
+            Send(AppPacket.Create(LoginOp.PlayEverquestRequest, new PlayRequest(5, server.RuntimeID)));
         }
     }
 }

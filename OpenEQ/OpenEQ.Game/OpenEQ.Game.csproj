@@ -113,6 +113,7 @@
     <Compile Include="ListDeconstructors.cs" />
     <Compile Include="LoginScript.cs" />
     <Compile Include="Network\AsyncUDPConnection.cs" />
+    <Compile Include="Network\IEQStruct.cs" />
     <Compile Include="Network\EQStream.cs" />
     <Compile Include="Network\LoginPackets.cs" />
     <Compile Include="Network\LoginStream.cs" />
