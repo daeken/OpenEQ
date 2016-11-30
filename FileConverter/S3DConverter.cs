@@ -11,7 +11,7 @@ namespace OpenEQ.FileConverter
 
     public class S3DConverter
     {
-        public static async Task<Dictionary<string, byte[]>> Convert(string fileName)
+        public static async Task<Dictionary<string, byte[]>> ConvertAsync(string fileName)
         {
             var directoryList = new List<string>();
             var outDict = new Dictionary<string, byte[]>();

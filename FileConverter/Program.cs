@@ -20,23 +20,26 @@ namespace OpenEQ.FileConverter
             var fileName = "gfaydark";
             var path = @"E:\Games\EQRoF2\";
 
-            var taskS3dObjFiles = S3DConverter.Convert($@"{path}{fileName}_obj.s3d");
+            var taskS3dObjFiles = S3DConverter.ConvertAsync($@"{path}{fileName}_obj.s3d");
 
-            var taskS3dFiles = S3DConverter.Convert($@"{path}{fileName}.s3d");
+            var taskS3dFiles = S3DConverter.ConvertAsync($@"{path}{fileName}.s3d");
 
             // We need the S3D to be fully parsed before we can continue.
             Task.WaitAll(taskS3dObjFiles, taskS3dFiles);
 
             // Left merge both so that we keep values in dictionary A if they exist in A and B.
-            var s3dObjFilesDict = taskS3dObjFiles.Result.Merge(taskS3dFiles.Result);
-            var s3dFilesDict = taskS3dFiles.Result.Merge(taskS3dObjFiles.Result);
+            // Verified behavior with a smaller set of dictionaries.  Then sort just in case
+            // that matters as the python script was doing that implicitly.
+            // Note: Sorting didn't fix it, so when I work out WTF is wrong I'll probably make
+            //       these two lines just a call to .Merge without the orderby and todictionary.
+            var s3dObjFilesDict =
+                taskS3dObjFiles.Result.Merge(taskS3dFiles.Result)
+                    .OrderBy(z => z.Key)
+                    .ToDictionary(z => z.Key, y => y.Value);
+            var s3dFilesDict = taskS3dFiles.Result.Merge(taskS3dObjFiles.Result).OrderBy(z => z.Key)
+                    .ToDictionary(z => z.Key, y => y.Value);
 
             var zone = new Zone();
-
-            // Leaving this for now even though it's not a huge benefit as everything is actually
-            // running in sequence.  There's a race condition inside convert that relates to Placeable
-            // objects.  I'll work that one out so I can reconcile the list at the end and make these
-            // async again.
 
             ConvertObjects(s3dObjFilesDict, $"{fileName}_obj.wld", zone);
             ConvertObjects(s3dFilesDict, "objects.wld", zone);
@@ -46,8 +49,6 @@ namespace OpenEQ.FileConverter
             zone.Output($@"{path}{fileName}.zip");
 
             sw.Stop();
-
-            var a = 1;
         }
 
         private static void ConvertObjects(IDictionary<string, byte[]> input, string fileName, Zone zone)

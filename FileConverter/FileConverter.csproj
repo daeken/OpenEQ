@@ -75,7 +75,7 @@
     <Compile Include="Extensions\BinaryReaderExtensions.cs" />
     <Compile Include="Extensions\DictionaryExtensions.cs" />
     <Compile Include="Extensions\IEnumerableExtensions.cs" />
-    <Compile Include="Extensions\StreamExtensions.cs" />
+    <Compile Include="Extensions\BinaryWriterExtensions.cs" />
     <Compile Include="Extensions\StringExtensions.cs" />
     <Compile Include="Entities\ObjectLocation.cs" />
     <Compile Include="Program.cs" />

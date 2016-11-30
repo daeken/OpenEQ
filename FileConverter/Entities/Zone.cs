@@ -1,15 +1,13 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.IO.Compression;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using ICSharpCode.SharpZipLib.Zip;
-using OpenEQ.FileConverter.Extensions;
-
+﻿
 namespace OpenEQ.FileConverter.Entities
 {
+    using System;
+    using System.Collections.Generic;
+    using System.IO;
+    using System.IO.Compression;
+    using System.Linq;
+    using Extensions;
+
     public class Zone
     {
         public ZoneObject ZoneObj;
@@ -62,23 +60,23 @@ namespace OpenEQ.FileConverter.Entities
             });
         }
 
-    //    def coalesceObjectMeshes(self):
-    //    for obj in self.objects:
-    //        startmeshcount = len(obj.meshes)
-    //        matmeshes = {}
-    //        for mesh in obj.meshes:
-    //            mat = mesh.material.filenames, mesh.material.flags
-    //            if mat not in matmeshes:
-    //                matmeshes[mat] = []
-    //    matmeshes[mat].append(mesh)
-    //        obj.meshes = []
-    //    poss = 0
-    //        for meshlist in matmeshes.values():
-    //            if len(meshlist) == 1:
-    //                obj.meshes.append(meshlist[0])
-    //                continue
-    //            gmesh = reduce(lambda a, b: a.add(b), meshlist)
-    //            obj.meshes += gmesh.optimize()
+        //    def coalesceObjectMeshes(self):
+        //    for obj in self.objects:
+        //        startmeshcount = len(obj.meshes)
+        //        matmeshes = {}
+        //        for mesh in obj.meshes:
+        //            mat = mesh.material.filenames, mesh.material.flags
+        //            if mat not in matmeshes:
+        //                matmeshes[mat] = []
+        //    matmeshes[mat].append(mesh)
+        //        obj.meshes = []
+        //    poss = 0
+        //        for meshlist in matmeshes.values():
+        //            if len(meshlist) == 1:
+        //                obj.meshes.append(meshlist[0])
+        //                continue
+        //            gmesh = reduce(lambda a, b: a.add(b), meshlist)
+        //            obj.meshes += gmesh.optimize()
 
         public void CoalesceObjectMeshes()
         {
@@ -86,7 +84,7 @@ namespace OpenEQ.FileConverter.Entities
             {
                 var startMeshCount = obj.Meshes.Count;
                 var matmeshes = new Dictionary<string, List<Mesh>>();
-            
+
                 foreach (var mesh in obj.Meshes)
                 {
                     var mat = new Tuple<List<string>, int>(mesh.Material.filenames, mesh.Material.Flags);
@@ -137,18 +135,6 @@ namespace OpenEQ.FileConverter.Entities
 
                     foreach (var obj in ZoneObjects)
                     {
-                        Console.WriteLine(obj.Name);
-                        foreach (var mesh in obj.Meshes)
-                        {
-                            foreach (var fn in mesh.Material.filenames)
-                            {
-                                Console.WriteLine($"{mesh.Material.Flags}, {fn}");
-                            }
-                        }
-                    }
-
-                    foreach (var obj in ZoneObjects)
-                    {
                         foreach (var mesh in obj.Meshes)
                         {
                             var material = mesh.Material;
@@ -162,17 +148,17 @@ namespace OpenEQ.FileConverter.Entities
                             }
                         }
                     }
-                    var aa = assets.OrderBy(a => a.Key);
+
                     // Skipping resample because I don't see anywhere it was ever set to true.
                     foreach (var asset in assets)
                     {
                         var zipEntry = zipArchive.CreateEntry(asset.Key, CompressionLevel.NoCompression);
 
-                        using (var sw = zipEntry.Open())
+                        using (var bw = new BinaryWriter(zipEntry.Open()))
                         {
-                            sw.WriteBytes(asset.Value);
-                            sw.Flush();
-                            sw.Close();
+                            bw.Write(asset.Value);
+                            bw.Flush();
+                            bw.Close();
                         }
                     }
 
@@ -187,7 +173,7 @@ namespace OpenEQ.FileConverter.Entities
                     }
 
                     var zoneZipEntry = zipArchive.CreateEntry("zone.oez", CompressionLevel.NoCompression);
-                    using (var sw = zoneZipEntry.Open())
+                    using (var bw = new BinaryWriter(zoneZipEntry.Open()))
                     {
                         var materials = new Dictionary<string, Tuple<int, Mesh>>();
 
@@ -201,133 +187,58 @@ namespace OpenEQ.FileConverter.Entities
                             }
                         }
 
-                        sw.WriteBytes(BitConverter.GetBytes(materials.Keys.Count));
+                        bw.Write(materials.Keys.Count);
 
                         var orderedList = materials.Values.OrderBy(z => z.Item1).ToList();
 
                         foreach (var m in orderedList)
                         {
-                            sw.WriteBytes(BitConverter.GetBytes(m.Item1));
-                            sw.WriteBytes(BitConverter.GetBytes(m.Item2.Material.filenames.Count));
+                            bw.Write(m.Item1);
+                            bw.Write(m.Item2.Material.filenames.Count);
                             foreach (var fileName in m.Item2.Material.filenames)
                             {
-                                sw.WriteString(fileName);
+                                bw.Write(fileName);
                             }
                         }
 
-                        sw.WriteBytes(BitConverter.GetBytes(ZoneObjects.Count));
+                        bw.Write(ZoneObjects.Count);
 
                         var objRefs = new Dictionary<ZoneObject, int>();
                         for (var i = 0; i < ZoneObjects.Count; i++)
                         {
                             objRefs.Add(ZoneObjects[i], i);
-                            sw.WriteBytes(BitConverter.GetBytes(ZoneObjects[i].Meshes.Count));
+                            bw.Write(ZoneObjects[i].Meshes.Count);
 
                             foreach (var mesh in ZoneObjects[i].Meshes)
                             {
                                 var matid =
                                     materials[$"{mesh.Material.Flags}{string.Join(",", mesh.Material.filenames)}"];
-                                sw.WriteBytes(BitConverter.GetBytes(matid.Item1));
-                                sw.WriteBytes(BitConverter.GetBytes(mesh.VertexBuffer.Count));
-                                sw.WriteBytes(mesh.VertexBuffer.Data.ToArray());
-                                sw.WriteBytes(BitConverter.GetBytes(mesh.Polygons.Count));
+                                bw.Write(matid.Item1);
+                                bw.Write(mesh.VertexBuffer.Count);
+                                bw.WriteFloatArray(mesh.VertexBuffer.Data.ToArray());
+                                bw.Write(mesh.Polygons.Count);
                                 foreach (var poly in mesh.Polygons)
                                 {
-                                    sw.WriteBytes(poly.Item2.to_array());
+                                    bw.WriteFloatArray(poly.Item2.to_array());
                                 }
                                 foreach (var poly in mesh.Polygons)
                                 {
-                                    sw.WriteBytes(BitConverter.GetBytes((poly.Item1 ? 1 : 0)));
+                                    bw.Write(poly.Item1 ? 1 : 0);
                                 }
                             }
                         }
 
-                        sw.WriteBytes(BitConverter.GetBytes(PlaceableObjects.Count));
+                        bw.Write(PlaceableObjects.Count);
                         foreach (var placeable in PlaceableObjects)
                         {
-                            sw.WriteBytes(BitConverter.GetBytes(objRefs[placeable.ObjectInst]));
-                            sw.WriteBytes(placeable.Position);
-                            sw.WriteBytes(placeable.Rotation);
-                            sw.WriteBytes(placeable.Scale);
+                            bw.Write(objRefs[placeable.ObjectInst]);
+                            bw.WriteFloatArray(placeable.Position);
+                            bw.WriteFloatArray(placeable.Rotation);
+                            bw.WriteFloatArray(placeable.Scale);
                         }
                     }
                 }
             }
         }
-
-        //def output(self, zip):
-    //    self.coalesceObjectMeshes()
-
-    //    assets = {}
-    //    for obj in self.objects:
-    //        for mesh in obj.meshes:
-    //            material = mesh.material
-    //            for i, filename in enumerate(material.filenames):
-    //                if filename not in assets:
-    //                    assets[filename] = material.textures[i]
-    //    if resample:
-    //        print 'Resampling textures'
-    //    for k, v in assets.items():
-    //        if resample:
-    //            v = resampleTexture(v)
-    //            k = k.replace('.dds', '.png')
-    //        zip.writestr(k, v)
-    //    if resample:
-    //        print 'Done'
-        
-    //    for obj in self.objects:
-    //        obj.meshes = [x for m in obj.meshes for x in m.optimize()]
-
-    //    def ouint(*x):
-    //        zout.write(struct.pack('<' + 'I'*len(x), *x))
-    //    def ofloat(*x):
-    //        zout.write(struct.pack('<' + 'f'*len(x), *x))
-    //    def ostring(x):
-    //        sl = len(x)
-    //        if sl == 0:
-    //            zout.write(chr(0))
-    //        while sl:
-    //            zout.write(chr((sl & 0x7F) | (0x80 if sl > 127 else 0x00)))
-    //            sl >>= 7
-    //        zout.write(x)
-    //    with tempfile.TemporaryFile() as zout:
-    //        materials = {}
-    //        for obj in self.objects:
-    //            for mesh in obj.meshes:
-    //                mat = mesh.material.flags, mesh.material.filenames
-    //                if mat not in materials:
-    //                    materials[mat] = len(materials)
-    //        ouint(len(materials))
-    //        for (flags, filenames), id in sorted(materials.items(), cmp=lambda a, b: cmp(a[1], b[1])):
-    //            ouint(flags)
-    //            ouint(len(filenames))
-    //            for filename in filenames:
-    //                ostring(filename)
-    //        ouint(len(self.objects))
-    //        objrefs = {}
-    //        for i, obj in enumerate(self.objects):
-    //            objrefs[obj] = i
-    //            ouint(len(obj.meshes))
-    //            for mesh in obj.meshes:
-    //                matid = materials[(mesh.material.flags, mesh.material.filenames)]
-    //                ouint(matid)
-    //                ouint(len(mesh.vertbuffer))
-    //                ofloat(*mesh.vertbuffer.data)
-    //                ouint(len(mesh.polygons))
-    //                for collidable, x in mesh.polygons:
-    //                    ouint(*x)
-    //                for collidable, x in mesh.polygons:
-    //                    ouint(int(collidable))
-
-    //        ouint(len(self.placeables))
-    //        for placeable in self.placeables:
-    //            ouint(objrefs[placeable.obj])
-    //            ofloat(*placeable.position)
-    //            ofloat(*placeable.rotation)
-    //            ofloat(*placeable.scale)
-
-
-    //        zout.seek(0)
-    //        zip.writestr('zone.oez', zout.read())
     }
 }

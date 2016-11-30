@@ -37,12 +37,7 @@ namespace OpenEQ.FileConverter.Extensions
 
         public static string DecodeString(this byte[] hash)
         {
-            for (var i = 0; i < hash.Length; i++)
-            {
-                hash[i] ^= XorKey[i % XorKey.Length];
-            }
-
-            return Encoding.UTF8.GetString(hash);
+            return string.Join("", hash.Select((t, i) => (char) (t ^ XorKey[i%XorKey.Length])));
         }
     }
 }

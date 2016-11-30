@@ -1,13 +1,13 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Threading.Tasks;
-using OpenEQ.FileConverter.Entities;
-using OpenEQ.FileConverter.Extensions;
-
+﻿
 namespace OpenEQ.FileConverter.Wld
 {
+    using System;
+    using System.Collections.Generic;
+    using System.IO;
+    using System.Linq;
+    using Entities;
+    using Extensions;
+
     public class WldConverter
     {
         public int FlagNormal = 0;
@@ -44,7 +44,6 @@ namespace OpenEQ.FileConverter.Wld
 
                 // Get the string table.
                 StringTable = input.ReadBytes(Header.stringHashSize).DecodeString();
-
                 GetFragments(input);
 
                 // Clear the values, but not the keys.
@@ -230,7 +229,7 @@ namespace OpenEQ.FileConverter.Wld
                         frag = FragObjLoc(input, name);
                         break;
                     }
-                    case 24:
+                    case 27:
                     {
                         frag = FragLightSource(input, name);
                         break;
@@ -274,77 +273,66 @@ namespace OpenEQ.FileConverter.Wld
                     case 8:
                     {
                         // UNKNOWN
-                        var bytes = input.ReadBytes((int) fragHeader.size);
                         break;
                     }
                     case 9:
                     {
                         // UNKNOWN
-                        var bytes = input.ReadBytes((int) fragHeader.size);
                         break;
                     }
                     case 22:
                     {
-                            break;
-                    }
-                    case 27:
-                    {
                         // UNKNOWN
-                        var bytes = input.ReadBytes((int) fragHeader.size);
                         break;
                     }
                     case 33:
                     {
                         // UNKNOWN
-                        var bytes = input.ReadBytes((int) fragHeader.size);
                         break;
                     }
                     case 34:
                     {
                         // UNKNOWN
-                        var bytes = input.ReadBytes((int) fragHeader.size);
                         break;
                     }
                     case 38:
                     {
                         // UNKNOWN
-                        var bytes = input.ReadBytes((int) fragHeader.size);
                         break;
                     }
                     case 41:
                     {
                         // UNKNOWN
-                        var bytes = input.ReadBytes((int) fragHeader.size);
                         break;
                     }
                     case 47:
                     {
                         // UNKNOWN
-                        var bytes = input.ReadBytes((int) fragHeader.size);
                         break;
                     }
                     case 50:
                     {
-                            break;
+                        // UNKNOWN
+                        break;
                     }
                     case 51:
                     {
+                        // UNKNOWN
                         break;
                     }
                     case 52:
                     {
                         // UNKNOWN
-                        var bytes = input.ReadBytes((int) fragHeader.size);
                         break;
                     }
                     case 53:
                     {
-                            break;
+                        // UNKNOWN
+                        break;
                     }
                     case 55:
                     {
                         // UNKNOWN
-                        var bytes = input.ReadBytes((int) fragHeader.size);
                         break;
                     }
 #endif
