@@ -1,6 +1,7 @@
 ﻿
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace OpenEQ.FileConverter.Entities
 {
@@ -8,7 +9,15 @@ namespace OpenEQ.FileConverter.Entities
     {
         public int Id;
         public string Name;
-        public object Value;
+        public dynamic Value;
+
+        //public dynamic this[int i]
+        //{
+        //    get
+        //    {
+        //        return ResolveInternal(this).ToList()[i];
+        //    }
+        //}
 
         public FragRef(int id = -1, string name = "", object value = null)
         {
@@ -17,17 +26,50 @@ namespace OpenEQ.FileConverter.Entities
             Value = value;
         }
 
-        public string[] Resolve()
+        private static IEnumerable<dynamic> ResolveInternal(dynamic obj)
+        {
+            yield return obj;
+            // At the end of the list.  Return ourselves.
+            //            if (Value == null)
+            //              yield return this;
+            //        else
+            if (obj is string[])
+            {
+                yield return obj;
+            }
+
+            if (obj is FragRef)
+            {
+                yield return obj;
+            }
+
+            if (obj is FragRef[])
+            {
+                var iter = (FragRef[]) obj;
+                foreach (var fr in iter)
+                {
+                    yield return ResolveInternal(fr);
+                }
+            }
+
+            if (obj is TexRef)
+            {
+                yield return ResolveInternal(obj);
+            }
+        }
+
+        public IEnumerable<string> Resolve()
         {
             var outList = new List<string>();// {Value};
             var tmp = Value;
 
             if (Value is string[])
-                return (string[])Value;
-//            if (null == Value) return outList;
-
-            // Clear the list because we're not at the end.
-            //outList.Clear();
+            {
+                foreach (var s in (string[]) Value)
+                {
+                    yield return s;
+                }
+            }
 
             if (tmp is Tuple<int, string, uint, object>)
             {
@@ -38,20 +80,22 @@ namespace OpenEQ.FileConverter.Entities
             {
                 var iter = (FragRef[]) tmp;
 
-                for (var i = 0; i < iter.Length; i++)
+                foreach (var fr in iter)
                 {
-                    outList.AddRange(iter[i].Resolve());
+                    foreach (var s in fr.Resolve())
+                    {
+                        yield return s;
+                    }
                 }
-
-                return outList.ToArray();
             }
 
             if (tmp is TexRef)
             {
-                outList.AddRange(((TexRef) tmp).Resolve());
+                foreach (var s in ((TexRef) tmp).Resolve())
+                {
+                    yield return s;
+                }
             }
-
-            return outList.ToArray();
         }
     }
 }

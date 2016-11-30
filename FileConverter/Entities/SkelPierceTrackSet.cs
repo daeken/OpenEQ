@@ -11,7 +11,7 @@ namespace OpenEQ.FileConverter.Entities
 
         public SkelPierceTrackSet(uint trackCount, string name)
         {
-            _name = name;
+            _name = name;   // may not need this.
             Tracks = new SkelPierceTrack[trackCount];
         }
     }

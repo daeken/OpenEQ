@@ -16,21 +16,15 @@ namespace OpenEQ.FileConverter.Entities
             Value = v;
         }
 
-        public string[] Resolve()
+        public IEnumerable<string> Resolve()
         {
-            var outList = new List<string>();// {Value};
-
-//            if (null == Value)
-//                return (string[]) Value;//outList;
-
-            // Don't need the value.
-            outList.Clear();
-            for (var i = 0; i < Value.Length; i++)
+            foreach (var fr in Value)
             {
-                outList.AddRange(Value[i].Resolve());
+                foreach (var s in fr.Resolve())
+                {
+                    yield return s;
+                }
             }
-
-            return outList.ToArray();
         }
     }
 }

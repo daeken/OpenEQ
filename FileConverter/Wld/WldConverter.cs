@@ -1,4 +1,6 @@
 ﻿
+using System.Diagnostics;
+
 namespace OpenEQ.FileConverter.Wld
 {
     using System;
@@ -16,19 +18,36 @@ namespace OpenEQ.FileConverter.Wld
         public int FlagTransparent = 1 << 2;
 
         public WorldHeader Header;
-        public Dictionary<int, object> frags;
+        public Dictionary<int, dynamic> frags;
         public Dictionary<uint, List<object>> byType;
         public Dictionary<string, object> names;
         public bool baked;
 
-        private string StringTable;
+        private Dictionary<int, string> _stringTableHash = new Dictionary<int, string>();
         private IDictionary<string, byte[]> s3d;
 
         public WldConverter()
         {
             byType = new Dictionary<uint, List<object>>();
-            frags = new Dictionary<int, object>();
+            frags = new Dictionary<int, dynamic>();
             names = new Dictionary<string, object>();
+        }
+
+        private static Dictionary<int, string> GenerateStringTableHash(string input)
+        {
+            var startPos = 0;
+            var output = new Dictionary<int, string>();
+
+            for (var i = 0; i < input.Length; i++)
+            {
+                if ('\0' != input[i]) continue;
+
+                // Found end of a word.
+                output.Add(startPos, input.Substring(startPos, i - startPos));
+                startPos = i + 1;
+            }
+
+            return output;
         }
 
         public void Convert(byte[] wldData, IDictionary<string, byte[]> objectFiles)
@@ -43,7 +62,9 @@ namespace OpenEQ.FileConverter.Wld
                     throw new FormatException("Expected magic (0x54503D02) not found.");
 
                 // Get the string table.
-                StringTable = input.ReadBytes(Header.stringHashSize).DecodeString();
+                _stringTableHash = GenerateStringTableHash(input.ReadBytes(Header.stringHashSize).DecodeString());
+
+                // Get all fragments from this file.
                 GetFragments(input);
 
                 // Clear the values, but not the keys.
@@ -125,7 +146,7 @@ namespace OpenEQ.FileConverter.Wld
 
             foreach (ObjectLocation frag in byType[21])
             {
-                var objname = StringTable.ReadNullTerminatedString(-frag.NameOffset).Replace("_ACTORDEF", "");
+                var objname = _stringTableHash[-frag.NameOffset].Replace("_ACTORDEF", "");
                 zone.AddPlaceable(objname, frag.Position, frag.Rotation, frag.Scale);
             }
         }
@@ -170,13 +191,13 @@ namespace OpenEQ.FileConverter.Wld
 
         private void GetFragments(BinaryReader input)
         {
+            var sw = Stopwatch.StartNew();
             for (var i = 0; i < Header.fragmentCount; i++)
             {
                 var fragHeader = new struct_wld_basic_frag(input);
-
                 var name =
-                    fragHeader.nameoff != 0x1000000
-                        ? StringTable.ReadNullTerminatedString(-Math.Min(fragHeader.nameoff, 0))
+                    fragHeader.nameoff != 0x1000000 && fragHeader.nameoff != -0x1000000
+                        ? _stringTableHash[-Math.Min(fragHeader.nameoff, 0)]
                         : "";
 
                 var epos = input.BaseStream.Position + fragHeader.size - 4;
@@ -184,42 +205,42 @@ namespace OpenEQ.FileConverter.Wld
 
                 switch (fragHeader.type)
                 {
-                    case 3:
+                    case 3: //0x03
                     {
                         frag = FragTexName(input);
                         break;
                     }
-                    case 4:
+                    case 4: //0x04
                     {
                         frag = FragTexBitInfo(input);
                         break;
                     }
-                    case 5:
+                    case 5: //0x05
                     {
                         frag = FragTexUnk(input);
                         break;
                     }
-                    case 16:
+                    case 16: //0x10
                     {
                         frag = FragSkelTrackSet(input, name);
                         break;
                     }
-                    case 17:
+                    case 17: //0x11
                     {
                         frag = FragSkelTrackSetRef(input);
                         break;
                     }
-                    case 18:
+                    case 18: //0x12
                     {
                         frag = FragSkelPierceTrack(input, name);
                         break;
                     }
-                    case 19:
+                    case 19: //0x13
                     {
                         frag = FragSkelPierceTrackRef(input, name);
                         break;
                     }
-                    case 20:
+                    case 20: //0x14
                     {
                         frag = FragModelRef(input, name);
                         break;
@@ -360,8 +381,10 @@ namespace OpenEQ.FileConverter.Wld
                 byType[fragHeader.type].Add(frag);
 
                 input.BaseStream.Position = epos;
-
             }
+
+            sw.Stop();
+            Console.WriteLine($"{sw.Elapsed}, {sw.ElapsedMilliseconds}, {sw.ElapsedTicks}");
         }
 
         private FragRef[] GetFrag(int reference)
@@ -382,17 +405,16 @@ namespace OpenEQ.FileConverter.Wld
                     if (frags.ContainsKey(references[i]))
                     {
                         refs[i] = new FragRef(references[i],
-                            value: ((Tuple<int, string, uint, object>) frags[references[i]]).Item4);
+                            value: ((Tuple<int, string, uint, object>)frags[references[i]]).Item4);
                     }
                     else
                     {
-                        refs[i] = new FragRef(references[i]);
+                        refs[i] = new FragRef(id: references[i]);
                     }
                 }
                 else
                 {
-                    var name = StringTable.ReadNullTerminatedString(references[i]);
-
+                    var name = _stringTableHash[-references[i]];
                     if (names.ContainsKey(name))
                     {
                         refs[i] = new FragRef(name: name, value: names[name]);
@@ -410,16 +432,19 @@ namespace OpenEQ.FileConverter.Wld
         /// <summary>
         /// Handler for fragment ID 0x03
         /// </summary>
-        /// <param name="input"></param>
-        /// <returns></returns>
+        /// <param name="input">The input stream.</param>
+        /// <returns>A string array containing a filename.</returns>
+        /// <remarks>It looks like this is always going to be a single string in an array.  If that holds
+        /// true for the newer file format (assuming we use this for that format) then we could probably
+        /// make this just return a string.</remarks>
         private static string[] FragTexName(BinaryReader input)
         {
-            var size = input.ReadInt32() + 1;
+            var size = input.ReadUInt32() + 1;
             var texNames = new string[size];
 
             for (var i = 0; i < texNames.Length; i++)
             {
-                texNames[i] = input.ReadBytes(input.ReadUInt16()).DecodeString().ToLower().TrimEnd('\0');
+                texNames[i] = input.ReadBytes(input.ReadUInt16()).DecodeString().Trim('\0');
             }
 
             return texNames;
@@ -428,8 +453,9 @@ namespace OpenEQ.FileConverter.Wld
         /// <summary>
         /// Handler for fragment ID 0x04
         /// </summary>
-        /// <param name="input"></param>
-        /// <returns></returns>
+        /// <param name="input">The input stream.</param>
+        /// <returns>A FragRef array.</returns>
+        /// <remarks>This appears to always have 1 child node?</remarks>
         private FragRef[] FragTexBitInfo(BinaryReader input)
         {
             var flags = input.ReadUInt32();
@@ -440,17 +466,21 @@ namespace OpenEQ.FileConverter.Wld
             if (0 != (flags & (1 << 3)))
                 input.ReadUInt32();
 
-            return GetFrag(input.ReadInt32(size));
+            var a = GetFrag(input.ReadInt32(size));
+            return a;
         }
 
         /// <summary>
         /// 0x05
         /// </summary>
         /// <param name="input"></param>
-        /// <returns></returns>
+        /// <returns>An array of FragRefs</returns>
+        /// <remarks>This appears to be a FragRef with one or more references to a FragRef
+        /// that has the underlying file name.</remarks>
         private FragRef[] FragTexUnk(BinaryReader input)
         {
-            return GetFrag(input.ReadInt32());
+            var a = GetFrag(input.ReadInt32());
+            return a;
         }
 
         /// <summary>
@@ -460,6 +490,8 @@ namespace OpenEQ.FileConverter.Wld
         /// <param name="name"></param>
         private SkelPierceTrackSet FragSkelTrackSet(BinaryReader input, string name)
         {
+            throw new NotImplementedException("0x10 Not used so far.  Want to know if/when it is.");
+
             var flags = input.ReadUInt32();
             var trackcount = input.ReadUInt32();
 
@@ -479,7 +511,7 @@ namespace OpenEQ.FileConverter.Wld
             {
                 var track = new SkelPierceTrack
                 {
-                    _name = StringTable.ReadNullTerminatedString(-input.ReadInt32()),
+                    Name = _stringTableHash[-input.ReadInt32()],
                     flags = input.ReadUInt32(),
                     pierceTrack = GetFrag(input.ReadInt32())
                 };
@@ -513,6 +545,7 @@ namespace OpenEQ.FileConverter.Wld
         /// <returns></returns>
         private FragRef[] FragSkelTrackSetRef(BinaryReader input)
         {
+            throw new NotImplementedException("0x11 Not used so far.  Want to know if/when it is.");
             return GetFrag(input.ReadInt32());
         }
 
@@ -523,6 +556,7 @@ namespace OpenEQ.FileConverter.Wld
         /// <returns></returns>
         private Frame[] FragSkelPierceTrack(BinaryReader input, string name)
         {
+            throw new NotImplementedException("0x12 Not used so far.  Want to know if/when it is.");
             // Skipping flags?
             input.ReadUInt32();
 
@@ -582,6 +616,7 @@ namespace OpenEQ.FileConverter.Wld
         /// <returns></returns>
         private SkelPierceTrack FragSkelPierceTrackRef(BinaryReader input, string name)
         {
+            throw new NotImplementedException("0x13 Not used so far.  Want to know if/when it is.");
             var skelpiecetrack = GetFrag(input.ReadInt32());
             var flags = input.ReadUInt32();
 
@@ -624,14 +659,16 @@ namespace OpenEQ.FileConverter.Wld
                 {
                     eldata[input.ReadUInt32()] = input.ReadSingle();
                 }
+
+                var aaa = 1;
             }
 
             var frags3 = input.ReadInt32(size2);
 
             // A string, but it seems to be blank?  Skipping it anyway.
             input.ReadBytes(input.ReadInt32()).DecodeString();
-
-            return new ModelRef(name, GetFrag(frags3));
+            var aa = new ModelRef(name, GetFrag(frags3));
+            return aa;
         }
 
         /// <summary>

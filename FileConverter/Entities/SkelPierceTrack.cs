@@ -3,7 +3,7 @@ namespace OpenEQ.FileConverter.Entities
 {
     public class SkelPierceTrack
     {
-        public string _name;
+        public string Name;
         public FragRef[] pierceTrack;
         public uint flags;
         public int[] NextPieces;
@@ -15,7 +15,7 @@ namespace OpenEQ.FileConverter.Entities
 
         public SkelPierceTrack(string name, FragRef[] t)
         {
-            _name = name;
+            Name = name;
             pierceTrack = t;
         }
     }
