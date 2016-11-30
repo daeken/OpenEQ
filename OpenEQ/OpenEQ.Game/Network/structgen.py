@@ -215,9 +215,9 @@ sdefs = {top : ({name : Struct(name, struct) for name, struct in d['structs'].it
 allEnums = {enum.name : enum for ns, (structs, enums) in sdefs.items() for name, enum in enums.items()}
 
 nsfiles = dict(
-	login='OpenEQ/OpenEQ.Game/Network/LoginPackets.cs', 
-	world='OpenEQ/OpenEQ.Game/Network/WorldPackets.cs', 
-	zone='OpenEQ/OpenEQ.Game/Network/ZonePackets.cs', 
+	login='LoginPackets.cs', 
+	world='WorldPackets.cs', 
+	zone='ZonePackets.cs', 
 )
 
 for ns, (structs, enums) in sdefs.items():
