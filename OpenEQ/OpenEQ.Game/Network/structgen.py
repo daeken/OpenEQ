@@ -17,15 +17,19 @@ btypemap = dict(
 	int8='SByte', 
 	int16='Int16', 
 	int32='Int32', 
-	float='Single'
+	float='Single', 
+	double='Double'
 )
 
+DEBUGSTRUCTS = ()
+
 class Type(object):
-	def __init__(self, spec):
+	def __init__(self, struct, spec):
+		self.struct = struct
 		if '<' in spec:
 			base, gen = spec.split('<', 1)
 			gen, rest = gen.split('>', 1)
-			self.gen = Type(gen)
+			self.gen = Type(self.struct, gen)
 			spec = base + rest
 		else:
 			self.gen = None
@@ -98,6 +102,8 @@ class Type(object):
 			print '%s}' % ws
 			return
 
+		if array != 'list' and self.struct.name in DEBUGSTRUCTS:
+			print '%sSystem.Console.WriteLine($"Reading field `%s` from { br.BaseStream.Position }");' % (ws, name)
 		if self.base in btypemap:
 			val = 'br.Read%s()' % btypemap[self.base]
 		elif self.base == 'bool':
@@ -113,16 +119,29 @@ class Type(object):
 			print '%s%s.Add(%s);' % (ws, name, val)
 		else:
 			print '%s%s = %s;' % (ws, name, val)
+			if self.struct.name in DEBUGSTRUCTS:
+				print '%sSystem.Console.WriteLine($"Read `%s` { %s }");' % (ws, name, name)
 
 class Struct(object):
 	def __init__(self, name, ydef):
 		self.name = name
 		self.elems = []
+		self.suppress = []
 		for elem in ydef:
 			(type, names), = elem.items()
-			type = Type(type)
+			if '@' in type:
+				type, cond = type.split('@', 2)
+				assert cond.startswith('if<') and cond.endswith('>')
+				cond = cond[3:-1]
+			else:
+				cond = None
+			type = Type(self, type)
 			for name in names.split(','):
-				self.elems.append((name.strip(), type))
+				name = name.strip()
+				if name.startswith('$'):
+					name = name[1:]
+					self.suppress.append(name)
+				self.elems.append((name, type, cond))
 
 	def __repr__(self):
 		return 'Struct(%r, %r)' % (self.name, self.elems)
@@ -130,16 +149,16 @@ class Struct(object):
 	def declare(self):
 		print '\tpublic struct %s : IEQStruct {' % self.name
 
-		for name, type in self.elems:
+		for name, type, cond in self.elems:
 			stype = type.declare()
 			if stype is None:
 				continue
 			print '\t\t%s%s %s;' % ('public ' if name[0].isupper() else '', stype, name)
 
-		if len(list(1 for name, type in self.elems if name[0].isupper())):
+		if len(list(1 for name, type, cond in self.elems if name[0].isupper())):
 			print
-			print '\t\tpublic %s(%s) : this() {' % (self.name, ', '.join('%s %s' % (type.declare(), name) for name, type in self.elems if name[0].isupper()))
-			for name, type in self.elems:
+			print '\t\tpublic %s(%s) : this() {' % (self.name, ', '.join('%s %s' % (type.declare(), name) for name, type, cond in self.elems if name[0].isupper()))
+			for name, type, cond in self.elems:
 				if name[0].isupper():
 					print '\t\t\tthis.%s = %s;' % (name, name)
 			print '\t\t}'
@@ -161,8 +180,13 @@ class Struct(object):
 		print '\t\t}'
 
 		print '\t\tpublic void Unpack(BinaryReader br) {'
-		for name, type in self.elems:
-			type.unpack(name, '\t\t\t')
+		for name, type, cond in self.elems:
+			if cond is not None:
+				print '\t\t\tif(%s) {' % cond
+				type.unpack(name, '\t\t\t\t')
+				print '\t\t\t}'
+			else:
+				type.unpack(name, '\t\t\t')
 		print '\t\t}'
 
 		print
@@ -176,16 +200,48 @@ class Struct(object):
 		print '\t\t}'
 
 		print '\t\tpublic void Pack(BinaryWriter bw) {'
-		for name, type in self.elems:
-			type.pack(name, '\t\t\t')
+		for name, type, cond in self.elems:
+			if cond is not None:
+				print '\t\t\tif(%s) {' % cond
+				type.pack(name, '\t\t\t\t')
+				print '\t\t\t}'
+			else:
+				type.pack(name, '\t\t\t')
 		print '\t\t}'
 
 		print
 		print '\t\tpublic override string ToString() {'
 		print '\t\t\tvar ret = "struct %s {\\n";' % self.name
-		for i, (name, type) in enumerate(self.elems):
-			if type.declare() is not None:
-				print '\t\t\tret += $"\\t%s = { Indentify(%s) }%s\\n";' % (name, name, ',' if i != len(self.elems) - 1 else '')
+		for i, (name, type, cond) in enumerate(self.elems):
+			dec = type.declare()
+			if dec is None or not name[0].isupper() or name in self.suppress:
+				continue
+
+			if cond is not None:
+				print '\t\t\tif(%s) {' % cond
+				ws = '\t\t\t\t'
+			else:
+				ws = '\t\t\t'
+
+			print ws + 'ret += "\\t%s = ";' % name
+			print ws + 'try {'
+			oldws = ws
+			ws += '\t'
+			if type.base != 'string' and type.rank is not None:
+				print ws + 'ret += "{{\\n";'
+				print ws + 'for(int i = 0, e = %s.%s; i < e; ++i)' % (name, 'Count' if type.base == 'list' else 'Length')
+				print ws + '\tret += $"\\t\\t{ Indentify(%s[i], 2) }" + (i != e - 1 ? "," : "") + "\\n";' % name
+				print ws + 'ret += "\\t}%s\\n";' % (',' if i != len(self.elems) - 1 else '')
+			else:
+				print ws + 'ret += $"{ Indentify(%s) }%s\\n";' % (name, ',' if i != len(self.elems) - 1 else '')
+			ws = oldws
+			print ws + '} catch(NullReferenceException) {'
+			print ws + '\tret += "!!NULL!!\\n";'
+			print ws + '}'
+
+			if cond is not None:
+				print '\t\t\t}'
+
 		print '\t\t\treturn ret + "}";'
 		print '\t\t}'
 
@@ -193,7 +249,7 @@ class Struct(object):
 
 class Enum(object):
 	def __init__(self, name, ydef):
-		type = Type(name)
+		type = Type(self, name)
 		self.base = (' : ' + type.gen.declare()) if type.gen and type.gen.declare() != 'uint' else ''
 		self.mbase = btypemap[type.gen.base if type.gen else 'uint32']
 		self.cast = type.gen.declare() if type.gen else 'uint'
@@ -233,8 +289,12 @@ class Enum(object):
 
 sfile = yaml.load(file('structs.yml'))
 
-sdefs = {top : ({name : Struct(name, struct) for name, struct in d['structs'].items()} if 'structs' in d else {}, {name : Enum(name, enum) for name, enum in d['enums'].items()} if 'enums' in d else {}) for top, d in sfile.items()}
-allEnums = {enum.name : enum for ns, (structs, enums) in sdefs.items() for name, enum in enums.items()}
+sdefs = {top : (
+	{name : Struct(name, struct) for name, struct in d['structs'].items()} if 'structs' in d else {}, 
+	{name : Enum(name, enum) for name, enum in d['enums'].items()} if 'enums' in d else {}, 
+	{name : value for name, value in d['constants'].items()} if 'constants' in d else {}
+) for top, d in sfile.items()}
+allEnums = {enum.name : enum for ns, (structs, enums, constants) in sdefs.items() for name, enum in enums.items()}
 
 nsfiles = dict(
 	login='LoginPackets.cs', 
@@ -242,7 +302,7 @@ nsfiles = dict(
 	zone='ZonePackets.cs', 
 )
 
-for ns, (structs, enums) in sdefs.items():
+for ns, (structs, enums, constants) in sdefs.items():
 	with file(nsfiles[ns], 'w') as fp:
 		sys.stdout = fp
 		print '''/*
@@ -260,9 +320,21 @@ for ns, (structs, enums) in sdefs.items():
 * DO NOT EDIT
 *
 */'''
+		print 'using System;'
 		print 'using System.Collections.Generic;'
 		print 'using System.IO;'
 		print 'using static OpenEQ.Network.Utility;'
+
+		if len(constants):
+			print
+			print 'using static OpenEQ.Network.%sConstants.Constants;' % ns.title()
+			print 'namespace OpenEQ.Network.%sConstants {' % ns.title()
+			print '\tinternal static class Constants {'
+			for name, value in constants.items():
+				print '\t\tpublic static int %s = %i;' % (name, value)
+			print '\t}'
+			print '}'
+
 		print
 		print 'namespace OpenEQ.Network {'
 

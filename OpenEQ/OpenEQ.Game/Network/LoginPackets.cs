@@ -13,6 +13,7 @@
 * DO NOT EDIT
 *
 */
+using System;
 using System.Collections.Generic;
 using System.IO;
 using static OpenEQ.Network.Utility;
@@ -102,14 +103,54 @@ namespace OpenEQ.Network {
 
 		public override string ToString() {
 			var ret = "struct ServerListElement {\n";
-			ret += $"\tWorldIP = { Indentify(WorldIP) },\n";
-			ret += $"\tServerListID = { Indentify(ServerListID) },\n";
-			ret += $"\tRuntimeID = { Indentify(RuntimeID) },\n";
-			ret += $"\tLongname = { Indentify(Longname) },\n";
-			ret += $"\tLanguage = { Indentify(Language) },\n";
-			ret += $"\tRegion = { Indentify(Region) },\n";
-			ret += $"\tStatus = { Indentify(Status) },\n";
-			ret += $"\tPlayersOnline = { Indentify(PlayersOnline) }\n";
+			ret += "\tWorldIP = ";
+			try {
+				ret += $"{ Indentify(WorldIP) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tServerListID = ";
+			try {
+				ret += $"{ Indentify(ServerListID) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tRuntimeID = ";
+			try {
+				ret += $"{ Indentify(RuntimeID) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tLongname = ";
+			try {
+				ret += $"{ Indentify(Longname) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tLanguage = ";
+			try {
+				ret += $"{ Indentify(Language) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tRegion = ";
+			try {
+				ret += $"{ Indentify(Region) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tStatus = ";
+			try {
+				ret += $"{ Indentify(Status) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tPlayersOnline = ";
+			try {
+				ret += $"{ Indentify(PlayersOnline) }\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
 			return ret + "}";
 		}
 	}
@@ -184,17 +225,24 @@ namespace OpenEQ.Network {
 
 		public override string ToString() {
 			var ret = "struct LoginReply {\n";
-			ret += $"\tmessage = { Indentify(message) },\n";
-			ret += $"\tunk1 = { Indentify(unk1) },\n";
-			ret += $"\tunk2 = { Indentify(unk2) },\n";
-			ret += $"\tunk3 = { Indentify(unk3) },\n";
-			ret += $"\tunk4 = { Indentify(unk4) },\n";
-			ret += $"\tunk5 = { Indentify(unk5) },\n";
-			ret += $"\tunk6 = { Indentify(unk6) },\n";
-			ret += $"\tunk7 = { Indentify(unk7) },\n";
-			ret += $"\tAcctID = { Indentify(AcctID) },\n";
-			ret += $"\tKey = { Indentify(Key) },\n";
-			ret += $"\tFailedAttempts = { Indentify(FailedAttempts) }\n";
+			ret += "\tAcctID = ";
+			try {
+				ret += $"{ Indentify(AcctID) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tKey = ";
+			try {
+				ret += $"{ Indentify(Key) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tFailedAttempts = ";
+			try {
+				ret += $"{ Indentify(FailedAttempts) }\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
 			return ret + "}";
 		}
 	}
@@ -239,9 +287,6 @@ namespace OpenEQ.Network {
 
 		public override string ToString() {
 			var ret = "struct SessionReady {\n";
-			ret += $"\tunk1 = { Indentify(unk1) },\n";
-			ret += $"\tunk2 = { Indentify(unk2) },\n";
-			ret += $"\tunk3 = { Indentify(unk3) }\n";
 			return ret + "}";
 		}
 	}
@@ -304,12 +349,15 @@ namespace OpenEQ.Network {
 
 		public override string ToString() {
 			var ret = "struct ServerListHeader {\n";
-			ret += $"\tunk1 = { Indentify(unk1) },\n";
-			ret += $"\tunk2 = { Indentify(unk2) },\n";
-			ret += $"\tunk3 = { Indentify(unk3) },\n";
-			ret += $"\tunk4 = { Indentify(unk4) },\n";
-			ret += $"\tserverCount = { Indentify(serverCount) },\n";
-			ret += $"\tServers = { Indentify(Servers) }\n";
+			ret += "\tServers = ";
+			try {
+				ret += "{{\n";
+				for(int i = 0, e = Servers.Count; i < e; ++i)
+					ret += $"\t\t{ Indentify(Servers[i], 2) }" + (i != e - 1 ? "," : "") + "\n";
+				ret += "\t}\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
 			return ret + "}";
 		}
 	}
@@ -360,11 +408,6 @@ namespace OpenEQ.Network {
 
 		public override string ToString() {
 			var ret = "struct Login {\n";
-			ret += $"\tunk1 = { Indentify(unk1) },\n";
-			ret += $"\tunk2 = { Indentify(unk2) },\n";
-			ret += $"\tunk3 = { Indentify(unk3) },\n";
-			ret += $"\tunk4 = { Indentify(unk4) },\n";
-			ret += $"\tunk5 = { Indentify(unk5) }\n";
 			return ret + "}";
 		}
 	}
@@ -434,15 +477,30 @@ namespace OpenEQ.Network {
 
 		public override string ToString() {
 			var ret = "struct PlayResponse {\n";
-			ret += $"\tSequence = { Indentify(Sequence) },\n";
-			ret += $"\tunk1 = { Indentify(unk1) },\n";
-			ret += $"\tunk2 = { Indentify(unk2) },\n";
-			ret += $"\tunk3 = { Indentify(unk3) },\n";
-			ret += $"\tAllowed = { Indentify(Allowed) },\n";
-			ret += $"\tMessage = { Indentify(Message) },\n";
-			ret += $"\tunk4 = { Indentify(unk4) },\n";
-			ret += $"\tunk5 = { Indentify(unk5) },\n";
-			ret += $"\tServerRuntimeID = { Indentify(ServerRuntimeID) }\n";
+			ret += "\tSequence = ";
+			try {
+				ret += $"{ Indentify(Sequence) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tAllowed = ";
+			try {
+				ret += $"{ Indentify(Allowed) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tMessage = ";
+			try {
+				ret += $"{ Indentify(Message) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tServerRuntimeID = ";
+			try {
+				ret += $"{ Indentify(ServerRuntimeID) }\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
 			return ret + "}";
 		}
 	}
@@ -495,10 +553,18 @@ namespace OpenEQ.Network {
 
 		public override string ToString() {
 			var ret = "struct PlayRequest {\n";
-			ret += $"\tSequence = { Indentify(Sequence) },\n";
-			ret += $"\tunk1 = { Indentify(unk1) },\n";
-			ret += $"\tunk2 = { Indentify(unk2) },\n";
-			ret += $"\tServerRuntimeID = { Indentify(ServerRuntimeID) }\n";
+			ret += "\tSequence = ";
+			try {
+				ret += $"{ Indentify(Sequence) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tServerRuntimeID = ";
+			try {
+				ret += $"{ Indentify(ServerRuntimeID) }\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
 			return ret + "}";
 		}
 	}

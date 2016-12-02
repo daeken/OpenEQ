@@ -26,7 +26,23 @@ namespace OpenEQ.Network {
             switch((ZoneOp) packet.Opcode) {
                 case ZoneOp.PlayerProfile:
                     var player = packet.Get<PlayerProfile>();
-                    WriteLine(player);
+                    //WriteLine(player);
+                    break;
+
+                case ZoneOp.CharInventory:
+                    var inventory = packet.Get<CharInventory>();
+                    Hexdump(packet.Data);
+                    WriteLine(inventory);
+                    break;
+
+                case ZoneOp.ZoneEntry:
+                    var mob = packet.Get<Spawn>();
+                    //WriteLine(mob);
+                    break;
+
+                case ZoneOp.SendFindableNPCs:
+                    var npc = packet.Get<FindableNPC>();
+                    //WriteLine(npc);
                     break;
 
                 default:

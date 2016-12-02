@@ -138,12 +138,12 @@ namespace OpenEQ.Network {
             }
         }
 
-        public static string Indentify(object ino) {
+        public static string Indentify(object ino, int amt = 1) {
             var inp = ino.ToString();
             if(inp.Contains("\n")) {
                 var lines = inp.Split('\n');
                 for(var i = 1; i < lines.Length; ++i)
-                    lines[i] = "\t" + lines[i];
+                    lines[i] = String.Concat(Enumerable.Repeat("\t", amt)) + lines[i];
                 return String.Join("\n", lines);
             } else
                 return inp;

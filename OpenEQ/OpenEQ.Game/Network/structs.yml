@@ -79,15 +79,306 @@ world:
       - uint16: Port
 
 zone:
+  constants:
+    MAX_PP_LANGUAGE: 25
+    MAX_PP_SPELLBOOK: 720
+    MAX_PP_MEMSPELL: 12
+    MAX_PP_SKILL: 100
+    MAX_PP_AA_ARRAY: 300
+    MAX_GROUP_MEMBERS: 6
+    MAX_RECAST_TYPES: 20
+    MAX_PP_DISCIPLINES: 200
+    MAX_PLAYER_TRIBUTES: 5
+    BUFF_COUNT: 30
+    BANDOLIERS_SIZE: 20
+    BANDOLIER_ITEM_COUNT: 4
+    POTIONBELT_SIZE: 5
+    SKILLARRAY_SIZE: 100
+
   enums:
-    Gender:
+    Gender<uint32>:
       - Male: 0
       - Female: 1
+
+    Roleplay<uint8>:
+      - NonAnon: 0
+      - Anon: 1
+      - Roleplay: 2
+
+    GuildRank<int8>:
+      - Member: 0
+      - Officer: 1
+      - Leader: 2
+      - None: -1
+
+    CharType<uint8>:
+      - PC: 0
+      - NPC: 1
+      - PCCorpse: 2
+      - NPCCorpse: 3
+
+    AATitle<uint32>:
+      - None: 0
+      - General: 1
+      - Archtype: 2
+      - ClassAARank: 3
 
   structs:
     ClientZoneEntry:
       - uint32: unk
       - string[64]: CharName
+
+    TimeOfDay:
+      - uint8: Hour, Minute, Day, Month
+      - uint32: Year
+
+    TributeInfo:
+      - bool<uint32>: Active
+      - uint32[MAX_PLAYER_TRIBUTES]: Tributes
+      - uint32[MAX_PLAYER_TRIBUTES]: Tiers
+      - uint32: TributeMasterID
+
+    TributeTimer:
+      - uint32: TimeLeft
+
+    ItemFaction:
+      - uint32: Mod
+      - int32: Amt
+
+    AugSlot:
+      - uint32: Type
+      - bool<uint8>: Visible
+      - skip[1]: unknown
+
+    GenEffect:
+      - int32: Effect
+      - uint8: Level2
+      - uint32: Type
+      - uint8: Level
+      - int32: MaxCharges, CastTime
+      - uint32: Recast
+      - int32: RecastType
+      - uint32: Procreate
+      - varstring: Name
+      - skip[4]: unk6
+
+    EvolvingItem:
+      - skip[4]: unknown001
+      - int32: EvoLevel
+      - double: Progress
+      - bool<uint8>: Activated
+      - int32: EvoMaxLevel
+      - skip[4]: unknown02
+
+    SerializedItem:
+      # ItemSerializationHeader
+      - uint32: StackSize
+      - skip[4]: unknown004
+      - uint32: Slot, Price, MerchantSlot, ScaledValue, InstanceID
+      - skip[4]: unknown028
+      - uint32: LastCastTime, Charges
+      - bool<uint32>: _IsNoDrop
+      - skip[12]: unknown044
+      - bool<uint8>: IsEvolving
+      - EvolvingItem@if<IsEvolving>: Evolution
+      - varstring: OrnamentIconFile
+      # ItemSerializationHeaderFinish
+      - uint16: OrnamentIcon
+      - skip[2]: unknown060
+      - bool<uint8>: IsCopied
+      - uint8: ItemClass
+      - varstring: Name, Lore, IDFile
+      # ItemBodyStruct
+      - uint32: ID
+      - uint8: Weight
+      - bool<uint8>: IsNoRent, IsNoDrop
+      - uint8: Attune, Size
+      - uint32: Slots, Price2, Icon
+      - skip[2]: unknown1
+      - uint32: BenefitFlag
+      - uint8: TradeSkills
+      - int8: CR, DR, PR, MR, FR, SVCorruption, AStr, ASta, AAgi, ADex, ACha, AInt, AWis
+      - int32: HP, Mana
+      - uint32: End
+      - int32: AC, Regen, ManaRegen, EndRegen
+      - uint32: Classes, Races, Deity
+      - int32: SkillModValue
+      - uint32: SkillModMax, SkillModType
+      - uint32: BaneDmgRace, BaneDmgBody, BaneDmgRaceAmt
+      - int32: BaneDmgAmt
+      - uint8: Magic
+      - int32: CastTime
+      - uint32: ReqLevel, RecLevel, RecSkill
+      - uint32: BardType
+      - int32: BardValue
+      - uint8: Light, Delay, ElemDmgType, ElemDmgAmt, Range
+      - uint32: Damage, Color
+      - uint8: ItemType
+      - uint32: Material
+      - skip[4]: unknown7
+      - uint32: EliteMaterial
+      - float: SellRate
+      - int32: CombatEffects, Shielding, StunResist, StrikeThrough, ExtraDmgSkill, ExtraDmgAmt, SpellShield, Avoidance, Accuracy
+      - uint32: CharmFileID
+      - ItemFaction[4]: Factions
+      - varstring: CharmFile
+      # ItemSecondaryBodyStruct
+      - uint32: AugType, AugRestrict
+      - AugSlot[5]: AugSlots
+      - uint32: LdonPointType, LdonTheme, LdonPrice, LdonSellbackRate, LdonSold
+      - uint8: BagType, BagSlots, BagSize, WeightReduction
+      - uint8: Book, BookType
+      - varstring: Filename
+      # ItemTertiaryBodyStruct
+      - int32: LoreGroup
+      - uint8: Artifact, SummonedFlag
+      - uint32: Favor
+      - uint8: FvNoDrop
+      - int32: DotShield, Atk, Haste, DamageShield
+      - uint32: GuildFavor, AugDistil
+      - skip[8]: unknown3
+      - bool<uint8>: NoPet
+      - skip[1]: unknown5
+      - uint8: PotionBeltEnabled
+      - uint32: PotionBeltSlots, StackSize2
+      - uint8: NoTransfer
+      - uint16: ExpendableArrow
+      - skip[4*4+3]: unknown8
+      - GenEffect: ClickEffect, ProcEffect
+      - GenEffect[4]: WornEffects
+      # ItemQuaternaryBodyStruct
+      - uint32: ScriptFileID
+      - uint8: QuestItem
+      - skip[4]: unknown15
+      - uint32: Purity, BackstabDmg, DSMitigation
+      - int32: HeroicStr, HeroicInt, HeroicWis, HeroicAgi, HeroicDex, HeroicSta, HeroicCha
+      - int32: HeroicMR, HeroicFR, HeroicCR, HeroicDR, HeroicPR, HeroicSVCorrupt
+      - int32: HealAmt, SpellDmg, Clairvoyance
+      - skip[1]: unknown18
+      - uint32: EvolveString
+      - skip[1+4*3]: unknown19
+      - uint32: SubItemCount
+      - SerializedItem[SubItemCount]: SubItems
+    
+    CharInventory:
+      - uint32: ItemCount
+      - SerializedItem[ItemCount]: Items
+
+    Spawn:
+      - varstring: Name
+      - uint32: SpawnID
+      - uint8: Level
+      - skip[4]: unknown1
+      - CharType: CharType
+      - uint32: SpawnFlags # XXX: Handle bitfield
+      - uint8: OtherFlags # & 4: has title, & 8: has suffix, & 1: it's a chest or untargetable
+      - skip[8]: unknown3
+      - float: Size
+      - uint8: Face
+      - float: WalkSpeed, RunSpeed
+      - uint32: Race
+      - uint8: ShowName
+      - uint32: BodyType
+      - uint8: CurHP, HairColor, BeardColor, EyeColor1, EyeColor2, HairStyle, Beard
+      - uint32: DrakkinHeritage, DrakkinTattoo, DrakkinDetails
+      - uint8: Statue
+      - uint32: Deity, GuildID
+      - GuildRank: GuildRank
+      - skip[3]: restofguildrank
+      - uint8: Class
+      - bool<uint8>: PVP # 2 if PVP -- bool don't care
+      - uint8: StandState, Light, FlyMode, EquipChest2
+      - skip[2]: unknown9
+      - uint8: Helm
+      - varstring: LastName
+      - AATitle: AATitle
+      - skip[1]: unknown12
+      - uint32: PetOwnerID
+      - skip[1]: unknown13
+      - uint32: PlayerState
+      - skip[5*4]: unknown15
+      - skip[20]: position # XXX: Parse!
+      #- TintProfile: EquipmentTint
+      #- TextureProfile: Equipment
+      # - varstring: Title # Only if OtherFlags & 4
+      # - varstring: Suffix # Only if OtherFlags & 8
+      # - skip[8]: unknown20
+      # - bool<uint8>: IsMercenary
+      # - skip[28]: unknown21
+
+    FindableNPC:
+      - bool<uint32>: Remove
+      - uint32: EntityID
+      - string[64]: Name
+      - string[32]: LastName
+      - uint32: Race
+      - uint8: Class
+      - skip[3]: unknown109
+
+    Bind:
+      - uint32: ZoneID
+      - float: X, Y, Z, Heading
+
+    Texture:
+      - uint32: Material, unknown1, EliteMaterial
+    TextureProfile:
+      - Texture: Head, Chest, Arms, Wrist, Hands, Legs, Feet, Primary, Secondary
+
+    Tint:
+      - uint8: Blue, Green, Red, UseTint
+    TintProfile:
+      - Tint: Head, Chest, Arms, Wrist, Hands, Legs, Feet, Primary, Secondary
+
+    AAArray:
+      - uint32: AA, Value, Charges
+
+    Money:
+      - uint32: Platinum, Gold, Silver, Copper
+
+    SpellBuff:
+      - uint8: EffectType, Level
+      - skip[2]: unk2
+      - float: BardModifier
+      - uint32: SpellID, Duration, NumHits, CasterID
+      - skip[4]: unk36
+      - int32[12]: SlotData
+
+    PotionBandolierItem:
+      - uint32: ID, Icon
+      - string[64]: Name
+    Bandolier:
+      - string[32]: Name
+      - PotionBandolierItem[BANDOLIER_ITEM_COUNT]: Items
+
+    GroupMember:
+      - string[64]: Name
+
+    LdonPoints:
+      - int32: Guk, Mir, Mmc, Ruj, Tak
+      - int32: Available
+
+    Tribute:
+      - uint32: TributeID, Tier
+
+    SubLeadershipAA:
+      - uint32: MarkNPC, NPCHealth, DelegateMainAssist, DelegateMarkNPC, _4, _5, _6, SpellAwareness
+      - uint32: OffenseEnhancement, ManaEnhancement, HealthEnhancement, HealthRegeneration, FindPathToPC, HealthOfTargetsTarget, _14, _15
+
+    LeadershipAA:
+      - SubLeadershipAA: Group, Raid
+
+    PVPStatsEntry:
+      - string[64]: Name
+      - uint32: Level, Race, Class, Zone, Time, Points
+
+    PVPStats:
+      - uint32: Kills, Deaths, CurrentPoints, CareerPoints, BestKillStreak, WorstDeathStreak, CurrentKillStreak
+      - PVPStatsEntry: LastKill, LastDeath
+      - uint32: KillsInLast24Hours
+      - PVPStatsEntry[50]: $RecentKills
+
+    Autoconsent:
+      - bool<uint8>: Group, Raid, Guild
 
     PlayerProfile:
       - uint32: checksum
@@ -95,3 +386,97 @@ zone:
       - uint32: Race, Class
       - skip[40]: unknown00016
       - uint8: Level, unkLevel
+      - skip[2]: unknown00058
+      - Bind[5]: Binds
+      - uint32: Deity
+      - uint32: Intoxication
+      - uint32[MAX_PP_MEMSPELL]: $SpellSlotRefresh
+      - skip[6]: unknown00208
+      - uint32: AbilitySlotRefresh
+      - uint8: HairColor, BeardColor, EyeColor1, EyeColor2, HairStyle, Beard
+      - skip[4]: unknown00232
+      - TextureProfile: Equipment
+      - skip[168]: unknown00344
+      - TintProfile: ItemTint
+      - AAArray[MAX_PP_AA_ARRAY]: $AAArray
+      - uint32: Points, Mana, CurHP, STR, STA, CHA, DEX, INT, AGI, WIS
+      - skip[28]: unknown04188
+      - uint8: Face
+      - skip[147]: unknown04217
+      - uint32[MAX_PP_SPELLBOOK]: $SpellBook
+      - uint32[MAX_PP_MEMSPELL]: $MemSpells
+      - skip[20]: unknown07284
+      - Money: PlayerMoney, CursorMoney
+      - uint32[MAX_PP_SKILL]: $Skills
+      - skip[136]: unknown07644
+      - uint32: Toxicity, Thirst, Hunger
+      - SpellBuff[BUFF_COUNT]: $Buffs
+      - uint32[MAX_PP_DISCIPLINES]: $Disciplines
+      - uint32[MAX_RECAST_TYPES]: $RecastTimers
+      - skip[160]: unknown11052
+      - uint32: Endurance
+      - skip[20]: unknown11216
+      - uint32: AAPointsSpent, AAPoints
+      - skip[4]: unknown11244
+      - Bandolier[BANDOLIERS_SIZE]: $Bandoliers
+      - PotionBandolierItem[POTIONBELT_SIZE]: $PotionBelt
+      - skip[8]: unknown18008
+      - uint32: AvailableSlots
+      - skip[80]: unknown18020
+      - string[64]: Name
+      - string[32]: LastName
+      - skip[8]: unknown18196
+      - uint32: GuildID, Birthday, LastLogin, AccountStartdate, TimePlayed
+      - bool<uint8>: PVP
+      - Roleplay: Roleplay
+      - bool<uint8>: GM
+      - GuildRank: GuildRank
+      - uint32: GuildBanker
+      - skip[4]: unknown18232
+      - uint32: Experience
+      - skip[8]: unknown18240
+      - uint32: timeEntitledOnAccount
+      - uint8[MAX_PP_LANGUAGE]: $Languages
+      - skip[7]: unknown18277
+      - float: X, Y, Z, Heading
+      - skip[4]: unknown18300
+      - Money: BankMoney
+      - uint32: PlatinumShared
+      - skip[1036]: unknown18324
+      - uint32: expansions
+      - skip[12]: unknown19364
+      - bool<uint32>: Autosplit
+      - skip[16]: unknown19380
+      - uint16: ZoneID, ZoneInstance
+      - GroupMember[MAX_GROUP_MEMBERS]: GroupMembers
+      - string[64]: GroupLeader
+      - skip[540]: unknown19848
+      - uint32: EntityID
+      - bool<uint32>: LeadAAActive
+      - skip[4]: unknown20396
+      - LdonPoints: LdonPoints
+      - skip[9*4+4+4*6+72]: unknown20424
+      - float: TributeTimeRemaining
+      - uint32: CareerTributePoints
+      - skip[4]: unknown20546
+      - uint32: TributePoints
+      - skip[4]: unknown20572
+      - bool<uint32>: TributeActive
+      - Tribute[MAX_PLAYER_TRIBUTES]: $Tributes
+      - skip[4]: unknown20620
+      - double: GroupLeadershipExp, RaidLeadershipExp
+      - uint32: GroupLeadershipPoints, RaidLeadershipPoints
+      - LeadershipAA: LeaderAbilities
+      - skip[128]: unknown20776
+      - uint32: AirRemaining
+      - PVPStats: PVPStats
+      - uint32: AAExperience
+      - skip[40]: unknown25524
+      - uint32: CurrentRadCrystals, CareerRadCrystals
+      - uint32: CurrentEbonCrystals, CareerEbonCrystals
+      - Autoconsent: Autoconsent
+      - skip[1]: unknown25583
+      - uint32: Level3
+      - bool<uint32>: ShowHelm
+      - uint32: RestTimer
+      - skip[1036]: unknown25596

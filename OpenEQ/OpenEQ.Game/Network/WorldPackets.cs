@@ -13,6 +13,7 @@
 * DO NOT EDIT
 *
 */
+using System;
 using System.Collections.Generic;
 using System.IO;
 using static OpenEQ.Network.Utility;
@@ -67,9 +68,15 @@ namespace OpenEQ.Network {
 
 		public override string ToString() {
 			var ret = "struct CharacterSelect {\n";
-			ret += $"\tcharCount = { Indentify(charCount) },\n";
-			ret += $"\ttotalChars = { Indentify(totalChars) },\n";
-			ret += $"\tCharacters = { Indentify(Characters) }\n";
+			ret += "\tCharacters = ";
+			try {
+				ret += "{{\n";
+				for(int i = 0, e = Characters.Count; i < e; ++i)
+					ret += $"\t\t{ Indentify(Characters[i], 2) }" + (i != e - 1 ? "," : "") + "\n";
+				ret += "\t}\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
 			return ret + "}";
 		}
 	}
@@ -120,9 +127,24 @@ namespace OpenEQ.Network {
 
 		public override string ToString() {
 			var ret = "struct EnterWorld {\n";
-			ret += $"\tName = { Indentify(Name) },\n";
-			ret += $"\tTutorial = { Indentify(Tutorial) },\n";
-			ret += $"\tGoHome = { Indentify(GoHome) }\n";
+			ret += "\tName = ";
+			try {
+				ret += $"{ Indentify(Name) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tTutorial = ";
+			try {
+				ret += $"{ Indentify(Tutorial) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tGoHome = ";
+			try {
+				ret += $"{ Indentify(GoHome) }\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
 			return ret + "}";
 		}
 	}
@@ -169,8 +191,18 @@ namespace OpenEQ.Network {
 
 		public override string ToString() {
 			var ret = "struct ZoneServerInfo {\n";
-			ret += $"\tHost = { Indentify(Host) },\n";
-			ret += $"\tPort = { Indentify(Port) }\n";
+			ret += "\tHost = ";
+			try {
+				ret += $"{ Indentify(Host) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tPort = ";
+			try {
+				ret += $"{ Indentify(Port) }\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
 			return ret + "}";
 		}
 	}
@@ -314,32 +346,138 @@ namespace OpenEQ.Network {
 
 		public override string ToString() {
 			var ret = "struct CharacterSelectEntry {\n";
-			ret += $"\tLevel = { Indentify(Level) },\n";
-			ret += $"\tHairStyle = { Indentify(HairStyle) },\n";
-			ret += $"\tGender = { Indentify(Gender) },\n";
-			ret += $"\tName = { Indentify(Name) },\n";
-			ret += $"\tBeard = { Indentify(Beard) },\n";
-			ret += $"\tHairColor = { Indentify(HairColor) },\n";
-			ret += $"\tFace = { Indentify(Face) },\n";
-			ret += $"\tequipment = { Indentify(equipment) },\n";
-			ret += $"\tPrimaryID = { Indentify(PrimaryID) },\n";
-			ret += $"\tSecondaryID = { Indentify(SecondaryID) },\n";
-			ret += $"\tunknown15 = { Indentify(unknown15) },\n";
-			ret += $"\tDeity = { Indentify(Deity) },\n";
-			ret += $"\tZone = { Indentify(Zone) },\n";
-			ret += $"\tInstance = { Indentify(Instance) },\n";
-			ret += $"\tGoHome = { Indentify(GoHome) },\n";
-			ret += $"\tunknown19 = { Indentify(unknown19) },\n";
-			ret += $"\tRace = { Indentify(Race) },\n";
-			ret += $"\tTutorial = { Indentify(Tutorial) },\n";
-			ret += $"\tClass = { Indentify(Class) },\n";
-			ret += $"\tEyeColor1 = { Indentify(EyeColor1) },\n";
-			ret += $"\tBeardColor = { Indentify(BeardColor) },\n";
-			ret += $"\tEyeColor2 = { Indentify(EyeColor2) },\n";
-			ret += $"\tDrakkinHeritage = { Indentify(DrakkinHeritage) },\n";
-			ret += $"\tDrakkinTattoo = { Indentify(DrakkinTattoo) },\n";
-			ret += $"\tDrakkinDetails = { Indentify(DrakkinDetails) },\n";
-			ret += $"\tunknown = { Indentify(unknown) }\n";
+			ret += "\tLevel = ";
+			try {
+				ret += $"{ Indentify(Level) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tHairStyle = ";
+			try {
+				ret += $"{ Indentify(HairStyle) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tGender = ";
+			try {
+				ret += $"{ Indentify(Gender) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tName = ";
+			try {
+				ret += $"{ Indentify(Name) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tBeard = ";
+			try {
+				ret += $"{ Indentify(Beard) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tHairColor = ";
+			try {
+				ret += $"{ Indentify(HairColor) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tFace = ";
+			try {
+				ret += $"{ Indentify(Face) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tPrimaryID = ";
+			try {
+				ret += $"{ Indentify(PrimaryID) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tSecondaryID = ";
+			try {
+				ret += $"{ Indentify(SecondaryID) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tDeity = ";
+			try {
+				ret += $"{ Indentify(Deity) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tZone = ";
+			try {
+				ret += $"{ Indentify(Zone) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tInstance = ";
+			try {
+				ret += $"{ Indentify(Instance) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tGoHome = ";
+			try {
+				ret += $"{ Indentify(GoHome) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tRace = ";
+			try {
+				ret += $"{ Indentify(Race) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tTutorial = ";
+			try {
+				ret += $"{ Indentify(Tutorial) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tClass = ";
+			try {
+				ret += $"{ Indentify(Class) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tEyeColor1 = ";
+			try {
+				ret += $"{ Indentify(EyeColor1) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tBeardColor = ";
+			try {
+				ret += $"{ Indentify(BeardColor) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tEyeColor2 = ";
+			try {
+				ret += $"{ Indentify(EyeColor2) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tDrakkinHeritage = ";
+			try {
+				ret += $"{ Indentify(DrakkinHeritage) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tDrakkinTattoo = ";
+			try {
+				ret += $"{ Indentify(DrakkinTattoo) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tDrakkinDetails = ";
+			try {
+				ret += $"{ Indentify(DrakkinDetails) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
 			return ret + "}";
 		}
 	}
