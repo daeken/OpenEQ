@@ -175,7 +175,7 @@ namespace OpenEQ.FileConverter.Entities
                     var zoneZipEntry = zipArchive.CreateEntry("zone.oez", CompressionLevel.NoCompression);
                     using (var bw = new BinaryWriter(zoneZipEntry.Open()))
                     {
-                        var materials = new Dictionary<string, Tuple<int, Mesh>>();
+                        var materials = new Dictionary<string, Tuple<int, int, Mesh>>();
 
                         foreach (var obj in ZoneObjects)
                         {
@@ -183,7 +183,7 @@ namespace OpenEQ.FileConverter.Entities
                             {
                                 var key = $"{mesh.Material.Flags}{string.Join(",", mesh.Material.filenames)}";
                                 if (!materials.ContainsKey(key))
-                                    materials.Add(key, new Tuple<int, Mesh>(materials.Keys.Count, mesh));
+                                    materials.Add(key, new Tuple<int, int, Mesh>(materials.Keys.Count, mesh.Material.Flags, mesh));
                             }
                         }
 
@@ -193,9 +193,9 @@ namespace OpenEQ.FileConverter.Entities
 
                         foreach (var m in orderedList)
                         {
-                            bw.Write(m.Item1);
-                            bw.Write(m.Item2.Material.filenames.Count);
-                            foreach (var fileName in m.Item2.Material.filenames)
+                            bw.Write(m.Item2);
+                            bw.Write(m.Item3.Material.filenames.Count);
+                            foreach (var fileName in m.Item3.Material.filenames)
                             {
                                 bw.Write(fileName);
                             }
