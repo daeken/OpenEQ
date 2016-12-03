@@ -60,24 +60,6 @@ namespace OpenEQ.FileConverter.Entities
             });
         }
 
-        //    def coalesceObjectMeshes(self):
-        //    for obj in self.objects:
-        //        startmeshcount = len(obj.meshes)
-        //        matmeshes = {}
-        //        for mesh in obj.meshes:
-        //            mat = mesh.material.filenames, mesh.material.flags
-        //            if mat not in matmeshes:
-        //                matmeshes[mat] = []
-        //    matmeshes[mat].append(mesh)
-        //        obj.meshes = []
-        //    poss = 0
-        //        for meshlist in matmeshes.values():
-        //            if len(meshlist) == 1:
-        //                obj.meshes.append(meshlist[0])
-        //                continue
-        //            gmesh = reduce(lambda a, b: a.add(b), meshlist)
-        //            obj.meshes += gmesh.optimize()
-
         public void CoalesceObjectMeshes()
         {
             foreach (var obj in ZoneObjects)
@@ -219,7 +201,7 @@ namespace OpenEQ.FileConverter.Entities
                                 bw.Write(mesh.Polygons.Count);
                                 foreach (var poly in mesh.Polygons)
                                 {
-                                    bw.WriteFloatArray(poly.Item2.to_array());
+                                    bw.WriteIntArray(poly.Item2.to_array());
                                 }
                                 foreach (var poly in mesh.Polygons)
                                 {

@@ -18,6 +18,12 @@ namespace OpenEQ.FileConverter
 
             await Task.Run(() =>
             {
+                if (!File.Exists(fileName))
+                {
+                    Console.WriteLine($"Could not find {fileName}.  Skipping.");
+                    return;
+                }
+
                 using (var fs = File.OpenRead(fileName))
                 {
                     using (var input = new BinaryReader(fs))

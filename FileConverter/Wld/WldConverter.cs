@@ -191,18 +191,25 @@ namespace OpenEQ.FileConverter.Wld
 
         private void GetFragments(BinaryReader input)
         {
+            var foo = new Dictionary<uint, int>();
+
             var sw = Stopwatch.StartNew();
             for (var i = 0; i < Header.fragmentCount; i++)
             {
                 var fragHeader = new struct_wld_basic_frag(input);
+                //		fragHeader.nameoff	-15132391	int
                 var name =
-                    fragHeader.nameoff != 0x1000000 && fragHeader.nameoff != -0x1000000
+                    fragHeader.nameoff != 0x1000000 && fragHeader.nameoff != -0x1000000 && _stringTableHash.ContainsKey(-Math.Min(fragHeader.nameoff, 0))
                         ? _stringTableHash[-Math.Min(fragHeader.nameoff, 0)]
                         : "";
 
                 var epos = input.BaseStream.Position + fragHeader.size - 4;
                 object frag = null;
-
+                if (!foo.ContainsKey(fragHeader.type))
+                {
+                    foo.Add(fragHeader.type, 0);
+                }
+                foo[fragHeader.type]++;
                 switch (fragHeader.type)
                 {
                     case 3: //0x03
@@ -303,18 +310,30 @@ namespace OpenEQ.FileConverter.Wld
                     }
                     case 22:
                     {
+                            // UNKNOWN
+                            break;
+                    }
+                    case 23:
+                    {
                         // UNKNOWN
+                        Frag23PolyHDef(input, name, fragHeader.size);
+                        break;
+                    }
+                    case 24:
+                    {
+                        // UNKNOWN
+                        Frag24PolyHDef(input, name, fragHeader.size);
                         break;
                     }
                     case 33:
                     {
-                        // UNKNOWN
-                        break;
+                        Frag33(input, name);
+                            break;
                     }
                     case 34:
                     {
-                        // UNKNOWN
-                        break;
+                        Frag34(input, name);
+                            break;
                     }
                     case 38:
                     {
@@ -384,7 +403,11 @@ namespace OpenEQ.FileConverter.Wld
             }
 
             sw.Stop();
-            Console.WriteLine($"{sw.Elapsed}, {sw.ElapsedMilliseconds}, {sw.ElapsedTicks}");
+            //Console.WriteLine($"{sw.Elapsed}, {sw.ElapsedMilliseconds}, {sw.ElapsedTicks}");
+            //foreach (var f in foo)
+            //{
+            //    Console.WriteLine($"{f.Key} :: {f.Value}");
+            //}
         }
 
         private FragRef[] GetFrag(int reference)
@@ -427,6 +450,64 @@ namespace OpenEQ.FileConverter.Wld
             }
 
             return refs;
+        }
+
+        private FragRef Frag23PolyHDef(BinaryReader input, string name, uint size)
+        {
+            var d = input.ReadBytes((int)size);
+            var flags = input.ReadUInt32() + 1;
+            var size1 = input.ReadUInt32();
+            return null;
+        }
+
+        private FragRef Frag24PolyHDef(BinaryReader input, string name, uint size)
+        {
+            var d = input.ReadBytes((int)size);
+            var size1 = input.ReadUInt32() + 1;
+            return null;
+        }
+
+        private FragRef Frag33(BinaryReader input, string name)
+        {
+            var a = 1;
+            //FRAGMENT_FUNC(Data21) {
+            //    struct_Data21* data;
+            //    long count = *((long*)buf);
+            //    long i;
+            //    BSP_Node* tree = (BSP_Node*)malloc(count * sizeof(BSP_Node));
+
+            //    for (i = 0; i < count; ++i)
+            //    {
+            //        data = (struct_Data21*)(buf + i * sizeof(struct_Data21));
+            //        tree[i].normal[0] = data->normal[0];
+            //        tree[i].normal[1] = data->normal[1];
+            //        tree[i].normal[2] = data->normal[2];
+            //        tree[i].splitdistance = data->splitdistance;
+            //        // tree[i].region = (BSP_Region *) wld->frags[data->region]->frag;
+            //        // tree[i].left = &tree[data->node[0]];
+            //        // tree[i].right = &tree[data->node[1]];
+            //    }
+            //    return 0;
+            //}
+            return null;
+        }
+
+        private FragRef Frag34(BinaryReader input, string name)
+        {
+            var a = 1;
+            // UNKNOWN
+            //FRAGMENT_FUNC(Data22) {
+            //    int pos;
+            //    struct_Data22* data = (struct_Data22*)buf;
+
+            //    if (!wld->loadBSP)
+            //        return -1;
+
+            //    pos = sizeof(struct_Data22) + (12 * data->size1) + (8 * data->size2);
+
+            //    return 0;
+            //}
+            return null;
         }
 
         /// <summary>
@@ -490,8 +571,6 @@ namespace OpenEQ.FileConverter.Wld
         /// <param name="name"></param>
         private SkelPierceTrackSet FragSkelTrackSet(BinaryReader input, string name)
         {
-            throw new NotImplementedException("0x10 Not used so far.  Want to know if/when it is.");
-
             var flags = input.ReadUInt32();
             var trackcount = input.ReadUInt32();
 
@@ -545,7 +624,6 @@ namespace OpenEQ.FileConverter.Wld
         /// <returns></returns>
         private FragRef[] FragSkelTrackSetRef(BinaryReader input)
         {
-            throw new NotImplementedException("0x11 Not used so far.  Want to know if/when it is.");
             return GetFrag(input.ReadInt32());
         }
 
@@ -556,7 +634,6 @@ namespace OpenEQ.FileConverter.Wld
         /// <returns></returns>
         private Frame[] FragSkelPierceTrack(BinaryReader input, string name)
         {
-            throw new NotImplementedException("0x12 Not used so far.  Want to know if/when it is.");
             // Skipping flags?
             input.ReadUInt32();
 
@@ -616,7 +693,6 @@ namespace OpenEQ.FileConverter.Wld
         /// <returns></returns>
         private SkelPierceTrack FragSkelPierceTrackRef(BinaryReader input, string name)
         {
-            throw new NotImplementedException("0x13 Not used so far.  Want to know if/when it is.");
             var skelpiecetrack = GetFrag(input.ReadInt32());
             var flags = input.ReadUInt32();
 
@@ -687,9 +763,12 @@ namespace OpenEQ.FileConverter.Wld
             input.ReadUInt32();
             var pos = input.ReadSingle(3);
             var rot = input.ReadSingle(3);
-            rot[0] = (float) (rot[2]/512F*360F*Math.PI/180F);
-            rot[1] = (float) (rot[1]/512F*360F*Math.PI/180F);
-            rot[2] = (float) (rot[0]/512F*360F*Math.PI/180F);
+
+            var tmpRot = new float[rot.Length];
+            tmpRot[0] = (rot[2]/512F)*360F* (float)(Math.PI/180F);
+            tmpRot[1] = (rot[1]/512F)*360F* (float)(Math.PI/180F);
+            tmpRot[2] = (rot[0]/512F)*360F* (float)(Math.PI/180F);
+            rot = tmpRot;
 
             var scale = input.ReadSingle(3);
             scale = scale[2] > 0.0001 ? new[] {scale[2], scale[2], scale[2]} : new[] {1F, 1F, 1F};

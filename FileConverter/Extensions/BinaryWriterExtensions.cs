@@ -12,5 +12,13 @@ namespace OpenEQ.FileConverter.Extensions
                 output.Write(f);
             }
         }
+
+        public static void WriteIntArray(this BinaryWriter output, float[] data)
+        {
+            foreach (var f in data)
+            {
+                output.Write((int)f);
+            }
+        }
     }
 }

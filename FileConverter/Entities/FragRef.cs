@@ -65,10 +65,11 @@ namespace OpenEQ.FileConverter.Entities
 
             if (Value is string[])
             {
-                foreach (var s in (string[]) Value)
-                {
-                    yield return s;
-                }
+                yield return ((string[]) Value)[0];
+                //foreach (var s in (string[]) Value)
+                //{
+                //    yield return s;
+                //}
             }
 
             if (tmp is Tuple<int, string, uint, object>)
