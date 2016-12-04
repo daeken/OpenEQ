@@ -70,7 +70,7 @@ namespace OpenEQ.Network {
 			var ret = "struct CharacterSelect {\n";
 			ret += "\tCharacters = ";
 			try {
-				ret += "{{\n";
+				ret += "{\n";
 				for(int i = 0, e = Characters.Count; i < e; ++i)
 					ret += $"\t\t{ Indentify(Characters[i], 2) }" + (i != e - 1 ? "," : "") + "\n";
 				ret += "\t}\n";

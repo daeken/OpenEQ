@@ -1,5 +1,6 @@
 import sys, yaml
 from pprint import pprint
+from math import *
 
 typemap = dict(
 	uint8='byte', 
@@ -228,7 +229,7 @@ class Struct(object):
 			oldws = ws
 			ws += '\t'
 			if type.base != 'string' and type.rank is not None:
-				print ws + 'ret += "{{\\n";'
+				print ws + 'ret += "{\\n";'
 				print ws + 'for(int i = 0, e = %s.%s; i < e; ++i)' % (name, 'Count' if type.base == 'list' else 'Length')
 				print ws + '\tret += $"\\t\\t{ Indentify(%s[i], 2) }" + (i != e - 1 ? "," : "") + "\\n";' % name
 				print ws + 'ret += "\\t}%s\\n";' % (',' if i != len(self.elems) - 1 else '')
@@ -246,6 +247,234 @@ class Struct(object):
 		print '\t\t}'
 
 		print '\t}'
+
+
+class BitType(object):
+	def __init__(self, bf, spec):
+		self.bf = bf
+		assert '<' in spec
+		base, size = spec.split('<', 1)
+		size, rest = size.split('>', 1)
+		self.size = int(size)
+		spec = base + rest
+
+		if '[' in spec:
+			self.rank = int(spec.split('[', 1)[1].split(']', 1)[0])
+			# XXX: Handle multidimensional arrays
+		else:
+			self.rank = None
+
+		self.bits = self.size * self.rank if self.rank is not None else self.size
+
+		self.base = spec.split('<', 1)[0].split('[', 1)[0]
+
+	def declare(self, new=False, noArray=False):
+		if self.base == 'skip':
+			return None
+
+		type = self.base
+		if type in ('int', 'uint'):
+			if self.size <= 8:
+				type = 'byte' if type == 'uint' else 'sbyte'
+			elif self.size <= 16:
+				type = 'ushort' if type == 'uint' else 'short'
+			elif self.size > 32:
+				print 'A bitfield can only be up to 32 bits (in %s)' % self.bf.name
+				assert False
+
+		if not noArray and self.rank is not None:
+			type += '[]' if not new else '[%i]' % self.rank
+
+		return type
+
+	def pack(self, name, ws='', array=False):
+		assert False # XXX: Implement
+
+		if self.base == 'skip':
+			return
+
+		if not array and self.rank is not None:
+			tvar = chr(ord('i') + len(ws) - 3)
+			print '%sfor(var %s = 0; %s < %s; ++%s) {' % (ws, tvar, tvar, self.rank, tvar)
+			self.pack('%s[%s]' % (name, tvar), ws=ws + '\t', array=True)
+			print '%s}' % ws
+			return
+
+		#
+
+	def unpack(self, name, data, ws='', array=False):
+		if self.base == 'skip':
+			return
+
+		if not array and self.rank is not None:
+			print '%s%s = new %s;' % (ws, name, self.declare(new=True))
+			tvar = chr(ord('i') + len(ws) - 3)
+			print '%sfor(var %s = 0; %s < %s; ++%s) {' % (ws, tvar, tvar, self.rank, tvar)
+			self.unpack('%s[%s]' % (name, tvar), ws=ws + '\t', array=True)
+			print '%s}' % ws
+			return
+
+		val = '%s & 0x%X' % (data, (1 << self.size) - 1)
+		if self.base == 'int':
+			val = '((int) (%s) ^ 0x%x) - 0x%x' % (val, 1 << (self.size - 1), 1 << (self.size - 1))
+		elif self.base == 'bool':
+			val = '(%s) != 0' % val
+
+		print '%s%s = (%s) (%s);' % (ws, name, self.declare(noArray=True), val)
+
+class Bitfield(object):
+	def __init__(self, name, ydef):
+		self.name = name
+		self.elems = []
+		self.suppress = []
+		for elem in ydef:
+			(type, names), = elem.items()
+			type = BitType(self, type)
+			for name in names.split(','):
+				name = name.strip()
+				if name.startswith('$'):
+					name = name[1:]
+					self.suppress.append(name)
+				self.elems.append((name, type))
+
+		self.bits = sum(type.bits for name, type in self.elems)
+
+	def __repr__(self):
+		return 'Bitfield(%r, %r)' % (self.name, self.elems)
+
+	def declare(self):
+		print '\tpublic struct %s : IEQStruct {' % self.name
+
+		for name, type in self.elems:
+			stype = type.declare()
+			if stype is None:
+				continue
+			print '\t\t%s%s %s;' % ('public ' if name[0].isupper() else '', stype, name)
+
+		if len(list(1 for name, type in self.elems if name[0].isupper())):
+			print
+			print '\t\tpublic %s(%s) : this() {' % (self.name, ', '.join('%s %s' % (type.declare(), name) for name, type in self.elems if name[0].isupper()))
+			for name, type in self.elems:
+				if name[0].isupper():
+					print '\t\t\tthis.%s = %s;' % (name, name)
+			print '\t\t}'
+
+		print
+		print '\t\tpublic %s(byte[] data, int offset = 0) : this() {' % self.name
+		print '\t\t\tUnpack(data, offset);'
+		print '\t\t}'
+		print '\t\tpublic %s(BinaryReader br) : this() {' % self.name
+		print '\t\t\tUnpack(br);'
+		print '\t\t}'
+
+		print '\t\tpublic void Unpack(byte[] data, int offset = 0) {'
+		print '\t\t\tusing(var ms = new MemoryStream(data, offset, data.Length - offset)) {'
+		print '\t\t\t\tusing(var br = new BinaryReader(ms)) {'
+		print '\t\t\t\t\tUnpack(br);'
+		print '\t\t\t\t}'
+		print '\t\t\t}'
+		print '\t\t}'
+
+		print '\t\tpublic void Unpack(BinaryReader br) {'
+		total_bytes = int(ceil(self.bits / 8.))
+		total_bits = total_bytes * 8
+		cur_size = min(total_bits, 64)
+		while True:
+			redo = False
+			cur_off = 0
+			cur_read = 0
+			total_read = 0
+
+			for name, type in self.elems:
+				while type.bits > cur_read - cur_off:
+					gap = cur_size - (cur_read - cur_off)
+					gap_read = int(ceil(gap / 8.)) * 8
+					gap_read = min(gap_read, total_bits - total_read)
+					if type.bits > gap_read + (cur_read - cur_off):
+						assert cur_size != 64
+						cur_size *= 2
+						redo = True
+						break
+					else:
+						cur_read += gap_read - cur_off
+						cur_off = 0
+						total_read += gap_read
+						assert total_read <= total_bits
+				if redo:
+					break
+				cur_off += type.bits
+			if not redo:
+				break
+
+		cur_off = 0
+		cur_read = 0
+		total_read = 0
+		print '\t\t\t%s _databuf;' % {8 : 'ubyte', 16 : 'ushort', 32 : 'uint', 64 : 'ulong'}[cur_size]
+		for name, type in self.elems:
+			if type.bits > cur_read - cur_off:
+				gap = cur_size - (cur_read - cur_off)
+				gap_read = int(ceil(gap / 8.)) * 8
+				gap_read = min(gap_read, total_bits - total_read)
+				unit = {8 : 'Byte', 16 : 'UInt16', 32 : 'UInt32', 64 : 'UInt64'}[gap_read] # XXX: Add non-even reading!
+				if cur_read - cur_off == 0:
+					print '\t\t\t_databuf = br.Read%s();' % unit
+				else:
+					print '\t\t\t_databuf = (br.Read%s() << %i) | (_databuf >> );' % (unit, cur_read - cur_off, cur_off)
+				assert type.bits <= gap_read + (cur_read - cur_off)
+				cur_read += gap_read - cur_off
+				cur_off = 0
+				total_read += gap_read
+				assert total_read <= total_bits
+			type.unpack(name, '(_databuf >> %i)' % cur_off if cur_off else '_databuf', '\t\t\t')
+			cur_off += type.bits
+		print '\t\t}'
+
+		print
+		print '\t\tpublic byte[] Pack() {'
+		print '\t\t\tusing(var ms = new MemoryStream()) {'
+		print '\t\t\t\tusing(var bw = new BinaryWriter(ms)) {'
+		print '\t\t\t\t\tPack(bw);'
+		print '\t\t\t\t\treturn ms.ToArray();'
+		print '\t\t\t\t}'
+		print '\t\t\t}'
+		print '\t\t}'
+
+		print '\t\tpublic void Pack(BinaryWriter bw) {'
+		#for name, type in self.elems:
+		#	type.pack(name, '\t\t\t')
+		print '\t\t}'
+
+		print
+		print '\t\tpublic override string ToString() {'
+		print '\t\t\tvar ret = "bitfield %s {\\n";' % self.name
+		for i, (name, type) in enumerate(self.elems):
+			dec = type.declare()
+			if dec is None or not name[0].isupper() or name in self.suppress:
+				continue
+
+			ws = '\t\t\t'
+
+			print ws + 'ret += "\\t%s = ";' % name
+			print ws + 'try {'
+			oldws = ws
+			ws += '\t'
+			if type.base != 'string' and type.rank is not None:
+				print ws + 'ret += "{\\n";'
+				print ws + 'for(int i = 0, e = %s.%s; i < e; ++i)' % (name, 'Count' if type.base == 'list' else 'Length')
+				print ws + '\tret += $"\\t\\t{ Indentify(%s[i], 2) }" + (i != e - 1 ? "," : "") + "\\n";' % name
+				print ws + 'ret += "\\t}%s\\n";' % (',' if i != len(self.elems) - 1 else '')
+			else:
+				print ws + 'ret += $"{ Indentify(%s) }%s\\n";' % (name, ',' if i != len(self.elems) - 1 else '')
+			ws = oldws
+			print ws + '} catch(NullReferenceException) {'
+			print ws + '\tret += "!!NULL!!\\n";'
+			print ws + '}'
+
+		print '\t\t\treturn ret + "}";'
+		print '\t\t}'
+
+		print '\t}'
+
 
 class Enum(object):
 	def __init__(self, name, ydef):
@@ -291,10 +520,11 @@ sfile = yaml.load(file('structs.yml'))
 
 sdefs = {top : (
 	{name : Struct(name, struct) for name, struct in d['structs'].items()} if 'structs' in d else {}, 
+	{name : Bitfield(name, bf) for name, bf in d['bitfields'].items()} if 'bitfields' in d else {}, 
 	{name : Enum(name, enum) for name, enum in d['enums'].items()} if 'enums' in d else {}, 
 	{name : value for name, value in d['constants'].items()} if 'constants' in d else {}
 ) for top, d in sfile.items()}
-allEnums = {enum.name : enum for ns, (structs, enums, constants) in sdefs.items() for name, enum in enums.items()}
+allEnums = {enum.name : enum for ns, (structs, bitfields, enums, constants) in sdefs.items() for name, enum in enums.items()}
 
 nsfiles = dict(
 	login='LoginPackets.cs', 
@@ -302,7 +532,7 @@ nsfiles = dict(
 	zone='ZonePackets.cs', 
 )
 
-for ns, (structs, enums, constants) in sdefs.items():
+for ns, (structs, bitfields, enums, constants) in sdefs.items():
 	with file(nsfiles[ns], 'w') as fp:
 		sys.stdout = fp
 		print '''/*
@@ -343,8 +573,17 @@ for ns, (structs, enums, constants) in sdefs.items():
 				enum.declare()
 				if i != len(enums) - 1:
 					print
-		if len(enums) and len(structs):
+		if len(enums) and len(bitfields):
 			print
+
+		for i, (name, bitfield) in enumerate(bitfields.items()):
+			bitfield.declare()
+			if i != len(bitfields) - 1:
+				print
+
+		if (len(bitfields) and len(structs)) or (len(bitfields) == 0 and len(enums) and len(structs)):
+			print
+
 		for i, (name, struct) in enumerate(structs.items()):
 			struct.declare()
 			if i != len(structs) - 1:

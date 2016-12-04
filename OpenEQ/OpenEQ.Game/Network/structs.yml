@@ -99,6 +99,7 @@ zone:
     Gender<uint32>:
       - Male: 0
       - Female: 1
+      - Monster: 2
 
     Roleplay<uint8>:
       - NonAnon: 0
@@ -123,6 +124,39 @@ zone:
       - Archtype: 2
       - ClassAARank: 3
 
+    WeatherType<uint32>:
+      - Normal: 0
+      - Snow: 2
+      - Rain: 0x31
+
+  bitfields:
+    SpawnBitfields:
+      - bool<1>: Pet, AFK, Sneak, LFG
+      - skip<1>: padding5
+      - bool<1>: Invisible
+      - skip<11>: padding7
+      - bool<1>: GM
+      - Roleplay<2>: Roleplay
+      - Gender<2>: Gender
+      - bool<1>: Linkdead, BetaBuffed, ShowHelm
+      - skip<1>: padding26
+      - bool<1>: Targetable, HotkeyTargetable, ShowName, Statue, Trader, Buyer
+
+    SpawnPosition:
+      - skip<12>: padding0000
+      - int<13>: DeltaX
+      - skip<7>: padding0005
+      - int<10>: DeltaHeading
+      - int<13>: DeltaY
+      - skip<9>: padding0006
+      - int<19>: Y
+      - int<13>: Animation
+      - uint<12>: Heading
+      - int<19>: X
+      - skip<1>: padding0014
+      - int<19>: Z
+      - int<13>: DeltaZ
+
   structs:
     ClientZoneEntry:
       - uint32: unk
@@ -131,6 +165,57 @@ zone:
     TimeOfDay:
       - uint8: Hour, Minute, Day, Month
       - uint32: Year
+
+    Weather:
+      - uint32: Val1
+      - WeatherType: Type
+      - uint32: Mode
+
+    TaskDescription:
+      - uint32: SequenceNumber, TaskID
+      - skip[4*2+1]: unknown2
+      - varstring: Title
+      - uint32: Duration
+      - skip[4]: unknown2
+      - uint32: StartTime
+      - varstring: Description
+      - uint32: RewardCount
+      - skip[4*2+2]: unknown1
+      - varstring: RewardText
+      - uint32: Points
+
+    TaskActivity:
+      - uint32: SequenceNumber
+      - skip[4]: unknown2
+      - uint32: TaskID, ActivityID
+      - skip[4]: unknown3
+      - uint32: ActivityType, Optional
+      - skip[4]: unknown5
+      - varstring: Text1, Text2
+      - uint32: GoalCount
+      - skip[8]: unknown1
+      - uint32: ZoneID
+      - skip[4]: unknown3
+      - varstring: Text3
+      - uint32: DoneCount
+      - skip[4]: unknown1
+    
+    TaskInfo:
+      - uint32: TaskID
+      - varstring: Title
+      - uint32: CompletedTime
+
+    CompletedTasks:
+      - uint32: count
+      - list<TaskInfo>[count]: Tasks
+
+    XTarget:
+      - uint32: MaxXTargets
+      - bool<uint32>: RestFlag # ?
+      - uint32@if<RestFlag>: Slot
+      - uint8@if<RestFlag>: Role # ?
+      - uint32@if<RestFlag>: TargetID # ?
+      - varstring@if<RestFlag>: Name
 
     TributeInfo:
       - bool<uint32>: Active
@@ -270,7 +355,7 @@ zone:
       - uint8: Level
       - skip[4]: unknown1
       - CharType: CharType
-      - uint32: SpawnFlags # XXX: Handle bitfield
+      - SpawnBitfields: SpawnFlags
       - uint8: OtherFlags # & 4: has title, & 8: has suffix, & 1: it's a chest or untargetable
       - skip[8]: unknown3
       - float: Size
@@ -297,14 +382,14 @@ zone:
       - skip[1]: unknown13
       - uint32: PlayerState
       - skip[5*4]: unknown15
-      - skip[20]: position # XXX: Parse!
-      #- TintProfile: EquipmentTint
-      #- TextureProfile: Equipment
-      # - varstring: Title # Only if OtherFlags & 4
-      # - varstring: Suffix # Only if OtherFlags & 8
-      # - skip[8]: unknown20
-      # - bool<uint8>: IsMercenary
-      # - skip[28]: unknown21
+      - SpawnPosition: Position
+      - TintProfile: EquipmentTint
+      - TextureProfile: Equipment
+      - varstring@if<(OtherFlags & 4) != 0>: Title
+      - varstring@if<(OtherFlags & 8) != 0>: Suffix
+      - skip[8]: unknown20
+      - bool<uint8>: IsMercenary
+      - skip[28]: unknown21
 
     FindableNPC:
       - bool<uint32>: Remove

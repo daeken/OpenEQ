@@ -31,13 +31,52 @@ namespace OpenEQ.Network {
 
                 case ZoneOp.CharInventory:
                     var inventory = packet.Get<CharInventory>();
-                    Hexdump(packet.Data);
-                    WriteLine(inventory);
+                    //WriteLine(inventory);
+                    break;
+
+                case ZoneOp.TimeOfDay:
+                    var timeofday = packet.Get<TimeOfDay>();
+                    //WriteLine(timeofday);
+                    break;
+
+                case ZoneOp.TaskActivity:
+                    var activity = packet.Get<TaskActivity>();
+                    //WriteLine(activity);
+                    break;
+
+                case ZoneOp.TaskDescription:
+                    var desc = packet.Get<TaskDescription>();
+                    //WriteLine(desc);
+                    break;
+
+                case ZoneOp.CompletedTasks:
+                    var comp = packet.Get<CompletedTasks>();
+                    //WriteLine(comp);
+                    break;
+
+                case ZoneOp.XTargetResponse:
+                    var xt = packet.Get<XTarget>();
+                    //WriteLine(xt);
+                    break;
+
+                case ZoneOp.Weather:
+                    var weather = packet.Get<Weather>();
+                    //WriteLine(weather);
+                    break;
+
+                case ZoneOp.TributeTimer:
+                    var timer = packet.Get<TributeTimer>();
+                    //WriteLine(timer);
+                    break;
+
+                case ZoneOp.TributeUpdate:
+                    var update = packet.Get<TributeInfo>();
+                    //WriteLine(update);
                     break;
 
                 case ZoneOp.ZoneEntry:
                     var mob = packet.Get<Spawn>();
-                    //WriteLine(mob);
+                    WriteLine(mob);
                     break;
 
                 case ZoneOp.SendFindableNPCs:

@@ -351,7 +351,7 @@ namespace OpenEQ.Network {
 			var ret = "struct ServerListHeader {\n";
 			ret += "\tServers = ";
 			try {
-				ret += "{{\n";
+				ret += "{\n";
 				for(int i = 0, e = Servers.Count; i < e; ++i)
 					ret += $"\t\t{ Indentify(Servers[i], 2) }" + (i != e - 1 ? "," : "") + "\n";
 				ret += "\t}\n";
