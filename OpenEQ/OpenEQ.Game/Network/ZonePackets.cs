@@ -117,6 +117,66 @@ namespace OpenEQ.Network {
 		}
 	}
 
+	public enum Race {
+		Human = 1, 
+		Barbarian = 2, 
+		Erudite = 3, 
+		WoodElf = 4, 
+		HighElf = 5, 
+		DarkElf = 6, 
+		HalfElf = 7, 
+		Dwarf = 8, 
+		Troll = 9, 
+		Ogre = 10, 
+		Halfling = 11, 
+		Gnome = 12, 
+		Iksar = 13, 
+		Vahshir = 14, 
+		Froglok = 15, 
+		Drakkin = 16, 
+		Unknown = 0
+	}
+	internal static class Race_Helper {
+		internal static Race Unpack(this Race val, BinaryReader br) {
+			switch(br.ReadUInt32()) {
+				case 1:
+					return Race.Human;
+				case 2:
+					return Race.Barbarian;
+				case 3:
+					return Race.Erudite;
+				case 4:
+					return Race.WoodElf;
+				case 5:
+					return Race.HighElf;
+				case 6:
+					return Race.DarkElf;
+				case 7:
+					return Race.HalfElf;
+				case 8:
+					return Race.Dwarf;
+				case 9:
+					return Race.Troll;
+				case 10:
+					return Race.Ogre;
+				case 11:
+					return Race.Halfling;
+				case 12:
+					return Race.Gnome;
+				case 13:
+					return Race.Iksar;
+				case 14:
+					return Race.Vahshir;
+				case 15:
+					return Race.Froglok;
+				case 16:
+					return Race.Drakkin;
+				default:
+					return Race.Unknown;
+			}
+		}
+	}
+
 	public enum Roleplay : byte {
 		NonAnon = 0, 
 		Anon = 1, 
@@ -5319,7 +5379,7 @@ namespace OpenEQ.Network {
 		public byte Face;
 		public float WalkSpeed;
 		public float RunSpeed;
-		public uint Race;
+		public Race Race;
 		public byte ShowName;
 		public uint BodyType;
 		public byte CurHP;
@@ -5354,7 +5414,7 @@ namespace OpenEQ.Network {
 		public string Suffix;
 		public bool IsMercenary;
 
-		public Spawn(string Name, uint SpawnID, byte Level, CharType CharType, SpawnBitfields SpawnFlags, byte OtherFlags, float Size, byte Face, float WalkSpeed, float RunSpeed, uint Race, byte ShowName, uint BodyType, byte CurHP, byte HairColor, byte BeardColor, byte EyeColor1, byte EyeColor2, byte HairStyle, byte Beard, uint DrakkinHeritage, uint DrakkinTattoo, uint DrakkinDetails, byte Statue, uint Deity, uint GuildID, GuildRank GuildRank, byte Class, bool PVP, byte StandState, byte Light, byte FlyMode, byte EquipChest2, byte Helm, string LastName, AATitle AATitle, uint PetOwnerID, uint PlayerState, SpawnPosition Position, TintProfile EquipmentTint, TextureProfile Equipment, string Title, string Suffix, bool IsMercenary) : this() {
+		public Spawn(string Name, uint SpawnID, byte Level, CharType CharType, SpawnBitfields SpawnFlags, byte OtherFlags, float Size, byte Face, float WalkSpeed, float RunSpeed, Race Race, byte ShowName, uint BodyType, byte CurHP, byte HairColor, byte BeardColor, byte EyeColor1, byte EyeColor2, byte HairStyle, byte Beard, uint DrakkinHeritage, uint DrakkinTattoo, uint DrakkinDetails, byte Statue, uint Deity, uint GuildID, GuildRank GuildRank, byte Class, bool PVP, byte StandState, byte Light, byte FlyMode, byte EquipChest2, byte Helm, string LastName, AATitle AATitle, uint PetOwnerID, uint PlayerState, SpawnPosition Position, TintProfile EquipmentTint, TextureProfile Equipment, string Title, string Suffix, bool IsMercenary) : this() {
 			this.Name = Name;
 			this.SpawnID = SpawnID;
 			this.Level = Level;
@@ -5427,7 +5487,7 @@ namespace OpenEQ.Network {
 			Face = br.ReadByte();
 			WalkSpeed = br.ReadSingle();
 			RunSpeed = br.ReadSingle();
-			Race = br.ReadUInt32();
+			Race = ((Race) 0).Unpack(br);
 			ShowName = br.ReadByte();
 			BodyType = br.ReadUInt32();
 			CurHP = br.ReadByte();
@@ -5462,7 +5522,9 @@ namespace OpenEQ.Network {
 			br.ReadBytes(5*4);
 			Position = new SpawnPosition(br);
 			EquipmentTint = new TintProfile(br);
-			Equipment = new TextureProfile(br);
+			if(CharType == CharType.PC || (int) Race == 12 || (int) Race == 128 || (int) Race == 130 || (int) Race == 330 || (int) Race == 522) {
+				Equipment = new TextureProfile(br);
+			}
 			if((OtherFlags & 4) != 0) {
 				Title = br.ReadString(-1);
 			}
@@ -5495,7 +5557,7 @@ namespace OpenEQ.Network {
 			bw.Write(Face);
 			bw.Write(WalkSpeed);
 			bw.Write(RunSpeed);
-			bw.Write(Race);
+			bw.Write((uint) Race);
 			bw.Write(ShowName);
 			bw.Write(BodyType);
 			bw.Write(CurHP);
@@ -5530,7 +5592,9 @@ namespace OpenEQ.Network {
 			bw.Write(new byte[5*4]);
 			Position.Pack(bw);
 			EquipmentTint.Pack(bw);
-			Equipment.Pack(bw);
+			if(CharType == CharType.PC || (int) Race == 12 || (int) Race == 128 || (int) Race == 130 || (int) Race == 330 || (int) Race == 522) {
+				Equipment.Pack(bw);
+			}
 			if((OtherFlags & 4) != 0) {
 				bw.Write(Title.ToBytes());
 			}
@@ -5784,11 +5848,13 @@ namespace OpenEQ.Network {
 			} catch(NullReferenceException) {
 				ret += "!!NULL!!\n";
 			}
-			ret += "\tEquipment = ";
-			try {
-				ret += $"{ Indentify(Equipment) },\n";
-			} catch(NullReferenceException) {
-				ret += "!!NULL!!\n";
+			if(CharType == CharType.PC || (int) Race == 12 || (int) Race == 128 || (int) Race == 130 || (int) Race == 330 || (int) Race == 522) {
+				ret += "\tEquipment = ";
+				try {
+					ret += $"{ Indentify(Equipment) },\n";
+				} catch(NullReferenceException) {
+					ret += "!!NULL!!\n";
+				}
 			}
 			if((OtherFlags & 4) != 0) {
 				ret += "\tTitle = ";
@@ -6305,12 +6371,10 @@ namespace OpenEQ.Network {
 	public struct Weather : IEQStruct {
 		public uint Val1;
 		public WeatherType Type;
-		public uint Mode;
 
-		public Weather(uint Val1, WeatherType Type, uint Mode) : this() {
+		public Weather(uint Val1, WeatherType Type) : this() {
 			this.Val1 = Val1;
 			this.Type = Type;
-			this.Mode = Mode;
 		}
 
 		public Weather(byte[] data, int offset = 0) : this() {
@@ -6329,7 +6393,6 @@ namespace OpenEQ.Network {
 		public void Unpack(BinaryReader br) {
 			Val1 = br.ReadUInt32();
 			Type = ((WeatherType) 0).Unpack(br);
-			Mode = br.ReadUInt32();
 		}
 
 		public byte[] Pack() {
@@ -6343,7 +6406,6 @@ namespace OpenEQ.Network {
 		public void Pack(BinaryWriter bw) {
 			bw.Write(Val1);
 			bw.Write((uint) Type);
-			bw.Write(Mode);
 		}
 
 		public override string ToString() {
@@ -6356,13 +6418,7 @@ namespace OpenEQ.Network {
 			}
 			ret += "\tType = ";
 			try {
-				ret += $"{ Indentify(Type) },\n";
-			} catch(NullReferenceException) {
-				ret += "!!NULL!!\n";
-			}
-			ret += "\tMode = ";
-			try {
-				ret += $"{ Indentify(Mode) }\n";
+				ret += $"{ Indentify(Type) }\n";
 			} catch(NullReferenceException) {
 				ret += "!!NULL!!\n";
 			}

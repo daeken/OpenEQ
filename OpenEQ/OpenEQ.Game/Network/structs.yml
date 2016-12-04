@@ -129,6 +129,25 @@ zone:
       - Snow: 2
       - Rain: 0x31
 
+    Race:
+      - Human: 1
+      - Barbarian: 2
+      - Erudite: 3
+      - WoodElf: 4
+      - HighElf: 5
+      - DarkElf: 6
+      - HalfElf: 7
+      - Dwarf: 8
+      - Troll: 9
+      - Ogre: 10
+      - Halfling: 11
+      - Gnome: 12
+      - Iksar: 13
+      - Vahshir: 14
+      - Froglok: 15
+      - Drakkin: 16
+      - Unknown: 0
+
   bitfields:
     SpawnBitfields:
       - bool<1>: Pet, AFK, Sneak, LFG
@@ -169,7 +188,7 @@ zone:
     Weather:
       - uint32: Val1
       - WeatherType: Type
-      - uint32: Mode
+      #- uint32: Mode # Only sent on zone-in
 
     TaskDescription:
       - uint32: SequenceNumber, TaskID
@@ -361,7 +380,7 @@ zone:
       - float: Size
       - uint8: Face
       - float: WalkSpeed, RunSpeed
-      - uint32: Race
+      - Race: Race
       - uint8: ShowName
       - uint32: BodyType
       - uint8: CurHP, HairColor, BeardColor, EyeColor1, EyeColor2, HairStyle, Beard
@@ -384,7 +403,7 @@ zone:
       - skip[5*4]: unknown15
       - SpawnPosition: Position
       - TintProfile: EquipmentTint
-      - TextureProfile: Equipment
+      - TextureProfile@if<CharType == CharType.PC || (int) Race == 12 || (int) Race == 128 || (int) Race == 130 || (int) Race == 330 || (int) Race == 522>: Equipment
       - varstring@if<(OtherFlags & 4) != 0>: Title
       - varstring@if<(OtherFlags & 8) != 0>: Suffix
       - skip[8]: unknown20

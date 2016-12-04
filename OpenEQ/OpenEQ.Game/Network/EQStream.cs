@@ -11,6 +11,9 @@ namespace OpenEQ.Network {
         public byte[] CRCKey;
         public ushort OutSequence, InSequence;
 
+        public bool SendKeepalives = false;
+        float lastRecvSendTime;
+
         AsyncUDPConnection conn;
         uint sessionID;
 
@@ -67,6 +70,10 @@ namespace OpenEQ.Network {
                         }
                     }
                 }
+                if(SendKeepalives && Time.Now - lastRecvSendTime > 5) {
+                    WriteLine("Sending keepalive");
+                    Send(Packet.Create(SessionOp.Ack, sequence: (ushort) ((lastAckSent + 65536 - 1) % 65536)));
+                }
                 await Task.Delay(100);
             }
         }
@@ -74,6 +81,7 @@ namespace OpenEQ.Network {
         async Task ReceiverAsync() {
             while(true) {
                 var data = await conn.Receive();
+                lastRecvSendTime = Time.Now;
 
                 if(Debug) {
                     ForegroundColor = ConsoleColor.DarkMagenta;
@@ -206,6 +214,8 @@ namespace OpenEQ.Network {
         }
 
         protected void Send(Packet packet) {
+            lastRecvSendTime = Time.Now;
+
             if(packet.Baked == null && packet.SentTime == 0 && !packet.Bare && packet.Opcode != (ushort) SessionOp.Ack && packet.Opcode != (ushort) SessionOp.Stats) {
                 packet.Sequence = OutSequence;
                 sentPackets[OutSequence++] = packet;

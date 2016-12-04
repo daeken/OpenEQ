@@ -7,8 +7,10 @@ using static OpenEQ.Network.Utility;
 namespace OpenEQ.Network {
     public class ZoneStream : EQStream {
         string charName;
+        bool entering = true;
 
         public ZoneStream(string host, int port, string charName) : base(host, port) {
+            SendKeepalives = true;
             this.charName = charName;
 
             WriteLine("Starting zone connection...");
@@ -62,6 +64,9 @@ namespace OpenEQ.Network {
                 case ZoneOp.Weather:
                     var weather = packet.Get<Weather>();
                     //WriteLine(weather);
+
+                    if(entering)
+                        Send(AppPacket.Create(ZoneOp.ReqNewZone));
                     break;
 
                 case ZoneOp.TributeTimer:
@@ -76,12 +81,30 @@ namespace OpenEQ.Network {
 
                 case ZoneOp.ZoneEntry:
                     var mob = packet.Get<Spawn>();
-                    WriteLine(mob);
+                    //WriteLine(mob);
+                    break;
+
+                case ZoneOp.NewZone:
+                    Send(AppPacket.Create(ZoneOp.ReqClientSpawn));
+
+                    break;
+
+                case ZoneOp.SendExpZonein:
+                    if(packet.Data.Length == 0) {
+                        Send(AppPacket.Create(ZoneOp.ClientReady));
+                        entering = false;
+                    }
                     break;
 
                 case ZoneOp.SendFindableNPCs:
                     var npc = packet.Get<FindableNPC>();
                     //WriteLine(npc);
+                    break;
+
+                case ZoneOp.ClientUpdate:
+                    break;
+
+                case ZoneOp.HPUpdate:
                     break;
 
                 default:
