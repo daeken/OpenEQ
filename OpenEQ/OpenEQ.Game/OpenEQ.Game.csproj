@@ -128,6 +128,7 @@
     <Compile Include="Network\WorldStream.cs" />
     <Compile Include="Network\ZonePackets.cs" />
     <Compile Include="Network\ZoneStream.cs" />
+    <Compile Include="OEQModelReader.cs" />
     <Compile Include="OEQZoneReader.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Time.cs" />
