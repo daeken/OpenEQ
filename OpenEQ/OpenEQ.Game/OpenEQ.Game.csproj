@@ -114,6 +114,7 @@
     <Compile Include="GlobalSuppressions.cs" />
     <Compile Include="ListDeconstructors.cs" />
     <Compile Include="LoginScript.cs" />
+    <Compile Include="ModelLoader.cs" />
     <Compile Include="Network\AsyncUDPConnection.cs" />
     <Compile Include="Network\IEQStruct.cs" />
     <Compile Include="Network\EQStream.cs" />
