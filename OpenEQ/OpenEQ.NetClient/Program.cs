@@ -23,10 +23,10 @@ namespace OpenEQ.NetClient {
             login.ServerList += (sender, servers) => {
                 WriteLine($"Got {servers.Count} servers:");
                 foreach(var server in servers) {
-                    WriteLine($"- '{server.longname}' @ {server.worldIP} is {server.status} with {server.playersOnline} players");
+                    WriteLine($"- '{server.Longname}' @ {server.WorldIP} is {server.Status} with {server.PlayersOnline} players");
                 }
                 var chosen = servers[0];
-                WriteLine($"Sending play request for server '{chosen.longname}' @ {chosen.worldIP}");
+                WriteLine($"Sending play request for server '{chosen.Longname}' @ {chosen.WorldIP}");
                 login.Play(chosen);
             };
 
@@ -36,7 +36,7 @@ namespace OpenEQ.NetClient {
                     running = false;
                 } else {
                     WriteLine("Play request accepted.  Initializing world.");
-                    var world = new WorldStream(server?.worldIP, 9000, login.accountID, login.sessionKey);
+                    var world = new WorldStream(server?.WorldIP, 9000, login.accountID, login.sessionKey);
                     SetupWorld(world);
                 }
             };
@@ -62,9 +62,9 @@ namespace OpenEQ.NetClient {
             };
 
             world.ZoneServer += (sender, server) => {
-                WriteLine($"Zone server info: {server.IP}:{server.Port}");
+                WriteLine($"Zone server info: {server.Host}:{server.Port}");
 
-                var zone = new ZoneStream(server.IP, server.Port, charname);
+                var zone = new ZoneStream(server.Host, server.Port, charname);
                 SetupZone(zone);
             };
         }

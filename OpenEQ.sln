@@ -12,10 +12,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenEQ.Windows", "OpenEQ\Op
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenEQ.Game", "OpenEQ\OpenEQ.Game\OpenEQ.Game.csproj", "{59E1E87E-2AF9-4ACD-ABC1-077FE8CAD76B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenEQ.NetClient", "OpenEQ.NetClient\OpenEQ.NetClient.csproj", "{E87C3F5B-BC2B-4D7D-A483-62A472E501CA}"
-	ProjectSection(ProjectDependencies) = postProject
-		{59E1E87E-2AF9-4ACD-ABC1-077FE8CAD76B} = {59E1E87E-2AF9-4ACD-ABC1-077FE8CAD76B}
-	EndProjectSection
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenEQ.NetClient", "OpenEQ\OpenEQ.NetClient\OpenEQ.NetClient.csproj", "{E87C3F5B-BC2B-4D7D-A483-62A472E501CA}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FileConverter", "FileConverter\FileConverter.csproj", "{B1EB95F9-D785-4A78-8808-3A07550595D0}"
 EndProject

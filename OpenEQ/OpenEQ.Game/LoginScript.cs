@@ -54,11 +54,11 @@ namespace OpenEQ
                 var i = 0;
                 foreach(var server in list) {
                     serverGrid.RowDefinitions.Add(new StripDefinition(StripType.Fixed, 20));
-                    var namefield = new TextBlock { Text = server.longname, Font = serverNameHeader.Font, TextSize = serverNameHeader.TextSize, TextColor = serverNameHeader.TextColor };
+                    var namefield = new TextBlock { Text = server.Longname, Font = serverNameHeader.Font, TextSize = serverNameHeader.TextSize, TextColor = serverNameHeader.TextColor };
                     namefield.SetGridColumn(0);
                     namefield.SetGridRow(i);
                     serverGrid.Children.Add(namefield);
-                    var statusfield = new TextBlock { Text = server.status == ServerStatus.Up ? server.playersOnline.ToString() : "Down", Font = serverNameHeader.Font, TextSize = serverNameHeader.TextSize, TextColor = serverNameHeader.TextColor };
+                    var statusfield = new TextBlock { Text = server.Status == ServerStatus.Up ? server.PlayersOnline.ToString() : "Down", Font = serverNameHeader.Font, TextSize = serverNameHeader.TextSize, TextColor = serverNameHeader.TextColor };
                     statusfield.SetGridColumn(1);
                     statusfield.SetGridRow(i);
                     serverGrid.Children.Add(statusfield);
@@ -70,7 +70,7 @@ namespace OpenEQ
                     serverGrid.Children.Add(serverButton);
                     serverButton.Click += (s, e) => {
                         ((Button)s).IsEnabled = false;
-                        Console.WriteLine($"Sending play request for {server.longname}");
+                        Console.WriteLine($"Sending play request for {server.Longname}");
                         login.Play(server);
                     };
                 }
@@ -85,7 +85,7 @@ namespace OpenEQ
                 var wui = SceneSystem.SceneInstance.Scene.Entities.Where(x => x.Name == "WorldDialog").First();
                 foreach(var comp in wui.Components)
                     if(comp is WorldScript)
-                        ((WorldScript) comp).world = new WorldStream(server.Value.worldIP, 9000, login.accountID, login.sessionKey);
+                        ((WorldScript) comp).world = new WorldStream(server.Value.WorldIP, 9000, login.accountID, login.sessionKey);
             };
         }
 

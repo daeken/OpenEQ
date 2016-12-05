@@ -2,7 +2,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using static System.Console;
-using static OpenEQ.Utility;
+using static OpenEQ.Network.Utility;
 using System.IO;
 using System.Collections.Generic;
 using Ionic.Zlib;
@@ -195,28 +195,21 @@ namespace OpenEQ.Network {
             return new AppPacket((ushort) (object) opcode, data);
         }
 
-        public static AppPacket Create<OpT, DataT>(OpT opcode, DataT data, byte[] extraData = null) {
-            var size = Marshal.SizeOf(data);
-            var arr = new byte[size + (extraData != null ? extraData.Length : 0)];
+        public static AppPacket Create<OpT, DataT>(OpT opcode, DataT data, byte[] extraData = null) where DataT : IEQStruct {
+            var adata = data.Pack();
+            if(extraData != null) {
+                var arr = new byte[adata.Length + extraData.Length];
+                Array.Copy(adata, 0, arr, 0, adata.Length);
+                Array.Copy(extraData, 0, arr, adata.Length, extraData.Length);
+                return new AppPacket((ushort) (object) opcode, arr);
+            }
 
-            var ptr = Marshal.AllocHGlobal(size);
-            Marshal.StructureToPtr(data, ptr, false);
-            Marshal.Copy(ptr, arr, 0, size);
-            Marshal.FreeHGlobal(ptr);
-
-            if(extraData != null)
-                Array.Copy(extraData, 0, arr, size, extraData.Length);
-
-            return new AppPacket((ushort) (object) opcode, arr);
+            return new AppPacket((ushort) (object) opcode, adata);
         }
 
-        public T Get<T>() where T : struct {
+        public T Get<T>() where T : IEQStruct, new() {
             var val = new T();
-            int len = Marshal.SizeOf(val);
-            var i = Marshal.AllocHGlobal(len);
-            Marshal.Copy(Data, 0, i, len);
-            val = Marshal.PtrToStructure<T>(i);
-            Marshal.FreeHGlobal(i);
+            val.Unpack(Data);
             return val;
         }
     }

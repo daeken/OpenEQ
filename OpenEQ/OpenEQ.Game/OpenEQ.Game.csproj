@@ -103,6 +103,7 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- A reference to the entire .NET Framework is automatically included -->
+    <None Include="Network\structs.yml" />
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
@@ -110,9 +111,12 @@
     <Compile Include="DESCrypto.cs" />
     <Compile Include="Extensions.cs" />
     <Compile Include="FPSCounter.cs" />
+    <Compile Include="GlobalSuppressions.cs" />
     <Compile Include="ListDeconstructors.cs" />
     <Compile Include="LoginScript.cs" />
+    <Compile Include="ModelLoader.cs" />
     <Compile Include="Network\AsyncUDPConnection.cs" />
+    <Compile Include="Network\IEQStruct.cs" />
     <Compile Include="Network\EQStream.cs" />
     <Compile Include="Network\LoginPackets.cs" />
     <Compile Include="Network\LoginStream.cs" />
@@ -143,6 +147,9 @@
       <Private>True</Private>
     </Reference>
   </ItemGroup>
+  <ItemGroup>
+    <Content Include="Network\structgen.py" />
+  </ItemGroup>
   <Import Condition="'$(SiliconStudioRuntime)' == ''" Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Import Project="$(SiliconStudioPackageProps)" Condition="Exists('$(SiliconStudioPackageProps)')" />
   <Import Project="$(SiliconStudioXenkoDir)\Targets\SiliconStudio.Common.targets" Condition="Exists('$(SiliconStudioXenkoDir)\Targets\SiliconStudio.Common.targets')" />
@@ -150,6 +157,10 @@
     <Error Condition="'$(SiliconStudioXenkoDir)' == ''" Text="Xenko SDK was not found. Check Xenko is installed and the global env variable [SiliconStudioXenkoDir] is setup correctly" />
     <Error Condition="!Exists('$(SiliconStudioXenkoDir)\Targets\SiliconStudio.Common.targets')" Text="Invalid Xenko SDK installation. Target file [$(SiliconStudioXenkoDir)\Targets\SiliconStudio.Common.targets] was not found." />
   </Target>
+  <PropertyGroup>
+    <PreBuildEvent>cd $(ProjectDir)\Network\
+python structgen.py</PreBuildEvent>
+  </PropertyGroup>
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
     Other similar extension points exist, see Microsoft.Common.targets.
   <Target Name="BeforeBuild">

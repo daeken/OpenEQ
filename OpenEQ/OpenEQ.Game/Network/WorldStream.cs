@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 using static System.Console;
-using static OpenEQ.Utility;
+using static OpenEQ.Network.Utility;
 
 namespace OpenEQ.Network {
     public class WorldStream : EQStream {
@@ -31,7 +31,7 @@ namespace OpenEQ.Network {
         }
 
         protected override void HandleAppPacket(AppPacket packet) {
-            switch((WorldOp)packet.Opcode) {
+            switch((WorldOp) packet.Opcode) {
                 case WorldOp.GuildsList:
                     break;
                 case WorldOp.LogServer:

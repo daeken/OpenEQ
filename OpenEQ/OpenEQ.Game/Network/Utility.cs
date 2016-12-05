@@ -3,8 +3,9 @@ using System.Linq;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 
-namespace OpenEQ {
+namespace OpenEQ.Network {
     public static class Utility {
         const string printable = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-=_+{}[];':\" |\\<>?,./`~!@#$%^&*()1234567890";
         public static void Hexdump(byte[] data) {
@@ -108,6 +109,44 @@ namespace OpenEQ {
             var narr = new T[end - start];
             Array.Copy(arr, start, narr, 0, end - start);
             return narr;
+        }
+
+        public static byte[] ToBytes(this string str, int fixedlen=-1) {
+            if(fixedlen == -1)
+                return Encoding.ASCII.GetBytes(str + "\0");
+
+            var strb = Encoding.ASCII.GetBytes(str);
+            if(strb.Length == fixedlen)
+                return strb;
+            var arr = new byte[fixedlen];
+            Array.Copy(strb, arr, Math.Min(strb.Length, fixedlen));
+            return arr;
+        }
+
+        public static string ReadString(this BinaryReader br, int fixedlen) {
+            if(fixedlen == -1) {
+                var ret = "";
+                byte c;
+                while((c = br.ReadByte()) != 0)
+                    ret += (char) c;
+                return ret;
+            } else {
+                var data = br.ReadBytes(fixedlen);
+                var tstr = Encoding.ASCII.GetString(data);
+                var off = tstr.IndexOf('\0');
+                return off == -1 ? tstr : tstr.Substring(0, off);
+            }
+        }
+
+        public static string Indentify(object ino, int amt = 1) {
+            var inp = ino.ToString();
+            if(inp.Contains("\n")) {
+                var lines = inp.Split('\n');
+                for(var i = 1; i < lines.Length; ++i)
+                    lines[i] = String.Concat(Enumerable.Repeat("\t", amt)) + lines[i];
+                return String.Join("\n", lines);
+            } else
+                return inp;
         }
 
         static readonly uint[] crcTable = new uint[]{

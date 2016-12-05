@@ -1,6 +1,6 @@
 ﻿using System;
 using static System.Console;
-using static OpenEQ.Utility;
+using static OpenEQ.Network.Utility;
 using System.Threading.Tasks;
 
 namespace OpenEQ.Network {
@@ -11,17 +11,21 @@ namespace OpenEQ.Network {
         public byte[] CRCKey;
         public ushort OutSequence, InSequence;
 
+        public bool SendKeepalives = false;
+        float lastRecvSendTime;
+
         AsyncUDPConnection conn;
         uint sessionID;
 
         ushort lastAckRecieved, lastAckSent;
+        bool resendAck = false;
         Packet[] sentPackets, futurePackets;
 
         public EQStream(string host, int port) {
             conn = new AsyncUDPConnection(host, port);
 
-            Task.Factory.StartNew(Checker, TaskCreationOptions.LongRunning);
-            Task.Factory.StartNew(Receiver, TaskCreationOptions.LongRunning);
+            Task.Factory.StartNew(CheckerAsync, TaskCreationOptions.LongRunning);
+            Task.Factory.StartNew(ReceiverAsync, TaskCreationOptions.LongRunning);
         }
 
         protected void Connect() {
@@ -40,32 +44,44 @@ namespace OpenEQ.Network {
             Send(Packet.Create(SessionOp.Request, sr, bare: true));
         }
 
-        async Task Checker() {
+        async Task CheckerAsync() {
             while(true) {
                 if(sentPackets != null) {
-                    var last = lastAckRecieved + 1; // In case this changes in mid-stream; no need to lock
-                    for(var i = last; i < last + 65536; ++i) {
-                        var packet = sentPackets[i % 65536];
-                        if(packet == null || packet.Acked)
-                            break;
-                        if(Time.Now - packet.SentTime > 5) {
+                    lock(sentPackets) {
+                        var last = lastAckRecieved + 1;
+                        for(var i = last; i < last + 65536; ++i) {
+                            var packet = sentPackets[i % 65536];
+                            if(packet == null || packet.Acked)
+                                break;
+                            if(Time.Now - packet.SentTime > 2) {
+                                if(Debug)
+                                    WriteLine($"Packet {packet.Sequence} not acked in {Time.Now - packet.SentTime}; resending.");
+                                Send(packet);
+                            }
+                        }
+                        if(lastAckSent != InSequence) {
                             if(Debug)
-                                WriteLine($"Packet {packet.Sequence} not acked in {Time.Now - packet.SentTime}; resending.");
-                            Send(packet);
+                                WriteLine($"ACKing up to {(ushort) ((InSequence + 65536 - 1) % 65536)}");
+                            Send(Packet.Create(SessionOp.Ack, sequence: (ushort) ((InSequence + 65536 - 1) % 65536)));
+                            lastAckSent = InSequence;
+                        } else if(resendAck) {
+                            Send(Packet.Create(SessionOp.Ack, sequence: (ushort) ((InSequence + 65536) % 65536)));
+                            resendAck = false;
                         }
                     }
-                    if(lastAckSent != InSequence) {
-                        Send(Packet.Create(SessionOp.Ack, sequence: (ushort) ((InSequence + 65536 - 1) % 65536)));
-                        lastAckSent = InSequence;
-                    }
                 }
-                await Task.Delay(1000);
+                if(SendKeepalives && Time.Now - lastRecvSendTime > 5) {
+                    WriteLine("Sending keepalive");
+                    Send(Packet.Create(SessionOp.Ack, sequence: (ushort) ((lastAckSent + 65536 - 1) % 65536)));
+                }
+                await Task.Delay(100);
             }
         }
 
-        async Task Receiver() {
+        async Task ReceiverAsync() {
             while(true) {
                 var data = await conn.Receive();
+                lastRecvSendTime = Time.Now;
 
                 if(Debug) {
                     ForegroundColor = ConsoleColor.DarkMagenta;
@@ -126,14 +142,18 @@ namespace OpenEQ.Network {
         }
 
         void QueueOrProcess(Packet packet) {
-            if(packet.Sequence == InSequence) // Present
-                ProcessPacket(packet);
-            else if((packet.Sequence > InSequence && packet.Sequence - InSequence < 2048) || (packet.Sequence + 65536) - InSequence < 2048) {// Future
-                futurePackets[packet.Sequence] = packet;
-                if(futurePackets[InSequence]?.Opcode == (ushort) SessionOp.Fragment) // Maybe we have enough for the current fragment?
-                    ProcessPacket(futurePackets[InSequence]);
-            } else if((packet.Sequence < InSequence && InSequence - packet.Sequence < 2048) || packet.Sequence - (InSequence + 65536) < 2048) { // Past
-                WriteLine($"Got packet in the past... expect {InSequence} got {packet.Sequence}");
+            lock(sentPackets) {
+                if(packet.Sequence == InSequence) // Present
+                    ProcessPacket(packet);
+                else if((packet.Sequence > InSequence && packet.Sequence - InSequence < 2048) || (packet.Sequence + 65536) - InSequence < 2048) {// Future
+                    futurePackets[packet.Sequence] = packet;
+                    if(futurePackets[InSequence]?.Opcode == (ushort) SessionOp.Fragment) // Maybe we have enough for the current fragment?
+                        ProcessPacket(futurePackets[InSequence]);
+                } else if((packet.Sequence < InSequence && InSequence - packet.Sequence < 2048) || packet.Sequence - (InSequence + 65536) < 2048) { // Past
+                    if(Debug)
+                        WriteLine($"Got packet in the past... expect {InSequence} got {packet.Sequence}.  Sending ACK up to {(ushort) ((InSequence + 65536) % 65536)}");
+                    resendAck = true;
+                }
             }
         }
 
@@ -158,6 +178,8 @@ namespace OpenEQ.Network {
                     var app = new AppPacket(packet.Data);
                     HandleAppPacketProxy(app);
                     InSequence = (ushort) ((packet.Sequence + 1) % 65536);
+                    if(Debug)
+                        WriteLine($"Single packet updated sequence from {packet.Sequence} to {InSequence}");
                     break;
                 case SessionOp.Fragment:
                     var tlen = packet.Data.NetU32(0);
@@ -180,6 +202,8 @@ namespace OpenEQ.Network {
                         last = i;
                     }
                     InSequence = (ushort) ((last + 1) % 65536);
+                    if(Debug)
+                        WriteLine($"Fragmented packet updated our sequence from {packet.Sequence} to {InSequence} ({last - packet.Sequence} packets)");
                     HandleAppPacketProxy(new AppPacket(tdata));
                     break;
             }
@@ -190,6 +214,8 @@ namespace OpenEQ.Network {
         }
 
         protected void Send(Packet packet) {
+            lastRecvSendTime = Time.Now;
+
             if(packet.Baked == null && packet.SentTime == 0 && !packet.Bare && packet.Opcode != (ushort) SessionOp.Ack && packet.Opcode != (ushort) SessionOp.Stats) {
                 packet.Sequence = OutSequence;
                 sentPackets[OutSequence++] = packet;

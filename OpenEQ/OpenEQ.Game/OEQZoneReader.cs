@@ -73,8 +73,9 @@ namespace OpenEQ {
                         DrawCount = indexbuffer.ElementCount
                     };
 
-                    var mesh = new Mesh();
-                    mesh.Draw = md;
+                    var mesh = new Mesh() {
+                        Draw = md
+                    };
                     if(matoffs.Contains(matid))
                         mesh.MaterialIndex = matoffs.IndexOf(matid);
                     else {
