@@ -1,5 +1,8 @@
 ﻿
 using System.Diagnostics;
+using System.IO.Compression;
+using System.Numerics;
+using System.Text;
 
 namespace OpenEQ.FileConverter.Wld
 {
@@ -102,6 +105,186 @@ namespace OpenEQ.FileConverter.Wld
         public void ConvertLights(Zone zone)
         {
             // No conversion of lights?
+        }
+
+        /// <summary>
+        /// TODO: Finish ConvertCharacters.  Still not fully implemented, but it was 75% or so.
+        /// </summary>
+        /// <param name="outputFileName"></param>
+        /// <param name="zone"></param>
+        public void ConvertCharacters(string outputFileName, Zone zone)
+        {
+            // Delete if it's already there.
+            if (File.Exists(outputFileName))
+                File.Delete(outputFileName);
+
+            using (var fsOut = File.Create(outputFileName))
+            {
+                using (var zipArchive = new ZipArchive(fsOut, ZipArchiveMode.Create))
+                {
+                    foreach (ModelRef modelRef in byType[20])
+                    {
+                        var charfile = new CharFile(modelRef._name);
+
+                        if (1 != modelRef.skeleton.Length)
+                            throw new Exception("ModelRef.Skeleton had more than 1 element.");
+
+                        var skeleton = (SkelPierceTrackSet) modelRef.skeleton[0].Value[0].Value;
+                        var roottrackname = skeleton.Tracks[0].pierceTrack[0].Value.Name;
+
+                        var aniTrees = new Dictionary<string, AniTree>();
+                        aniTrees.Add("", null);// not sure if I need this.
+
+                        foreach (SkelPierceTrack x in byType[19])
+                        {
+                            var name = x.Name;
+
+                            if (name != roottrackname && name.EndsWith(roottrackname))
+                            {
+                                aniTrees.Add(name.Replace(roottrackname, ""), null);
+                            }
+                        }
+
+                        foreach (var prefix in aniTrees.Keys.ToList())
+                        {
+                            //aniTrees[prefix] = InvertTree(BuildAniTree(skeleton, prefix, 0));
+                        }
+
+                        var meshes = skeleton.Meshes;
+                        var voff = 0;
+
+                        foreach (FragRef fr in meshes[0].Value)
+                        {
+                            var off = 0;
+                            var mesh = (FragMesh)fr.Value;
+
+                            foreach (var poly in mesh.Polytex)
+                            {
+                                var count = poly[0];
+                                var index = poly[1];
+
+                                var texnames = ((FragRef[])mesh.Textures[0].Value)[index].Resolve().OfType<string>().ToList();
+                                var texFlags = ((TexRef) mesh.Textures[0].Value[index].Value).SaneFlags;
+                                var tmpS3DData = texnames.Select(t => s3d[t.ToLower()]).ToList();
+
+                                var material = new Material(texFlags, tmpS3DData);
+                                var outpolys = new List<int>();
+
+                                for (var i = off; i < off + count; i++)
+                                {
+                                    outpolys.Add(voff + (int)mesh.Polys[i].Item2.x);
+                                    outpolys.Add(voff + (int)mesh.Polys[i].Item2.y);
+                                    outpolys.Add(voff + (int)mesh.Polys[i].Item2.z);
+                                }
+
+                                charfile.AddMaterial(material, outpolys);
+                                off += count;
+                            }
+
+                            voff += mesh.Vertices.Length;
+                        }
+
+                        foreach (var aniTree in aniTrees.Values)
+                        {
+                            foreach (var frame in aniTree.Frames)
+                            {
+                                BuildBoneMatrices(frame, Matrix4x4.Identity);
+                            }
+                        }
+                        var aa = 1;
+
+                        //for modelref in self.byType[0x14]:
+
+                        //    for name, frames in aniTrees.items():
+                        //        for i, frame in enumerate(frames):
+                        //            mats = { }
+                        //            buildBoneMatrices(frame, Matrix44.identity())
+
+                        //            outbuffer = []
+                        //            for mesh in meshes:
+                        //                inverts = mesh['vertices']
+                        //                innorms = mesh['normals']
+                        //                texcoords = mesh['texcoords']
+                        //                vertices = []
+                        //                normals = []
+                        //                off = 0
+                        //                for count, matid in mesh['bonevertices']:
+                        //                    vertices += transform(inverts[off: off + count], mats[matid])
+                        //                    normals += transform(innorms[off: off + count], mats[matid])
+                        //                    off += count
+
+
+                        //                temp = flatten(interleave(vertices, normals, texcoords))
+                        //                outbuffer += temp
+                        //            charfile.addFrame(name, outbuffer)
+                        //    charfile.out(zip)
+                    }
+                }
+            }
+
+        //    def convertCharacters(self, zip):
+
+        //        def invertTree(atree):
+        //    def getMaxFrames(elem):
+        //        return max([len(elem['frames'])] + map(getMaxFrames, elem['children']))
+        //    framecount = getMaxFrames(atree)
+        //    def sub(elem, i):
+        //        return dict(bone = elem['bone'], transform = elem['frames'][i if len(elem['frames']) > 1 else 0], children =[sub(x, i) for x in elem['children']])
+        //        frames = []
+        //    for i in xrange(framecount):
+        //        frames.append(sub(atree, i))
+        //    return frames
+
+        //def transform(elems, mat):
+        //    return [tuple(mat * Vector3(elem)) for elem in elems]
+        }
+
+        private void BuildBoneMatrices(Frame tree, Matrix4x4 parentmat)
+        {
+            //var trans = tree.
+            //    trans = tree['transform']
+            //    translate = Matrix44.from_translation(trans['position'])
+            //    rotate = Quaternion(trans['rotation']).matrix44
+            //    mat = mats[tree['bone']] = rotate * translate * parentmat
+
+            //    for x in tree['children']:
+            //        buildBoneMatrices(x, mat)
+        }
+
+        private void InvertTree(AniTree atree)
+        {
+            //def getMaxFrames(elem):
+            //    return max([len(elem['frames'])] + map(getMaxFrames, elem['children']))
+            //var framecount = getMaxFrames(atree);
+
+            //def sub(elem, i):
+            //    return dict(bone = elem['bone'], transform = elem['frames'][i if len(elem['frames']) > 1 else 0], children =[sub(x, i) for x in elem['children']])
+            //    frames = []
+
+            //for (var i = 0; i < framecount; i++)
+            //{
+            //    //    frames.append(sub(atree, i))
+            //}
+            //return frames
+        }
+
+        private AniTree BuildAniTree(SkelPierceTrackSet skeleton, string prefix, int idx)
+        {
+            var track = skeleton.Tracks[idx];
+            var piercetrack = (SkelPierceTrack)track.pierceTrack[0].Value;
+
+            if ("" != prefix && this.names.ContainsKey($"{prefix}{piercetrack.Name}"))
+            {
+                piercetrack = (SkelPierceTrack)names[$"{prefix}{piercetrack.Name}"];
+            }
+
+            var children = new List<AniTree>();
+            foreach (var x in track.NextPieces)
+            {
+                children.Add(BuildAniTree(skeleton, prefix, x));
+            }
+
+            return new AniTree(idx, (Frame[]) piercetrack.pierceTrack[0].Value, children);
         }
 
         public void ConvertZone(Zone zone)
@@ -455,15 +638,12 @@ namespace OpenEQ.FileConverter.Wld
         private FragRef Frag23PolyHDef(BinaryReader input, string name, uint size)
         {
             var d = input.ReadBytes((int)size);
-            var flags = input.ReadUInt32() + 1;
-            var size1 = input.ReadUInt32();
             return null;
         }
 
         private FragRef Frag24PolyHDef(BinaryReader input, string name, uint size)
         {
             var d = input.ReadBytes((int)size);
-            var size1 = input.ReadUInt32() + 1;
             return null;
         }
 

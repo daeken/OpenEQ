@@ -11,7 +11,7 @@ namespace OpenEQ.FileConverter
 
     public class S3DConverter
     {
-        public static async Task<Dictionary<string, byte[]>> ConvertAsync(string fileName)
+        public static async Task<Dictionary<string, byte[]>> ReadS3DAsync(string fileName)
         {
             var directoryList = new List<string>();
             var outDict = new Dictionary<string, byte[]>();
@@ -42,7 +42,7 @@ namespace OpenEQ.FileConverter
 
                         for (var i = 0; i < count; i++)
                         {
-                            input.BaseStream.Position = offset + sizeof(int) + i * 12;
+                            input.BaseStream.Position = offset + sizeof(int) + i*12;
                             var crc = input.ReadUInt32();
                             var foff = input.ReadUInt32();
                             var size = input.ReadUInt32();
@@ -59,12 +59,13 @@ namespace OpenEQ.FileConverter
 
                                 var tempPosition = input.BaseStream.Position;
                                 input.BaseStream.Position += 2; // wtf?
-                                using (var dstream = new DeflateStream(input.BaseStream, CompressionMode.Decompress, true))
+                                using (
+                                    var dstream = new DeflateStream(input.BaseStream, CompressionMode.Decompress, true))
                                 {
-                                    dstream.Read(outdata, tpos, (int)inflen);
+                                    dstream.Read(outdata, tpos, (int) inflen);
                                 }
                                 input.BaseStream.Position = tempPosition + deflen;
-                                tpos += (int)inflen;
+                                tpos += (int) inflen;
                             }
 
                             if (crc == 0x61580AC9)
