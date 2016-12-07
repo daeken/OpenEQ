@@ -66,6 +66,31 @@ world:
       - uint32: DrakkinHeritage, DrakkinTattoo, DrakkinDetails
       - uint8: unknown
 
+    CharCreate:
+      - uint32: Class_
+      - uint32: Haircolor # Might be hairstyle
+      - uint32: BeardColor # Might be beard
+      - uint32: Beard # Might be beardcolor
+      - uint32: Gender
+      - uint32: Race
+      - uint32: StartZone # 0 = odus, 1 = qeynos, 2 = halas, 3 = rivervale, 4 = freeport, 5 = neriak, 6 = gukta/grobb, 7 = ogguk, 8 = kaladim, 9 = gfay, 10 = felwithe, 11 = akanon, 12 = cabalis, 13 = shar vahl
+      - uint32: HairStyle # Might be haircolor
+      - uint32: Deity
+      - uint32: STR
+      - uint32: STA
+      - uint32: AGI
+      - uint32: DEX
+      - uint32: WIS
+      - uint32: INT
+      - uint32: CHA
+      - uint32: Face
+      - uint32: EyeColor1
+      - uint32: EyeColor2
+      - uint32: DrakkinHeritage
+      - uint32: DrakkinTattoo
+      - uint32: DrakkinDetails
+      - uint32: Tutorial
+
     CharacterSelect:
       - uint32: charCount, totalChars
       - list<CharacterSelectEntry>[charCount]: Characters
@@ -73,6 +98,12 @@ world:
     EnterWorld:
       - string[64]: Name
       - bool<uint8>: Tutorial, GoHome
+
+    NameApproval:
+      - string[64]: Name
+      - uint32: Race
+      - uint32: Class
+      - uint32: Unknown
 
     ZoneServerInfo:
       - string[128]: Host

@@ -44,6 +44,15 @@ namespace OpenEQ.Network {
             Send(Packet.Create(SessionOp.Request, sr, bare: true));
         }
 
+        public void ResetAckForZone()
+        {
+            OutSequence = InSequence = 0;
+            lastAckRecieved = 65535;
+            lastAckSent = 0;
+//            sentPackets = new Packet[65536];
+//            futurePackets = new Packet[65536];
+        }
+
         async Task CheckerAsync() {
             while(true) {
                 if(sentPackets != null) {

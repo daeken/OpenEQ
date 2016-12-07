@@ -19,68 +19,6 @@ using System.IO;
 using static OpenEQ.Network.Utility;
 
 namespace OpenEQ.Network {
-	public struct CharacterSelect : IEQStruct {
-		uint charCount;
-		uint totalChars;
-		public List<CharacterSelectEntry> Characters;
-
-		public CharacterSelect(List<CharacterSelectEntry> Characters) : this() {
-			this.Characters = Characters;
-		}
-
-		public CharacterSelect(byte[] data, int offset = 0) : this() {
-			Unpack(data, offset);
-		}
-		public CharacterSelect(BinaryReader br) : this() {
-			Unpack(br);
-		}
-		public void Unpack(byte[] data, int offset = 0) {
-			using(var ms = new MemoryStream(data, offset, data.Length - offset)) {
-				using(var br = new BinaryReader(ms)) {
-					Unpack(br);
-				}
-			}
-		}
-		public void Unpack(BinaryReader br) {
-			charCount = br.ReadUInt32();
-			totalChars = br.ReadUInt32();
-			Characters = new List<CharacterSelectEntry>();
-			for(var i = 0; i < charCount; ++i) {
-				Characters.Add(new CharacterSelectEntry(br));
-			}
-		}
-
-		public byte[] Pack() {
-			using(var ms = new MemoryStream()) {
-				using(var bw = new BinaryWriter(ms)) {
-					Pack(bw);
-					return ms.ToArray();
-				}
-			}
-		}
-		public void Pack(BinaryWriter bw) {
-			bw.Write(charCount);
-			bw.Write(totalChars);
-			for(var i = 0; i < charCount; ++i) {
-				Characters[i].Pack(bw);
-			}
-		}
-
-		public override string ToString() {
-			var ret = "struct CharacterSelect {\n";
-			ret += "\tCharacters = ";
-			try {
-				ret += "{\n";
-				for(int i = 0, e = Characters.Count; i < e; ++i)
-					ret += $"\t\t{ Indentify(Characters[i], 2) }" + (i != e - 1 ? "," : "") + "\n";
-				ret += "\t}\n";
-			} catch(NullReferenceException) {
-				ret += "!!NULL!!\n";
-			}
-			return ret + "}";
-		}
-	}
-
 	public struct EnterWorld : IEQStruct {
 		public string Name;
 		public bool Tutorial;
@@ -142,64 +80,6 @@ namespace OpenEQ.Network {
 			ret += "\tGoHome = ";
 			try {
 				ret += $"{ Indentify(GoHome) }\n";
-			} catch(NullReferenceException) {
-				ret += "!!NULL!!\n";
-			}
-			return ret + "}";
-		}
-	}
-
-	public struct ZoneServerInfo : IEQStruct {
-		public string Host;
-		public ushort Port;
-
-		public ZoneServerInfo(string Host, ushort Port) : this() {
-			this.Host = Host;
-			this.Port = Port;
-		}
-
-		public ZoneServerInfo(byte[] data, int offset = 0) : this() {
-			Unpack(data, offset);
-		}
-		public ZoneServerInfo(BinaryReader br) : this() {
-			Unpack(br);
-		}
-		public void Unpack(byte[] data, int offset = 0) {
-			using(var ms = new MemoryStream(data, offset, data.Length - offset)) {
-				using(var br = new BinaryReader(ms)) {
-					Unpack(br);
-				}
-			}
-		}
-		public void Unpack(BinaryReader br) {
-			Host = br.ReadString(128);
-			Port = br.ReadUInt16();
-		}
-
-		public byte[] Pack() {
-			using(var ms = new MemoryStream()) {
-				using(var bw = new BinaryWriter(ms)) {
-					Pack(bw);
-					return ms.ToArray();
-				}
-			}
-		}
-		public void Pack(BinaryWriter bw) {
-			bw.Write(Host.ToBytes(128));
-			bw.Write(Port);
-		}
-
-		public override string ToString() {
-			var ret = "struct ZoneServerInfo {\n";
-			ret += "\tHost = ";
-			try {
-				ret += $"{ Indentify(Host) },\n";
-			} catch(NullReferenceException) {
-				ret += "!!NULL!!\n";
-			}
-			ret += "\tPort = ";
-			try {
-				ret += $"{ Indentify(Port) }\n";
 			} catch(NullReferenceException) {
 				ret += "!!NULL!!\n";
 			}
@@ -475,6 +355,472 @@ namespace OpenEQ.Network {
 			ret += "\tDrakkinDetails = ";
 			try {
 				ret += $"{ Indentify(DrakkinDetails) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			return ret + "}";
+		}
+	}
+
+	public struct CharCreate : IEQStruct {
+		public uint Class_;
+		public uint Haircolor;
+		public uint BeardColor;
+		public uint Beard;
+		public uint Gender;
+		public uint Race;
+		public uint StartZone;
+		public uint HairStyle;
+		public uint Deity;
+		public uint STR;
+		public uint STA;
+		public uint AGI;
+		public uint DEX;
+		public uint WIS;
+		public uint INT;
+		public uint CHA;
+		public uint Face;
+		public uint EyeColor1;
+		public uint EyeColor2;
+		public uint DrakkinHeritage;
+		public uint DrakkinTattoo;
+		public uint DrakkinDetails;
+		public uint Tutorial;
+
+		public CharCreate(uint Class_, uint Haircolor, uint BeardColor, uint Beard, uint Gender, uint Race, uint StartZone, uint HairStyle, uint Deity, uint STR, uint STA, uint AGI, uint DEX, uint WIS, uint INT, uint CHA, uint Face, uint EyeColor1, uint EyeColor2, uint DrakkinHeritage, uint DrakkinTattoo, uint DrakkinDetails, uint Tutorial) : this() {
+			this.Class_ = Class_;
+			this.Haircolor = Haircolor;
+			this.BeardColor = BeardColor;
+			this.Beard = Beard;
+			this.Gender = Gender;
+			this.Race = Race;
+			this.StartZone = StartZone;
+			this.HairStyle = HairStyle;
+			this.Deity = Deity;
+			this.STR = STR;
+			this.STA = STA;
+			this.AGI = AGI;
+			this.DEX = DEX;
+			this.WIS = WIS;
+			this.INT = INT;
+			this.CHA = CHA;
+			this.Face = Face;
+			this.EyeColor1 = EyeColor1;
+			this.EyeColor2 = EyeColor2;
+			this.DrakkinHeritage = DrakkinHeritage;
+			this.DrakkinTattoo = DrakkinTattoo;
+			this.DrakkinDetails = DrakkinDetails;
+			this.Tutorial = Tutorial;
+		}
+
+		public CharCreate(byte[] data, int offset = 0) : this() {
+			Unpack(data, offset);
+		}
+		public CharCreate(BinaryReader br) : this() {
+			Unpack(br);
+		}
+		public void Unpack(byte[] data, int offset = 0) {
+			using(var ms = new MemoryStream(data, offset, data.Length - offset)) {
+				using(var br = new BinaryReader(ms)) {
+					Unpack(br);
+				}
+			}
+		}
+		public void Unpack(BinaryReader br) {
+			Class_ = br.ReadUInt32();
+			Haircolor = br.ReadUInt32();
+			BeardColor = br.ReadUInt32();
+			Beard = br.ReadUInt32();
+			Gender = br.ReadUInt32();
+			Race = br.ReadUInt32();
+			StartZone = br.ReadUInt32();
+			HairStyle = br.ReadUInt32();
+			Deity = br.ReadUInt32();
+			STR = br.ReadUInt32();
+			STA = br.ReadUInt32();
+			AGI = br.ReadUInt32();
+			DEX = br.ReadUInt32();
+			WIS = br.ReadUInt32();
+			INT = br.ReadUInt32();
+			CHA = br.ReadUInt32();
+			Face = br.ReadUInt32();
+			EyeColor1 = br.ReadUInt32();
+			EyeColor2 = br.ReadUInt32();
+			DrakkinHeritage = br.ReadUInt32();
+			DrakkinTattoo = br.ReadUInt32();
+			DrakkinDetails = br.ReadUInt32();
+			Tutorial = br.ReadUInt32();
+		}
+
+		public byte[] Pack() {
+			using(var ms = new MemoryStream()) {
+				using(var bw = new BinaryWriter(ms)) {
+					Pack(bw);
+					return ms.ToArray();
+				}
+			}
+		}
+		public void Pack(BinaryWriter bw) {
+			bw.Write(Class_);
+			bw.Write(Haircolor);
+			bw.Write(BeardColor);
+			bw.Write(Beard);
+			bw.Write(Gender);
+			bw.Write(Race);
+			bw.Write(StartZone);
+			bw.Write(HairStyle);
+			bw.Write(Deity);
+			bw.Write(STR);
+			bw.Write(STA);
+			bw.Write(AGI);
+			bw.Write(DEX);
+			bw.Write(WIS);
+			bw.Write(INT);
+			bw.Write(CHA);
+			bw.Write(Face);
+			bw.Write(EyeColor1);
+			bw.Write(EyeColor2);
+			bw.Write(DrakkinHeritage);
+			bw.Write(DrakkinTattoo);
+			bw.Write(DrakkinDetails);
+			bw.Write(Tutorial);
+		}
+
+		public override string ToString() {
+			var ret = "struct CharCreate {\n";
+			ret += "\tClass_ = ";
+			try {
+				ret += $"{ Indentify(Class_) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tHaircolor = ";
+			try {
+				ret += $"{ Indentify(Haircolor) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tBeardColor = ";
+			try {
+				ret += $"{ Indentify(BeardColor) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tBeard = ";
+			try {
+				ret += $"{ Indentify(Beard) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tGender = ";
+			try {
+				ret += $"{ Indentify(Gender) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tRace = ";
+			try {
+				ret += $"{ Indentify(Race) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tStartZone = ";
+			try {
+				ret += $"{ Indentify(StartZone) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tHairStyle = ";
+			try {
+				ret += $"{ Indentify(HairStyle) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tDeity = ";
+			try {
+				ret += $"{ Indentify(Deity) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tSTR = ";
+			try {
+				ret += $"{ Indentify(STR) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tSTA = ";
+			try {
+				ret += $"{ Indentify(STA) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tAGI = ";
+			try {
+				ret += $"{ Indentify(AGI) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tDEX = ";
+			try {
+				ret += $"{ Indentify(DEX) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tWIS = ";
+			try {
+				ret += $"{ Indentify(WIS) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tINT = ";
+			try {
+				ret += $"{ Indentify(INT) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tCHA = ";
+			try {
+				ret += $"{ Indentify(CHA) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tFace = ";
+			try {
+				ret += $"{ Indentify(Face) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tEyeColor1 = ";
+			try {
+				ret += $"{ Indentify(EyeColor1) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tEyeColor2 = ";
+			try {
+				ret += $"{ Indentify(EyeColor2) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tDrakkinHeritage = ";
+			try {
+				ret += $"{ Indentify(DrakkinHeritage) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tDrakkinTattoo = ";
+			try {
+				ret += $"{ Indentify(DrakkinTattoo) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tDrakkinDetails = ";
+			try {
+				ret += $"{ Indentify(DrakkinDetails) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tTutorial = ";
+			try {
+				ret += $"{ Indentify(Tutorial) }\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			return ret + "}";
+		}
+	}
+
+	public struct NameApproval : IEQStruct {
+		public string Name;
+		public uint Race;
+		public uint Class;
+		public uint Unknown;
+
+		public NameApproval(string Name, uint Race, uint Class, uint Unknown) : this() {
+			this.Name = Name;
+			this.Race = Race;
+			this.Class = Class;
+			this.Unknown = Unknown;
+		}
+
+		public NameApproval(byte[] data, int offset = 0) : this() {
+			Unpack(data, offset);
+		}
+		public NameApproval(BinaryReader br) : this() {
+			Unpack(br);
+		}
+		public void Unpack(byte[] data, int offset = 0) {
+			using(var ms = new MemoryStream(data, offset, data.Length - offset)) {
+				using(var br = new BinaryReader(ms)) {
+					Unpack(br);
+				}
+			}
+		}
+		public void Unpack(BinaryReader br) {
+			Name = br.ReadString(64);
+			Race = br.ReadUInt32();
+			Class = br.ReadUInt32();
+			Unknown = br.ReadUInt32();
+		}
+
+		public byte[] Pack() {
+			using(var ms = new MemoryStream()) {
+				using(var bw = new BinaryWriter(ms)) {
+					Pack(bw);
+					return ms.ToArray();
+				}
+			}
+		}
+		public void Pack(BinaryWriter bw) {
+			bw.Write(Name.ToBytes(64));
+			bw.Write(Race);
+			bw.Write(Class);
+			bw.Write(Unknown);
+		}
+
+		public override string ToString() {
+			var ret = "struct NameApproval {\n";
+			ret += "\tName = ";
+			try {
+				ret += $"{ Indentify(Name) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tRace = ";
+			try {
+				ret += $"{ Indentify(Race) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tClass = ";
+			try {
+				ret += $"{ Indentify(Class) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tUnknown = ";
+			try {
+				ret += $"{ Indentify(Unknown) }\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			return ret + "}";
+		}
+	}
+
+	public struct CharacterSelect : IEQStruct {
+		uint charCount;
+		uint totalChars;
+		public List<CharacterSelectEntry> Characters;
+
+		public CharacterSelect(List<CharacterSelectEntry> Characters) : this() {
+			this.Characters = Characters;
+		}
+
+		public CharacterSelect(byte[] data, int offset = 0) : this() {
+			Unpack(data, offset);
+		}
+		public CharacterSelect(BinaryReader br) : this() {
+			Unpack(br);
+		}
+		public void Unpack(byte[] data, int offset = 0) {
+			using(var ms = new MemoryStream(data, offset, data.Length - offset)) {
+				using(var br = new BinaryReader(ms)) {
+					Unpack(br);
+				}
+			}
+		}
+		public void Unpack(BinaryReader br) {
+			charCount = br.ReadUInt32();
+			totalChars = br.ReadUInt32();
+			Characters = new List<CharacterSelectEntry>();
+			for(var i = 0; i < charCount; ++i) {
+				Characters.Add(new CharacterSelectEntry(br));
+			}
+		}
+
+		public byte[] Pack() {
+			using(var ms = new MemoryStream()) {
+				using(var bw = new BinaryWriter(ms)) {
+					Pack(bw);
+					return ms.ToArray();
+				}
+			}
+		}
+		public void Pack(BinaryWriter bw) {
+			bw.Write(charCount);
+			bw.Write(totalChars);
+			for(var i = 0; i < charCount; ++i) {
+				Characters[i].Pack(bw);
+			}
+		}
+
+		public override string ToString() {
+			var ret = "struct CharacterSelect {\n";
+			ret += "\tCharacters = ";
+			try {
+				ret += "{\n";
+				for(int i = 0, e = Characters.Count; i < e; ++i)
+					ret += $"\t\t{ Indentify(Characters[i], 2) }" + (i != e - 1 ? "," : "") + "\n";
+				ret += "\t}\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			return ret + "}";
+		}
+	}
+
+	public struct ZoneServerInfo : IEQStruct {
+		public string Host;
+		public ushort Port;
+
+		public ZoneServerInfo(string Host, ushort Port) : this() {
+			this.Host = Host;
+			this.Port = Port;
+		}
+
+		public ZoneServerInfo(byte[] data, int offset = 0) : this() {
+			Unpack(data, offset);
+		}
+		public ZoneServerInfo(BinaryReader br) : this() {
+			Unpack(br);
+		}
+		public void Unpack(byte[] data, int offset = 0) {
+			using(var ms = new MemoryStream(data, offset, data.Length - offset)) {
+				using(var br = new BinaryReader(ms)) {
+					Unpack(br);
+				}
+			}
+		}
+		public void Unpack(BinaryReader br) {
+			Host = br.ReadString(128);
+			Port = br.ReadUInt16();
+		}
+
+		public byte[] Pack() {
+			using(var ms = new MemoryStream()) {
+				using(var bw = new BinaryWriter(ms)) {
+					Pack(bw);
+					return ms.ToArray();
+				}
+			}
+		}
+		public void Pack(BinaryWriter bw) {
+			bw.Write(Host.ToBytes(128));
+			bw.Write(Port);
+		}
+
+		public override string ToString() {
+			var ret = "struct ZoneServerInfo {\n";
+			ret += "\tHost = ";
+			try {
+				ret += $"{ Indentify(Host) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tPort = ";
+			try {
+				ret += $"{ Indentify(Port) }\n";
 			} catch(NullReferenceException) {
 				ret += "!!NULL!!\n";
 			}

@@ -7,8 +7,10 @@ using System.IO;
 using System.Reflection;
 using System.Collections.Generic;
 
-namespace OpenEQ.Network {
-    public class LoginStream : EQStream {
+namespace OpenEQ.Network
+{
+    public class LoginStream : EQStream
+    {
         public event EventHandler<bool> LoginSuccess;
         public event EventHandler<List<ServerListElement>> ServerList;
         public event EventHandler<ServerListElement?> PlaySuccess;
@@ -20,19 +22,23 @@ namespace OpenEQ.Network {
 
         byte[] cryptoBlob;
         bool triedOnce = false;
-        public LoginStream(string host, int port) : base(host, port) {
+
+        public LoginStream(string host, int port) : base(host, port)
+        {
             Connect();
         }
 
-        public void Login(string username, string password) {
+        public void Login(string username, string password)
+        {
             cryptoBlob = Encrypt(username, password);
-            if(triedOnce)
+            if (triedOnce)
                 Send(AppPacket.Create(LoginOp.Login, new Login(), cryptoBlob));
             else
                 SendSessionRequest();
         }
 
-        byte[] Encrypt(string username, string password) {
+        byte[] Encrypt(string username, string password)
+        {
             var tbuf = new byte[username.Length + password.Length + 2];
             Array.Copy(ASCII.GetBytes(username), tbuf, username.Length);
             Array.Copy(ASCII.GetBytes(password), 0, tbuf, username.Length + 1, password.Length);
@@ -40,30 +46,40 @@ namespace OpenEQ.Network {
             tbuf[username.Length + password.Length + 1] = 0;
             return Encrypt(tbuf);
         }
-        byte[] Encrypt(byte[] buffer) {
-            var empty = new byte[] { 0, 0, 0, 0, 0, 0, 0, 0 };
+
+        byte[] Encrypt(byte[] buffer)
+        {
+            var empty = new byte[] {0, 0, 0, 0, 0, 0, 0, 0};
             var des = new DESCrypto(empty, empty);
             return des.Encrypt(buffer);
         }
-        byte[] Decrypt(byte[] buffer, int offset = 0) {
-            var empty = new byte[] { 0, 0, 0, 0, 0, 0, 0, 0 };
+
+        byte[] Decrypt(byte[] buffer, int offset = 0)
+        {
+            var empty = new byte[] {0, 0, 0, 0, 0, 0, 0, 0};
             var des = new DESCrypto(empty, empty);
             return des.Decrypt(offset == 0 ? buffer : buffer.Sub(offset));
         }
 
-        protected override void HandleSessionResponse(Packet packet) {
+        protected override void HandleSessionResponse(Packet packet)
+        {
             Send(AppPacket.Create(LoginOp.SessionReady, new SessionReady()));
         }
 
-        protected override void HandleAppPacket(AppPacket packet) {
-            switch((LoginOp) packet.Opcode) {
+        protected override void HandleAppPacket(AppPacket packet)
+        {
+            Hexdump(packet.Data);
+
+            switch ((LoginOp) packet.Opcode)
+            {
                 case LoginOp.ChatMessage:
                     Send(AppPacket.Create(LoginOp.Login, new Login(), cryptoBlob));
                     break;
                 case LoginOp.LoginAccepted:
-                    if(packet.Data.Length < 80)
+                    if (packet.Data.Length < 80)
                         LoginSuccess?.Invoke(this, false);
-                    else {
+                    else
+                    {
                         var dec = Decrypt(packet.Data, 10);
                         var rep = new LoginReply(dec);
                         accountID = rep.AcctID;
@@ -78,9 +94,9 @@ namespace OpenEQ.Network {
                 case LoginOp.PlayEverquestResponse:
                     var resp = packet.Get<PlayResponse>();
 
-                    if(!resp.Allowed)
+                    if (!resp.Allowed)
                         curPlay = null;
-                    
+
                     PlaySuccess?.Invoke(this, curPlay);
                     break;
                 default:
@@ -90,11 +106,13 @@ namespace OpenEQ.Network {
             }
         }
 
-        public void RequestServerList() {
+        public void RequestServerList()
+        {
             Send(AppPacket.Create(LoginOp.ServerListRequest));
         }
 
-        public void Play(ServerListElement server) {
+        public void Play(ServerListElement server)
+        {
             curPlay = server;
             Send(AppPacket.Create(LoginOp.PlayEverquestRequest, new PlayRequest(5, server.RuntimeID)));
         }
