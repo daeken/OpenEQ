@@ -4,7 +4,6 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using GlmNet;
-using Microsoft.SqlServer.Server;
 
 namespace OpenEQ.FileConverter.Entities
 {

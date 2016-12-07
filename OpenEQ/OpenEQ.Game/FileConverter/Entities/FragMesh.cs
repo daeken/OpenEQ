@@ -1,12 +1,11 @@
-﻿
+﻿using System;
+using System.Collections.Generic;
+using System.IO;
+using GlmNet;
+using OpenEQ.FileConverter.Extensions;
+
 namespace OpenEQ.FileConverter.Entities
 {
-    using System;
-    using System.Collections.Generic;
-    using System.IO;
-    using GlmNet;
-    using OpenEQ.FileConverter.Extensions;
-
     public class FragMesh
     {
         public string _name;

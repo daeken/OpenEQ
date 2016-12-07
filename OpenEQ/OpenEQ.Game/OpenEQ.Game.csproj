@@ -110,6 +110,35 @@
     <Compile Include="BasicCameraController.cs" />
     <Compile Include="DESCrypto.cs" />
     <Compile Include="Extensions.cs" />
+    <Compile Include="FileConverter\Entities\AniTree.cs" />
+    <Compile Include="FileConverter\Entities\CharFile.cs" />
+    <Compile Include="FileConverter\Entities\FragMesh.cs" />
+    <Compile Include="FileConverter\Entities\FragRef.cs" />
+    <Compile Include="FileConverter\Entities\Frame.cs" />
+    <Compile Include="FileConverter\Entities\IRef.cs" />
+    <Compile Include="FileConverter\Entities\LightInfo.cs" />
+    <Compile Include="FileConverter\Entities\LightSource.cs" />
+    <Compile Include="FileConverter\Entities\Material.cs" />
+    <Compile Include="FileConverter\Entities\Mesh.cs" />
+    <Compile Include="FileConverter\Entities\ModelRef.cs" />
+    <Compile Include="FileConverter\Entities\ObjectLocation.cs" />
+    <Compile Include="FileConverter\Entities\PlaceableObject.cs" />
+    <Compile Include="FileConverter\Entities\SkelPierceTrack.cs" />
+    <Compile Include="FileConverter\Entities\SkelPierceTrackSet.cs" />
+    <Compile Include="FileConverter\Entities\struct_frag.cs" />
+    <Compile Include="FileConverter\Entities\struct_wld_basic_frag.cs" />
+    <Compile Include="FileConverter\Entities\TexRef.cs" />
+    <Compile Include="FileConverter\Entities\VertexBuffer.cs" />
+    <Compile Include="FileConverter\Entities\WorldHeader.cs" />
+    <Compile Include="FileConverter\Entities\Zone.cs" />
+    <Compile Include="FileConverter\Entities\ZoneObject.cs" />
+    <Compile Include="FileConverter\Extensions\BinaryReaderExtensions.cs" />
+    <Compile Include="FileConverter\Extensions\BinaryWriterExtensions.cs" />
+    <Compile Include="FileConverter\Extensions\DictionaryExtensions.cs" />
+    <Compile Include="FileConverter\Extensions\IEnumerableExtensions.cs" />
+    <Compile Include="FileConverter\Extensions\StringExtensions.cs" />
+    <Compile Include="FileConverter\S3DConverter.cs" />
+    <Compile Include="FileConverter\Wld\WldConverter.cs" />
     <Compile Include="FPSCounter.cs" />
     <Compile Include="GlobalSuppressions.cs" />
     <Compile Include="ListDeconstructors.cs" />
@@ -141,8 +170,18 @@
       <HintPath>..\..\packages\DotNetZip.1.10.1\lib\net20\DotNetZip.dll</HintPath>
       <Private>True</Private>
     </Reference>
+    <Reference Include="GlmNet, Version=0.5.1.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\..\packages\GlmNet.0.5.1.0\lib\net40\GlmNet.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="Microsoft.CSharp" />
     <Reference Include="System" />
     <Reference Include="System.IO.Compression" />
+    <Reference Include="System.Numerics" />
+    <Reference Include="System.Numerics.Vectors, Version=4.1.2.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a, processorArchitecture=MSIL">
+      <HintPath>..\..\packages\System.Numerics.Vectors.4.3.0\lib\net46\System.Numerics.Vectors.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
     <Reference Include="System.ValueTuple, Version=4.0.1.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
       <HintPath>..\..\packages\System.ValueTuple.4.3.0\lib\netstandard1.0\System.ValueTuple.dll</HintPath>
       <Private>True</Private>
