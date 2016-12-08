@@ -7,6 +7,7 @@ using SiliconStudio.Xenko.UI.Events;
 using SiliconStudio.Core.Mathematics;
 using SiliconStudio.Xenko.Engine;
 using System.Linq;
+using OpenEQ.Configuration;
 
 namespace OpenEQ
 {
@@ -29,7 +30,7 @@ namespace OpenEQ
             authSection.Visibility = Visibility.Visible;
             serverListSection.Visibility = Visibility.Hidden;
 
-            login = new LoginStream(LoginServer.Split(':')[0], Int32.Parse(LoginServer.Split(':')[1]));
+            login = new LoginStream(OpenEQConfiguration.Instance.LoginServerAddress, OpenEQConfiguration.Instance.LoginServerPort);
 
             loginButton.Click += (sender, e) => {
                 loginButton.IsEnabled = false;
@@ -51,9 +52,12 @@ namespace OpenEQ
                 authSection.Visibility = Visibility.Hidden;
                 serverListSection.Visibility = Visibility.Visible;
 
+                // Sort this list first.
+                list = list.OrderByDescending(a => a.ServerListID).ThenBy(b => b.Status).ThenByDescending(c => c.PlayersOnline).ThenBy(d => d.Longname).ToList();
+
                 var i = 0;
                 foreach(var server in list) {
-                    serverGrid.RowDefinitions.Add(new StripDefinition(StripType.Fixed, 20));
+                    serverGrid.RowDefinitions.Add(new StripDefinition(StripType.Fixed, 25));
                     var namefield = new TextBlock { Text = server.Longname, Font = serverNameHeader.Font, TextSize = serverNameHeader.TextSize, TextColor = serverNameHeader.TextColor };
                     namefield.SetGridColumn(0);
                     namefield.SetGridRow(i);
@@ -63,7 +67,7 @@ namespace OpenEQ
                     statusfield.SetGridRow(i);
                     serverGrid.Children.Add(statusfield);
                     var serverButton = new Button { MouseOverImage = loginButton.MouseOverImage, NotPressedImage = loginButton.NotPressedImage, PressedImage = loginButton.PressedImage };
-                    var buttonLabel = new TextBlock { Text = "Play", Font = serverNameHeader.Font, TextSize = 10, TextColor = serverNameHeader.TextColor, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
+                    var buttonLabel = new TextBlock { Text = "Play", Font = serverNameHeader.Font, TextSize = 8, TextColor = serverNameHeader.TextColor, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
                     serverButton.Content = buttonLabel;
                     serverButton.SetGridColumn(2);
                     serverButton.SetGridRow(i++);

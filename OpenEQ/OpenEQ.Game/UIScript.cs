@@ -3,6 +3,7 @@ using SiliconStudio.Xenko.Engine;
 using SiliconStudio.Xenko.UI;
 using System.Linq;
 using System.Reflection;
+using OpenEQ.Configuration;
 
 namespace OpenEQ {
     public abstract class UIScript : SyncScript {
