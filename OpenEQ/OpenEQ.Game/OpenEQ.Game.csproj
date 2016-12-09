@@ -103,6 +103,7 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- A reference to the entire .NET Framework is automatically included -->
+    <None Include="app.config" />
     <None Include="appsettings.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
@@ -115,6 +116,35 @@
     <Compile Include="Configuration\OpenEQConfiguration.cs" />
     <Compile Include="DESCrypto.cs" />
     <Compile Include="Extensions.cs" />
+    <Compile Include="FileConverter\Entities\AniTree.cs" />
+    <Compile Include="FileConverter\Entities\CharFile.cs" />
+    <Compile Include="FileConverter\Entities\FragMesh.cs" />
+    <Compile Include="FileConverter\Entities\FragRef.cs" />
+    <Compile Include="FileConverter\Entities\Frame.cs" />
+    <Compile Include="FileConverter\Entities\IRef.cs" />
+    <Compile Include="FileConverter\Entities\LightInfo.cs" />
+    <Compile Include="FileConverter\Entities\LightSource.cs" />
+    <Compile Include="FileConverter\Entities\Material.cs" />
+    <Compile Include="FileConverter\Entities\Mesh.cs" />
+    <Compile Include="FileConverter\Entities\ModelRef.cs" />
+    <Compile Include="FileConverter\Entities\ObjectLocation.cs" />
+    <Compile Include="FileConverter\Entities\PlaceableObject.cs" />
+    <Compile Include="FileConverter\Entities\SkelPierceTrack.cs" />
+    <Compile Include="FileConverter\Entities\SkelPierceTrackSet.cs" />
+    <Compile Include="FileConverter\Entities\struct_frag.cs" />
+    <Compile Include="FileConverter\Entities\struct_wld_basic_frag.cs" />
+    <Compile Include="FileConverter\Entities\TexRef.cs" />
+    <Compile Include="FileConverter\Entities\VertexBuffer.cs" />
+    <Compile Include="FileConverter\Entities\WorldHeader.cs" />
+    <Compile Include="FileConverter\Entities\Zone.cs" />
+    <Compile Include="FileConverter\Entities\ZoneObject.cs" />
+    <Compile Include="FileConverter\Extensions\BinaryReaderExtensions.cs" />
+    <Compile Include="FileConverter\Extensions\BinaryWriterExtensions.cs" />
+    <Compile Include="FileConverter\Extensions\DictionaryExtensions.cs" />
+    <Compile Include="FileConverter\Extensions\IEnumerableExtensions.cs" />
+    <Compile Include="FileConverter\Extensions\StringExtensions.cs" />
+    <Compile Include="FileConverter\S3DConverter.cs" />
+    <Compile Include="FileConverter\Wld\WldConverter.cs" />
     <Compile Include="FPSCounter.cs" />
     <Compile Include="GlobalSuppressions.cs" />
     <Compile Include="ListDeconstructors.cs" />
@@ -146,6 +176,11 @@
       <HintPath>..\..\packages\DotNetZip.1.10.1\lib\net20\DotNetZip.dll</HintPath>
       <Private>True</Private>
     </Reference>
+    <Reference Include="GlmNet, Version=0.5.1.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\..\packages\GlmNet.0.5.1.0\lib\net40\GlmNet.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="Microsoft.CSharp" />
     <Reference Include="Microsoft.Extensions.Configuration, Version=1.1.0.0, Culture=neutral, PublicKeyToken=adb9793829ddae60, processorArchitecture=MSIL">
       <HintPath>..\..\packages\Microsoft.Extensions.Configuration.1.1.0\lib\netstandard1.1\Microsoft.Extensions.Configuration.dll</HintPath>
       <Private>True</Private>
@@ -154,20 +189,12 @@
       <HintPath>..\..\packages\Microsoft.Extensions.Configuration.Abstractions.1.1.0\lib\netstandard1.0\Microsoft.Extensions.Configuration.Abstractions.dll</HintPath>
       <Private>True</Private>
     </Reference>
-    <Reference Include="Microsoft.Extensions.Configuration.Binder, Version=1.1.0.0, Culture=neutral, PublicKeyToken=adb9793829ddae60, processorArchitecture=MSIL">
-      <HintPath>..\..\packages\Microsoft.Extensions.Configuration.Binder.1.1.0\lib\netstandard1.1\Microsoft.Extensions.Configuration.Binder.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
     <Reference Include="Microsoft.Extensions.Configuration.FileExtensions, Version=1.1.0.0, Culture=neutral, PublicKeyToken=adb9793829ddae60, processorArchitecture=MSIL">
       <HintPath>..\..\packages\Microsoft.Extensions.Configuration.FileExtensions.1.1.0\lib\net451\Microsoft.Extensions.Configuration.FileExtensions.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="Microsoft.Extensions.Configuration.Json, Version=1.1.0.0, Culture=neutral, PublicKeyToken=adb9793829ddae60, processorArchitecture=MSIL">
       <HintPath>..\..\packages\Microsoft.Extensions.Configuration.Json.1.1.0\lib\net451\Microsoft.Extensions.Configuration.Json.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
-    <Reference Include="Microsoft.Extensions.DependencyInjection.Abstractions, Version=1.1.0.0, Culture=neutral, PublicKeyToken=adb9793829ddae60, processorArchitecture=MSIL">
-      <HintPath>..\..\packages\Microsoft.Extensions.DependencyInjection.Abstractions.1.1.0\lib\netstandard1.0\Microsoft.Extensions.DependencyInjection.Abstractions.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="Microsoft.Extensions.FileProviders.Abstractions, Version=1.1.0.0, Culture=neutral, PublicKeyToken=adb9793829ddae60, processorArchitecture=MSIL">
@@ -180,14 +207,6 @@
     </Reference>
     <Reference Include="Microsoft.Extensions.FileSystemGlobbing, Version=1.1.0.0, Culture=neutral, PublicKeyToken=adb9793829ddae60, processorArchitecture=MSIL">
       <HintPath>..\..\packages\Microsoft.Extensions.FileSystemGlobbing.1.1.0\lib\net45\Microsoft.Extensions.FileSystemGlobbing.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
-    <Reference Include="Microsoft.Extensions.Options, Version=1.1.0.0, Culture=neutral, PublicKeyToken=adb9793829ddae60, processorArchitecture=MSIL">
-      <HintPath>..\..\packages\Microsoft.Extensions.Options.1.1.0\lib\netstandard1.0\Microsoft.Extensions.Options.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
-    <Reference Include="Microsoft.Extensions.Options.ConfigurationExtensions, Version=1.1.0.0, Culture=neutral, PublicKeyToken=adb9793829ddae60, processorArchitecture=MSIL">
-      <HintPath>..\..\packages\Microsoft.Extensions.Options.ConfigurationExtensions.1.1.0\lib\netstandard1.1\Microsoft.Extensions.Options.ConfigurationExtensions.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="Microsoft.Extensions.Primitives, Version=1.1.0.0, Culture=neutral, PublicKeyToken=adb9793829ddae60, processorArchitecture=MSIL">
@@ -208,14 +227,6 @@
       <Private>True</Private>
     </Reference>
     <Reference Include="System.ComponentModel.Composition" />
-    <Reference Include="System.ComponentModel.Primitives, Version=4.1.1.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a, processorArchitecture=MSIL">
-      <HintPath>..\..\packages\System.ComponentModel.Primitives.4.3.0\lib\net45\System.ComponentModel.Primitives.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
-    <Reference Include="System.ComponentModel.TypeConverter, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a, processorArchitecture=MSIL">
-      <HintPath>..\..\packages\System.ComponentModel.TypeConverter.4.3.0\lib\net45\System.ComponentModel.TypeConverter.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
     <Reference Include="System.Console, Version=4.0.1.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a, processorArchitecture=MSIL">
       <HintPath>..\..\packages\System.Console.4.3.0\lib\net46\System.Console.dll</HintPath>
       <Private>True</Private>
@@ -254,6 +265,10 @@
       <Private>True</Private>
     </Reference>
     <Reference Include="System.Numerics" />
+    <Reference Include="System.Numerics.Vectors, Version=4.1.2.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a, processorArchitecture=MSIL">
+      <HintPath>..\..\packages\System.Numerics.Vectors.4.3.0\lib\net46\System.Numerics.Vectors.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
     <Reference Include="System.Runtime.CompilerServices.Unsafe, Version=4.0.2.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a, processorArchitecture=MSIL">
       <HintPath>..\..\packages\System.Runtime.CompilerServices.Unsafe.4.3.0\lib\netstandard1.0\System.Runtime.CompilerServices.Unsafe.dll</HintPath>
       <Private>True</Private>

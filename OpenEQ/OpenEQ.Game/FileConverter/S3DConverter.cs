@@ -1,14 +1,13 @@
-﻿
+﻿using System;
+using System.Collections.Generic;
+using System.IO;
+using System.IO.Compression;
+using System.Linq;
+using System.Threading.Tasks;
+using OpenEQ.FileConverter.Extensions;
+
 namespace OpenEQ.FileConverter
 {
-    using System;
-    using System.Collections.Generic;
-    using System.IO;
-    using System.IO.Compression;
-    using System.Linq;
-    using System.Threading.Tasks;
-    using Extensions;
-
     public class S3DConverter
     {
         public static async Task<Dictionary<string, byte[]>> ReadS3DAsync(string fileName)
