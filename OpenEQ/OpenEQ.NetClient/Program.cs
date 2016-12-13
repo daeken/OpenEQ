@@ -62,7 +62,7 @@ namespace OpenEQ.NetClient
                 }
             };
 
-            login.Login("daetest", "daetest1");
+            login.Login("", "");
 
             //_waitForLogin.WaitOne();
             while (running)
