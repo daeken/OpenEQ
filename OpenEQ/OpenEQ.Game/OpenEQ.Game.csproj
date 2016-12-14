@@ -113,6 +113,8 @@
   <ItemGroup>
     <Compile Include="BasicCameraController.cs" />
     <Compile Include="Chat\ChatServer.cs" />
+    <Compile Include="Classes\ClassTypes.cs" />
+    <Compile Include="Classes\ClassTypesExtensions.cs" />
     <Compile Include="Configuration\OpenEQConfiguration.cs" />
     <Compile Include="DESCrypto.cs" />
     <Compile Include="Extensions.cs" />
