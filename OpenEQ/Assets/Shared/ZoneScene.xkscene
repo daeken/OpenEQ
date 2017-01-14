@@ -1,6 +1,6 @@
 !SceneAsset
 Id: b3135b1e-4c59-44d7-8c24-1689a74e57ab
-SerializedVersion: {Xenko: 1.9.0-beta05}
+SerializedVersion: {Xenko: 1.9.0-beta06}
 Tags: []
 SceneSettings:
     Id: 86550efb-3f94-4e9c-b37d-0b1b1421b29a
@@ -137,7 +137,7 @@ Hierarchy:
                 Components:
                     dc6ef7798b2ed24782f59c14002fee51: !TransformComponent
                         Id: 79f76edc-2e8b-47d2-82f5-9c14002fee51
-                        Position: {X: 10.0, Y: 10.0, Z: 0.0}
+                        Position: {X: 10.0, Y: 54.3573151, Z: 18.7301559}
                         Rotation: {X: -0.5540323, Y: 0.212012157, Z: 0.1484525, W: 0.7912401}
                         Scale: {X: 1.0, Y: 1.0, Z: 1.0}
                         Children: {}
@@ -149,9 +149,9 @@ Hierarchy:
                             Shadow:
                                 Enabled: true
                                 Size: Large
+                                StabilizationMode: ViewSnapping
                                 DepthRange:
-                                    IsAutomatic: false
-                                    ManualMaxDistance: 100.0
+                                    ManualMaxDistance: 10000.0
                                 PartitionMode: !LightDirectionalShadowMap.PartitionLogarithmic {}
                                 BiasParameters: {}
                         Intensity: 3.0
@@ -168,6 +168,7 @@ Hierarchy:
                     45a3e11d1c099b44a08ddaa6d44415fc: !OpenEQ.ZoneLoader,OpenEQ.Game
                         Id: 1de1a345-091c-449b-a08d-daa6d44415fc
                         ZoneName: gfaydark
+                        EverquestPath: D:\ssdbackup\equf
         -   Entity:
                 Id: 79a08698-2a06-4aca-aa87-b98c7d629e0c
                 Name: Skybox

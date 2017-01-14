@@ -12,13 +12,13 @@ using SiliconStudio.Xenko.Rendering.Materials;
 
 namespace OpenEQ {
     class OEQZoneReader {
-        public static Entity Read(Game game, string name) {
-            var zip = new ZipArchive(VirtualFileSystem.OpenStream($"/cache/{name}.zip", VirtualFileMode.Open, VirtualFileAccess.Read));
+        public static Entity Read(Game game, string name, Stream fs) {
+            var zip = new ZipArchive(fs);
             var zonefile = zip.GetEntry("zone.oez").Open();
             var reader = new BinaryReader(zonefile);
 
             var entity = new Entity(position: new Vector3(0, 0, 0), name: "ZoneEntity");
-
+            
             var nummats = reader.ReadInt32();
             var materials = new Dictionary<int, Material>();
             var hidden = new Dictionary<int, bool>();
@@ -82,16 +82,21 @@ namespace OpenEQ {
                         mesh.MaterialIndex = matoffs.Count;
                         matoffs.Add(matid);
                         obj.Materials.Add(materials[matid]);
+                        var inst = obj.Materials[mesh.MaterialIndex];
+                        inst.IsShadowCaster = inst.IsShadowReceiver = true;
                     }
                     obj.Add(mesh);
                 }
             }
 
             var component = new ModelComponent(objects[0]);
+            component.IsShadowCaster = true;
+            component.IsShadowReceiver = true;
             entity.Add(component);
             var numplace = reader.ReadUInt32();
             for(var i = 0; i < numplace; ++i) {
                 component = new ModelComponent(objects[reader.ReadInt32()]);
+                component.IsShadowCaster = component.IsShadowReceiver = true;
                 var subent = new Entity();
                 subent.Transform.Position = reader.ReadVector3();
                 subent.Transform.RotationEulerXYZ = reader.ReadVector3();

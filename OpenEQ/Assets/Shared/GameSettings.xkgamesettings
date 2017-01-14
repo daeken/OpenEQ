@@ -2,7 +2,7 @@
 Id: 3acc6730-516f-4bd6-a7a0-27c235b1682f
 SerializedVersion: {Xenko: 1.6.1-alpha01}
 Tags: []
-DefaultScene: 22022418-606c-4b76-a6ec-4fa663936beb:LoginScene
+DefaultScene: b3135b1e-4c59-44d7-8c24-1689a74e57ab:ZoneScene
 Defaults:
     - !SiliconStudio.Xenko.Graphics.RenderingSettings,SiliconStudio.Xenko.Graphics
         DefaultBackBufferWidth: 1920
