@@ -1,12 +1,13 @@
-﻿
-namespace OpenEQ.FileConverter.Entities
+﻿namespace OpenEQ.FileConverter.Entities
 {
     using System;
     using System.Collections.Generic;
     using System.IO;
-    using System.IO.Compression;
+    using Ionic.Zip;
     using System.Linq;
     using Extensions;
+    using OpenEQ;
+    using SiliconStudio.Xenko.Graphics;
 
     public class Zone
     {
@@ -79,8 +80,7 @@ namespace OpenEQ.FileConverter.Entities
 
                 // We're done with it.
                 obj.Meshes.Clear();
-                var poss = 0;
-
+                
                 foreach (var meshlist in matmeshes.Values)
                 {
                     if (1 == meshlist.Count)
@@ -92,7 +92,6 @@ namespace OpenEQ.FileConverter.Entities
                         var gmesh = meshlist[0];
                         for (var i = 1; i < meshlist.Count; i++)
                         {
-                            //gmesh = reduce(lambda a, b: a.add(b), meshlist)
                             gmesh.Add(meshlist[i]);
                         }
                         obj.Meshes.AddRange(gmesh.Optimize());
@@ -101,64 +100,58 @@ namespace OpenEQ.FileConverter.Entities
             }
         }
 
-        public void Output(Stream fsOut)
-        {
-            using (var zipArchive = new ZipArchive(fsOut, ZipArchiveMode.Create))
-            {
-                CoalesceObjectMeshes();
+        public void Output(Stream fsOut) {
+            var zipArchive = new ZipFile();
+            CoalesceObjectMeshes();
 
-                var assets = new Dictionary<string, byte[]>();
+            var assets = new Dictionary<string, byte[]>();
+            var repl = new Dictionary<string, Tuple<string, byte[]>>();
 
-                foreach (var obj in ZoneObjects)
-                {
-                    foreach (var mesh in obj.Meshes)
-                    {
-                        var material = mesh.Material;
+            foreach(var obj in ZoneObjects) {
+                foreach(var mesh in obj.Meshes) {
+                    var material = mesh.Material;
 
-                        for (var i = 0; i < material.filenames.Count; i++)
-                        {
-                            if (!assets.ContainsKey(material.filenames[i]))
-                            {
-                                assets.Add(material.filenames[i], material.Textures[i]);
-                            }
-                        }
+                    for(var i = 0; i < material.filenames.Count; i++) {
+                        var ofn = material.filenames[i];
+                        if(!assets.ContainsKey(ofn))
+                            assets.Add(material.filenames[i], material.Textures[i]);
                     }
                 }
+            }
 
-                // Skipping resample because I don't see anywhere it was ever set to true.
-                foreach (var asset in assets)
-                {
-                    var zipEntry = zipArchive.CreateEntry(asset.Key, CompressionLevel.NoCompression);
+            foreach(var tu in assets.AsParallel().Select(kv => {
+                var xenkofn = kv.Key.Substring(0, kv.Key.Length - 4) + ImageFileType.Xenko.ToFileExtension();
+                var tdata = TextureLoader.Convert(kv.Value);
+                if(tdata == null)
+                    return null;
+                return new Tuple<string, string, byte[]>(kv.Key, xenkofn, tdata);
+            })) {
+                if(tu != null)
+                    repl[tu.Item1] = new Tuple<string, byte[]>(tu.Item2, tu.Item3);
+            }
 
-                    using (var bw = new BinaryWriter(zipEntry.Open()))
-                    {
-                        bw.Write(asset.Value);
-                        bw.Flush();
-                        bw.Close();
-                    }
+            foreach(var asset in assets)
+                if(repl.ContainsKey(asset.Key))
+                    zipArchive.AddEntry(repl[asset.Key].Item1, repl[asset.Key].Item2);
+                else
+                    zipArchive.AddEntry(asset.Key, asset.Value);
+
+            foreach(var obj in ZoneObjects) {
+                var optimizedMeshes = new List<Mesh>();
+                foreach(var mesh in obj.Meshes) {
+                    optimizedMeshes.AddRange(mesh.Optimize());
                 }
+                obj.Meshes = optimizedMeshes;
+            }
 
-                foreach (var obj in ZoneObjects)
-                {
-                    var optimizedMeshes = new List<Mesh>();
-                    foreach (var mesh in obj.Meshes)
-                    {
-                        optimizedMeshes.AddRange(mesh.Optimize());
-                    }
-                    obj.Meshes = optimizedMeshes;
-                }
-
-                var zoneZipEntry = zipArchive.CreateEntry("zone.oez", CompressionLevel.NoCompression);
-                using (var bw = new BinaryWriter(zoneZipEntry.Open()))
-                {
+            using(var ms = new MemoryStream()) {
+                using(var bw = new BinaryWriter(ms)) {
                     var materials = new Dictionary<string, Tuple<int, int, Mesh>>();
 
-                    foreach (var obj in ZoneObjects)
-                    {
-                        foreach (var mesh in obj.Meshes)
-                        {
+                    foreach(var obj in ZoneObjects) {
+                        foreach(var mesh in obj.Meshes) {
                             var key = $"{mesh.Material.Flags}{string.Join(",", mesh.Material.filenames)}";
-                            if (!materials.ContainsKey(key))
+                            if(!materials.ContainsKey(key))
                                 materials.Add(key, new Tuple<int, int, Mesh>(materials.Keys.Count, mesh.Material.Flags, mesh));
                         }
                     }
@@ -167,53 +160,50 @@ namespace OpenEQ.FileConverter.Entities
 
                     var orderedList = materials.Values.OrderBy(z => z.Item1).ToList();
 
-                    foreach (var m in orderedList)
-                    {
+                    foreach(var m in orderedList) {
                         bw.Write(m.Item2);
                         bw.Write(m.Item3.Material.filenames.Count);
-                        foreach (var fileName in m.Item3.Material.filenames)
-                        {
-                            bw.Write(fileName);
+                        foreach(var fileName in m.Item3.Material.filenames) {
+                            bw.Write(repl.ContainsKey(fileName) ? repl[fileName].Item1 : fileName);
                         }
                     }
 
                     bw.Write(ZoneObjects.Count);
 
                     var objRefs = new Dictionary<ZoneObject, int>();
-                    for (var i = 0; i < ZoneObjects.Count; i++)
-                    {
+                    for(var i = 0; i < ZoneObjects.Count; i++) {
                         objRefs.Add(ZoneObjects[i], i);
                         bw.Write(ZoneObjects[i].Meshes.Count);
 
-                        foreach (var mesh in ZoneObjects[i].Meshes)
-                        {
+                        foreach(var mesh in ZoneObjects[i].Meshes) {
                             var matid =
                                 materials[$"{mesh.Material.Flags}{string.Join(",", mesh.Material.filenames)}"];
                             bw.Write(matid.Item1);
                             bw.Write(mesh.VertexBuffer.Count);
                             bw.WriteFloatArray(mesh.VertexBuffer.Data.ToArray());
                             bw.Write(mesh.Polygons.Count);
-                            foreach (var poly in mesh.Polygons)
-                            {
+                            foreach(var poly in mesh.Polygons) {
                                 bw.WriteIntArray(poly.Item2.to_array());
                             }
-                            foreach (var poly in mesh.Polygons)
-                            {
+                            foreach(var poly in mesh.Polygons) {
                                 bw.Write(poly.Item1 ? 1 : 0);
                             }
                         }
                     }
 
                     bw.Write(PlaceableObjects.Count);
-                    foreach (var placeable in PlaceableObjects)
-                    {
+                    foreach(var placeable in PlaceableObjects) {
                         bw.Write(objRefs[placeable.ObjectInst]);
                         bw.WriteFloatArray(placeable.Position);
                         bw.WriteFloatArray(placeable.Rotation);
                         bw.WriteFloatArray(placeable.Scale);
                     }
                 }
+                ms.Flush();
+                zipArchive.AddEntry("zone.oez", ms.GetBuffer());
             }
+
+            zipArchive.Save(fsOut);
         }
     }
 }
