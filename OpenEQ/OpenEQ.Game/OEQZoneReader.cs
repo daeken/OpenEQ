@@ -29,10 +29,7 @@ namespace OpenEQ {
                 for(var j = 0; j < numtex; ++j) {
                     var fn = reader.ReadString();
                     var entry = zip.GetEntry(fn);
-                    var zfp = new BinaryReader(entry.Open());
-                    var data = zfp.ReadBytes((int)entry.Length);
-                    var img = Image.Load(data);
-                    textures[j] = Texture.New(game.GraphicsDevice, img);
+                    textures[j] = TextureLoader.Load(game, entry.Open(), (int) entry.Length);
                 }
                 hidden[i] = flags == 4;
                 var matname = "DiffuseMaterial";

@@ -168,6 +168,7 @@
     <Compile Include="OEQModelReader.cs" />
     <Compile Include="OEQZoneReader.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="TextureLoader.cs" />
     <Compile Include="Time.cs" />
     <Compile Include="UIScript.cs" />
     <Compile Include="WorldScript.cs" />
@@ -180,6 +181,18 @@
     </Reference>
     <Reference Include="GlmNet, Version=0.5.1.0, Culture=neutral, processorArchitecture=MSIL">
       <HintPath>..\..\packages\GlmNet.0.5.1.0\lib\net40\GlmNet.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="ImageSharp, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\..\packages\ImageSharp.1.0.0-alpha1-00054\lib\net45\ImageSharp.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="ImageSharp.Formats.Png, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\..\packages\ImageSharp.Formats.Png.1.0.0-alpha1-00034\lib\net45\ImageSharp.Formats.Png.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="ImageSharp.Processing, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\..\packages\ImageSharp.Processing.1.0.0-alpha1-00034\lib\net45\ImageSharp.Processing.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="Microsoft.CSharp" />
@@ -223,9 +236,17 @@
       <HintPath>..\..\packages\Newtonsoft.Json.9.0.1\lib\net45\Newtonsoft.Json.dll</HintPath>
       <Private>True</Private>
     </Reference>
+    <Reference Include="Pfim, Version=0.3.1.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\..\packages\Pfim.0.3.1\lib\net40\Pfim.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
     <Reference Include="System" />
     <Reference Include="System.AppContext, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a, processorArchitecture=MSIL">
       <HintPath>..\..\packages\System.AppContext.4.3.0\lib\net46\System.AppContext.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="System.Buffers, Version=4.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
+      <HintPath>..\..\packages\System.Buffers.4.0.0\lib\netstandard1.1\System.Buffers.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="System.ComponentModel.Composition" />

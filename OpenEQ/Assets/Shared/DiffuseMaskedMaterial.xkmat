@@ -14,7 +14,7 @@ Attributes:
     DiffuseModel: !MaterialDiffuseLambertModelFeature {}
     Transparency: !MaterialTransparencyCutoffFeature
         Alpha: !ComputeFloat
-            Value: 0.14
+            Value: 0.3
     Overrides:
         UVScale: {X: 1.0, Y: 1.0}
 Layers: {}
