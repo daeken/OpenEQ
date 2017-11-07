@@ -15,7 +15,7 @@ public class WorldBase : Node
 		WriteLine($"Starting off at {((Spatial) GetNode("../RigidBody")).Translation}");
 		var zone = LogicBridge.Instance.CurZone;
 		WriteLine($"Loading zone {zone}");
-		ZoneReader.Read(this, System.IO.File.OpenRead($@"c:\aaa\projects\oldopeneq\converter\{ zone }.zip"), out Animat);
+		ZoneReader.Read(this, System.IO.File.OpenRead($@"c:\aaa\projects\openeq\converter\{ zone }.zip"), out Animat);
 		((Spatial) GetNode("../RigidBody/CameraHolder")).RotateY(pos.Item4 * Mathf.PI / 180f); 
     }
 
