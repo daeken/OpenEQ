@@ -16,7 +16,7 @@ Structure
     - uint32 meshes
         - uint32 material_id -- index into material array
         - bool32 collidable
-        - uint32 vertices
+        - uint32 vertices -- Separate arrays
             - vec3 vertex
             - vec3 normal
             - vec2 texcoord

@@ -11,12 +11,16 @@ public class WorldBase : Node
 	public override void _Ready()
     {
 		var pos = LogicBridge.Instance.CharacterSpawnPosition;
-		((Spatial) GetNode("../RigidBody")).Translation = new Vector3(pos.Item1, pos.Item2, -pos.Item3);
+		//((Spatial) GetNode("../RigidBody")).Translation = new Vector3(pos.Item1, pos.Item2, -pos.Item3);
 		WriteLine($"Starting off at {((Spatial) GetNode("../RigidBody")).Translation}");
 		var zone = LogicBridge.Instance.CurZone;
 		WriteLine($"Loading zone {zone}");
-		ZoneReader.Read(this, System.IO.File.OpenRead($@"c:\aaa\projects\openeq\converter\{ zone }.zip"), out Animat);
-		((Spatial) GetNode("../RigidBody/CameraHolder")).RotateY(pos.Item4 * Mathf.PI / 180f); 
+		//ZoneReader.Read(this, System.IO.File.OpenRead($@"c:\aaa\projects\openeq\converter\{ zone }.zip"), out Animat);
+
+		Animat = new List<Tuple<SpatialMaterial, Texture[], float>>();
+		ModelReader.Read(this, System.IO.File.OpenRead($@"c:\aaa\projects\openeq\converter\orc_chr.zip"));
+
+		//((Spatial) GetNode("../RigidBody/CameraHolder")).RotateY(pos.Item4 / 255f * 2f * Mathf.PI / 180f); 
     }
 
     public override void _Process(float delta)

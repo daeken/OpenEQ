@@ -1,4 +1,5 @@
 ﻿using Godot;
+using System;
 using System.IO;
 
 public static class Extensions {
@@ -7,6 +8,9 @@ public static class Extensions {
 	}
 	public static Vector3 ReadVector3(this BinaryReader br) {
 		return new Vector3(br.ReadSingle(), br.ReadSingle(), br.ReadSingle());
+	}
+	public static Quat ReadQuat(this BinaryReader br) {
+		return new Quat(br.ReadSingle(), br.ReadSingle(), br.ReadSingle(), br.ReadSingle());
 	}
 
 	public static Quat EulerToQuat(this Vector3 v) {
@@ -18,5 +22,9 @@ public static class Extensions {
 			c1 * c2 * s3 + s1 * s2 * c3, 
 			c1 * c2 * c3 - s1 * s2 * s3
 		);
+	}
+
+	public static Transform ToTransform(this Tuple<Vector3, Quat> data) {
+		return new Transform(data.Item2, data.Item1);
 	}
 }

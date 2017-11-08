@@ -1,29 +1,34 @@
 import struct, tempfile
+from zonefile import resampleTexture
 
 class Charfile(object):
 	def __init__(self, name):
 		self.name = name
-		self.matpolys = []
+		self.meshes = []
 		self.animations = {}
+		self.boneparents = {}
 
-	def addMaterial(self, material, polys):
-		self.matpolys.append((material, polys))
+	def addMesh(self, mesh):
+		self.meshes.append(mesh)
 
-	def addFrame(self, aniname, vertbuffer):
-		if aniname not in self.animations:
-			self.animations[aniname] = []
+	def addBoneParent(self, child, parent):
+		self.boneparents[child] = parent
 
-		self.animations[aniname].append(vertbuffer)
+	def addAnimation(self, aniname, boneframes):
+		self.animations[aniname] = boneframes
 
 	def out(self, zip):
 		assets = {}
-		for material, _ in self.matpolys:
-			for i, filename in enumerate(material.filenames):
+		for mesh in self.meshes:
+			for i, filename in enumerate(mesh.material.filenames):
 				if filename not in assets:
-					assets[filename] = material.textures[i]
+					assets[filename] = mesh.material.textures[i]
 		for k, v in assets.items():
+			v = resampleTexture(v)
 			zip.writestr(k, v)
 
+		def oint(*x):
+			zout.write(struct.pack('<' + 'i'*len(x), *x))
 		def ouint(*x):
 			zout.write(struct.pack('<' + 'I'*len(x), *x))
 		def ofloat(*x):
@@ -37,22 +42,43 @@ class Charfile(object):
 				sl >>= 7
 			zout.write(x)
 		with tempfile.TemporaryFile() as zout:
-			ouint(len(self.matpolys))
-			for material, polys in self.matpolys:
-				ouint(material.flags)
-				ouint(len(material.filenames))
-				for filename in material.filenames:
+			ouint(len(self.meshes))
+			for mesh in self.meshes:
+				ouint(mesh.material.flags)
+				ouint(len(mesh.material.filenames))
+				for filename in mesh.material.filenames:
 					ostring(filename)
-				ouint(len(polys) / 3)
-				ouint(*polys)
 
-			ouint(len(self.animations[self.animations.keys()[0]][0]) / 8) # Number of vertices
+				ouint(len(mesh.vertbuffer))
+				data = mesh.vertbuffer.data
+				positions = []
+				normals = []
+				texcoords = []
+				bones = []
+				for i in xrange(len(mesh.vertbuffer)):
+					positions += data[i * 9 + 0 + 0:i * 9 + 0 + 3]
+					normals += data[i * 9 + 3 + 0:i * 9 + 3 + 3]
+					texcoords += data[i * 9 + 6 + 0:i * 9 + 6 + 2]
+					bones.append(data[i * 9 + 8])
+				ofloat(*positions)
+				ofloat(*normals)
+				ofloat(*texcoords)
+				ouint(*bones)
+
+				ouint(len(mesh.polygons))
+				for poly in mesh.polygons:
+					ouint(*poly)
+
+			ouint(len(self.boneparents))
+			for i in xrange(len(self.boneparents)):
+				oint(self.boneparents[i])
+
 			ouint(len(self.animations))
-			for name, frames in self.animations.items():
+			for name, boneframes in self.animations.items():
 				ostring(name)
-				ouint(len(frames))
-				for frame in frames:
-					ofloat(*frame)
+				for data in boneframes:
+					ouint(len(data) / 7)
+					ofloat(*data)
 
 			zout.seek(0)
 			zip.writestr('%s.oec' % self.name, zout.read())

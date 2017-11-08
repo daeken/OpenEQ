@@ -25,7 +25,7 @@ namespace OpenEQ {
 		ServerListElement curWorld;
 		CharacterSelectEntry curChar;
 
-		public ZoneNumber CurZone = ZoneNumber.poknowledge;
+		public ZoneNumber CurZone = ZoneNumber.gfaydark;
 		public Tuple<float, float, float, float> CharacterSpawnPosition = new Tuple<float, float, float, float>(2678 / 8f, 632 / 8f, 2135 / 8f, 1767 / 8f);
 
 		public LogicBridge() {

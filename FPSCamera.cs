@@ -15,7 +15,7 @@ public class FPSCamera : Spatial
 
 		var movement = new Vector3();
 		var tilt = new Vector2();
-		var speed = 3000f;
+		var speed = 1000f; // XXXX FOR NORMAL ZONES: 3000f;
 		if(Input.IsActionPressed("camera_right"))
 			movement.x += 1;
 		if(Input.IsActionPressed("camera_left"))
