@@ -6,7 +6,7 @@ using System.IO;
 using System.Linq;
 using static System.Console;
 
-class ModelReader {
+class ModelReader : Godot.Object {
 	public static void Read(Node node, Stream fs) {
 		var zip = new ZipFile(fs);
 		var zonefile = zip.GetInputStream(zip.GetEntry("ORC_ACTORDEF.oec"));
@@ -28,8 +28,8 @@ class ModelReader {
 				mat.AlbedoTexture = textures[0];
 			if(flags == 1)
 				mat.ParamsUseAlphaScissor = true;
-			else if(flags != 0)
-				mat.FlagsTransparent = true;
+			//else if(flags != 0)
+			//	mat.FlagsTransparent = true;
 
 			var numvert = reader.ReadInt32();
 			var arrays = new object[ArrayMesh.ARRAY_MAX];
@@ -48,29 +48,49 @@ class ModelReader {
 		var numbones = reader.ReadUInt32();
 		var skel = new Skeleton();
 		node.AddChild(skel);
+		var spath = skel.GetPath();
 		for(var i = 0; i < numbones; ++i) {
-			skel.AddBone($"bone_{0}");
+			skel.AddBone($"bone_{i}");
 			skel.SetBoneParent(i, reader.ReadInt32());
 		}
 
 		var numanim = reader.ReadUInt32();
+		var aniplayer = new AnimationPlayer();
 		for(var i = 0; i < numanim; ++i) {
 			var name = reader.ReadString();
+			var ani = new Animation();
 			var boneframes = new List<Tuple<Vector3, Quat>>[numbones];
 			for(var j = 0; j < numbones; ++j) {
+				ani.AddTrack(Animation.TYPE_TRANSFORM);
+				ani.TrackSetPath(j, spath + $":bone_{j}");
 				var numframes = reader.ReadUInt32();
-				boneframes[j] = new List<Tuple<Vector3, Quat>>();
 				for(var k = 0; k < numframes; ++k)
-					boneframes[j].Add(new Tuple<Vector3, Quat>(reader.ReadVector3(), reader.ReadQuat()));
+					ani.TransformTrackInsertKey(j, 0.1f * k, reader.ReadVector3(), reader.ReadQuat(), new Vector3(1, 1, 1));
 			}
-			if(name == "") {
-				for(var j = 0; j < numbones; ++j)
-					skel.SetBonePose(j, boneframes[j][0].ToTransform());
-			}
+			aniplayer.AddAnimation(name, ani);
+			WriteLine(name);
 		}
+
+		aniplayer.SetActive(true);
+		aniplayer.Play("");
+		node.AddChild(aniplayer);
+		aniplayer.Connect("animation_finished", new ModelReader(aniplayer), "AnimationFinished");
 
 		var mi = new MeshInstance { Mesh = obj };
 		skel.AddChild(mi);
 		skel.RotateX(-Mathf.PI / 2);
+	}
+
+	AnimationPlayer player;
+	int count = 0;
+	ModelReader(AnimationPlayer player) {
+		this.player = player;
+	}
+
+	void AnimationFinished(string ani) {
+		var al = player.GetAnimationList();
+		var next = al[count++ % al.Length];
+		WriteLine($"Playing animation '{next}'");
+		player.Play(next);
 	}
 }
