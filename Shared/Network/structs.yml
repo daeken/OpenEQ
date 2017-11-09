@@ -207,6 +207,22 @@ zone:
       - int<19>: Z
       - int<13>: DeltaZ
 
+    UpdatePosition:
+      - skip<12>: padding0000
+      - int<13>: DeltaX
+      - skip<7>: padding0005
+      - int<10>: DeltaHeading
+      - int<13>: DeltaY
+      - skip<9>: padding0006
+      - int<19>: Y
+      - int<10>: Animation
+      - skip<3>: padding0010
+      - uint<12>: Heading
+      - int<19>: X
+      - skip<1>: padding0014
+      - int<19>: Z
+      - int<13>: DeltaZ
+
   structs:
     ClientZoneEntry:
       - uint32: unk
@@ -615,3 +631,7 @@ zone:
       - bool<uint32>: ShowHelm
       - uint32: RestTimer
       - skip[1036]: unknown25596
+
+    PlayerPositionUpdate:
+      - uint16: ID
+      - UpdatePosition: Position

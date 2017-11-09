@@ -68,8 +68,6 @@ namespace OpenEQ.Network
 
         protected override void HandleAppPacket(AppPacket packet)
         {
-            Hexdump(packet.Data);
-
             switch ((LoginOp) packet.Opcode)
             {
                 case LoginOp.ChatMessage:

@@ -10,6 +10,7 @@ namespace OpenEQ.Network {
         bool entering = true;
 
 		public event EventHandler<Spawn> Spawned;
+		public event EventHandler<PlayerPositionUpdate> PositionUpdated;
 
         public ZoneStream(string host, int port, string charName) : base(host, port) {
             SendKeepalives = true;
@@ -27,15 +28,12 @@ namespace OpenEQ.Network {
         }
 
         protected override void HandleAppPacket(AppPacket packet) {
+			if((ZoneOp) packet.Opcode != ZoneOp.ZoneEntry)
+				WriteLine($"Zone app packet: {(ZoneOp) packet.Opcode}");
             switch((ZoneOp) packet.Opcode) {
                 case ZoneOp.PlayerProfile:
                     var player = packet.Get<PlayerProfile>();
                     //WriteLine(player);
-                    break;
-
-                case ZoneOp.CharInventory:
-                    var inventory = packet.Get<CharInventory>();
-                    //WriteLine(inventory);
                     break;
 
                 case ZoneOp.TimeOfDay:
@@ -44,7 +42,8 @@ namespace OpenEQ.Network {
                     break;
 
                 case ZoneOp.TaskActivity:
-                    var activity = packet.Get<TaskActivity>();
+					// XXX: Handle short activities!
+                    //var activity = packet.Get<TaskActivity>();
                     //WriteLine(activity);
                     break;
 
@@ -88,14 +87,16 @@ namespace OpenEQ.Network {
 
                 case ZoneOp.NewZone:
                     Send(AppPacket.Create(ZoneOp.ReqClientSpawn));
-
                     break;
 
-                case ZoneOp.SendExpZonein:
-                    if(packet.Data.Length == 0) {
-                        Send(AppPacket.Create(ZoneOp.ClientReady));
-                        entering = false;
-                    }
+				case ZoneOp.SendExpZonein:
+					if(entering) {
+						Send(AppPacket.Create(ZoneOp.ClientReady));
+						entering = false;
+					}
+					break;
+
+                case ZoneOp.CharInventory:
                     break;
 
                 case ZoneOp.SendFindableNPCs:
@@ -104,7 +105,10 @@ namespace OpenEQ.Network {
                     break;
 
                 case ZoneOp.ClientUpdate:
-                    break;
+					Hexdump(packet.Data);
+					var pu = packet.Get<PlayerPositionUpdate>();
+					PositionUpdated?.Invoke(this, pu);
+					break;
 
                 case ZoneOp.HPUpdate:
                     break;

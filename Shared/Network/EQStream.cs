@@ -88,20 +88,29 @@ namespace OpenEQ.Network {
         }
 
         async Task ReceiverAsync() {
-            while(true) {
-                var data = await conn.Receive();
-                lastRecvSendTime = Time.Now;
+			try {
+				while(true) {
+					if(Debug)
+						WriteLine($"Waiting for packets on wire ({this})");
+					var data = await conn.Receive();
+					ForegroundColor = ConsoleColor.Blue;
+					lastRecvSendTime = Time.Now;
 
-                if(Debug) {
-                    ForegroundColor = ConsoleColor.DarkMagenta;
-                    WriteLine($"Received packet ({this})");
-                    Hexdump(data);
-                    ResetColor();
-                }
-                var packet = new Packet(this, data);
-                if(packet.Valid)
-                    ProcessSessionPacket(packet);
-            }
+					if(Debug) {
+						ForegroundColor = ConsoleColor.DarkMagenta;
+						WriteLine($"Received packet ({this})");
+						Hexdump(data);
+						ResetColor();
+					}
+					var packet = new Packet(this, data);
+					if(packet.Valid)
+						ProcessSessionPacket(packet);
+				}
+			} catch(Exception e) {
+				WriteLine($"Got exception in receiver thread for {this}");
+				WriteLine(e);
+				Environment.Exit(0);
+			}
         }
 
         void ProcessSessionPacket(Packet packet) {
@@ -134,12 +143,16 @@ namespace OpenEQ.Network {
                     QueueOrProcess(packet);
                     break;
                 case SessionOp.Combined:
+					if(Debug)
+						WriteLine("Processing combined packet: {");
                     for(var i = 0; i < packet.Data.Length;) {
                         var slen = packet.Data[i];
                         var sub = new Packet(this, packet.Data.Sub(i + 1, i + 1 + slen), combined: true);
                         ProcessSessionPacket(sub);
                         i += slen + 1;
                     }
+					if(Debug)
+						WriteLine("} END OF COMBINED");
                     break;
                 default:
                     if(Debug) {
@@ -155,6 +168,7 @@ namespace OpenEQ.Network {
                 if(packet.Sequence == InSequence) // Present
                     ProcessPacket(packet);
                 else if((packet.Sequence > InSequence && packet.Sequence - InSequence < 2048) || (packet.Sequence + 65536) - InSequence < 2048) {// Future
+					WriteLine($"Future packet :( Got {packet.Sequence}, need {InSequence}");
                     futurePackets[packet.Sequence] = packet;
                     if(futurePackets[InSequence]?.Opcode == (ushort) SessionOp.Fragment) // Maybe we have enough for the current fragment?
                         ProcessPacket(futurePackets[InSequence]);
@@ -184,7 +198,7 @@ namespace OpenEQ.Network {
             switch((SessionOp) packet.Opcode) {
                 case SessionOp.Single:
                     futurePackets[packet.Sequence] = null;
-                    var app = new AppPacket(packet.Data);
+					var app = new AppPacket(packet.Data);
                     HandleAppPacketProxy(app);
                     InSequence = (ushort) ((packet.Sequence + 1) % 65536);
                     if(Debug)

@@ -125,7 +125,6 @@ namespace OpenEQ.NetClient {
 					var charNum = "1";//Console.ReadLine();
 					charname = chars[Convert.ToInt32(charNum) - 1].Name;
 					WriteLine(chars[0]);
-					//Environment.Exit(0);
 					WriteLine($"Entering world with {charname}");
 					//world.ResetAckForZone();
 					world.SendEnterWorld(new EnterWorld {
@@ -147,8 +146,8 @@ namespace OpenEQ.NetClient {
 		static void SetupZone(ZoneStream zone) {
 			zone.Spawned += (_, mob) => {
 				if(mob.Name.Contains("Jim")) {
-					WriteLine(mob);
-					Environment.Exit(0);
+					//WriteLine(mob);
+					//Environment.Exit(0);
 				}
 			};
 		}

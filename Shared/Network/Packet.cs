@@ -55,16 +55,16 @@ namespace OpenEQ.Network {
                     }
                     if(!combined && stream.Compressing) {
                         if(packet[off] == 0x5a) {
-                            using(var ms = new MemoryStream(packet, 3, packet.Length - 3 - 2)) {
-                                using(var ds = new ZlibStream(ms, CompressionMode.Decompress)) {
-                                    using(var tms = new MemoryStream()) {
-                                        ds.CopyTo(tms);
-                                        packet = tms.ToArray();
-                                        plen = packet.Length;
-                                        off = 0;
-                                    }
-                                }
-                            }
+							using(var ms = new MemoryStream(packet, 3, packet.Length - 3 - 2)) {
+								using(var ds = new ZlibStream(ms, CompressionMode.Decompress)) {
+									using(var tms = new MemoryStream()) {
+										ds.CopyTo(tms);
+										packet = tms.ToArray();
+										plen = packet.Length;
+										off = 0;
+									}
+								}
+							}
                         } else if(packet[off] == 0xa5) {
                             off++;
                             plen--;
@@ -183,13 +183,24 @@ namespace OpenEQ.Network {
 
         public AppPacket(byte[] data) {
             if(data[0] == 0) {
-                Opcode = (ushort)(data[1] | (data[2] << 8));
-                Data = data.Sub(3);
+				if(data[1] == 0 && data.Length == 2) {
+					Opcode = 0;
+					Data = new byte[0];
+				} else {
+					Opcode = (ushort) (data[1] | (data[2] << 8));
+					if(data.Length == 3)
+						Data = new byte[0];
+					else
+						Data = data.Sub(3);
+				}
             } else {
                 Opcode = (ushort)(data[0] | (data[1] << 8));
-                Data = data.Sub(2);
-            }
-        }
+				if(data.Length == 2)
+					Data = new byte[0];
+				else
+					Data = data.Sub(2);
+			}
+		}
 
         public static AppPacket Create<OpT>(OpT opcode, byte[] data = null) {
             return new AppPacket((ushort) (object) opcode, data);

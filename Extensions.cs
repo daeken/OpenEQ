@@ -1,4 +1,5 @@
 ﻿using Godot;
+using OpenEQ.Network;
 using System;
 using System.IO;
 
@@ -26,5 +27,40 @@ public static class Extensions {
 
 	public static Transform ToTransform(this Tuple<Vector3, Quat> data) {
 		return new Transform(data.Item2, data.Item1);
+	}
+
+	public static Tuple<float, float, float, float> GetPositionHeading(this SpawnPosition position) {
+		return new Tuple<float, float, float, float>(
+			position.Y / 8f,
+			position.Z / 8f,
+			position.X / 8f,
+			position.Heading / 8f / 255f
+		);
+	}
+
+	public static Tuple<float, float, float, float> GetPositionHeading(this UpdatePosition position) {
+		return new Tuple<float, float, float, float>(
+			position.Y / 8f,
+			position.Z / 8f,
+			position.X / 8f,
+			position.Heading / 8f / 255f
+		);
+	}
+
+	public static Tuple<float, float, float, float> GetDeltas(this UpdatePosition position) {
+		return new Tuple<float, float, float, float>(
+			position.DeltaY / 64f,
+			position.DeltaZ / 64f,
+			position.DeltaX / 64f,
+			position.DeltaHeading / 64f / 255f
+		);
+	}
+
+	public static Vector3 XYZ(this Tuple<float, float, float> data) {
+		return new Vector3(data.Item1, data.Item2, data.Item3);
+	}
+
+	public static Vector3 XYZ(this Tuple<float, float, float, float> data) {
+		return new Vector3(data.Item1, data.Item2, data.Item3);
 	}
 }

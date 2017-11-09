@@ -6,8 +6,8 @@ using System.IO;
 using System.Linq;
 using static System.Console;
 
-class ModelReader : Godot.Object {
-	public static void Read(Node node, Stream fs) {
+class MobModel : Godot.Object {
+	public static MobModel Read(Stream fs) {
 		var zip = new ZipFile(fs);
 		var zonefile = zip.GetInputStream(zip.GetEntry("ORC_ACTORDEF.oec"));
 		var reader = new BinaryReader(zonefile);
@@ -45,10 +45,13 @@ class ModelReader : Godot.Object {
 			obj.SurfaceSetMaterial(i, mat);
 		}
 
+		var sp = new Spatial();
+
 		var numbones = reader.ReadUInt32();
 		var skel = new Skeleton();
-		node.AddChild(skel);
-		var spath = skel.GetPath();
+		skel.RotateX(-Mathf.PI / 2);
+		sp.AddChild(skel);
+		skel.SetName("skel");
 		for(var i = 0; i < numbones; ++i) {
 			skel.AddBone($"bone_{i}");
 			skel.SetBoneParent(i, reader.ReadInt32());
@@ -56,41 +59,55 @@ class ModelReader : Godot.Object {
 
 		var numanim = reader.ReadUInt32();
 		var aniplayer = new AnimationPlayer();
+		aniplayer.SetName("aniplayer");
 		for(var i = 0; i < numanim; ++i) {
 			var name = reader.ReadString();
 			var ani = new Animation();
 			var boneframes = new List<Tuple<Vector3, Quat>>[numbones];
 			for(var j = 0; j < numbones; ++j) {
 				ani.AddTrack(Animation.TYPE_TRANSFORM);
-				ani.TrackSetPath(j, spath + $":bone_{j}");
+				ani.TrackSetPath(j, $"skel:bone_{j}");
 				var numframes = reader.ReadUInt32();
 				for(var k = 0; k < numframes; ++k)
 					ani.TransformTrackInsertKey(j, 0.1f * k, reader.ReadVector3(), reader.ReadQuat(), new Vector3(1, 1, 1));
 			}
 			aniplayer.AddAnimation(name, ani);
-			WriteLine(name);
 		}
 
+		sp.AddChild(aniplayer);
 		aniplayer.SetActive(true);
-		aniplayer.Play("");
-		node.AddChild(aniplayer);
-		aniplayer.Connect("animation_finished", new ModelReader(aniplayer), "AnimationFinished");
-
+		aniplayer.Play("C09");
+		
 		var mi = new MeshInstance { Mesh = obj };
 		skel.AddChild(mi);
-		skel.RotateX(-Mathf.PI / 2);
+
+		return new MobModel(sp);
 	}
 
-	AnimationPlayer player;
-	int count = 0;
-	ModelReader(AnimationPlayer player) {
-		this.player = player;
+	public Spatial Node;
+	AnimationPlayer AniPlayer;
+	string Looping = null;
+
+	public string[] Animations;
+
+	MobModel(Spatial root) {
+		Node = root;
+		AniPlayer = (AnimationPlayer) root.GetNode("aniplayer");
+		AniPlayer.Connect("animation_finished", this, "AnimationFinished");
+		Animations = AniPlayer.GetAnimationList();
 	}
 
-	void AnimationFinished(string ani) {
-		var al = player.GetAnimationList();
-		var next = al[count++ % al.Length];
-		WriteLine($"Playing animation '{next}'");
-		player.Play(next);
+	public MobModel Instantiate() {
+		return new MobModel((Spatial) Node.Duplicate());
+	}
+
+	public void StartAnimation(string name, bool loop = true) {
+		Looping = loop ? name : null;
+		AniPlayer.Play(name);
+	}
+
+	void AnimationFinished(string old) {
+		if(Looping != null)
+			AniPlayer.Play(Looping);
 	}
 }

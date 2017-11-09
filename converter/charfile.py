@@ -75,6 +75,7 @@ class Charfile(object):
 
 			ouint(len(self.animations))
 			for name, boneframes in self.animations.items():
+				print name
 				ostring(name)
 				for data in boneframes:
 					ouint(len(data) / 7)

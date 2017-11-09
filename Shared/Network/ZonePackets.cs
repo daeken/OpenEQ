@@ -532,6 +532,129 @@ namespace OpenEQ.Network {
 		}
 	}
 
+	public struct UpdatePosition : IEQStruct {
+		public short DeltaX;
+		public short DeltaHeading;
+		public short DeltaY;
+		public int Y;
+		public short Animation;
+		public ushort Heading;
+		public int X;
+		public int Z;
+		public short DeltaZ;
+
+		public UpdatePosition(short DeltaX, short DeltaHeading, short DeltaY, int Y, short Animation, ushort Heading, int X, int Z, short DeltaZ) : this() {
+			this.DeltaX = DeltaX;
+			this.DeltaHeading = DeltaHeading;
+			this.DeltaY = DeltaY;
+			this.Y = Y;
+			this.Animation = Animation;
+			this.Heading = Heading;
+			this.X = X;
+			this.Z = Z;
+			this.DeltaZ = DeltaZ;
+		}
+
+		public UpdatePosition(byte[] data, int offset = 0) : this() {
+			Unpack(data, offset);
+		}
+		public UpdatePosition(BinaryReader br) : this() {
+			Unpack(br);
+		}
+		public void Unpack(byte[] data, int offset = 0) {
+			using(var ms = new MemoryStream(data, offset, data.Length - offset)) {
+				using(var br = new BinaryReader(ms)) {
+					Unpack(br);
+				}
+			}
+		}
+		public void Unpack(BinaryReader br) {
+			ulong _databuf;
+			_databuf = br.ReadUInt64();
+			DeltaX = (short) (((int) ((_databuf >> 12) & 0x1FFF) ^ 0x1000) - 0x1000);
+			DeltaHeading = (short) (((int) ((_databuf >> 32) & 0x3FF) ^ 0x200) - 0x200);
+			DeltaY = (short) (((int) ((_databuf >> 42) & 0x1FFF) ^ 0x1000) - 0x1000);
+			_databuf = br.ReadUInt64();
+			Y = (int) (((int) (_databuf & 0x7FFFF) ^ 0x40000) - 0x40000);
+			Animation = (short) (((int) ((_databuf >> 19) & 0x3FF) ^ 0x200) - 0x200);
+			Heading = (ushort) ((_databuf >> 32) & 0xFFF);
+			X = (int) (((int) ((_databuf >> 44) & 0x7FFFF) ^ 0x40000) - 0x40000);
+			_databuf = br.ReadUInt32();
+			Z = (int) (((int) (_databuf & 0x7FFFF) ^ 0x40000) - 0x40000);
+			DeltaZ = (short) (((int) ((_databuf >> 19) & 0x1FFF) ^ 0x1000) - 0x1000);
+		}
+
+		public byte[] Pack() {
+			using(var ms = new MemoryStream()) {
+				using(var bw = new BinaryWriter(ms)) {
+					Pack(bw);
+					return ms.ToArray();
+				}
+			}
+		}
+		public void Pack(BinaryWriter bw) {
+		}
+
+		public override string ToString() {
+			var ret = "bitfield UpdatePosition {\n";
+			ret += "\tDeltaX = ";
+			try {
+				ret += $"{ Indentify(DeltaX) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tDeltaHeading = ";
+			try {
+				ret += $"{ Indentify(DeltaHeading) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tDeltaY = ";
+			try {
+				ret += $"{ Indentify(DeltaY) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tY = ";
+			try {
+				ret += $"{ Indentify(Y) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tAnimation = ";
+			try {
+				ret += $"{ Indentify(Animation) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tHeading = ";
+			try {
+				ret += $"{ Indentify(Heading) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tX = ";
+			try {
+				ret += $"{ Indentify(X) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tZ = ";
+			try {
+				ret += $"{ Indentify(Z) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tDeltaZ = ";
+			try {
+				ret += $"{ Indentify(DeltaZ) }\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			return ret + "}";
+		}
+	}
+
 	public struct Tint : IEQStruct {
 		public byte Blue;
 		public byte Green;
@@ -603,6 +726,64 @@ namespace OpenEQ.Network {
 			ret += "\tUseTint = ";
 			try {
 				ret += $"{ Indentify(UseTint) }\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			return ret + "}";
+		}
+	}
+
+	public struct PlayerPositionUpdate : IEQStruct {
+		public ushort ID;
+		public UpdatePosition Position;
+
+		public PlayerPositionUpdate(ushort ID, UpdatePosition Position) : this() {
+			this.ID = ID;
+			this.Position = Position;
+		}
+
+		public PlayerPositionUpdate(byte[] data, int offset = 0) : this() {
+			Unpack(data, offset);
+		}
+		public PlayerPositionUpdate(BinaryReader br) : this() {
+			Unpack(br);
+		}
+		public void Unpack(byte[] data, int offset = 0) {
+			using(var ms = new MemoryStream(data, offset, data.Length - offset)) {
+				using(var br = new BinaryReader(ms)) {
+					Unpack(br);
+				}
+			}
+		}
+		public void Unpack(BinaryReader br) {
+			ID = br.ReadUInt16();
+			Position = new UpdatePosition(br);
+		}
+
+		public byte[] Pack() {
+			using(var ms = new MemoryStream()) {
+				using(var bw = new BinaryWriter(ms)) {
+					Pack(bw);
+					return ms.ToArray();
+				}
+			}
+		}
+		public void Pack(BinaryWriter bw) {
+			bw.Write(ID);
+			Position.Pack(bw);
+		}
+
+		public override string ToString() {
+			var ret = "struct PlayerPositionUpdate {\n";
+			ret += "\tID = ";
+			try {
+				ret += $"{ Indentify(ID) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tPosition = ";
+			try {
+				ret += $"{ Indentify(Position) }\n";
 			} catch(NullReferenceException) {
 				ret += "!!NULL!!\n";
 			}

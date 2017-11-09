@@ -73,7 +73,7 @@
     <Compile Include="FPSCamera.cs" />
     <Compile Include="LogicBridge.cs" />
     <Compile Include="Login.cs" />
-    <Compile Include="ModelReader.cs" />
+    <Compile Include="MobModel.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="ServerList.cs" />
     <Compile Include="TextureLoader.cs" />

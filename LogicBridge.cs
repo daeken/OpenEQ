@@ -18,6 +18,9 @@ namespace OpenEQ {
 		// Zone
 		public event EventHandler<bool> OnCharacterSpawn;
 		public event EventHandler<Spawn> OnSpawn;
+		public event EventHandler<PlayerPositionUpdate> OnMoved;
+
+		public List<Spawn> Spawns = new List<Spawn>();
 
 		LoginStream login;
 		WorldStream world;
@@ -60,14 +63,13 @@ namespace OpenEQ {
 				zone = new ZoneStream(server.Host, server.Port, curChar.Name);
 				zone.Spawned += (__, mob) => {
 					if(mob.Name == curChar.Name) {
-						CharacterSpawnPosition = new Tuple<float, float, float, float>(
-							mob.Position.Y / 8f,
-							mob.Position.Z / 8f,
-							mob.Position.X / 8f,
-							mob.Position.Heading / 8f
-						);
-						OnCharacterSpawn(this, true);
-					}
+						CharacterSpawnPosition = mob.Position.GetPositionHeading();
+						OnCharacterSpawn?.Invoke(this, true);
+					} else
+						Spawns.Add(mob);
+				};
+				zone.PositionUpdated += (__, pu) => {
+					OnMoved?.Invoke(this, pu);
 				};
 			};
 		}
