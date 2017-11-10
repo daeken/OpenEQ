@@ -44,7 +44,7 @@ namespace OpenEQ {
 			};
 		}
 
-		public void Login(string username, string password) {
+		public void Login(string username, string password, string loginServer) {
 			login.Login(username, password);
 		}
 

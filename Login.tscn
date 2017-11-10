@@ -4,7 +4,7 @@
 
 [node name="Node" type="Node"]
 
-[node name="Username" type="TextEdit" parent="."]
+[node name="Username" type="LineEdit" parent="."]
 
 anchor_left = 0.5
 anchor_top = 0.0
@@ -16,22 +16,41 @@ margin_right = 198.0
 margin_bottom = 47.0
 rect_pivot_offset = Vector2( 0, 0 )
 rect_clip_content = false
+focus_neighbour_right = NodePath("../Password")
+focus_neighbour_bottom = NodePath("../Password")
 mouse_filter = 0
 size_flags_horizontal = 1
 size_flags_vertical = 1
-highlight_current_line = false
-syntax_highlighting = false
-show_line_numbers = false
-highlight_all_occurrences = false
-override_selected_font_color = false
-smooth_scrolling = false
-v_scroll_speed = 80.0
-caret_block_mode = false
+expand_to_len = false
+focus_mode = 2
+placeholder_alpha = 0.6
 caret_blink = false
 caret_blink_speed = 0.65
-_sections_unfolded = [ "Visibility" ]
+_sections_unfolded = [ "Focus", "Visibility" ]
 
-[node name="Password" type="TextEdit" parent="."]
+[node name="Username Label" type="RichTextLabel" parent="Username"]
+
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+margin_left = 320.0
+margin_top = 20.0
+margin_right = 401.0
+margin_bottom = 39.0
+rect_pivot_offset = Vector2( 0, 0 )
+mouse_filter = 0
+size_flags_horizontal = 1
+size_flags_vertical = 1
+custom_colors/default_color = Color( 0.386719, 0.346303, 0.346303, 1 )
+bbcode_enabled = false
+bbcode_text = "Username"
+visible_characters = -1
+percent_visible = 1.0
+override_selected_font_color = false
+_sections_unfolded = [ "BBCode", "custom_colors" ]
+
+[node name="Password" type="LineEdit" parent="."]
 
 anchor_left = 0.5
 anchor_top = 0.0
@@ -43,19 +62,84 @@ margin_right = 199.0
 margin_bottom = 99.0
 rect_pivot_offset = Vector2( 0, 0 )
 rect_clip_content = false
+focus_neighbour_bottom = NodePath("../LoginServer")
 mouse_filter = 0
 size_flags_horizontal = 1
 size_flags_vertical = 1
-highlight_current_line = false
-syntax_highlighting = false
-show_line_numbers = false
-highlight_all_occurrences = false
-override_selected_font_color = false
-smooth_scrolling = false
-v_scroll_speed = 80.0
-caret_block_mode = false
+secret = true
+expand_to_len = false
+focus_mode = 2
+placeholder_alpha = 0.6
 caret_blink = false
 caret_blink_speed = 0.65
+_sections_unfolded = [ "Focus", "Rect" ]
+
+[node name="Password Label" type="RichTextLabel" parent="Password"]
+
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+margin_left = 328.0
+margin_top = 21.0
+margin_right = 398.0
+margin_bottom = 41.0
+rect_pivot_offset = Vector2( 0, 0 )
+mouse_filter = 0
+size_flags_horizontal = 1
+size_flags_vertical = 1
+custom_colors/default_color = Color( 0.386719, 0.346303, 0.346303, 1 )
+bbcode_enabled = false
+bbcode_text = "Password"
+visible_characters = -1
+percent_visible = 1.0
+override_selected_font_color = false
+_sections_unfolded = [ "BBCode", "custom_colors" ]
+
+[node name="LoginServer" type="LineEdit" parent="."]
+
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+margin_left = 320.0
+margin_top = 110.0
+margin_right = 711.0
+margin_bottom = 149.0
+rect_pivot_offset = Vector2( 0, 0 )
+rect_clip_content = false
+focus_neighbour_bottom = NodePath("../Login")
+mouse_filter = 0
+size_flags_horizontal = 1
+size_flags_vertical = 1
+expand_to_len = false
+focus_mode = 2
+placeholder_alpha = 0.6
+caret_blink = false
+caret_blink_speed = 0.65
+_sections_unfolded = [ "Focus", "Rect" ]
+
+[node name="LoginServer Label" type="RichTextLabel" parent="LoginServer"]
+
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+margin_left = 310.0
+margin_top = 21.0
+margin_right = 400.0
+margin_bottom = 41.0
+rect_pivot_offset = Vector2( 0, 0 )
+mouse_filter = 0
+size_flags_horizontal = 1
+size_flags_vertical = 1
+custom_colors/default_color = Color( 0.386719, 0.346303, 0.346303, 1 )
+bbcode_enabled = false
+bbcode_text = "Login Server"
+visible_characters = -1
+percent_visible = 1.0
+override_selected_font_color = false
+_sections_unfolded = [ "BBCode", "custom_colors" ]
 
 [node name="Login" type="Button" parent="."]
 
@@ -69,6 +153,7 @@ margin_right = 193.0
 margin_bottom = 70.0
 rect_pivot_offset = Vector2( 0, 0 )
 rect_clip_content = false
+focus_neighbour_bottom = NodePath("../Username")
 mouse_filter = 0
 size_flags_horizontal = 1
 size_flags_vertical = 1
@@ -79,6 +164,7 @@ group = null
 text = "Log In"
 flat = false
 script = ExtResource( 1 )
+_sections_unfolded = [ "Focus" ]
 
 [node name="ErrorLabel" type="RichTextLabel" parent="."]
 
