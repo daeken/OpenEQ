@@ -71,6 +71,7 @@
     <Compile Include="CharacterList.cs" />
     <Compile Include="Extensions.cs" />
     <Compile Include="FPSCamera.cs" />
+    <Compile Include="GodotExtensions.cs" />
     <Compile Include="LogicBridge.cs" />
     <Compile Include="Login.cs" />
     <Compile Include="MobModel.cs" />

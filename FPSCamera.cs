@@ -1,4 +1,5 @@
 using Godot;
+using OpenEQ;
 using System;
 
 public class FPSCamera : Spatial

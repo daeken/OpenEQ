@@ -223,6 +223,16 @@ zone:
       - int<19>: Z
       - int<13>: DeltaZ
 
+    ClientUpdatePositionSub1:
+      - int<10>: DeltaHeading
+      - skip<10>: padding0036
+      - skip<12>: padding0016
+
+    ClientUpdatePositionSub2:
+      - uint<10>: Animation
+      - uint<12>: Heading
+      - skip<10>: padding0037
+
   structs:
     ClientZoneEntry:
       - uint32: unk
@@ -635,3 +645,16 @@ zone:
     PlayerPositionUpdate:
       - uint16: ID
       - UpdatePosition: Position
+
+    ClientPlayerPositionUpdate:
+      - uint16: ID
+      - uint16: Sequence
+      - uint32: unknown0004
+      - float: X
+      - float: Y
+      - ClientUpdatePositionSub1: Sub1
+      - float: DeltaX
+      - float: DeltaY
+      - float: Z
+      - float: DeltaZ
+      - ClientUpdatePositionSub2: Sub2

@@ -15,7 +15,8 @@ namespace OpenEQ.Network {
         OutOfOrder = 0x0011, 
         Single = 0x0009, 
         Fragment = 0x000d, 
-        Combined = 0x0003
+        Combined = 0x0003, 
+		Bare = 0xFFFF // FAKE
     }
 
     public enum LoginOp : ushort {

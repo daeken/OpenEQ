@@ -35,7 +35,6 @@ namespace OpenEQ.Network {
             lastAckSent = 0;
             sentPackets = new Packet[65536];
             futurePackets = new Packet[65536];
-
         }
 
         public void SendSessionRequest() {
@@ -140,6 +139,7 @@ namespace OpenEQ.Network {
                     break;
                 case SessionOp.Single:
                 case SessionOp.Fragment:
+				case SessionOp.Bare:
                     QueueOrProcess(packet);
                     break;
                 case SessionOp.Combined:
@@ -165,7 +165,7 @@ namespace OpenEQ.Network {
 
         void QueueOrProcess(Packet packet) {
             lock(sentPackets) {
-                if(packet.Sequence == InSequence) // Present
+                if(packet.Bare || packet.Sequence == InSequence) // Present
                     ProcessPacket(packet);
                 else if((packet.Sequence > InSequence && packet.Sequence - InSequence < 2048) || (packet.Sequence + 65536) - InSequence < 2048) {// Future
 					WriteLine($"Future packet :( Got {packet.Sequence}, need {InSequence}");
@@ -196,6 +196,10 @@ namespace OpenEQ.Network {
 
         bool ProcessPacket(Packet packet, bool self = false) {
             switch((SessionOp) packet.Opcode) {
+				case SessionOp.Bare:
+					var bapp = new AppPacket(packet.Data);
+					HandleAppPacketProxy(bapp);
+					break;
                 case SessionOp.Single:
                     futurePackets[packet.Sequence] = null;
 					var app = new AppPacket(packet.Data);

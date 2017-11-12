@@ -78,8 +78,16 @@ namespace OpenEQ.Network {
                     Data = packet.Sub(off, off + plen);
                     Bare = false;
                     break;
+				case SessionOp.Response:
+					Data = packet.Sub(2);
+					break;
                 default:
-                    Data = packet.Sub(2);
+					Opcode = (ushort) SessionOp.Bare;
+					if(packet.Length > 2 && packet[1] == 0xA5) {
+						Data = packet.Sub(1);
+						Data[0] = packet[0];
+					} else
+	                    Data = packet;
                     Bare = true;
                     break;
             }

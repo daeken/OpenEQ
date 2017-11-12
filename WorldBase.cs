@@ -4,6 +4,7 @@ using System;
 using System.Linq;
 using System.Collections.Generic;
 using static System.Console;
+using System.Threading.Tasks;
 
 public class WorldBase : Node
 {
@@ -14,8 +15,8 @@ public class WorldBase : Node
 	public override void _Ready()
     {
 		var pos = LogicBridge.Instance.CharacterSpawnPosition;
-		((Spatial) GetNode("../RigidBody")).Translation = pos.XYZ() * new Vector3(1, 1, -1);
-		WriteLine($"Starting off at {((Spatial) GetNode("../RigidBody")).Translation}");
+		this.GetNode<Spatial>("../RigidBody").Translation = pos.XYZ() * new Vector3(1, 1, -1);
+		WriteLine($"Starting off at {this.GetNode<Spatial>("../RigidBody").Translation}");
 		var zone = LogicBridge.Instance.CurZone;
 		WriteLine($"Loading zone {zone}");
 		ZoneReader.Read(this, System.IO.File.OpenRead($@"c:\aaa\projects\openeq\converter\{ zone }.zip"), out Animat);
@@ -53,11 +54,13 @@ public class WorldBase : Node
 			o.Node.Show();
 		};
 
-		((Spatial) GetNode("../RigidBody/CameraHolder")).RotateY(pos.Item4 * 2f * Mathf.PI); 
+		this.GetNode<Spatial>("../RigidBody/CameraHolder").RotateY(pos.Item4 * 2f * Mathf.PI);
 	}
 
 	public override void _Process(float delta)
     {
+		if(Animat == null)
+			return;
 		var ticks = OS.GetTicksMsec();
 		foreach(var elem in Animat)
 			elem.Item1.AlbedoTexture = elem.Item2[(int) Mathf.round(ticks / elem.Item3) % elem.Item2.Length];
@@ -65,7 +68,11 @@ public class WorldBase : Node
 			var o = mdict[elem.Key];
 			var d = elem.Value;
 			//WriteLine($"Attempting to move with delta vector {d.XYZ() * new Vector3(1, 1, -1)}");
-			o.Node.Transform = new Transform(o.Node.Transform.basis, o.Node.Transform.origin + d.XYZ() * new Vector3(1, 1, -1) * delta);
+			o.Node.Transform = new Transform(o.Node.Transform.basis, o.Node.Transform.origin + d.XYZ() * new Vector3(1, 1, -1) * delta * 5);
+			//o.Node.RotateY(d.Item4 * 2f * Mathf.PI * delta * 2);
 		}
-    }
+		var rb = this.GetNode<Spatial>("../RigidBody");
+		var pos = rb.Translation;
+		LogicBridge.Instance.UpdatePosition(new Tuple<float, float, float, float>(pos.x, pos.y, pos.z, 0));
+	}
 }

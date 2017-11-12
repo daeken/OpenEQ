@@ -79,5 +79,9 @@ namespace OpenEQ {
 			CurZone = (ZoneNumber) character.Zone;
 			world.SendEnterWorld(new EnterWorld(character.Name, tutorial, goHome));
 		}
+
+		public void UpdatePosition(Tuple<float, float, float, float> pos) {
+			zone.UpdatePosition(pos);
+		}
 	}
 }

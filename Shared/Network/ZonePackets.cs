@@ -216,6 +216,55 @@ namespace OpenEQ.Network {
 		}
 	}
 
+	public struct ClientUpdatePositionSub1 : IEQStruct {
+		public short DeltaHeading;
+
+		public ClientUpdatePositionSub1(short DeltaHeading) : this() {
+			this.DeltaHeading = DeltaHeading;
+		}
+
+		public ClientUpdatePositionSub1(byte[] data, int offset = 0) : this() {
+			Unpack(data, offset);
+		}
+		public ClientUpdatePositionSub1(BinaryReader br) : this() {
+			Unpack(br);
+		}
+		public void Unpack(byte[] data, int offset = 0) {
+			using(var ms = new MemoryStream(data, offset, data.Length - offset)) {
+				using(var br = new BinaryReader(ms)) {
+					Unpack(br);
+				}
+			}
+		}
+		public void Unpack(BinaryReader br) {
+			uint _databuf;
+			_databuf = br.ReadUInt32();
+			DeltaHeading = (short) (((int) (_databuf & 0x3FF) ^ 0x200) - 0x200);
+		}
+
+		public byte[] Pack() {
+			using(var ms = new MemoryStream()) {
+				using(var bw = new BinaryWriter(ms)) {
+					Pack(bw);
+					return ms.ToArray();
+				}
+			}
+		}
+		public void Pack(BinaryWriter bw) {
+		}
+
+		public override string ToString() {
+			var ret = "bitfield ClientUpdatePositionSub1 {\n";
+			ret += "\tDeltaHeading = ";
+			try {
+				ret += $"{ Indentify(DeltaHeading) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			return ret + "}";
+		}
+	}
+
 	public struct SpawnPosition : IEQStruct {
 		public short DeltaX;
 		public short DeltaHeading;
@@ -332,6 +381,64 @@ namespace OpenEQ.Network {
 			ret += "\tDeltaZ = ";
 			try {
 				ret += $"{ Indentify(DeltaZ) }\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			return ret + "}";
+		}
+	}
+
+	public struct ClientUpdatePositionSub2 : IEQStruct {
+		public ushort Animation;
+		public ushort Heading;
+
+		public ClientUpdatePositionSub2(ushort Animation, ushort Heading) : this() {
+			this.Animation = Animation;
+			this.Heading = Heading;
+		}
+
+		public ClientUpdatePositionSub2(byte[] data, int offset = 0) : this() {
+			Unpack(data, offset);
+		}
+		public ClientUpdatePositionSub2(BinaryReader br) : this() {
+			Unpack(br);
+		}
+		public void Unpack(byte[] data, int offset = 0) {
+			using(var ms = new MemoryStream(data, offset, data.Length - offset)) {
+				using(var br = new BinaryReader(ms)) {
+					Unpack(br);
+				}
+			}
+		}
+		public void Unpack(BinaryReader br) {
+			uint _databuf;
+			_databuf = br.ReadUInt32();
+			Animation = (ushort) (_databuf & 0x3FF);
+			Heading = (ushort) ((_databuf >> 10) & 0xFFF);
+		}
+
+		public byte[] Pack() {
+			using(var ms = new MemoryStream()) {
+				using(var bw = new BinaryWriter(ms)) {
+					Pack(bw);
+					return ms.ToArray();
+				}
+			}
+		}
+		public void Pack(BinaryWriter bw) {
+		}
+
+		public override string ToString() {
+			var ret = "bitfield ClientUpdatePositionSub2 {\n";
+			ret += "\tAnimation = ";
+			try {
+				ret += $"{ Indentify(Animation) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tHeading = ";
+			try {
+				ret += $"{ Indentify(Heading) },\n";
 			} catch(NullReferenceException) {
 				ret += "!!NULL!!\n";
 			}
@@ -5382,6 +5489,147 @@ namespace OpenEQ.Network {
 				for(int i = 0, e = SlotData.Length; i < e; ++i)
 					ret += $"\t\t{ Indentify(SlotData[i], 2) }" + (i != e - 1 ? "," : "") + "\n";
 				ret += "\t}\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			return ret + "}";
+		}
+	}
+
+	public struct ClientPlayerPositionUpdate : IEQStruct {
+		public ushort ID;
+		public ushort Sequence;
+		uint unknown0004;
+		public float X;
+		public float Y;
+		public ClientUpdatePositionSub1 Sub1;
+		public float DeltaX;
+		public float DeltaY;
+		public float Z;
+		public float DeltaZ;
+		public ClientUpdatePositionSub2 Sub2;
+
+		public ClientPlayerPositionUpdate(ushort ID, ushort Sequence, float X, float Y, ClientUpdatePositionSub1 Sub1, float DeltaX, float DeltaY, float Z, float DeltaZ, ClientUpdatePositionSub2 Sub2) : this() {
+			this.ID = ID;
+			this.Sequence = Sequence;
+			this.X = X;
+			this.Y = Y;
+			this.Sub1 = Sub1;
+			this.DeltaX = DeltaX;
+			this.DeltaY = DeltaY;
+			this.Z = Z;
+			this.DeltaZ = DeltaZ;
+			this.Sub2 = Sub2;
+		}
+
+		public ClientPlayerPositionUpdate(byte[] data, int offset = 0) : this() {
+			Unpack(data, offset);
+		}
+		public ClientPlayerPositionUpdate(BinaryReader br) : this() {
+			Unpack(br);
+		}
+		public void Unpack(byte[] data, int offset = 0) {
+			using(var ms = new MemoryStream(data, offset, data.Length - offset)) {
+				using(var br = new BinaryReader(ms)) {
+					Unpack(br);
+				}
+			}
+		}
+		public void Unpack(BinaryReader br) {
+			ID = br.ReadUInt16();
+			Sequence = br.ReadUInt16();
+			unknown0004 = br.ReadUInt32();
+			X = br.ReadSingle();
+			Y = br.ReadSingle();
+			Sub1 = new ClientUpdatePositionSub1(br);
+			DeltaX = br.ReadSingle();
+			DeltaY = br.ReadSingle();
+			Z = br.ReadSingle();
+			DeltaZ = br.ReadSingle();
+			Sub2 = new ClientUpdatePositionSub2(br);
+		}
+
+		public byte[] Pack() {
+			using(var ms = new MemoryStream()) {
+				using(var bw = new BinaryWriter(ms)) {
+					Pack(bw);
+					return ms.ToArray();
+				}
+			}
+		}
+		public void Pack(BinaryWriter bw) {
+			bw.Write(ID);
+			bw.Write(Sequence);
+			bw.Write(unknown0004);
+			bw.Write(X);
+			bw.Write(Y);
+			Sub1.Pack(bw);
+			bw.Write(DeltaX);
+			bw.Write(DeltaY);
+			bw.Write(Z);
+			bw.Write(DeltaZ);
+			Sub2.Pack(bw);
+		}
+
+		public override string ToString() {
+			var ret = "struct ClientPlayerPositionUpdate {\n";
+			ret += "\tID = ";
+			try {
+				ret += $"{ Indentify(ID) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tSequence = ";
+			try {
+				ret += $"{ Indentify(Sequence) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tX = ";
+			try {
+				ret += $"{ Indentify(X) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tY = ";
+			try {
+				ret += $"{ Indentify(Y) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tSub1 = ";
+			try {
+				ret += $"{ Indentify(Sub1) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tDeltaX = ";
+			try {
+				ret += $"{ Indentify(DeltaX) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tDeltaY = ";
+			try {
+				ret += $"{ Indentify(DeltaY) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tZ = ";
+			try {
+				ret += $"{ Indentify(Z) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tDeltaZ = ";
+			try {
+				ret += $"{ Indentify(DeltaZ) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tSub2 = ";
+			try {
+				ret += $"{ Indentify(Sub2) }\n";
 			} catch(NullReferenceException) {
 				ret += "!!NULL!!\n";
 			}

@@ -92,6 +92,8 @@ class ZoneReader {
 			node.AddChild(body);
 		}
 
+		return;
+
 		var oset = new List<Transform>[objects.Count - 1];
 		for(var i = 0; i < oset.Length; ++i)
 			oset[i] = new List<Transform>();

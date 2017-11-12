@@ -9,7 +9,7 @@ namespace OpenEQ.NetClient {
 		static void Main(string[] args) {
 			var _waitForLogin = new AutoResetEvent(false);
 
-			EQStream.Debug = true;
+			//EQStream.Debug = true;
 
 			var running = true;
 			var login = new LoginStream("127.0.0.1", 5999);

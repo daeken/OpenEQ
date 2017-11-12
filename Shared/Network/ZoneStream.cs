@@ -8,6 +8,9 @@ namespace OpenEQ.Network {
     public class ZoneStream : EQStream {
         string charName;
         bool entering = true;
+		bool done = false;
+		ushort playerSpawnId;
+		ushort updateSequence = 0;
 
 		public event EventHandler<Spawn> Spawned;
 		public event EventHandler<PlayerPositionUpdate> PositionUpdated;
@@ -28,8 +31,7 @@ namespace OpenEQ.Network {
         }
 
         protected override void HandleAppPacket(AppPacket packet) {
-			if((ZoneOp) packet.Opcode != ZoneOp.ZoneEntry)
-				WriteLine($"Zone app packet: {(ZoneOp) packet.Opcode}");
+			WriteLine($"Zone app packet: {(ZoneOp) packet.Opcode}");
             switch((ZoneOp) packet.Opcode) {
                 case ZoneOp.PlayerProfile:
                     var player = packet.Get<PlayerProfile>();
@@ -82,6 +84,8 @@ namespace OpenEQ.Network {
 
                 case ZoneOp.ZoneEntry:
                     var mob = packet.Get<Spawn>();
+					if(mob.Name == charName)
+						playerSpawnId = (ushort) mob.SpawnID;
 					Spawned(this, mob);
                     break;
 
@@ -105,7 +109,6 @@ namespace OpenEQ.Network {
                     break;
 
                 case ZoneOp.ClientUpdate:
-					Hexdump(packet.Data);
 					var pu = packet.Get<PlayerPositionUpdate>();
 					PositionUpdated?.Invoke(this, pu);
 					break;
@@ -119,5 +122,17 @@ namespace OpenEQ.Network {
                     break;
             }
         }
+
+		public void UpdatePosition(Tuple<float, float, float, float> Position) {
+			var update = new ClientPlayerPositionUpdate();
+			update.ID = playerSpawnId;
+			update.Sequence = updateSequence++;
+			update.X = Position.Item1;
+			update.Y = Position.Item2;
+			update.Sub1 = new ClientUpdatePositionSub1();
+			update.Z = Position.Item3;
+			update.Sub2 = new ClientUpdatePositionSub2(0, (ushort) (Position.Item4 * 8f * 255f));
+			Send(AppPacket.Create(ZoneOp.ClientUpdate, update));
+		}
     }
 }
