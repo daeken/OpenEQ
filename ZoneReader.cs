@@ -80,6 +80,7 @@ class ZoneReader {
 			if(!hasCollision)
 				colobjs[i] = null;
 		}
+		WriteLine("Building base meshinstance");
 
 		var mi = new MeshInstance { Mesh = objects[0] };
 		node.AddChild(mi);
@@ -92,7 +93,7 @@ class ZoneReader {
 			node.AddChild(body);
 		}
 
-		return;
+		WriteLine("Adding placeables");
 
 		var oset = new List<Transform>[objects.Count - 1];
 		for(var i = 0; i < oset.Length; ++i)
@@ -112,7 +113,9 @@ class ZoneReader {
 			), pos);
 			oset[ind - 1].Add(trans);
 		}
+		WriteLine("Parsed ...");
 		for(var i = 1; i < numobjs; ++i) {
+			WriteLine($"Handling placeable {i}/{numobjs}");
 			var set = oset[i - 1];
 			if(set.Count < 100) { // XXX: Add collision support for multimeshes
 				foreach(var trans in set) {
@@ -152,5 +155,7 @@ class ZoneReader {
 					mmesh.SetInstanceTransform(j, set[j]);
 			}
 		}
+
+		WriteLine("Done loading ... ?");
 	}
 }

@@ -24,8 +24,8 @@ namespace OpenEQ.Network {
         public EQStream(string host, int port) {
             conn = new AsyncUDPConnection(host, port);
 
-            Task.Factory.StartNew(CheckerAsync, TaskCreationOptions.LongRunning);
-            Task.Factory.StartNew(ReceiverAsync, TaskCreationOptions.LongRunning);
+            AsyncHelper.Run(CheckerAsync, longRunning: true);
+            AsyncHelper.Run(ReceiverAsync, longRunning: true);
         }
 
         protected void Connect() {
@@ -52,7 +52,7 @@ namespace OpenEQ.Network {
 //            futurePackets = new Packet[65536];
         }
 
-        async Task CheckerAsync() {
+        async void CheckerAsync() {
             while(true) {
                 if(sentPackets != null) {
                     lock(sentPackets) {
@@ -86,7 +86,7 @@ namespace OpenEQ.Network {
             }
         }
 
-        async Task ReceiverAsync() {
+        async void ReceiverAsync() {
 			try {
 				while(true) {
 					if(Debug)

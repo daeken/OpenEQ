@@ -62,5 +62,39 @@ namespace OpenEQ {
 		public static T Get<T>(this Node node, string propname) {
 			return (T) node.Get(propname);
 		}
+
+		class SignalWrapper<T> : Godot.Object {
+			Action<T> CB;
+			T Target;
+			internal SignalWrapper(Action<T> cb, T target) {
+				CB = cb;
+				Target = target;
+			}
+			void Signal() {
+				CB(Target);
+			}
+		}
+
+		class SignalWrapper1<T> : Godot.Object {
+			Action<T> CB;
+			internal SignalWrapper1(Action<T> cb) {
+				CB = cb;
+			}
+			void Signal(T arg1) {
+				CB(arg1);
+			}
+		}
+
+		public static void Connect<T>(this T obj, string signal, Action<T> cb) where T : Godot.Object {
+			obj.Connect(signal, new SignalWrapper<T>(cb, obj), "Signal");
+		}
+
+		public static void Connect<T>(this T obj, string signal, Action cb) where T : Godot.Object {
+			obj.Connect(signal, _ => cb());
+		}
+
+		public static void Connect<T>(this Godot.Object obj, string signal, Action<T> cb) {
+			obj.Connect(signal, new SignalWrapper1<T>(cb), "Signal");
+		}
 	}
 }

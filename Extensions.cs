@@ -2,6 +2,8 @@
 using OpenEQ.Network;
 using System;
 using System.IO;
+using System.Threading.Tasks;
+using static System.Console;
 
 public static class Extensions {
 	public static Vector2 ReadVector2(this BinaryReader br) {
@@ -62,5 +64,11 @@ public static class Extensions {
 
 	public static Vector3 XYZ(this Tuple<float, float, float, float> data) {
 		return new Vector3(data.Item1, data.Item2, data.Item3);
+	}
+
+	public static T Get<T>(this WeakReference<T> wr) where T : class {
+		if(!wr.TryGetTarget(out var r))
+			return null;
+		return r;
 	}
 }

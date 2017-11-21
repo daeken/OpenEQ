@@ -1,8 +1,10 @@
 [gd_scene load_steps=2 format=2]
 
-[ext_resource path="res://CharacterList.cs" type="Script" id=1]
+[ext_resource path="res://Views/WorldView.cs" type="Script" id=1]
 
 [node name="Node" type="Node"]
+
+script = ExtResource( 1 )
 
 [node name="CharacterList" type="ItemList" parent="."]
 
@@ -17,7 +19,6 @@ size_flags_vertical = 1
 items = [ "Name", null, true ]
 select_mode = 0
 icon_mode = 1
-script = ExtResource( 1 )
 _sections_unfolded = [ "Columns" ]
 
 

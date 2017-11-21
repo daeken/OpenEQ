@@ -8,7 +8,6 @@ namespace OpenEQ.Network {
     public class ZoneStream : EQStream {
         string charName;
         bool entering = true;
-		bool done = false;
 		ushort playerSpawnId;
 		ushort updateSequence = 0;
 
@@ -31,7 +30,7 @@ namespace OpenEQ.Network {
         }
 
         protected override void HandleAppPacket(AppPacket packet) {
-			WriteLine($"Zone app packet: {(ZoneOp) packet.Opcode}");
+			//WriteLine($"Zone app packet: {(ZoneOp) packet.Opcode}");
             switch((ZoneOp) packet.Opcode) {
                 case ZoneOp.PlayerProfile:
                     var player = packet.Get<PlayerProfile>();
@@ -117,8 +116,8 @@ namespace OpenEQ.Network {
                     break;
 
                 default:
-                    WriteLine($"Unhandled packet in ZoneStream: {(ZoneOp) packet.Opcode} (0x{packet.Opcode:X04})");
-                    Hexdump(packet.Data);
+                    //WriteLine($"Unhandled packet in ZoneStream: {(ZoneOp) packet.Opcode} (0x{packet.Opcode:X04})");
+                    //Hexdump(packet.Data);
                     break;
             }
         }
