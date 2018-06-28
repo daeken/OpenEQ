@@ -4,10 +4,10 @@
     <AssemblyName>OpenEQ.Engine</AssemblyName>
     <RootNamespace>OpenEQ.Engine</RootNamespace>
     <LangVersion>7.2</LangVersion>
-    <Platform>x64</Platform>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="OpenTK.NETCore" Version="1.1.2749.6433" />
+    <PackageReference Include="morelinq" Version="3.0.0-beta-2" />
+    <PackageReference Include="OpenTK" Version="3.0.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\NsimGui\NsimGui.csproj" />

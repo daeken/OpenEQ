@@ -1,6 +1,6 @@
 ﻿using System.Collections.Generic;
 
-namespace OpenEQ.NsimGui {
+namespace NsimGui {
 	public enum TextureFormat {
 		Alpha,
 		Rgb, 
@@ -9,8 +9,8 @@ namespace OpenEQ.NsimGui {
 
 	public struct DrawCommand {
 		public int TextureId;
-		public (float X, float Y, float Width, float Height) Scissor;
-		public uint IndexOffset, ElementCount;
+		public (int X, int Y, int Width, int Height) Scissor;
+		public int IndexOffset, ElementCount;
 	}
 
 	public struct DrawCommandSet {
@@ -22,6 +22,6 @@ namespace OpenEQ.NsimGui {
 	public interface IGuiRenderer {
 		int CreateTexture(TextureFormat format, int width, int height, byte[] pixels);
 		void DeleteTexture(int id);
-		void Draw(IReadOnlyList<DrawCommandSet> commandsets);
+		void Draw((float, float) dimensions, IReadOnlyList<DrawCommandSet> commandsets);
 	}
 }
