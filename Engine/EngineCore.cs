@@ -15,6 +15,8 @@ namespace OpenEQ.Engine {
 		public readonly Gui Gui;
 		
 		readonly List<Model> Models = new List<Model>();
+
+		readonly List<double> FrameTimes = new List<double>();
 		
 		public EngineCore() : base(
 			1280, 720, new GraphicsMode(new ColorFormat(8, 8, 8, 8), 32), "OpenEQ", 
@@ -22,9 +24,10 @@ namespace OpenEQ.Engine {
 		) {
 			Stopwatch.Start();
 			Gui = new Gui(new GuiRenderer()) {
-				new Window("Camera") {
+				new Window("Status") {
 					new Size(500, 100), 
-					new Text(() => $"Position {Camera.Position}")
+					new Text(() => $"Position {Camera.Position}"), 
+					new Text(() => $"FPS {(FrameTimes.Count == 0 ? 0 : 1 / (FrameTimes.Sum() / (double) FrameTimes.Count))}")
 				}
 			};
 			
@@ -120,6 +123,9 @@ namespace OpenEQ.Engine {
 		}
 
 		protected override void OnRenderFrame(FrameEventArgs e) {
+			if(FrameTimes.Count == 200)
+				FrameTimes.RemoveAt(0);
+			FrameTimes.Add(e.Time);
 			GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 			
 			GL.Enable(EnableCap.CullFace);
