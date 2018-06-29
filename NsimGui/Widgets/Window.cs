@@ -35,6 +35,8 @@ namespace NsimGui.Widgets {
 		static int TWidth = 100;
 
 		bool HasRendered;
+
+		public void Add(Size size) => Size = (size.Width, size.Height);
 		
 		public override void Render(Gui gui) {
 			if(SetSize) {
