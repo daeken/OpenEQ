@@ -1,6 +1,8 @@
 ﻿using System;
 using System.IO;
 using System.Linq;
+using OpenTK.Graphics.OpenGL4;
+using static OpenEQ.Engine.Globals;
 
 namespace OpenEQ.Engine {
 	[Flags]
@@ -29,6 +31,15 @@ namespace OpenEQ.Engine {
 			}).ToArray();
 		}
 
-		public void Use() => (Textures.Length == 1 ? Textures[0] : Textures[0]).Use();
+		public void Use() {
+			if(Flags.HasFlag(MaterialFlag.Translucent) && !Flags.HasFlag(MaterialFlag.Masked)) {
+				GL.Enable(EnableCap.Blend);
+				GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+			} else
+				GL.Disable(EnableCap.Blend);
+			(Textures.Length == 1
+				? Textures[0]
+				: Textures[(int) MathF.Round(Stopwatch.ElapsedMilliseconds / AniParam * 2) % Textures.Length]).Use();
+		}
 	}
 }
