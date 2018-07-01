@@ -244,6 +244,15 @@ namespace OpenEQ.Engine {
 			);
 		}
 
+		public static Mat4 Scale(Vec3 scale) {
+			return new Mat4(
+				scale.X, 0, 0, 0, 
+				0, scale.Y, 0, 0, 
+				0, 0, scale.Z, 0, 
+				0, 0, 0, 1
+			);
+		}
+
 		public static Mat4 RotationX(double rot) {
 			var s = Math.Sin(rot);
 			var c = Math.Cos(rot);

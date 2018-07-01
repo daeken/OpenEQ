@@ -23,12 +23,12 @@ namespace OpenEQ.Engine {
 			var eps = 0.0000001;
 			Pitch = Clamp(Pitch + pitchmod, -PI / 2 + eps, PI / 2 - eps);
 			Yaw += yawmod;
-			LookRotation = Mat3.Pitch(Yaw) * Mat3.Roll(-Pitch);
+			LookRotation = Mat3.Yaw(Yaw) * Mat3.Roll(Pitch);
 		}
 
 		public void Update() {
-			var at = (Mat3.Pitch(Yaw) * Mat3.Roll(-Pitch) * vec3(0, 0, 1)).Normalized;
-			Matrix = Mat4.LookAt(Position, Position + at, vec3(0, 1, 0));
+			var at = (Mat3.Yaw(Yaw) * Mat3.Roll(Pitch) * vec3(0, 1, 0)).Normalized;
+			Matrix = Mat4.LookAt(Position, Position + at, vec3(0, 0, 1));
 		}
 	}
 }

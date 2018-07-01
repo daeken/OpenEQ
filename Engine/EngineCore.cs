@@ -68,22 +68,22 @@ namespace OpenEQ.Engine {
 			foreach(var key in KeyState.Keys)
 				switch(key) {
 					case Key.W:
-						movement += vec3(0, 0, -e.Time * movescale);
+						movement += vec3(0, -e.Time * movescale, 0);
 						break;
 					case Key.S:
-						movement += vec3(0, 0, e.Time * movescale);
-						break;
-					case Key.A:
-						movement += vec3(-e.Time * movescale, 0, 0);
-						break;
-					case Key.D:
-						movement += vec3(e.Time * movescale, 0, 0);
-						break;
-					case Key.Space:
 						movement += vec3(0, e.Time * movescale, 0);
 						break;
+					case Key.A:
+						movement += vec3(e.Time * movescale, 0, 0);
+						break;
+					case Key.D:
+						movement += vec3(-e.Time * movescale, 0, 0);
+						break;
+					case Key.Space:
+						movement += vec3(0, 0, e.Time * movescale);
+						break;
 					case Key.ShiftLeft:
-						movement += vec3(0, -e.Time * movescale, 0);
+						movement += vec3(0, 0, -e.Time * movescale);
 						break;
 					case Key.Up:
 						Camera.Look(-e.Time * pitchscale, 0);
@@ -130,6 +130,9 @@ namespace OpenEQ.Engine {
 			
 			GL.Enable(EnableCap.CullFace);
 			GL.Enable(EnableCap.DepthTest);
+			
+			Mesh.SetProjectionView(FpsCamera.Matrix * ProjectionMat);
+			
 			Models.ForEach(model => model.Draw());
 
 			Gui.Render((float) e.Time);
