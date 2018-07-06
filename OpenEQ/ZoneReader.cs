@@ -44,7 +44,7 @@ namespace OpenEQ {
 						Enumerable.Range(0, br.ReadInt32()).Select(j => {
 							var matId = br.ReadInt32();
 							var collidable = br.ReadUInt32() != 0U;
-							var buf = Enumerable.Range(0, br.ReadInt32() * (3 + 3 + 2 + 1)).Select(_ => br.ReadSingle()).ToArray();
+							var buf = Enumerable.Range(0, br.ReadInt32() * (3 + 3 + 2)).Select(_ => br.ReadSingle()).ToArray();
 							var indices = Enumerable.Range(0, br.ReadInt32() * 3).Select(_ => br.ReadUInt32()).ToArray();
 							return new ZoneMesh {
 								MatId = matId, 
