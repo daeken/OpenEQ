@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using OpenEQ.Engine;
+using MoreLinq;
 using static System.Console;
 
 namespace OpenEQ {
@@ -10,13 +11,18 @@ namespace OpenEQ {
 			var engine = new EngineCore();
 			var zone = new ZoneReader($"../converter/{args[0]}.zip");
 			var materials = zone.Materials.Select(mat => new Material((MaterialFlag) mat.Flags, mat.Param, mat.Textures.ToArray())).ToArray();
-			var models = zone.Objects.Select(zobj => BuildModel(zobj, materials)).ToList();
-			engine.Add(models[0]);
-			zone.Placeables.ForEach(p => {
-				var model = models[p.ObjId].Clone();
-				model.SetProperties(p.Position, p.Scale, p.Rotation);
-				engine.Add(model);
+			//Transformation = Mat4.Scale(scale) * Mat4.RotationX(rotate.X) * Mat4.RotationY(rotate.Y) * Mat4.RotationZ(rotate.Z) * Mat4.Translation(translate);
+
+			var objInstances = zone.Objects.Select(_ => new List<Mat4>()).ToArray();
+			objInstances.First().Add(Mat4.Identity);
+
+			zone.Placeables.ForEach(p =>
+				objInstances[p.ObjId].Add(Mat4.Scale(p.Scale) * Mat4.RotationX(p.Rotation.X) * Mat4.RotationY(p.Rotation.Y) * Mat4.RotationZ(p.Rotation.Z) * Mat4.Translation(p.Position)));
+
+			objInstances.ForEach((list, i) => {
+				engine.Add(BuildModel(zone.Objects[i], materials, list.ToArray()));
 			});
+			
 			/*var smesh = Mesh.Sphere(null);
 			zone.Lights.ForEach(p => {
 				WriteLine($"Light {p.Flags:X}");
@@ -28,10 +34,10 @@ namespace OpenEQ {
 			engine.Run();
 		}
 		
-		static Model BuildModel(List<ZoneMesh> zmeshes, Material[] materials) {
+		static Model BuildModel(List<ZoneMesh> zmeshes, Material[] materials, Mat4[] instances) {
 			var model = new Model();
 			foreach(var zmesh in zmeshes)
-				model.Add(new Mesh(materials[zmesh.MatId], zmesh.VertexBuffer, zmesh.Indices));
+				model.Add(new Mesh(materials[zmesh.MatId], zmesh.VertexBuffer, zmesh.Indices, instances));
 			return model;
 		}
 	}

@@ -100,7 +100,7 @@ class Wld(object):
 	
 	def convertZone(self, zone):
 		for meshfrag in self.byType[0x36]:
-			vbuf = VertexBuffer(flatten(interleave(meshfrag['vertices'], meshfrag['normals'], meshfrag['texcoords'], meshfrag['colors'])), len(meshfrag['vertices']))
+			vbuf = VertexBuffer(flatten(interleave(meshfrag['vertices'], meshfrag['normals'], meshfrag['texcoords'])), len(meshfrag['vertices']))
 
 			off = 0
 			for count, index in meshfrag['polytex']:
@@ -124,7 +124,7 @@ class Wld(object):
 		if 0x36 in self.byType:
 			for meshfrag in self.byType[0x36]:
 				obj = zone.addObject(meshfrag['_name'].replace('_DMSPRITEDEF', ''))
-				vbuf = VertexBuffer(flatten(interleave(meshfrag['vertices'], meshfrag['normals'], meshfrag['texcoords'], meshfrag['colors'])), len(meshfrag['vertices']))
+				vbuf = VertexBuffer(flatten(interleave(meshfrag['vertices'], meshfrag['normals'], meshfrag['texcoords'])), len(meshfrag['vertices']))
 
 				off = 0
 				for count, index in meshfrag['polytex']:

@@ -7,12 +7,12 @@ using static OpenEQ.Engine.Globals;
 namespace OpenEQ.Engine {
 	public class Mesh {
 		public Material Material;
-		public readonly int Vao, Pbo, Ibo;
-		public readonly int ElementCount;
+		public readonly int Vao, Pbo, Ibo, Mbo;
+		public readonly int ElementCount, InstanceCount;
 
 		static Program Program;
 
-		public Mesh(Material material, float[] vdata, uint[] indices) {
+		public Mesh(Material material, float[] vdata, uint[] indices, Mat4[] modelMatrices) {
 			if(Program == null)
 				Program = new Program(@"
 #version 410
@@ -20,23 +20,20 @@ precision highp float;
 layout (location = 0) in vec4 aPosition;
 layout (location = 1) in vec3 aNormal;
 layout (location = 2) in vec2 aTexCoord;
-layout (location = 3) in vec4 aColor;
-uniform mat4 uProjectionViewMat, uModelMat;
+layout (location = 3) in mat4 aModelMat;
+uniform mat4 uProjectionViewMat;
 out vec3 vNormal;
 out vec2 vTexCoord;
-out vec4 vColor;
 void main() {
-	gl_Position = uProjectionViewMat * uModelMat * aPosition;
+	gl_Position = uProjectionViewMat * aModelMat * aPosition;
 	vNormal = aNormal;
 	vTexCoord = aTexCoord;
-	vColor = aColor;
 }
 			", @"
 #version 410
 precision highp float;
 in vec3 vNormal;
 in vec2 vTexCoord;
-in vec4 vColor;
 layout (location = 0) out vec4 color;
 uniform sampler2D uTex;
 uniform bool uMasked, uFake;
@@ -48,7 +45,6 @@ void main() {
 	color = texture(uTex, vTexCoord);
 	if(uMasked && color.a < 0.5)
 		discard;
-	color = vec4(color.rgb + vColor.bgr * (vColor.a - .5) - 0.1, color.a);
 }
 				");
 			
@@ -63,18 +59,33 @@ void main() {
 			GL.BufferData(BufferTarget.ArrayBuffer, vdata.Length * 4, vdata, BufferUsageHint.StaticDraw);
 			var pp = Program.GetAttribute("aPosition");
 			GL.EnableVertexAttribArray(pp);
-			GL.VertexAttribPointer(pp, 3, VertexAttribPointerType.Float, false, (3 + 3 + 2 + 1) * 4, 0);
+			GL.VertexAttribPointer(pp, 3, VertexAttribPointerType.Float, false, (3 + 3 + 2) * 4, 0);
 			pp = Program.GetAttribute("aNormal");
 			GL.EnableVertexAttribArray(pp);
-			GL.VertexAttribPointer(pp, 3, VertexAttribPointerType.Float, false, (3 + 3 + 2 + 1) * 4, 3 * 4);
+			GL.VertexAttribPointer(pp, 3, VertexAttribPointerType.Float, false, (3 + 3 + 2) * 4, 3 * 4);
 			pp = Program.GetAttribute("aTexCoord");
 			GL.EnableVertexAttribArray(pp);
-			GL.VertexAttribPointer(pp, 2, VertexAttribPointerType.Float, false, (3 + 3 + 2 + 1) * 4, (3 + 3) * 4);
-			pp = Program.GetAttribute("aColor");
+			GL.VertexAttribPointer(pp, 2, VertexAttribPointerType.Float, false, (3 + 3 + 2) * 4, (3 + 3) * 4);
+			
+			GL.BindBuffer(BufferTarget.ArrayBuffer, Mbo = GL.GenBuffer());
+			GL.BufferData(BufferTarget.ArrayBuffer, modelMatrices.Length * 16 * 4, 
+				modelMatrices.Select(x => x.AsArray).SelectMany(x => x).Select(x => (float) x).ToArray(), BufferUsageHint.StaticDraw);
+			pp = Program.GetAttribute("aModelMat");
 			GL.EnableVertexAttribArray(pp);
-			GL.VertexAttribPointer(pp, 4, VertexAttribPointerType.UnsignedByte, true, (3 + 3 + 2 + 1) * 4, (3 + 3 + 2) * 4);
+			GL.VertexAttribPointer(pp, 4, VertexAttribPointerType.Float, false, 4 * 16, 0);
+			GL.VertexAttribDivisor(pp, 1);
+			GL.EnableVertexAttribArray(pp + 1);
+			GL.VertexAttribPointer(pp + 1, 4, VertexAttribPointerType.Float, false, 4 * 16, 4 * 4);
+			GL.VertexAttribDivisor(pp + 1, 1);
+			GL.EnableVertexAttribArray(pp + 2);
+			GL.VertexAttribPointer(pp + 2, 4, VertexAttribPointerType.Float, false, 4 * 16, 8 * 4);
+			GL.VertexAttribDivisor(pp + 2, 1);
+			GL.EnableVertexAttribArray(pp + 3);
+			GL.VertexAttribPointer(pp + 3, 4, VertexAttribPointerType.Float, false, 4 * 16, 12 * 4);
+			GL.VertexAttribDivisor(pp + 3, 1);
 
 			ElementCount = indices.Length;
+			InstanceCount = modelMatrices.Length;
 		}
 
 		public static void SetProjectionView(Mat4 mat) {
@@ -84,8 +95,7 @@ void main() {
 			Program.SetUniform("uTex", 0);
 		}
 
-		public void Draw(Mat4 modelMat) {
-			Program.SetUniform("uModelMat", modelMat);
+		public void Draw() {
 			if(Material != null) {
 				Material.Use();
 				switch(Material.Flags) {
@@ -107,7 +117,7 @@ void main() {
 			}
 
 			GL.BindVertexArray(Vao);
-			GL.DrawElements(PrimitiveType.Triangles, ElementCount, DrawElementsType.UnsignedInt, 0);
+			GL.DrawElementsInstanced(PrimitiveType.Triangles, ElementCount, DrawElementsType.UnsignedInt, IntPtr.Zero, InstanceCount);
 			
 			if(Material == null) {
 				Program.SetUniform("uFake", 0);
@@ -166,13 +176,13 @@ void main() {
 				// UV
 				buf.Add(0.5);
 				buf.Add(0.5);
-				// Color
-				buf.Add(0.5);
 			}
 			
 			return new Mesh(mat, 
 				buf.Select(x => (float) x).ToArray(), 
-				indices.Select(x => new[] { (uint) x.Item1, (uint) x.Item2, (uint) x.Item3 }).SelectMany(x => x).ToArray());
+				indices.Select(x => new[] { (uint) x.Item1, (uint) x.Item2, (uint) x.Item3 }).SelectMany(x => x).ToArray(), 
+				new[] { Mat4.Identity }
+			);
 		}
 	}
 }
