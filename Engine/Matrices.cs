@@ -373,10 +373,10 @@ namespace OpenEQ.Engine {
 		public static Vec4 operator *(Mat4 left, Vec4 right) {
 			var la = left.AsArray;
 			return new Vec4(
-				la[0] * right.X + la[1] * right.Y + la[2] * right.Z + la[3] * right.W,
-				la[4] * right.X + la[5] * right.Y + la[6] * right.Z + la[7] * right.W,
-				la[8] * right.X + la[9] * right.Y + la[10] * right.Z + la[11] * right.W,
-				la[12] * right.X + la[13] * right.Y + la[14] * right.Z + la[15] * right.W
+				la[0] * right.X + la[4] * right.Y + la[8] * right.Z + la[12] * right.W,
+				la[1] * right.X + la[5] * right.Y + la[9] * right.Z + la[13] * right.W,
+				la[2] * right.X + la[6] * right.Y + la[10] * right.Z + la[14] * right.W,
+				la[3] * right.X + la[7] * right.Y + la[11] * right.Z + la[15] * right.W
 			);
 		}
 		public static Vec4 operator *(Vec4 left, Mat4 right) {

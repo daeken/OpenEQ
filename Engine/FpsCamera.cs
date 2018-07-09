@@ -7,7 +7,7 @@ namespace OpenEQ.Engine {
 		public double Pitch, Yaw;
 
 		public static Mat4 Matrix;
-		Mat3 LookRotation = Mat3.Identity;
+		public Mat3 LookRotation = Mat3.Identity;
 
 		public FpsCamera(Vec3 pos) {
 			Pitch = Yaw = 0;

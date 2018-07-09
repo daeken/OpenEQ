@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using System;
+using System.Diagnostics;
 using static System.Math;
 
 namespace OpenEQ.Engine {
@@ -24,6 +25,8 @@ namespace OpenEQ.Engine {
 		public static Vec4 vec4() => new Vec4();
 		public static Vec4 vec4(float v) => new Vec4(v);
 		public static Vec4 vec4(double v) => new Vec4(v);
+		public static Vec4 vec4(Vec3 xyz, float w) => new Vec4(xyz.X, xyz.Y, xyz.Z, w);
+		public static Vec4 vec4(Vec3 xyz, double w) => new Vec4(xyz.X, xyz.Y, xyz.Z, w);
 		public static Vec4 vec4(float x, float y, float z, float w) => new Vec4(x, y, z, w);
 		public static Vec4 vec4(double x, double y, double z, double w) => new Vec4(x, y, z, w);
 
@@ -61,5 +64,7 @@ namespace OpenEQ.Engine {
 		public static double sin(double v) => Sin(v);
 		public static Vec2 sin(Vec2 v) => vec2(Sin(v.X), Sin(v.Y));
 		public static Vec3 sin(Vec3 v) => vec3(Sin(v.X), Sin(v.Y), Sin(v.Z));
+		
+		public static LazyProperty<T> lazy<T>(Func<T> func) => new LazyProperty<T>(func);
 	}
 }

@@ -7,8 +7,8 @@ using static OpenEQ.Engine.Globals;
 namespace OpenEQ.Engine {
 	public class Mesh {
 		public Material Material;
-		public readonly int Vao, Pbo, Ibo, Mbo;
-		public readonly int ElementCount, InstanceCount;
+		readonly int Vao, Pbo, Ibo, Mbo;
+		readonly int ElementCount, InstanceCount;
 
 		static Program Program;
 
@@ -22,29 +22,34 @@ layout (location = 1) in vec3 aNormal;
 layout (location = 2) in vec2 aTexCoord;
 layout (location = 3) in mat4 aModelMat;
 uniform mat4 uProjectionViewMat;
+out vec3 vPosition;
 out vec3 vNormal;
 out vec2 vTexCoord;
 void main() {
-	gl_Position = uProjectionViewMat * aModelMat * aPosition;
-	vNormal = aNormal;
+	vec4 pos = aModelMat * aPosition;
+	gl_Position = uProjectionViewMat * pos;
+	vPosition = pos.xyz;
+	vNormal = (aModelMat * vec4(aNormal, 0.0)).xyz;
 	vTexCoord = aTexCoord;
 }
 			", @"
 #version 410
 precision highp float;
+in vec3 vPosition;
 in vec3 vNormal;
 in vec2 vTexCoord;
 layout (location = 0) out vec4 color;
+layout (location = 1) out vec3 position;
+layout (location = 2) out vec3 normal;
 uniform sampler2D uTex;
-uniform bool uMasked, uFake;
+uniform bool uMasked;
 void main() {
-	if(uFake) {
-		color = vec4(0, 1, 0, .1);
-		return;
-	}
 	color = texture(uTex, vTexCoord);
 	if(uMasked && color.a < 0.5)
 		discard;
+	color.a = 0;
+	position = vPosition;
+	normal = normalize(vNormal);
 }
 				");
 			
@@ -96,35 +101,20 @@ void main() {
 		}
 
 		public void Draw() {
-			if(Material != null) {
-				Material.Use();
-				switch(Material.Flags) {
-					case MaterialFlag x when x.HasFlag(MaterialFlag.Masked):
-						Program.SetUniform("uMasked", 1);
-						break;
-					case MaterialFlag.Transparent:
-						return;
-					default:
-						Program.SetUniform("uMasked", 0);
-						break;
-				}
-			} else {
-				Program.SetUniform("uFake", 1);
-				GL.Enable(EnableCap.Blend);
-				GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
-				GL.DepthMask(false);
-				GL.Disable(EnableCap.CullFace);
+			Material.Use();
+			switch(Material.Flags) {
+				case MaterialFlag x when x.HasFlag(MaterialFlag.Masked):
+					Program.SetUniform("uMasked", 1);
+					break;
+				case MaterialFlag.Transparent:
+					return;
+				default:
+					Program.SetUniform("uMasked", 0);
+					break;
 			}
 
 			GL.BindVertexArray(Vao);
 			GL.DrawElementsInstanced(PrimitiveType.Triangles, ElementCount, DrawElementsType.UnsignedInt, IntPtr.Zero, InstanceCount);
-			
-			if(Material == null) {
-				Program.SetUniform("uFake", 0);
-				GL.Disable(EnableCap.Blend);
-				GL.DepthMask(true);
-				GL.Enable(EnableCap.CullFace);
-			}
 		}
 
 		public static Mesh Sphere(Material mat) {
