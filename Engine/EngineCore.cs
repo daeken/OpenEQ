@@ -84,13 +84,25 @@ void main() {
 precision highp float;
 in vec2 vTexCoord;
 
-uniform sampler2D uColor, uDepth;
+uniform sampler2D uColor, uPosition, uNormal, uDepth;
 uniform vec3 uAmbientColor;
 out vec3 color;
 
+vec3 csv, N;
+
+float calcDiffuse(vec3 lightDir) {
+	vec3 toLight = normalize(lightDir);
+	return clamp(dot(N, toLight), 0, 1);
+}
+
 void main() {
 	gl_FragDepth = texture(uDepth, vTexCoord).r;
-	color = texture(uColor, vTexCoord).rgb * uAmbientColor;
+	csv = texture(uColor, vTexCoord).rgb;
+	N = texture(uNormal, vTexCoord).xyz;
+
+	float diffuse = calcDiffuse(vec3(10, 5, 25)) + calcDiffuse(vec3(-15, 5, 25)) + calcDiffuse(vec3(-5, -11, 7));
+	
+	color = csv * uAmbientColor * (1 + diffuse / 3);
 }
 			");
 			
@@ -137,7 +149,7 @@ void main() {
 			if(KeyState.Count == 0)
 				return;
 			var movement = vec3();
-			var movescale = KeyState.Keys.Contains(Key.WinLeft) ? 150 : 30;
+			var movescale = KeyState.Keys.Contains(Key.WinLeft) ? 250 : 30;
 			var pitchscale = .5;
 			var yawscale = 1;
 			var updatedCamera = false;
@@ -235,8 +247,7 @@ void main() {
 			
 			DeferredAmbientProgram.Use();
 			DeferredAmbientProgram.SetUniform("uAmbientColor", vec3(0.35));
-			DeferredAmbientProgram.SetTexture("uColor", 0, FBO.Textures[0]);
-			DeferredAmbientProgram.SetTexture("uDepth", 1, FBO.Textures[3]);
+			DeferredAmbientProgram.SetTextures(0, FBO.Textures, "uColor", "uPosition", "uNormal", "uDepth");
 			GL.DrawElements(PrimitiveType.Triangles, 6, DrawElementsType.UnsignedInt, IntPtr.Zero);
 
 			GL.Enable(EnableCap.Blend);
