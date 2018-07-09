@@ -102,7 +102,7 @@ void main() {
 
 	float diffuse = calcDiffuse(vec3(10, 5, 25)) + calcDiffuse(vec3(-15, 5, 25)) + calcDiffuse(vec3(-5, -11, 7));
 	
-	color = csv * uAmbientColor * (1 + diffuse / 3);
+	color = csv * uAmbientColor * (.7 + diffuse / 5);
 }
 			");
 			
