@@ -11,8 +11,7 @@ namespace OpenEQ {
 			var engine = new EngineCore();
 			var zone = new ZoneReader($"../converter/{args[0]}.zip");
 			var materials = zone.Materials.Select(mat => new Material((MaterialFlag) mat.Flags, mat.Param, mat.Textures.ToArray())).ToArray();
-			//Transformation = Mat4.Scale(scale) * Mat4.RotationX(rotate.X) * Mat4.RotationY(rotate.Y) * Mat4.RotationZ(rotate.Z) * Mat4.Translation(translate);
-
+			
 			var objInstances = zone.Objects.Select(_ => new List<Mat4>()).ToArray();
 			objInstances.First().Add(Mat4.Identity);
 
@@ -21,6 +20,11 @@ namespace OpenEQ {
 
 			objInstances.ForEach((list, i) => {
 				engine.Add(BuildModel(zone.Objects[i], materials, list.ToArray()));
+			});
+			
+			WriteLine($"Loading {zone.Lights.Count} lights");
+			zone.Lights.ForEach(lp => {
+				engine.AddLight(lp.Position, lp.Radius, lp.Attenuation, lp.Color);
 			});
 			
 			/*var smesh = Mesh.Sphere(null);

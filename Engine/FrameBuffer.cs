@@ -7,6 +7,8 @@ namespace OpenEQ.Engine {
 	public enum FrameBufferAttachment {
 		Rgba, 
 		Rgb, 
+		Xyzw, 
+		Xyz, 
 		Depth, 
 		Depth16, 
 		DepthStencil
@@ -14,7 +16,7 @@ namespace OpenEQ.Engine {
 	
 	public class FrameBuffer {
 		public FrameBufferAttachment[] Attachments;
-		public int FBO;
+		public int FBO, Width, Height;
 		public int[] Textures;
 		
 		public static void Unbind() => GL.BindFramebuffer(FramebufferTarget.FramebufferExt, 0);
@@ -58,8 +60,16 @@ namespace OpenEQ.Engine {
 					case FrameBufferAttachment.Rgba:
 						pif = PixelInternalFormat.Rgba;
 						pf = PixelFormat.Rgba;
+						pt = PixelType.UnsignedByte;
 						break;
 					case FrameBufferAttachment.Rgb:
+						pt = PixelType.UnsignedByte;
+						break;
+					case FrameBufferAttachment.Xyzw:
+						pif = PixelInternalFormat.Rgba;
+						pf = PixelFormat.Rgba;
+						break;
+					case FrameBufferAttachment.Xyz:
 						break;
 				}
 				if(glatt == FramebufferAttachment.Aux0)
@@ -81,6 +91,14 @@ namespace OpenEQ.Engine {
 			GL.BindFramebuffer(FramebufferTarget.FramebufferExt, FBO);
 			var bufs = Attachments.Count(x => x != FrameBufferAttachment.Depth && x != FrameBufferAttachment.Depth16 && x != FrameBufferAttachment.DepthStencil);
 			GL.DrawBuffers(bufs, Enumerable.Range(0, bufs).Select(x => DrawBuffersEnum.ColorAttachment0 + x).ToArray());
+		}
+
+		public void BlitDepth() {
+			GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+			GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, FBO);
+			GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, 0);
+			GL.BlitFramebuffer(0, 0, Width, Height, 0, 0, Width, Height, ClearBufferMask.DepthBufferBit, BlitFramebufferFilter.Nearest);
+			GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
 		}
 	}
 }

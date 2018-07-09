@@ -273,6 +273,7 @@ namespace OpenEQ.Engine {
 		public Vec4 Sqrt => new Vec4(Math.Sqrt(X), Math.Sqrt(Y), Math.Sqrt(Z), Math.Sqrt(W));
 		public Vec4 InverseSqrt => new Vec4(1 / Math.Sqrt(X), 1 / Math.Sqrt(Y), 1 / Math.Sqrt(Z), 1 / Math.Sqrt(W));
 		
+		public Vec2 XY => new Vec2(X, Y);
 		public Vec3 XYZ => new Vec3(X, Y, Z);
 
 		public Vec4(double v) {
