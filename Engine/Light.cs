@@ -13,7 +13,7 @@ namespace OpenEQ.Engine {
 
 		public PointLight(Vec3 position, float radius, float attenuation, Vec3 color) {
 			Position = position;
-			Radius = radius / 5;
+			Radius = radius / 2;
 			Attenuation = attenuation;
 			Color = color;
 			
@@ -43,13 +43,13 @@ void main() {
 	vec3 toLight = uLightPos - pos;
 	float dist = length(toLight);
 	//if(dist > uRadius) discard;
-	vec3 N = texture(uNormal, vTexCoord).xyz;
+	//vec3 N = texture(uNormal, vTexCoord).xyz;
 	//if(length(N) < 0.9) discard;
-	toLight = normalize(toLight);
-	float cos = clamp(dot(N, toLight), 0, 1);
+	//toLight = normalize(toLight);
+	//float cos = clamp(dot(N, toLight), 0, 1);
 	//if(cos == 0) discard;
 	vec4 csv = texture(uColor, vTexCoord);
-	float diffuse = pow(1 - min(dist / uRadius, 1), 2) * cos;
+	float diffuse = pow(1 - min(dist / uRadius, 1), 3);// * cos;
 	color = csv.rgb * uLightColor * diffuse;
 }
 				");
