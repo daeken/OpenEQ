@@ -33,7 +33,7 @@ void main() {
 precision highp float;
 in vec2 vTexCoord;
 
-uniform sampler2D uColor, uPosition;
+uniform sampler2D uColor, uPosition, uNormal;
 uniform vec3 uLightPos, uLightColor, uCameraPos;
 uniform float uRadius;//, uAttenuation;
 out vec3 color;
@@ -42,14 +42,14 @@ void main() {
 	vec3 pos = texture(uPosition, vTexCoord).xyz;
 	vec3 toLight = uLightPos - pos;
 	float dist = length(toLight);
-	//vec3 N = texture(uNormal, vTexCoord).xyz;
+	//if(dist > uRadius) discard;
+	vec3 N = texture(uNormal, vTexCoord).xyz;
 	//if(length(N) < 0.9) discard;
-	/*toLight = normalize(toLight);
+	toLight = normalize(toLight);
 	float cos = clamp(dot(N, toLight), 0, 1);
-	if(cos == 0)
-		discard;*/
+	//if(cos == 0) discard;
 	vec4 csv = texture(uColor, vTexCoord);
-	float diffuse = pow(1 - min(dist / uRadius, 1), 2);// * cos;
+	float diffuse = pow(1 - min(dist / uRadius, 1), 2) * cos;
 	color = csv.rgb * uLightColor * diffuse;
 }
 				");
