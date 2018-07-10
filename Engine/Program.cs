@@ -52,6 +52,7 @@ namespace OpenEQ.Engine {
 
 		public void SetUniform(string name, int val) => GL.Uniform1(GetUniform(name), val);
 		public void SetUniform(string name, double val) => GL.Uniform1(GetUniform(name), (float) val);
+		public void SetUniform(string name, Vec2 val) => GL.Uniform2(GetUniform(name), 1, new[] { (float) val.X, (float) val.Y });
 		public void SetUniform(string name, Vec3 val) => GL.Uniform3(GetUniform(name), 1, new[] { (float) val.X, (float) val.Y, (float) val.Z });
 		public void SetUniform(string name, Mat4 val) => GL.UniformMatrix4(GetUniform(name), 1, false, val.AsArray.Select(x => (float) x).ToArray());
 
