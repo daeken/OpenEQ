@@ -9,7 +9,7 @@ namespace OpenEQ.Engine {
 
 		public PointLight(Vec3 position, float radius, float attenuation, Vec3 color) {
 			Position = position;
-			Radius = radius / 4;
+			Radius = radius / 3;
 			Attenuation = attenuation;
 			Color = color;
 		}
