@@ -10,6 +10,7 @@ namespace OpenEQ.Engine {
 		static readonly Dictionary<string, int> ShaderCache = new Dictionary<string, int>();
 		int ProgramId;
 		readonly Dictionary<string, int> Locations = new Dictionary<string, int>();
+		static int CurrentProgramId = -1;
 
 		public Program(string vs, string fs) {
 			ProgramId = GL.CreateProgram();
@@ -40,7 +41,12 @@ namespace OpenEQ.Engine {
 			return shader;
 		}
 
-		public void Use() => GL.UseProgram(ProgramId);
+		public void Use() {
+			if(CurrentProgramId == ProgramId)
+				return;
+			GL.UseProgram(ProgramId);
+			CurrentProgramId = ProgramId;
+		}
 
 		public int GetUniform(string name) => Locations.ContainsKey(name)
 			? Locations[name]

@@ -12,6 +12,6 @@ namespace OpenEQ.Engine {
 
 		public void Add(Mesh mesh) => Meshes.Add(mesh);
 
-		public void Draw() => Meshes.ForEach(mesh => mesh.Draw());
+		public void Draw(bool translucent) => Meshes.ForEach(mesh => mesh.Draw(translucent));
 	}
 }

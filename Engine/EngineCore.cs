@@ -133,6 +133,14 @@ namespace OpenEQ.Engine {
 			FrameTimes.Add(e.Time);
 			
 			RenderDeferredPathway();
+			
+			GL.Enable(EnableCap.Blend);
+			GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+			GL.Enable(EnableCap.DepthTest);
+			GL.ActiveTexture(TextureUnit.Texture0);
+			GL.DepthMask(false);
+			Models.ForEach(model => model.Draw(translucent: true));
+			GL.DepthMask(true);
 
 			Gui.Render((float) e.Time);
 

@@ -32,11 +32,6 @@ namespace OpenEQ.Engine {
 		}
 
 		public void Use() {
-			if(Flags.HasFlag(MaterialFlag.Translucent) && !Flags.HasFlag(MaterialFlag.Masked)) {
-				GL.Enable(EnableCap.Blend);
-				GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
-			} else
-				GL.Disable(EnableCap.Blend);
 			(Textures.Length == 1
 				? Textures[0]
 				: Textures[(int) MathF.Round(Stopwatch.ElapsedMilliseconds / AniParam * 2) % Textures.Length]).Use();
