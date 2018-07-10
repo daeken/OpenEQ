@@ -1,13 +1,18 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using MoreLinq;
 using OpenTK.Graphics.OpenGL4;
 using static OpenEQ.Engine.Globals;
 using static System.Console;
 
 namespace OpenEQ.Engine {
 	public partial class EngineCore {
+		const int maxLights = 64;
+		
 		FrameBuffer FBO;
-		int DeferredQuadVAO;
-		Program DeferredAmbientProgram;
+		int QuadVAO;
+		Program Program;
 
 
 		void SetupDeferredPathway() {
@@ -20,7 +25,7 @@ namespace OpenEQ.Engine {
 					FBO.Resize(Width, Height);
 			};
 			
-			GL.BindVertexArray(DeferredQuadVAO = GL.GenVertexArray());
+			GL.BindVertexArray(QuadVAO = GL.GenVertexArray());
 			GL.BindBuffer(BufferTarget.ArrayBuffer, GL.GenBuffer());
 			GL.BufferData(BufferTarget.ArrayBuffer, 6 * 2 * 4, new[] {
 				-1f, -1f, 
@@ -37,7 +42,7 @@ namespace OpenEQ.Engine {
 			GL.EnableVertexAttribArray(0);
 			GL.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, 0, 0);
 
-			DeferredAmbientProgram = new Program(@"
+			Program = new Program(@"
 #version 410
 precision highp float;
 in vec2 aPosition;
@@ -51,18 +56,40 @@ void main() {
 precision highp float;
 in vec2 vTexCoord;
 
+struct Light {
+	vec3 pos, color;
+	float radius;
+};
+
 uniform sampler2D uColor, uPosition, uDepth;
 uniform vec3 uAmbientColor;
+uniform Light uLights[" + maxLights + @"];
+uniform int uLightCount;
 out vec3 color;
 
 void main() {
-	//gl_FragDepth = texture(uDepth, vTexCoord).r; // Copy depth from FBO to screen depth buffer
-	color = texture(uColor, vTexCoord).rgb * uAmbientColor;
+	gl_FragDepth = texture(uDepth, vTexCoord).x; // Copy depth from FBO to screen depth buffer
+	vec3 csv = texture(uColor, vTexCoord).rgb;
+	vec3 pos = texture(uPosition, vTexCoord).xyz;
+	vec3 accum = uAmbientColor;
+	for(int i = 0; i < uLightCount; ++i) {
+		Light light = uLights[i];
+		float dist = length(light.pos - pos);
+		accum += light.color * pow(1 - min(dist / light.radius, 1), 3);
+	}
+	color = csv * accum;
 }
 			");
 		}
 
 		void RenderDeferredPathway() {
+			var screenDim = vec2(Width, Height) / 2;
+			var projView = FpsCamera.Matrix * ProjectionMat;
+			Vec2 screenPos(Vec3 wpos) {
+				var ipos = projView * vec4(wpos, 1);
+				return (ipos.XY / ipos.W + 1) * screenDim;
+			}
+			
 			GL.Viewport(0, 0, Width, Height);
 			FBO.Bind();
 			GL.ClearColor(0, 0, 0, 1);
@@ -72,7 +99,6 @@ void main() {
 			GL.Enable(EnableCap.DepthTest);
 			GL.Disable(EnableCap.Blend);
 
-			var projView = FpsCamera.Matrix * ProjectionMat;
 			Mesh.SetProjectionView(projView);
 			
 			Models.ForEach(model => model.Draw());
@@ -80,29 +106,13 @@ void main() {
 			FrameBuffer.Unbind();
 			
 			GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
-			
-			GL.Enable(EnableCap.DepthTest);
-			GL.BindVertexArray(DeferredQuadVAO);
-			
-			DeferredAmbientProgram.Use();
-			DeferredAmbientProgram.SetUniform("uAmbientColor", vec3(0.35));
-			DeferredAmbientProgram.SetTextures(0, FBO.Textures, "uColor", "uPosition", "uDepth");
-			GL.DrawElements(PrimitiveType.Triangles, 6, DrawElementsType.UnsignedInt, IntPtr.Zero);
 
-			GL.Enable(EnableCap.Blend);
-			GL.BlendFunc(BlendingFactor.One, BlendingFactor.One);
+			const int tileSize = 128;
+			var tw = (int) Math.Ceiling((float) Width / tileSize);
+			var th = (int) Math.Ceiling((float) Height / tileSize);
+			var tiles = Enumerable.Range(0, tw * th).Select(i => new List<(double Dist, PointLight Light)>()).ToArray();
 
-			GL.DepthMask(false);
-			GL.Disable(EnableCap.DepthTest);
-			PointLight.SetupFinal(FBO.Textures, Camera.Position);
-			GL.Enable(EnableCap.ScissorTest);
-			var screenDim = vec2(Width, Height) / 2;
 			foreach(var light in Lights) {
-				Vec2 screenPos(Vec3 wpos) {
-					var ipos = projView * vec4(wpos, 1);
-					return (ipos.XY / ipos.W + 1) * screenDim;
-				}
-
 				var toLight = Camera.Position - light.Position;
 				var tll = toLight.Length;
 				if(tll > light.Radius) {
@@ -112,23 +122,45 @@ void main() {
 					var perp = toLight.Cross(cp).Normalized;
 					var espos = screenPos(light.Position + perp * light.Radius);
 					var pradius = (espos - lspos).Length;
-					if(pradius < 100)
+					if(lspos.X + pradius < 0 || lspos.Y + pradius < 0 || lspos.X - pradius > Width || lspos.Y - pradius > Height)
 						continue;
-					var bl = lspos - pradius;
-					var tr = lspos + pradius;
-					if(tr.X < 0 || tr.Y < 0 || bl.X > Width || bl.Y > Height)
-						continue;
-					
-					tr -= bl;
-
-					GL.Scissor((int) max(bl.X, 0), (int) max(bl.Y, 0), (int) min(tr.X, Width - bl.X) + 1,
-						(int) min(tr.Y, Height - bl.Y) + 1);
+					pradius *= pradius;
+					for(var x = 0; x < tw; ++x)
+						for(var y = 0; y < th; ++y) {
+							var tilePos = (x * tileSize, y * tileSize);
+							var delta = (lspos.X - max(tilePos.Item1, min(lspos.X, tilePos.Item1 + tileSize)), lspos.Y - max(tilePos.Item2, min(lspos.Y, tilePos.Item2 + tileSize)));
+							if(delta.Item1 * delta.Item1 + delta.Item2 * delta.Item2 < pradius)
+								tiles[x * th + y].Add((tll, light));
+						}
 				} else
-					GL.Scissor(0, 0, Width, Height);
+					tiles.ForEach(tile => tile.Add((tll, light)));
+			}
 
-				GL.BindVertexArray(DeferredQuadVAO);
-				light.SetupIndividual();
-				GL.DrawElements(PrimitiveType.Triangles, 6, DrawElementsType.UnsignedInt, IntPtr.Zero);
+			tiles = tiles.Select(tile => tile.Count <= maxLights ? tile : tile.OrderBy(x => x.Dist).Take(maxLights).ToList()).ToArray();
+			
+			GL.Enable(EnableCap.DepthTest);
+			GL.BindVertexArray(QuadVAO);
+			
+			Program.Use();
+			Program.SetUniform("uAmbientColor", vec3(0.35));
+			Program.SetTextures(0, FBO.Textures, "uColor", "uPosition", "uDepth");
+
+			GL.Enable(EnableCap.ScissorTest);
+			var ti = 0;
+			for(var x = 0; x < tw; ++x) {
+				for(var y = 0; y < th; ++y, ++ti) {
+					var tile = tiles[ti];
+					GL.Scissor(x * tileSize, y * tileSize, tileSize, tileSize);
+					Program.SetUniform("uLightCount", tile.Count);
+					tile.ForEach((tl, tli) => {
+						var light = tl.Light;
+						var prefix = $"uLights[{tli}].";
+						Program.SetUniform(prefix + "pos", light.Position);
+						Program.SetUniform(prefix + "color", light.Color);
+						Program.SetUniform(prefix + "radius", light.Radius);
+					});
+					GL.DrawElements(PrimitiveType.Triangles, 6, DrawElementsType.UnsignedInt, IntPtr.Zero);
+				}
 			}
 			GL.Disable(EnableCap.ScissorTest);
 			
