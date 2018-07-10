@@ -26,7 +26,7 @@ namespace OpenEQ.Engine {
 					var width = br.ReadInt32();
 					var height = br.ReadInt32();
 					var pixels = br.ReadBytes(width * height * 4);
-					return new Texture((width, height), pixels, flags != MaterialFlag.Normal);
+					return new Texture((width, height), pixels, flags.HasFlag(MaterialFlag.Masked) && !flags.HasFlag(MaterialFlag.Translucent));
 				}
 			}).ToArray();
 		}
@@ -34,7 +34,7 @@ namespace OpenEQ.Engine {
 		public void Use() {
 			(Textures.Length == 1
 				? Textures[0]
-				: Textures[(int) MathF.Round(Stopwatch.ElapsedMilliseconds / AniParam * 2) % Textures.Length]).Use();
+				: Textures[(int) MathF.Round(Stopwatch.ElapsedMilliseconds / AniParam) % Textures.Length]).Use();
 		}
 	}
 }

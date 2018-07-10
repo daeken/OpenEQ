@@ -340,6 +340,7 @@ class Wld(object):
 		frag1_unk = self.b.uint()
 		pos = self.b.float(3)
 		rot = self.b.float(3)
+		#rot = (rot[2], rot[1], rot[0])
 		rot = (rot[2] / 512. * 360. * math.pi / 180., rot[1] / 512. * 360. * math.pi / 180., rot[0] / 512. * 360. * math.pi / 180.)
 		scale = self.b.float(3)
 		scale = (scale[2], scale[2], scale[2]) if scale[2] > 0.0001 else (1, 1, 1)

@@ -37,8 +37,9 @@ def readTer(data, zone, s3d):
             vertices += b.float(6)
             b += 12 # ignore 3 floats
             vertices += b.float(2)
+            vertices += [0]
     else:
-        vertices = b.float(numvert * 8)
+        vertices = [list(b.float(8)) + [0] for i in xrange(numvert)]
     polygons = [(b.uint(3), b.uint(), b.uint()) for i in xrange(numtri)]
 
     assert (version == 3 or b.uint() == 0) and b.pos == len(b)
@@ -62,4 +63,4 @@ def readTer(data, zone, s3d):
     # '20000000', '40000000', '80000000'
     
     for index, polys in matpolys.items():
-        zone.zoneobj.addMesh(Mesh(zmats[index], VertexBuffer(vertices, numvert), polys))
+        zone.zoneobj.addMesh(Mesh(zmats[index], VertexBuffer(vertices, numvert), [poly[1] for poly in polys]))

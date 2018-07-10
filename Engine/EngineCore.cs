@@ -133,7 +133,7 @@ namespace OpenEQ.Engine {
 			FrameTimes.Add(e.Time);
 			
 			RenderDeferredPathway();
-			
+
 			GL.Enable(EnableCap.Blend);
 			GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
 			GL.Enable(EnableCap.DepthTest);
