@@ -101,7 +101,7 @@ void main() {
 
 			Mesh.SetProjectionView(projView);
 			
-			Models.ForEach(model => model.Draw());
+			Models.ForEach(model => model.Draw(translucent: false));
 			
 			FrameBuffer.Unbind();
 			
