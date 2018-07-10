@@ -23,24 +23,20 @@ layout (location = 2) in vec2 aTexCoord;
 layout (location = 3) in mat4 aModelMat;
 uniform mat4 uProjectionViewMat;
 out vec3 vPosition;
-out vec3 vNormal;
 out vec2 vTexCoord;
 void main() {
 	vec4 pos = aModelMat * aPosition;
 	gl_Position = uProjectionViewMat * pos;
 	vPosition = pos.xyz;
-	vNormal = (aModelMat * vec4(aNormal, 0.0)).xyz;
 	vTexCoord = aTexCoord;
 }
 			", @"
 #version 410
 precision highp float;
 in vec3 vPosition;
-in vec3 vNormal;
 in vec2 vTexCoord;
 layout (location = 0) out vec4 color;
 layout (location = 1) out vec3 position;
-layout (location = 2) out vec3 normal;
 uniform sampler2D uTex;
 uniform bool uMasked;
 void main() {
@@ -49,7 +45,6 @@ void main() {
 		discard;
 	color.a = 0;
 	position = vPosition;
-	normal = normalize(vNormal);
 }
 				");
 			

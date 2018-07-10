@@ -13,7 +13,7 @@ namespace OpenEQ.Engine {
 
 		public PointLight(Vec3 position, float radius, float attenuation, Vec3 color) {
 			Position = position;
-			Radius = radius / 2;
+			Radius = radius / 4;
 			Attenuation = attenuation;
 			Color = color;
 			
@@ -33,7 +33,7 @@ void main() {
 precision highp float;
 in vec2 vTexCoord;
 
-uniform sampler2D uColor, uPosition, uNormal;
+uniform sampler2D uColor, uPosition;
 uniform vec3 uLightPos, uLightColor, uCameraPos;
 uniform float uRadius;//, uAttenuation;
 out vec3 color;
@@ -42,14 +42,8 @@ void main() {
 	vec3 pos = texture(uPosition, vTexCoord).xyz;
 	vec3 toLight = uLightPos - pos;
 	float dist = length(toLight);
-	//if(dist > uRadius) discard;
-	//vec3 N = texture(uNormal, vTexCoord).xyz;
-	//if(length(N) < 0.9) discard;
-	//toLight = normalize(toLight);
-	//float cos = clamp(dot(N, toLight), 0, 1);
-	//if(cos == 0) discard;
 	vec4 csv = texture(uColor, vTexCoord);
-	float diffuse = pow(1 - min(dist / uRadius, 1), 3);// * cos;
+	float diffuse = pow(1 - min(dist / uRadius, 1), 3);
 	color = csv.rgb * uLightColor * diffuse;
 }
 				");
@@ -58,7 +52,7 @@ void main() {
 		public static void SetupFinal(int[] textures, Vec3 cameraPos) {
 			FinalProgram.Use();
 			FinalProgram.SetUniform("uCameraPos", cameraPos);
-			FinalProgram.SetTextures(0, textures, "uColor", "uPosition", "uNormal");
+			FinalProgram.SetTextures(0, textures, "uColor", "uPosition");
 		}
 
 		public void SetupIndividual() {
