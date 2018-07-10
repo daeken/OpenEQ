@@ -94,15 +94,15 @@ void main() {
 			FBO.Bind();
 			GL.ClearColor(0, 0, 0, 1);
 			GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
-			
+		
 			GL.Enable(EnableCap.CullFace);
 			GL.Enable(EnableCap.DepthTest);
 			GL.Disable(EnableCap.Blend);
 
 			Mesh.SetProjectionView(projView);
-			
+		
 			Models.ForEach(model => model.Draw(translucent: false));
-			
+		
 			FrameBuffer.Unbind();
 			
 			GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
@@ -140,7 +140,7 @@ void main() {
 			
 			GL.Enable(EnableCap.DepthTest);
 			GL.BindVertexArray(QuadVAO);
-			
+		
 			Program.Use();
 			Program.SetUniform("uAmbientColor", vec3(0.35));
 			Program.SetTextures(0, FBO.Textures, "uColor", "uPosition", "uDepth");
@@ -163,7 +163,7 @@ void main() {
 				}
 			}
 			GL.Disable(EnableCap.ScissorTest);
-			
+		
 			GL.DepthMask(true);
 		}
 	}

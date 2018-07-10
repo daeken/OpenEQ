@@ -11,6 +11,10 @@ namespace OpenEQ.Engine {
 			var filter = (int) (transparent ? TextureMinFilter.Linear : TextureMinFilter.LinearMipmapLinear);
 			GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, filter);
 			GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, filter);
+			if(!transparent) {
+				GL.GetFloat((GetPName) 0x84FF, out float maxAniso);
+				GL.TexParameter(TextureTarget.Texture2D, (TextureParameterName)All.TextureMaxAnisotropyExt, maxAniso);
+			}
 			GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba, size.Item1, size.Item2, 0, PixelFormat.Rgba, PixelType.UnsignedByte, data);
 			if(!transparent)
 				GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);

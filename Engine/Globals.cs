@@ -66,5 +66,12 @@ namespace OpenEQ.Engine {
 		public static Vec3 sin(Vec3 v) => vec3(Sin(v.X), Sin(v.Y), Sin(v.Z));
 		
 		public static LazyProperty<T> lazy<T>(Func<T> func) => new LazyProperty<T>(func);
+
+		public static void Profile(string name, Action func) {
+			var pre = Stopwatch.Elapsed.TotalMilliseconds;
+			func();
+			var post = Stopwatch.Elapsed.TotalMilliseconds;
+			Console.WriteLine($"{name} took {post - pre} ms");
+		}
 	}
 }

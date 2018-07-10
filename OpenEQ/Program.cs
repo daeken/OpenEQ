@@ -15,17 +15,13 @@ namespace OpenEQ {
 			var objInstances = zone.Objects.Select(_ => new List<Mat4>()).ToArray();
 			objInstances.First().Add(Mat4.Identity);
 
-			zone.Placeables.ForEach(p =>
-				objInstances[p.ObjId].Add(Mat4.Scale(p.Scale) * Mat4.RotationX(p.Rotation.X) * Mat4.RotationY(p.Rotation.Y) * Mat4.RotationZ(p.Rotation.Z) * Mat4.Translation(p.Position)));
+			zone.Placeables.ForEach(p => objInstances[p.ObjId].Add(
+				Mat4.Scale(p.Scale) * Mat4.RotationZ(p.Rotation.Z) * Mat4.RotationY(p.Rotation.Y) * Mat4.RotationX(p.Rotation.X) * Mat4.Translation(p.Position)));
 
-			objInstances.ForEach((list, i) => {
-				engine.Add(BuildModel(zone.Objects[i], materials, list.ToArray()));
-			});
+			objInstances.ForEach((list, i) => engine.Add(BuildModel(zone.Objects[i], materials, list.ToArray())));
 			
 			WriteLine($"Loading {zone.Lights.Count} lights");
-			zone.Lights.ForEach(lp => {
-				engine.AddLight(lp.Position, lp.Radius, lp.Attenuation, lp.Color);
-			});
+			zone.Lights.ForEach(lp => engine.AddLight(lp.Position, lp.Radius, lp.Attenuation, lp.Color));
 			
 			/*var smesh = Mesh.Sphere(null);
 			zone.Lights.ForEach(p => {

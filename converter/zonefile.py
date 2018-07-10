@@ -257,7 +257,6 @@ class Zone(object):
 				ofloat(*rewind(rotate(placeable.rotation, ys=-1)))
 				ofloat(*placeable.scale)
 
-			print 'foo?', len(self.lights)
 			ouint(len(self.lights))
 			for light in self.lights:
 				ofloat(*light.position)
