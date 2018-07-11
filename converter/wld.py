@@ -404,7 +404,13 @@ class Wld(object):
 		if (flags & (4 | 8)) != 0:
 			saneflags |= FLAG_TRANSLUCENT
 
-		return saneflags, self.getFrag(self.b.int())
+		if flags & 0xFFFF == 0x14: # HACK: Tiger head in halas
+			saneflags = 0
+
+		temp = saneflags, self.getFrag(self.b.int())
+		if flags != 0x80000001:
+			print '%08x' % flags, temp
+		return temp
 
 	@fragment(0x31)
 	def frag_texlist(self):
