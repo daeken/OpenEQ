@@ -1,4 +1,5 @@
-﻿using static System.Math;
+﻿using OpenEQ.Common;
+using static System.Math;
 using static OpenEQ.Engine.Globals;
 
 namespace OpenEQ.Engine {

@@ -10,6 +10,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LegacyFileReader", "LegacyF
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ConverterApp", "ConverterApp\ConverterApp.csproj", "{4A964466-60D2-40D3-9185-852D1A8891CF}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Common", "Common\Common.csproj", "{369BB521-1704-4159-895D-02313992B88A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -36,5 +38,9 @@ Global
 		{4A964466-60D2-40D3-9185-852D1A8891CF}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{4A964466-60D2-40D3-9185-852D1A8891CF}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{4A964466-60D2-40D3-9185-852D1A8891CF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{369BB521-1704-4159-895D-02313992B88A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{369BB521-1704-4159-895D-02313992B88A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{369BB521-1704-4159-895D-02313992B88A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{369BB521-1704-4159-895D-02313992B88A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

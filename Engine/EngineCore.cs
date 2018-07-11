@@ -7,6 +7,7 @@ using OpenTK;
 using OpenTK.Graphics;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Input;
+using OpenEQ.Common;
 using Vector2 = System.Numerics.Vector2;
 using static OpenEQ.Engine.Globals;
 

@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using OpenTK.Graphics.OpenGL4;
+using OpenEQ.Common;
 using static OpenEQ.Engine.Globals;
 
 namespace OpenEQ.Engine {
@@ -70,9 +71,11 @@ in vec3 vPosition;
 in vec2 vTexCoord;
 out vec4 color;
 uniform sampler2D uTex;
+uniform bool uMasked;
 void main() {
 	color = texture(uTex, vTexCoord);
-	color.a *= (color.r + color.g + color.b) / 3;
+	if(uMasked)
+		color.a *= (color.r + color.g + color.b) / 3;
 }
 				");
 			}
@@ -135,12 +138,12 @@ void main() {
 			cp.Use();
 			Material.Use();
 			switch(Material.Flags) {
-				case MaterialFlag x when !translucent && x.HasFlag(MaterialFlag.Masked):
+				case MaterialFlag x when x.HasFlag(MaterialFlag.Masked):
 					cp.SetUniform("uMasked", 1);
 					break;
 				case MaterialFlag.Transparent:
 					return;
-				case var x when !translucent:
+				default:
 					cp.SetUniform("uMasked", 0);
 					break;
 			}

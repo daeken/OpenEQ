@@ -1,5 +1,6 @@
 ﻿using System;
 using OpenTK.Graphics.OpenGL4;
+using OpenEQ.Common;
 using static OpenEQ.Engine.Globals;
 
 namespace OpenEQ.Engine {

@@ -8,7 +8,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Text;
 
-namespace LegacyFileReader {
+namespace OpenEQ.LegacyFileReader {
 	public class S3D : IEnumerable<string> {
 		readonly Stream Fp;
 		readonly BinaryReader Br;
