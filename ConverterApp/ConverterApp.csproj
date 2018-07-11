@@ -2,6 +2,8 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>netcoreapp2.1</TargetFramework>
+    <AssemblyName>OpenEQ.ConverterApp</AssemblyName>
+    <RootNamespace>OpenEQ.ConverterApp</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\LegacyFileReader\LegacyFileReader.csproj" />

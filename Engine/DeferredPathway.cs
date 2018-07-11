@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using MoreLinq;
 using OpenTK.Graphics.OpenGL4;
+using OpenEQ.Common;
 using static OpenEQ.Engine.Globals;
 using static System.Console;
 

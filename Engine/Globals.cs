@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Diagnostics;
+using OpenEQ.Common;
 using static System.Math;
 
 namespace OpenEQ.Engine {

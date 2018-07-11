@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using NsimGui;
+using OpenEQ.Common;
 using OpenTK.Graphics.OpenGL4;
 
 namespace OpenEQ.Engine {
