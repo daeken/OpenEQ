@@ -1,12 +1,18 @@
 ﻿using System;
+using System.Diagnostics;
 using System.IO;
 using OpenEQ.ConverterCore;
 
 namespace OpenEQ.ConverterApp {
 	class Program {
 		static void Main(string[] args) {
+			var sw = new Stopwatch();
+			sw.Start();
 			var converter = new Converter(args[0]);
-			Console.WriteLine(converter.ConvertZone(args[1]) ? "Zone converted" : "Zone not found");
+			var success = converter.ConvertZone(args[1]);
+			sw.Stop();
+			Console.WriteLine(success ? "Zone converted" : "Zone not found");
+			Console.WriteLine($"Took {sw.Elapsed.Milliseconds} ms");
 		}
 	}
 }
