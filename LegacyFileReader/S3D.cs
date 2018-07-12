@@ -63,9 +63,11 @@ namespace OpenEQ.LegacyFileReader {
 			}
 			return arr;
 		}
+
+		byte[] DecompressChunk((uint, uint) file) => DecompressChunk(file.Item1, file.Item2);
 		
-		public byte[] this[string fn] => DecompressChunk(Files[fn].Offset, Files[fn].Size);
-		public Stream Open(string fn) => new MemoryStream(this[fn], writable: false);
+		public byte[] this[string fn] => DecompressChunk(Files[fn.ToLower()]);
+		public Stream Open(string fn) => new MemoryStream(this[fn.ToLower()], writable: false);
 		
 		public IEnumerator<string> GetEnumerator() => Files.Keys.GetEnumerator();
 		IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();

@@ -1,5 +1,7 @@
-﻿using System.IO;
+﻿using System.Collections.Generic;
+using System.IO;
 using System.Text;
+using System.Linq;
 
 namespace OpenEQ.Common {
 	public static class Extensions {
@@ -33,5 +35,8 @@ namespace OpenEQ.Common {
 			bw.Write((float) v.Z);
 			bw.Write((float) v.W);
 		}
+
+		public static Dictionary<KeyT, ValueT> ToDictionary<KeyT, ValueT>(this IEnumerable<(KeyT Key, ValueT Value)> e) =>
+			e.ToDictionary(x => x.Key, x => x.Value);
 	}
 }

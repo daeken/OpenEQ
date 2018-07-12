@@ -14,6 +14,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Common", "Common\Common.csp
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ConverterCore", "ConverterCore\ConverterCore.csproj", "{21DE82AC-42AB-4686-B6A6-E469B65DCE06}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ImageLib", "ImageLib\ImageLib.csproj", "{F5855B21-D53B-4457-9C5C-CA01B1044AAE}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -48,5 +50,9 @@ Global
 		{21DE82AC-42AB-4686-B6A6-E469B65DCE06}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{21DE82AC-42AB-4686-B6A6-E469B65DCE06}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{21DE82AC-42AB-4686-B6A6-E469B65DCE06}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F5855B21-D53B-4457-9C5C-CA01B1044AAE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F5855B21-D53B-4457-9C5C-CA01B1044AAE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F5855B21-D53B-4457-9C5C-CA01B1044AAE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F5855B21-D53B-4457-9C5C-CA01B1044AAE}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
