@@ -87,6 +87,15 @@ namespace OpenEQ.Common {
 		public Vec2 ToPolar() => new Vec2(Math.Atan2(Y, X), Length);
 		public Vec2 ToCartesian() => new Vec2(Y * Math.Cos(X), Y * Math.Sin(X));
 
+		public override bool Equals(object obj) {
+			if(obj is Vec2 b)
+				return (int) (X * 100000 + .5) == (int) (b.X * 100000 + .5) && (int) (Y * 100000 + .5) == (int) (b.Y * 100000 + .5);
+			return base.Equals(obj);
+		}
+
+		public override int GetHashCode() =>
+			((int) (X * 100000 + .5)).GetHashCode() * 67 + ((int) (Y * 100000 + .5)).GetHashCode() * 17;
+
 		public override string ToString() {
 			return $"Vec2[ {X} {Y} ]";
 		}

@@ -4,4 +4,7 @@
     <AssemblyName>OpenEQ.Common</AssemblyName>
     <RootNamespace>OpenEQ.Common</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="morelinq" Version="3.0.0" />
+  </ItemGroup>
 </Project>
