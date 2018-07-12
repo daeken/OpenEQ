@@ -6,6 +6,6 @@
     <RootNamespace>OpenEQ.ConverterApp</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\LegacyFileReader\LegacyFileReader.csproj" />
+    <ProjectReference Include="..\ConverterCore\ConverterCore.csproj" />
   </ItemGroup>
 </Project>

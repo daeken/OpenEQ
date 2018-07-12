@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -9,15 +10,23 @@ using static System.Console;
 namespace OpenEQ.LegacyFileReader {
 	public class Reference<T> where T : class {
 		readonly Wld Wld;
-		readonly int Ref;
+		public readonly int Ref;
 
 		public Reference(Wld wld, int @ref) {
 			Wld = wld;
-			Ref = @ref;
+			Ref = wld.PreResolveRef(@ref);
 		}
 
 		public string Name => Wld.GetReferenceName(Ref);
-		public T Value => Wld.GetReference(Ref) is T tv ? tv : null;
+		public T Value {
+			get {
+				var v = Wld.GetReference(Ref);
+				if(v is T tv)
+					return tv;
+				WriteLine($"Reference not found? {Ref} '{v}' {typeof(T)}");
+				return null;
+			}
+		}
 
 		public override string ToString() {
 			switch(Value) {
@@ -132,6 +141,9 @@ namespace OpenEQ.LegacyFileReader {
 	
 	public class Wld {
 		static readonly byte[] StringHashKey = { 0x95, 0x3A, 0xC5, 0x2A, 0x95, 0x7A, 0x95, 0x6A };
+
+		public readonly S3D S3D;
+		public readonly string Filename;
 		
 		readonly Stream Fp;
 		readonly BinaryReader Br;
@@ -140,12 +152,16 @@ namespace OpenEQ.LegacyFileReader {
 		readonly string StringHash;
 
 		readonly (string Name, object Fragment)[] Fragments;
+		readonly Dictionary<string, int> NameIndex = new Dictionary<string, int>();
 		
-		public Wld(Stream fp) {
-			Fp = fp;
-			Br = new BinaryReader(fp);
-			
-			Debug.Assert(Br.ReadUInt32() == 0x54503D02);
+		public Wld(S3D s3d, string fn) {
+			S3D = s3d;
+			Filename = fn;
+			Fp = s3d.Open(fn);
+			Br = new BinaryReader(Fp);
+
+			var magic = Br.ReadUInt32();
+			Debug.Assert(magic == 0x54503D02);
 			NewFormat = Br.ReadUInt32() != 0x00015500;
 
 			var fragCount = Br.ReadUInt32();
@@ -165,14 +181,15 @@ namespace OpenEQ.LegacyFileReader {
 				var type = Br.ReadUInt32();
 				var spos = Fp.Position;
 				var nr = Br.ReadInt32();
-				var name = nr < 0 && type != 0x35 ? GetString(-nr) : null;
+				var name = nr <= 0 && type != 0x35 ? GetString(-nr) : null;
 
 				void Add<T>(T obj) {
-					WriteLine(obj);
+					//WriteLine(obj);
 					Fragments[i] = (name, obj);
+					NameIndex[name] = i;
 				}
 				
-				WriteLine($"Parsing fragment {i}, type 0x{type:X2} with size 0x{size:X} and name '{name}'");
+				//WriteLine($"Parsing fragment {i}, type 0x{type:X2} with size 0x{size:X} and name '{name}'");
 
 				switch(type) {
 					case 0x03: Add(Read03()); break;
@@ -199,36 +216,22 @@ namespace OpenEQ.LegacyFileReader {
 					case 0x2F: Add(Read2F()); break;
 					case 0x30: Add(Read30()); break;
 					case 0x31: Add(Read31()); break;
+					case 0x32: break;
+					case 0x33: break;
 					case 0x34: break; // TODO: Figure out -- totally unknown
 					case 0x35: break;
 					case 0x36: Add(Read36()); break;
 					case 0x37: Add(Read37()); break;
 					default:
-						WriteLine($"Unhandled");
+						WriteLine($"Unhandled fragment type 0x{type:X02}");
 						break;
 				}
 				Debug.Assert(Fp.Position <= spos + size); // Make sure we didn't read past the end of a fragment
 				Fp.Position = spos + size;
 			}
-
-			/*foreach(var (name, obj) in Fragments) {
-				switch(obj) {
-					case null: break;
-					case Fragment04 f04:
-						WriteLine($"0x04 fragment {f04}");
-						WriteLine($"- References [{string.Join(", ", f04.References.Select(GetReference))}]");
-						break;
-					case Fragment15 f15:
-						WriteLine($"0x15 fragment {f15}");
-						WriteLine($"- Reference {GetReference(f15.Reference)}");
-						break;
-					case Fragment30 f30:
-						WriteLine($"0x30 fragment {f30}");
-						WriteLine($"- Reference {GetReference(f30.Reference)}");
-						break;
-				}
-			}*/
 		}
+
+		public IEnumerable<(string Name, T Fragment)> GetFragments<T>() => Fragments.Where(x => x.Fragment is T).Select(x => (x.Name, (T) x.Fragment));
 
 		Fragment03 Read03() =>
 			new Fragment03 {
@@ -347,6 +350,7 @@ namespace OpenEQ.LegacyFileReader {
 				Br.ReadUInt32();
 				Br.ReadSingle();
 			}
+
 			var reference = ReadRef<Fragment05>();
 			return new Fragment30 {
 				Reference = reference, 
@@ -355,7 +359,7 @@ namespace OpenEQ.LegacyFileReader {
 		}
 		
 		Fragment31 Read31() {
-			Debug.Assert(Br.ReadUInt32() == 0);
+			Br.ReadUInt32();
 			return new Fragment31 {
 				References = Enumerable.Range(0, Br.ReadInt32()).Select(_ => ReadRef<Fragment30>()).ToArray()
 			};
@@ -383,16 +387,13 @@ namespace OpenEQ.LegacyFileReader {
 			var polyTexCount = Br.ReadUInt16();
 			var vertTexCount = Br.ReadUInt16();
 			
-			Debug.Assert(vertCount == tcCount);
-			Debug.Assert(vertCount == normalCount);
-			
 			Br.ReadUInt16();
 			var scale = (double) (1UL << Br.ReadUInt16());
 			var vertices = Enumerable.Range(0, vertCount)
 				.Select(_ => new Vec3(Br.ReadInt16(), Br.ReadInt16(), Br.ReadInt16()) / scale + center).ToArray();
-			var texcoords = Enumerable.Range(0, vertCount)
+			var texcoords = Enumerable.Range(0, tcCount)
 				.Select(_ => NewFormat ? Br.ReadVec2() : new Vec2(Br.ReadInt16(), Br.ReadInt16()) / 256).ToArray();
-			var normals = Enumerable.Range(0, vertCount)
+			var normals = Enumerable.Range(0, normalCount)
 				.Select(_ => new Vec3(Br.ReadSByte(), Br.ReadSByte(), Br.ReadSByte()) / 127).ToArray();
 			var colors = Enumerable.Range(0, colorCount)
 				.Select(_ => Br.ReadUInt32()).ToArray();
@@ -418,6 +419,12 @@ namespace OpenEQ.LegacyFileReader {
 		}
 		
 		Reference<T> ReadRef<T>() where T : class => Br.ReadRef<T>(this);
+
+		public int PreResolveRef(int reference) {
+			if(reference > 0) return reference;
+			var name = GetString(-reference);
+			return NameIndex.ContainsKey(name) ? NameIndex[name] + 1 : reference;
+		}
 
 		public string GetReferenceName(int reference) => reference > 0 ? Fragments[reference - 1].Name : GetString(-reference);
 		public object GetReference(int reference) => reference > 0 ? Fragments[reference - 1].Fragment : GetString(-reference);

@@ -12,6 +12,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ConverterApp", "ConverterAp
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Common", "Common\Common.csproj", "{369BB521-1704-4159-895D-02313992B88A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ConverterCore", "ConverterCore\ConverterCore.csproj", "{21DE82AC-42AB-4686-B6A6-E469B65DCE06}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -42,5 +44,9 @@ Global
 		{369BB521-1704-4159-895D-02313992B88A}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{369BB521-1704-4159-895D-02313992B88A}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{369BB521-1704-4159-895D-02313992B88A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{21DE82AC-42AB-4686-B6A6-E469B65DCE06}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{21DE82AC-42AB-4686-B6A6-E469B65DCE06}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{21DE82AC-42AB-4686-B6A6-E469B65DCE06}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{21DE82AC-42AB-4686-B6A6-E469B65DCE06}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

@@ -10,17 +10,20 @@ using System.Text;
 
 namespace OpenEQ.LegacyFileReader {
 	public class S3D : IEnumerable<string> {
+		public readonly string Filename;
 		readonly Stream Fp;
 		readonly BinaryReader Br;
 
 		readonly Dictionary<string, (uint Offset, uint Size)> Files = new Dictionary<string, (uint Offset, uint Size)>();
 		
-		public S3D(Stream fp) {
+		public S3D(string fn, Stream fp) {
+			Filename = fn;
 			Fp = fp;
 			Br = new BinaryReader(fp);
 
 			var offset = Br.ReadUInt32();
-			Debug.Assert(Br.ReadUInt32() == 0x20534650);
+			var magic = Br.ReadUInt32();
+			Debug.Assert(magic == 0x20534650);
 
 			fp.Position = offset;
 			var chunks = Enumerable.Range(0, Br.ReadInt32()).Select(
