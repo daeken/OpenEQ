@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Common\Common.csproj" />
+    <ProjectReference Include="..\ImageLib\ImageLib.csproj" />
     <ProjectReference Include="..\LegacyFileReader\LegacyFileReader.csproj" />
   </ItemGroup>
   <ItemGroup>
