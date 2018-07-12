@@ -50,6 +50,16 @@ namespace OpenEQ.ConverterCore {
 				OESFile.Write(zip.CreateEntry("main.oes", CompressionLevel.Optimal).Open(), zone);
 			}
 
+			return true;
+		}
+
+		string ConvertTexture(S3D s3d, ZipArchive zip, string fn) {
+			byte[] data;
+			lock(s3d) data = s3d[fn];
+
+			var dimg = Dds.Decode(new MemoryStream(data));
+			
+			/*
 			var idat = new byte[800 * 600 * 3];
 			var i = 0;
 			for(var y = 0; y < 600; ++y)
@@ -60,17 +70,9 @@ namespace OpenEQ.ConverterCore {
 					idat[i++] = (byte) Math.Round(fy * 255);
 					idat[i++] = (byte) Math.Round(fx * fy * 255);
 				}
-			
 			var img = new Image(ColorMode.Rgb, (800, 600), idat);
 			using(var fp = File.OpenWrite("test.png"))
-				Png.Encode(img, fp);
-			
-			return true;
-		}
-
-		string ConvertTexture(S3D s3d, ZipArchive zip, string fn) {
-			byte[] data;
-			lock(s3d) data = s3d[fn];
+				Png.Encode(img, fp);*/
 			
 			return fn;
 		}
