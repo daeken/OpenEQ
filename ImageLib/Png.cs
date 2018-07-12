@@ -8,7 +8,7 @@ using Force.Crc32;
 using Ionic.Zlib;
 
 namespace ImageLib {
-	public class Png {
+	public static class Png {
 		public static void Encode(Image image, Stream stream) {
 			var bw = new BeBinaryWriter(stream, Encoding.Default, leaveOpen: true);
 			bw.Write(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A });
