@@ -126,9 +126,9 @@ namespace OpenEQ.Common {
 		}
 
 		protected override void DeserializeData(BinaryReader br) {
-			AlphaMask = br.ReadBoolean();
-			Transparent = br.ReadBoolean();
-			Emissive = br.ReadBoolean();
+			AlphaMask = br.ReadBool();
+			Transparent = br.ReadBool();
+			Emissive = br.ReadBool();
 		}
 	}
 
@@ -203,12 +203,12 @@ namespace OpenEQ.Common {
 	public class OESInstance : OESChunk {
 		public OESObject Object;
 		public Vec3 Position, Scale;
-		public Vec4 Rotation;
+		public Quaternion Rotation;
 		public string SkinName;
 
 		public OESInstance(string typeCode, uint id) : base(typeCode, id) {}
 		
-		public OESInstance(OESObject obj, Vec3 position, Vec3 scale, Vec4 rotation, string skinName = "") : base("inst") {
+		public OESInstance(OESObject obj, Vec3 position, Vec3 scale, Quaternion rotation, string skinName = "") : base("inst") {
 			Object = obj;
 			Position = position;
 			Scale = scale;
@@ -229,7 +229,7 @@ namespace OpenEQ.Common {
 			SkinName = br.ReadUTF8String();
 			Position = br.ReadVec3();
 			Scale = br.ReadVec3();
-			Rotation = br.ReadVec4();
+			Rotation = br.ReadQuaternion();
 		}
 	}
 
@@ -315,23 +315,24 @@ namespace OpenEQ.Common {
 				chunk.Serialize(bw);
 		}
 		
-		readonly Dictionary<uint, Action<OESChunk>> Resolvers = new Dictionary<uint, Action<OESChunk>>();
+		readonly Dictionary<uint, List<Action<OESChunk>>> Resolvers = new Dictionary<uint, List<Action<OESChunk>>>();
 		readonly Dictionary<uint, OESChunk> Chunks = new Dictionary<uint, OESChunk>();
 
 		OESChunk Read(BinaryReader br) {
 			var instance = OESChunk.Deserialize(this, br);
-			foreach(var (id, func) in Resolvers)
-				func(Chunks[id]);
+			foreach(var (id, funcs) in Resolvers)
+				funcs.ForEach(x => x(Chunks[id]));
 			return instance;
 		}
 
 		internal void Add(OESChunk chunk) => Chunks[chunk.Id] = chunk;
 
 		internal void Resolve<T>(uint id, Action<T> func) where T : OESChunk {
-			Resolvers[id] = chunk => {
+			if(!Resolvers.ContainsKey(id)) Resolvers[id] = new List<Action<OESChunk>>();
+			Resolvers[id].Add(chunk => {
 				Debug.Assert(chunk is T);
 				func((T) chunk);
-			};
+			});
 		}
 	}
 }

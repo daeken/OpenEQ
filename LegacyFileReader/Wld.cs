@@ -282,7 +282,7 @@ namespace OpenEQ.LegacyFileReader {
 			var scale = Br.ReadVec3();
 
 			scale = scale.Z > 0.0001 ? new Vec3(scale.Z) : Vec3.One;
-			rot = new Vec3(rot.Z / 512 * 360 * MathF.PI / 180, rot.Y / 512 * 360 * MathF.PI / 180, rot.X / 512 * 360 * MathF.PI / 180);
+			rot = new Vec3(rot.Z / 256 * Math.PI, rot.Y / 256 * Math.PI, rot.X / 256 * Math.PI);
 			
 			return new Fragment15 {
 				Reference = reference, 

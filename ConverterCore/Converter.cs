@@ -5,9 +5,11 @@ using System.IO.Compression;
 using System.Linq;
 using System.Security.Cryptography;
 using ImageLib;
+using MoreLinq;
 using OpenEQ.Common;
 using OpenEQ.LegacyFileReader;
 using static System.Console;
+using Extensions = OpenEQ.Common.Extensions;
 
 namespace OpenEQ.ConverterCore {
 	public class Converter {
@@ -27,30 +29,38 @@ namespace OpenEQ.ConverterCore {
 			if(File.Exists(zn)) File.Delete(zn);
 			using(var zip = ZipFile.Open(zn, ZipArchiveMode.Create)) {
 				var zone = new OESZone(name);
-				var skin = new OESSkin();
-				zone.Add(skin);
-
+				
 				foreach(var wld in wlds) {
 					if(wld.Filename != name + ".wld") continue;
-					var zonemesh = new Mesh();
-					foreach(var (meshname, meshfrag) in wld.GetFragments<Fragment36>())
-						zonemesh.Add(new MeshPiece(meshfrag));
-					var baked = zonemesh.Bake();
-					var textureFns = baked.Select(x => x.Texture.Filenames).SelectMany(x => x).OrderBy(x => x)
-						.Distinct();
-					var textureMap = textureFns.AsParallel().Select(fn => (fn, ConvertTexture(wld.S3D, zip, fn)))
-						.ToDictionary();
-					foreach(var (vb, ib, collidable, texture) in baked) {
-						if(texture.Flags == 0) continue; // TODO: Bake this in, but non-renderable. Collision mesh type?
-						zone.Add(new OESStaticMesh(collidable, ib, vb));
-						var tf = texture.Flags;
-						var masked = (tf & (2 | 8 | 16)) != 0;
-						var transparent = (tf & (4 | 8)) != 0;
-						if((tf & 0xFFFF) == 0x14) // TODO: Remove hack. Fixes tiger head in Halas
-							masked = transparent = false;
-						skin.Add(new OESMaterial(masked, transparent, false) {
-							new OESTexture(textureMap[texture.Filenames.First()])
-						});
+					CreateMeshAndSkin(
+						wld, zip, zone, 
+						wld.GetFragments<Fragment36>().Select(mesh => new MeshPiece(mesh.Fragment))
+					);
+					break;
+				}
+
+				var objMap = new Dictionary<string, OESObject>();
+				foreach(var wld in wlds) {
+					if(wld.Filename == name + ".wld") continue;
+
+					foreach(var (_objname, objmesh) in wld.GetFragments<Fragment36>()) {
+						var objname = _objname.Replace("_DMSPRITEDEF", "");
+						CreateMeshAndSkin(wld, zip, objMap[objname] = new OESObject(objname), new[] { new MeshPiece(objmesh) });
+						zone.Add(objMap[objname]);
+					}
+				}
+
+				foreach(var wld in wlds) {
+					if(wld.Filename == name + ".wld") continue;
+
+					foreach(var (instname, instance) in wld.GetFragments<Fragment15>()) {
+						var objname = instance.Reference.Value.Replace("_ACTORDEF", "");
+						zone.Add(new OESInstance(
+							objMap[objname], instance.Position, instance.Scale, 
+							Quaternion.FromAxisAngle(new Vec3(0, 0, 1), -instance.Rotation.Z) * 
+							Quaternion.FromAxisAngle(new Vec3(0, 1, 0), -instance.Rotation.Y) * 
+							Quaternion.FromAxisAngle(new Vec3(1, 0, 0), -instance.Rotation.X)
+						));
 					}
 				}
 
@@ -64,6 +74,29 @@ namespace OpenEQ.ConverterCore {
 			}
 
 			return true;
+		}
+
+		void CreateMeshAndSkin(Wld wld, ZipArchive zip, OESChunk target, IEnumerable<MeshPiece> pieces) {
+			var mesh = new Mesh();
+			pieces.ForEach(mesh.Add);
+			var baked = mesh.Bake();
+			var textureFns = baked.Select(x => x.Texture.Filenames).SelectMany(x => x).OrderBy(x => x)
+				.Distinct();
+			var textureMap = Extensions.ToDictionary(textureFns.AsParallel().Select(fn => (fn, ConvertTexture(wld.S3D, zip, fn))));
+			var skin = new OESSkin();
+			target.Add(skin);
+			foreach(var (vb, ib, collidable, texture) in baked) {
+				if(texture.Flags == 0) continue; // TODO: Bake this in, but non-renderable. Collision mesh type?
+				target.Add(new OESStaticMesh(collidable, ib, vb));
+				var tf = texture.Flags;
+				var masked = (tf & (2 | 8 | 16)) != 0;
+				var transparent = (tf & (4 | 8)) != 0;
+				if((tf & 0xFFFF) == 0x14) // TODO: Remove hack. Fixes tiger head in Halas
+					masked = transparent = false;
+				skin.Add(new OESMaterial(masked, transparent, false) {
+					new OESTexture(textureMap[texture.Filenames.First()])
+				});
+			}
 		}
 
 		string ConvertTexture(S3D s3d, ZipArchive zip, string fn) {

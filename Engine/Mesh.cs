@@ -134,7 +134,7 @@ void main() {
 				return;
 			if(!translucent && Material.Flags.HasFlag(MaterialFlag.Translucent))
 				return;
-			
+
 			cp.Use();
 			Material.Use();
 			switch(Material.Flags) {
