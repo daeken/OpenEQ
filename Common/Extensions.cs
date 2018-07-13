@@ -9,11 +9,12 @@ namespace OpenEQ.Common {
 		internal static bool ReadBool(this BinaryReader br) => br.ReadUInt32() != 0;
 
 		internal static void WriteUTF8String(this BinaryWriter bw, string value) {
-			bw.Write(value.Length);
-			bw.Write(Encoding.UTF8.GetBytes(value));
+			var bytes = Encoding.UTF8.GetBytes(value);
+			bw.Write(bytes.Length);
+			bw.Write(bytes);
 		}
 		internal static string ReadUTF8String(this BinaryReader br) => Encoding.UTF8.GetString(br.ReadBytes(br.ReadInt32()));
-		
+
 		public static Vec2 ReadVec2(this BinaryReader br) => new Vec2(br.ReadSingle(), br.ReadSingle());
 		public static Vec3 ReadVec3(this BinaryReader br) => new Vec3(br.ReadSingle(), br.ReadSingle(), br.ReadSingle());
 		public static Vec4 ReadVec4(this BinaryReader br) => new Vec4(br.ReadSingle(), br.ReadSingle(), br.ReadSingle(), br.ReadSingle());

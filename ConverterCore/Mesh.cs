@@ -52,7 +52,7 @@ namespace OpenEQ.ConverterCore {
 				texCoords.AddRange(piece.TexCoords.Concat(Enumerable.Range(0, piece.Vertices.Count - piece.TexCoords.Count).Select(x => Vec2.Zero)));
 				textures.AddRange(piece.Textures);
 				var pi = 0;
-				foreach(var (ti, ptc) in piece.PolyTexs) {
+				foreach(var (ptc, ti) in piece.PolyTexs) {
 					foreach(var (collidable, a, b, c) in piece.Polygons.Skip(pi).Take((int) ptc)) {
 						var index = ((int) ti + texoff, collidable);
 						if(!polygons.ContainsKey(index))
@@ -111,8 +111,8 @@ namespace OpenEQ.ConverterCore {
 
 			foreach(var (a, b, c) in polys) {
 				oib.Add(Add(a));
-				oib.Add(Add(b));
 				oib.Add(Add(c));
+				oib.Add(Add(b));
 			}
 
 			return (ovb.ToArray(), oib.ToArray());

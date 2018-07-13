@@ -62,5 +62,54 @@ namespace ImageLib {
 			Chunk("IEND", w => { });
 			bw.Flush();
 		}
+
+		public static Image Decode(Stream stream) {
+			var br = new BeBinaryReader(stream, Encoding.Default, leaveOpen: true);
+
+			ColorMode colorMode = ColorMode.Greyscale;
+			var size = (Width: 0, Height: 0);
+			byte[] data = null;
+
+			var header = br.ReadBytes(8);
+
+			var running = true;
+			while(running) {
+				var dlen = br.ReadInt32();
+				var type = Encoding.ASCII.GetString(br.ReadBytes(4));
+				switch(type) {
+					case "IHDR":
+						size = (br.ReadInt32(), br.ReadInt32());
+						br.ReadByte();
+						switch(br.ReadByte()) {
+							case 0: colorMode = ColorMode.Greyscale; break;
+							case 2: colorMode = ColorMode.Rgb; break;
+							case 6: colorMode = ColorMode.Rgba; break;
+						}
+						data = new byte[size.Width * size.Height * Image.PixelSize(colorMode)];
+						br.ReadByte();
+						br.ReadByte();
+						br.ReadByte();
+						break;
+					case "IDAT":
+						using(var ms = new MemoryStream())
+							using(var zs = new ZlibStream(ms, CompressionMode.Decompress)) {
+								zs.Write(br.ReadBytes(dlen), 0, dlen);
+								zs.Flush();
+								ms.Flush();
+								var tdata = ms.ToArray();
+								var stride = size.Width * Image.PixelSize(colorMode);
+								for(var y = 0; y < size.Height; ++y)
+									Array.Copy(tdata, y * stride + y + 1, data, stride * y, stride);
+							}
+						break;
+					case "IEND":
+						running = false;
+						break;
+				}
+				br.ReadUInt32();
+			}
+			
+			return new Image(colorMode, size, data);
+		}
 	}
 }

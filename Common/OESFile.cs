@@ -60,6 +60,7 @@ namespace OpenEQ.Common {
 			
 			bw.Write((uint) data.LongLength);
 			bw.Write((uint) childData.LongLength);
+			bw.Write((uint) Children.Count);
 			bw.Write(data);
 			bw.Write(childData);
 		}
@@ -267,7 +268,7 @@ namespace OpenEQ.Common {
 		
 		public OESSkin(string name = "") : base("skin") => Name = name;
 
-		protected override void SerializeData(BinaryWriter bw) => bw.Write(Name ?? "");
+		protected override void SerializeData(BinaryWriter bw) => bw.WriteUTF8String(Name ?? "");
 		protected override void DeserializeData(BinaryReader br) => Name = br.ReadUTF8String();
 	}
 
@@ -302,6 +303,8 @@ namespace OpenEQ.Common {
 	}
 
 	public class OESFile {
+		public static T Read<T>(Stream fp) where T : OESChunk => (T) Read(fp);
+		
 		public static OESChunk Read(Stream fp) {
 			using(var br = new BinaryReader(fp))
 				return new OESFile().Read(br);
