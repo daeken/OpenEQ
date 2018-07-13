@@ -41,11 +41,23 @@ namespace OpenEQ.ConverterCore {
 					var textureMap = textureFns.AsParallel().Select(fn => (fn, ConvertTexture(wld.S3D, zip, fn)))
 						.ToDictionary();
 					foreach(var (vb, ib, collidable, texture) in baked) {
+						if(texture.Flags == 0) continue; // TODO: Bake this in, but non-renderable. Collision mesh type?
 						zone.Add(new OESStaticMesh(collidable, ib, vb));
-						skin.Add(new OESMaterial(false, false, false) {
-							new OESTexture(texture.Filenames.First())
+						var tf = texture.Flags;
+						var masked = (tf & (2 | 8 | 16)) != 0;
+						var transparent = (tf & (4 | 8)) != 0;
+						if((tf & 0xFFFF) == 0x14) // TODO: Remove hack. Fixes tiger head in Halas
+							masked = transparent = false;
+						skin.Add(new OESMaterial(masked, transparent, false) {
+							new OESTexture(textureMap[texture.Filenames.First()])
 						});
 					}
+				}
+
+				foreach(var lf in wlds.First(x => x.Filename == "lights.wld").GetFragments<Fragment28>()) {
+					var light = lf.Fragment;
+					var sl = light.Reference.Value.Reference.Value;
+					zone.Add(new OESLight(light.Pos, sl.Color, light.Radius, sl.Attenuation ?? 200));
 				}
 
 				OESFile.Write(zip.CreateEntry("main.oes", CompressionLevel.Optimal).Open(), zone);

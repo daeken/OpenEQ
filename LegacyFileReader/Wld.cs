@@ -317,12 +317,15 @@ namespace OpenEQ.LegacyFileReader {
 			return new Fragment22();
 		}
 
-		Fragment28 Read28() =>
-			new Fragment28 {
-				Reference = ReadRef<Fragment1C>(), 
-				Pos = Br.ReadVec3(), 
+		Fragment28 Read28() {
+			var reference = ReadRef<Fragment1C>();
+			var flags = Br.ReadUInt32();
+			return new Fragment28 {
+				Reference = reference,
+				Pos = Br.ReadVec3(),
 				Radius = Br.ReadSingle()
 			};
+		}
 
 		Fragment29 Read29() {
 			return new Fragment29();

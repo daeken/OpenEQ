@@ -288,7 +288,8 @@ namespace ImageLib {
 						}
 
 						_dds.Images[_level] = Decompress.Image(_imageBits, _w2, _h2, _compressionMode);
-						_dds.Images[_level].FlipY();
+						_dds.Images[_level].SwapRB();
+						//_dds.Images[_level].FlipY();
 					} catch {
 						// Unexpected end of file. Perhaps mipmaps weren't fully written to file.
 						// We'll at least provide them with what we've extracted so far.

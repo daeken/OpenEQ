@@ -1,6 +1,7 @@
 ﻿using System;
 using System.IO;
 using System.Linq;
+using ImageLib;
 using OpenTK.Graphics.OpenGL4;
 using static OpenEQ.Engine.Globals;
 
@@ -18,17 +19,12 @@ namespace OpenEQ.Engine {
 		readonly float AniParam;
 		public readonly MaterialFlag Flags;
 		
-		public Material(MaterialFlag flags, float aniParam, Stream[] streams) {
+		public Material(MaterialFlag flags, float aniParam, Image[] images) {
 			Flags = flags;
 			AniParam = aniParam;
-			Textures = streams.Select(stream => {
-				using(var br = new BinaryReader(stream)) {
-					var width = br.ReadInt32();
-					var height = br.ReadInt32();
-					var pixels = br.ReadBytes(width * height * 4);
-					return new Texture((width, height), pixels, flags.HasFlag(MaterialFlag.Masked) && !flags.HasFlag(MaterialFlag.Translucent));
-				}
-			}).ToArray();
+			Textures = images.Select(image =>
+				new Texture(image, flags.HasFlag(MaterialFlag.Masked) && !flags.HasFlag(MaterialFlag.Translucent))
+			).ToArray();
 		}
 
 		public void Use() {

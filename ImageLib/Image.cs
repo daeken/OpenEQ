@@ -40,6 +40,17 @@ namespace ImageLib {
 			}
 		}
 
+		public void SwapRB() {
+			if(ColorMode == ColorMode.Greyscale) return;
+
+			var size = PixelSize(ColorMode);
+			for(var i = 0; i < Data.Length; i += size) {
+				var t = Data[i];
+				Data[i] = Data[i + 2];
+				Data[i + 2] = t;
+			}
+		}
+
 		public static int PixelSize(ColorMode mode) {
 			switch(mode) {
 				case ColorMode.Greyscale: return 1;
