@@ -93,9 +93,11 @@ namespace OpenEQ.ConverterCore {
 				var transparent = (tf & (4 | 8)) != 0;
 				if((tf & 0xFFFF) == 0x14) // TODO: Remove hack. Fixes tiger head in Halas
 					masked = transparent = false;
-				skin.Add(new OESMaterial(masked, transparent, false) {
-					new OESTexture(textureMap[texture.Filenames.First()])
-				});
+				var mat = new OESMaterial(masked, transparent, false);
+				if(texture.Filenames.Count > 1)
+					mat.Add(new OESEffect("animated") { ["speed"] = texture.AnimSpeed });
+				texture.Filenames.ForEach(fn => mat.Add(new OESTexture(textureMap[fn])));
+				skin.Add(mat);
 			}
 		}
 

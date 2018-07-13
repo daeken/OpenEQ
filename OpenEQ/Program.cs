@@ -58,7 +58,7 @@ namespace OpenEQ {
 				new Material(
 					(mat.Transparent ? MaterialFlag.Translucent : MaterialFlag.Normal) |
 					(mat.AlphaMask ? MaterialFlag.Masked : MaterialFlag.Normal),
-					0,
+					mat.Find<OESEffect>().FirstOrDefault(x => x.Name == "animated")?.Get<uint>("speed") ?? 0,
 					mat.Find<OESTexture>().Select(x => {
 						using(var tzs = zip.GetEntry(x.Filename).Open())
 							return Png.Decode(tzs);
