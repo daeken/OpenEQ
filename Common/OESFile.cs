@@ -134,20 +134,83 @@ namespace OpenEQ.Common {
 
 	public class OESEffect : OESChunk {
 		public string Name;
-
+		public readonly Dictionary<string, object> Parameters = new Dictionary<string, object>();
+		
 		public OESEffect(string typeCode, uint id) : base(typeCode, id) {}
 		
 		public OESEffect(string name) : base("fx") => Name = name;
+
+		public object this[string name] {
+			get => Parameters[name];
+			set => Parameters[name] = value;
+		}
+
+		public T Get<T>(string name) => (T) Parameters[name];
 		
 		protected override void SerializeData(BinaryWriter bw) {
 			bw.WriteUTF8String(Name);
-			bw.Write(0U);
+			bw.Write(Parameters.Count);
+
+			foreach(var (name, value) in Parameters) {
+				bw.WriteUTF8String(name);
+				switch(value) {
+					case uint uv:
+						bw.Write(0U);
+						bw.Write(uv);
+						break;
+					case float fv:
+						bw.Write(1U);
+						bw.Write(fv);
+						break;
+					case Vec2 v2v:
+						bw.Write(2U);
+						bw.Write(v2v);
+						break;
+					case Vec3 v3v:
+						bw.Write(3U);
+						bw.Write(v3v);
+						break;
+					case Vec4 v4v:
+						bw.Write(4U);
+						bw.Write(v4v);
+						break;
+					case Mat3 m3v:
+						bw.Write(9U);
+						m3v.AsArray.ForEach(x => bw.Write((float) x));
+						break;
+					case Mat4 m4v:
+						bw.Write(16U);
+						m4v.AsArray.ForEach(x => bw.Write((float) x));
+						break;
+					case string sv:
+						bw.Write(64);
+						bw.WriteUTF8String(sv);
+						break;
+					default:
+						throw new NotImplementedException();
+				}
+			}
 		}
 
 		protected override void DeserializeData(BinaryReader br) {
 			Name = br.ReadUTF8String();
 			var numParams = br.ReadUInt32();
-			Debug.Assert(numParams == 0);
+			for(var i = 0; i < numParams; ++i) {
+				var name = br.ReadUTF8String();
+				object value;
+				switch(br.ReadUInt32()) {
+					case 0: value = br.ReadUInt32(); break;
+					case 1: value = br.ReadSingle(); break;
+					case 2: value = br.ReadVec2(); break;
+					case 3: value = br.ReadVec3(); break;
+					case 4: value = br.ReadVec4(); break;
+					case 9: throw new NotImplementedException(); // TODO
+					case 16: throw new NotImplementedException(); // TODO
+					case 64: value = br.ReadUTF8String(); break;
+					default: throw new NotImplementedException();
+				}
+				Parameters[name] = value;
+			}
 		}
 	}
 
