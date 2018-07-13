@@ -31,6 +31,12 @@ namespace OpenEQ.Common {
 		public IEnumerator<OESChunk> GetEnumerator() => Children.GetEnumerator();
 		IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
+		public IEnumerable<T> Find<T>() where T : OESChunk => Children.OfType<T>();
+		public IEnumerable<OESChunk> Find<T1, T2>() where T1 : OESChunk where T2 : OESChunk =>
+			Children.Where(x => x is T1 || x is T2);
+		public IEnumerable<OESChunk> Find<T1, T2, T3>() where T1 : OESChunk where T2 : OESChunk where T3 : OESChunk =>
+			Children.Where(x => x is T1 || x is T2 || x is T3);
+
 		internal void Serialize(BinaryWriter bw) {
 			Debug.Assert(TypeCode.Length <= 4);
 			bw.Write(Encoding.ASCII.GetBytes(TypeCode + "    ".Substring(TypeCode.Length)));
