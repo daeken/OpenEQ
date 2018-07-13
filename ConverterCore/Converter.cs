@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Security.Cryptography;
 using ImageLib;
 using OpenEQ.Common;
 using OpenEQ.LegacyFileReader;
@@ -57,24 +58,17 @@ namespace OpenEQ.ConverterCore {
 			byte[] data;
 			lock(s3d) data = s3d[fn];
 
-			var dimg = Dds.Decode(new MemoryStream(data));
-			
-			/*
-			var idat = new byte[800 * 600 * 3];
-			var i = 0;
-			for(var y = 0; y < 600; ++y)
-				for(var x = 0; x < 800; ++x) {
-					var fx = x / 799.0;
-					var fy = y / 599.0;
-					idat[i++] = (byte) Math.Round(fx * 255);
-					idat[i++] = (byte) Math.Round(fy * 255);
-					idat[i++] = (byte) Math.Round(fx * fy * 255);
-				}
-			var img = new Image(ColorMode.Rgb, (800, 600), idat);
-			using(var fp = File.OpenWrite("test.png"))
-				Png.Encode(img, fp);*/
-			
-			return fn;
+			var md5 = string.Join("", MD5.Create().ComputeHash(data).Select(x => $"{x:X02}")).Substring(0, 10);
+
+			var ofn = $"{fn.Split('.', 2)[0]}-{md5}.png";
+			var dimg = Dds.Load(data);
+			lock(zip) {
+				var entry = zip.CreateEntry(ofn, CompressionLevel.NoCompression).Open();
+				Png.Encode(dimg.Images[0], entry);
+				entry.Close();
+			}
+
+			return ofn;
 		}
 
 		List<string> FindFiles(string pattern) => Directory.GetFiles(BasePath, pattern).Select(Path.GetFileName).ToList();
