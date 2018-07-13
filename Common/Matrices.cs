@@ -220,6 +220,13 @@ namespace OpenEQ.Common {
 			_20, _21, _22, _23,
 			_30, _31, _32, _33
 		};
+		
+		public Mat4 Transpose => new Mat4(
+			_00, _10, _20, _30, 
+			_01, _11, _21, _31, 
+			_02, _12, _22, _32, 
+			_03, _13, _23, _33
+		);
 
 		public static Mat4 Identity = new Mat4(
 			1, 0, 0, 0, 

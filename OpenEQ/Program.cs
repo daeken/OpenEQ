@@ -16,19 +16,6 @@ namespace OpenEQ {
 
 			LoadZoneFile($"../ConverterApp/{args[0]}_oes.zip", engine);
 			
-			/*var zone = new ZoneReader($"../converter/{args[0]}.zip");
-			var materials = zone.Materials.Select(mat => new Material((MaterialFlag) mat.Flags, mat.Param, mat.Textures.ToArray())).ToArray();
-			
-			var objInstances = zone.Objects.Select(_ => new List<Mat4>()).ToArray();
-			objInstances.First().Add(Mat4.Identity);
-
-			zone.Placeables.ForEach(p => objInstances[p.ObjId].Add(
-				Mat4.Scale(p.Scale) * Mat4.RotationZ(p.Rotation.Z) * Mat4.RotationY(p.Rotation.Y) * Mat4.RotationX(p.Rotation.X) * Mat4.Translation(p.Position)));
-
-			objInstances.ForEach((list, i) => engine.Add(BuildModel(zone.Objects[i], materials, list.ToArray())));
-			
-			zone.Lights.ForEach(lp => engine.AddLight(lp.Position, lp.Radius, lp.Attenuation, lp.Color));*/
-			
 			engine.Run();
 		}
 
@@ -40,33 +27,42 @@ namespace OpenEQ {
 					ms.Position = 0;
 					var zone = OESFile.Read<OESZone>(ms);
 					WriteLine($"Loading {zone.Name}");
-					var mats = zone.Find<OESSkin>().First().Find<OESMaterial>().Select(mat => 
-						new Material(
-							(mat.Transparent ? MaterialFlag.Translucent : MaterialFlag.Normal) | (mat.AlphaMask ? MaterialFlag.Masked : MaterialFlag.Normal), 
-							0, 
-							mat.Find<OESTexture>().Select(x => {
-								using(var tzs = zip.GetEntry(x.Filename).Open())
-									return Png.Decode(tzs);
-							}).ToArray()
-						)).ToList();
+					
+					engine.Add(FromMeshes(FromSkin(zone.Find<OESSkin>().First(), zip), new[] { Mat4.Identity }, zone.Find<OESStaticMesh>()));
 
-					var instances = new[] { Mat4.Identity };
-					var model = new Model();
-					zone.Find<OESStaticMesh>().ForEach((sm, i) => {
-						model.Add(new Mesh(mats[i], sm.VertexBuffer.ToArray(), sm.IndexBuffer.ToArray(), instances));
+					var objInstances = zone.Find<OESObject>().ToDictionary(x => x, x => new List<Mat4>());
+					zone.Find<OESInstance>().ForEach(inst => {
+						objInstances[inst.Object].Add(Mat4.Scale(inst.Scale) * inst.Rotation.ToMatrix() * Mat4.Translation(inst.Position));
 					});
-					engine.Add(model);
+					foreach(var (obj, instances) in objInstances) {
+						engine.Add(FromMeshes(
+							FromSkin(obj.Find<OESSkin>().First(), zip), 
+							instances.ToArray(), 
+							obj.Find<OESStaticMesh>()
+						));
+					}
 					
 					zone.Find<OESLight>().ForEach(light => engine.AddLight(light.Position, light.Radius, light.Attenuation, light.Color));
 				}
 			}
 		}
-		
-		static Model BuildModel(List<ZoneMesh> zmeshes, Material[] materials, Mat4[] instances) {
+
+		static Model FromMeshes(IReadOnlyList<Material> mats, Mat4[] instances, IEnumerable<OESStaticMesh> meshes) {
 			var model = new Model();
-			foreach(var zmesh in zmeshes)
-				model.Add(new Mesh(materials[zmesh.MatId], zmesh.VertexBuffer, zmesh.Indices, instances));
+			meshes.ForEach((sm, i) => model.Add(new Mesh(mats[i], sm.VertexBuffer.ToArray(), sm.IndexBuffer.ToArray(), instances)));
 			return model;
 		}
+
+		static List<Material> FromSkin(OESSkin skin, ZipArchive zip) =>
+			skin.Find<OESMaterial>().Select(mat =>
+				new Material(
+					(mat.Transparent ? MaterialFlag.Translucent : MaterialFlag.Normal) |
+					(mat.AlphaMask ? MaterialFlag.Masked : MaterialFlag.Normal),
+					0,
+					mat.Find<OESTexture>().Select(x => {
+						using(var tzs = zip.GetEntry(x.Filename).Open())
+							return Png.Decode(tzs);
+					}).ToArray()
+				)).ToList();
 	}
 }

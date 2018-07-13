@@ -18,6 +18,7 @@ namespace OpenEQ.Common {
 		public static Vec2 ReadVec2(this BinaryReader br) => new Vec2(br.ReadSingle(), br.ReadSingle());
 		public static Vec3 ReadVec3(this BinaryReader br) => new Vec3(br.ReadSingle(), br.ReadSingle(), br.ReadSingle());
 		public static Vec4 ReadVec4(this BinaryReader br) => new Vec4(br.ReadSingle(), br.ReadSingle(), br.ReadSingle(), br.ReadSingle());
+		public static Quaternion ReadQuaternion(this BinaryReader br) => new Quaternion(br.ReadSingle(), br.ReadSingle(), br.ReadSingle(), br.ReadSingle());
 
 		internal static void Write(this BinaryWriter bw, Vec2 v) {
 			bw.Write((float) v.X);
@@ -31,6 +32,13 @@ namespace OpenEQ.Common {
 		}
 
 		internal static void Write(this BinaryWriter bw, Vec4 v) {
+			bw.Write((float) v.X);
+			bw.Write((float) v.Y);
+			bw.Write((float) v.Z);
+			bw.Write((float) v.W);
+		}
+
+		internal static void Write(this BinaryWriter bw, Quaternion v) {
 			bw.Write((float) v.X);
 			bw.Write((float) v.Y);
 			bw.Write((float) v.Z);
