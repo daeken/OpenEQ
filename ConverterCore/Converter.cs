@@ -55,6 +55,7 @@ namespace OpenEQ.ConverterCore {
 
 					foreach(var (instname, instance) in wld.GetFragments<Fragment15>()) {
 						var objname = instance.Reference.Value.Replace("_ACTORDEF", "");
+						if(!objMap.ContainsKey(objname)) continue;
 						zone.Add(new OESInstance(
 							objMap[objname], instance.Position, instance.Scale, 
 							Quaternion.FromAxisAngle(new Vec3(0, 0, 1), -instance.Rotation.Z) * 
@@ -93,15 +94,22 @@ namespace OpenEQ.ConverterCore {
 				var transparent = (tf & (4 | 8)) != 0;
 				if((tf & 0xFFFF) == 0x14) // TODO: Remove hack. Fixes tiger head in Halas
 					masked = transparent = false;
-				var mat = new OESMaterial(masked, transparent, false);
-				if(texture.Filenames.Count > 1)
-					mat.Add(new OESEffect("animated") { ["speed"] = texture.AnimSpeed });
-				texture.Filenames.ForEach(fn => mat.Add(new OESTexture(textureMap[fn])));
+				var isFire = texture.Filenames[0].ToLower() == "fire1.bmp";
+				var mat = new OESMaterial(masked, transparent, isFire);
+				if(isFire)
+					mat.Add(new OESEffect("fire"));
+				else {
+					if(texture.Filenames.Count > 1)
+						mat.Add(new OESEffect("animated") { ["speed"] = texture.AnimSpeed });
+					texture.Filenames.ForEach(fn => mat.Add(new OESTexture(textureMap[fn])));
+				}
+
 				skin.Add(mat);
 			}
 		}
 
 		string ConvertTexture(S3D s3d, ZipArchive zip, string fn) {
+			fn = fn.Substring(0, fn.IndexOf('.') + 4);
 			byte[] data;
 			lock(s3d) data = s3d[fn];
 
