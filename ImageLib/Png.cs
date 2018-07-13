@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -72,6 +73,8 @@ namespace ImageLib {
 
 			var header = br.ReadBytes(8);
 
+			var idats = new List<byte[]>();
+
 			var running = true;
 			while(running) {
 				var dlen = br.ReadInt32();
@@ -84,6 +87,7 @@ namespace ImageLib {
 							case 0: colorMode = ColorMode.Greyscale; break;
 							case 2: colorMode = ColorMode.Rgb; break;
 							case 6: colorMode = ColorMode.Rgba; break;
+							default: throw new NotImplementedException();
 						}
 						data = new byte[size.Width * size.Height * Image.PixelSize(colorMode)];
 						br.ReadByte();
@@ -91,23 +95,62 @@ namespace ImageLib {
 						br.ReadByte();
 						break;
 					case "IDAT":
-						using(var ms = new MemoryStream())
-							using(var zs = new ZlibStream(ms, CompressionMode.Decompress)) {
-								zs.Write(br.ReadBytes(dlen), 0, dlen);
-								zs.Flush();
-								ms.Flush();
-								var tdata = ms.ToArray();
-								var stride = size.Width * Image.PixelSize(colorMode);
-								for(var y = 0; y < size.Height; ++y)
-									Array.Copy(tdata, y * stride + y + 1, data, stride * y, stride);
-							}
+						idats.Add(br.ReadBytes(dlen));
 						break;
 					case "IEND":
 						running = false;
 						break;
+					default:
+						br.ReadBytes(dlen);
+						break;
 				}
 				br.ReadUInt32();
 			}
+
+			var idata = idats.SelectMany(x => x).ToArray();
+			using(var ms = new MemoryStream())
+				using(var zs = new ZlibStream(ms, CompressionMode.Decompress)) {
+					zs.Write(idata, 0, idata.Length);
+					zs.Flush();
+					ms.Flush();
+					var tdata = ms.GetBuffer();
+					var ps = Image.PixelSize(colorMode);
+					var stride = size.Width * ps;
+					for(var y = 0; y < size.Height; ++y) {
+						Array.Copy(tdata, y * stride + y + 1, data, stride * y, stride);
+						switch(tdata[y * stride + y]) {
+							case 0: break;
+							case 1: {
+								for(var x = ps; x < stride; ++x) {
+									data[y * stride + x] = unchecked((byte) (data[y * stride + x] + data[y * stride + x - ps]));
+								}
+								break;
+							}
+							case 4: {
+								byte Paeth(byte a, byte b, byte c) {
+									int p = a + b - c, pa = p > a ? p - a : a - p, pb = p > b ? p - b : b - p, pc = p > c ? p - c : c - p;
+									return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+								}
+								for(var x = 0; x < stride; ++x) {
+									byte mod = 0;
+									if(x < ps) {
+										if(y > 0)
+											mod = Paeth(0, data[(y - 1) * stride + x], 0);
+									} else {
+										mod = y == 0
+											? Paeth(data[y * stride + x - ps], 0, 0)
+											: Paeth(data[y * stride + x - ps], data[(y - 1) * stride + x], data[(y - 1) * stride + x - ps]);
+									}
+
+									data[y * stride + x] = unchecked((byte) (data[y * stride + x] + mod));
+								}
+								break;
+							}
+							case byte x:
+								throw new NotImplementedException($"Unsupported filter mode {x}");
+						}
+					}
+				}
 			
 			return new Image(colorMode, size, data);
 		}

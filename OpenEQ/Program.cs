@@ -54,15 +54,18 @@ namespace OpenEQ {
 		}
 
 		static List<Material> FromSkin(OESSkin skin, ZipArchive zip) =>
-			skin.Find<OESMaterial>().Select(mat =>
-				new Material(
-					(mat.Transparent ? MaterialFlag.Translucent : MaterialFlag.Normal) |
-					(mat.AlphaMask ? MaterialFlag.Masked : MaterialFlag.Normal),
-					mat.Find<OESEffect>().FirstOrDefault(x => x.Name == "animated")?.Get<uint>("speed") ?? 0,
-					mat.Find<OESTexture>().Select(x => {
-						using(var tzs = zip.GetEntry(x.Filename).Open())
-							return Png.Decode(tzs);
-					}).ToArray()
-				)).ToList();
+			skin.Find<OESMaterial>().Select(mat => {
+				if(mat.Find<OESEffect>().Any(x => x.Name == "fire"))
+					return null; // TODO: Unhack
+				return new Material(
+						(mat.Transparent ? MaterialFlag.Translucent : MaterialFlag.Normal) |
+						(mat.AlphaMask ? MaterialFlag.Masked : MaterialFlag.Normal),
+						mat.Find<OESEffect>().FirstOrDefault(x => x.Name == "animated")?.Get<uint>("speed") ?? 0,
+						mat.Find<OESTexture>().Select(x => {
+							using(var tzs = zip.GetEntry(x.Filename).Open())
+								return Png.Decode(tzs);
+						}).ToArray()
+					);
+			}).ToList();
 	}
 }
