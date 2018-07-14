@@ -121,9 +121,14 @@ namespace ImageLib {
 						switch(tdata[y * stride + y]) {
 							case 0: break;
 							case 1: {
-								for(var x = ps; x < stride; ++x) {
+								for(var x = ps; x < stride; ++x)
 									data[y * stride + x] = unchecked((byte) (data[y * stride + x] + data[y * stride + x - ps]));
-								}
+								break;
+							}
+							case 2: {
+								if(y == 0) break;
+								for(var x = 0; x < stride; ++x)
+									data[y * stride + x] = unchecked((byte) (data[y * stride + x] + data[y * stride + x - stride]));
 								break;
 							}
 							case 4: {

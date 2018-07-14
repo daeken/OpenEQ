@@ -143,7 +143,7 @@ void main() {
 			GL.BindVertexArray(QuadVAO);
 		
 			Program.Use();
-			Program.SetUniform("uAmbientColor", vec3(0.35));
+			Program.SetUniform("uAmbientColor", vec3(0.2));
 			Program.SetTextures(0, FBO.Textures, "uColor", "uPosition", "uDepth");
 
 			GL.Enable(EnableCap.ScissorTest);

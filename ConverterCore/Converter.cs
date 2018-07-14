@@ -117,9 +117,10 @@ namespace OpenEQ.ConverterCore {
 
 			var ofn = $"{fn.Split('.', 2)[0]}-{md5}.png";
 			var dimg = Dds.Load(data);
+			var scaled = dimg.Images[0];//.UpscaleFfmpeg(4);
 			lock(zip) {
 				var entry = zip.CreateEntry(ofn, CompressionLevel.NoCompression).Open();
-				Png.Encode(dimg.Images[0], entry);
+				Png.Encode(scaled, entry);
 				entry.Close();
 			}
 
