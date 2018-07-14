@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Diagnostics;
+using System.IO;
 
 namespace ImageLib {
 	public enum ColorMode {
@@ -12,12 +13,15 @@ namespace ImageLib {
 		public readonly ColorMode ColorMode;
 		public readonly (int Width, int Height) Size;
 		public readonly byte[] Data;
+		public readonly int Stride, PixelBytes;
 		
 		public Image(ColorMode colorMode, (int Width, int Height) size, byte[] data) {
 			ColorMode = colorMode;
 			Size = size;
 			Data = data;
-			Debug.Assert(Data.Length == PixelSize(ColorMode) * Size.Width * Size.Height);
+			PixelBytes = PixelSize(ColorMode);
+			Stride = Size.Width * PixelBytes;
+			Debug.Assert(Data.Length == PixelBytes * Size.Width * Size.Height);
 		}
 
 		public Image(ColorMode colorMode, (int Width, int Height) size, uint[] data) {
@@ -51,6 +55,92 @@ namespace ImageLib {
 			}
 		}
 
+		public Image Upscale(int factor, Action<Image, float, float, byte[], int> sampler) {
+			if(factor <= 0) throw new NotImplementedException();
+			if(factor == 1) return this;
+
+			var ns = (Width: Size.Width * factor, Height: Size.Height * factor);
+			var ps = PixelBytes;
+			var nd = new byte[ns.Width * ns.Height * ps];
+			
+			var i = 0;
+			for(var y = 0; y < ns.Height; ++y) {
+				var v = y / (ns.Height - 1f);
+				for(var x = 0; x < ns.Width; ++x) {
+					var u = x / (ns.Width - 1f);
+					sampler(this, u, v, nd, i);
+					i += ps;
+				}
+			}
+			
+			return new Image(ColorMode, ns, nd);
+		}
+
+		public static void SampleNearest(Image im, float u, float v, byte[] odata, int offset) {
+			u *= im.Size.Width - 1;
+			v *= im.Size.Height - 1;
+
+			var x = (int) u;
+			var y = (int) v;
+
+			if(x + 1 < im.Size.Width && u - x > .5)
+				x++;
+			if(x + 1 < im.Size.Height && v - y > .5)
+				y++;
+
+			var pos = y * im.Stride + x * im.PixelBytes;
+			for(var i = 0; i < im.PixelBytes; ++i)
+				odata[offset + i] = im.Data[pos + i];
+		}
+
+		static float Mix(float a, float b, float x) => a * (1f - x) + b * x;
+
+		static byte ClampByte(float v) {
+			v = MathF.Round(v);
+			if(v <= 0) return 0;
+			if(v >= 255) return 255;
+			return (byte) v;
+		}
+
+		public static void SampleBilinear(Image im, float u, float v, byte[] odata, int offset) {
+			u *= im.Size.Width - 1;
+			v *= im.Size.Height - 1;
+
+			var x = (int) u;
+			var y = (int) v;
+
+			u -= x;
+			v -= y;
+
+			var bx = x + 1 == im.Size.Width;
+			var by = y + 1 == im.Size.Height;
+			var pos = y * im.Stride + x * im.PixelBytes;
+			for(var i = 0; i < im.PixelBytes; ++i) {
+				var a = im.Data[pos + i];
+				var b = bx ? a : im.Data[pos + i + im.PixelBytes];
+				var c = by ? a : im.Data[pos + i + im.Stride];
+				var d = bx && by ? a : (bx ? c : (by ? b : im.Data[pos + i + im.PixelBytes + im.Stride]));
+				odata[offset + i] = ClampByte(Mix(Mix(a, b, u), Mix(c, d, u), v));
+			}
+		}
+
+		public Image UpscaleFfmpeg(int factor) {
+			if(factor <= 0) throw new NotImplementedException();
+			if(factor == 1) return this;
+
+			var ns = (Width: Size.Width * factor, Height: Size.Height * factor);
+
+			var tfn = Path.GetTempFileName() + ".png";
+			using(var fp = File.OpenWrite(tfn))
+				Png.Encode(this, fp);
+
+			var otfn = Path.GetTempFileName() + ".png";
+			Process.Start("ffmpeg", $"-i {tfn} -vf scale={ns.Width}:{ns.Height}:flags=lanczos {otfn}").WaitForExit();
+
+			using(var fp = File.OpenRead(otfn))
+				return Png.Decode(fp);
+		}
+
 		public static int PixelSize(ColorMode mode) {
 			switch(mode) {
 				case ColorMode.Greyscale: return 1;
@@ -58,6 +148,6 @@ namespace ImageLib {
 				case ColorMode.Rgba: return 4;
 				default: throw new NotImplementedException();
 			}
-		}
+		} 
 	}
 }
