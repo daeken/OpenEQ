@@ -19,7 +19,8 @@ namespace OpenEQ.Engine {
 		FrameBuffer FBO;
 		int QuadVAO;
 		Program Program;
-
+		int[] UniformLocs;
+		int UniformLC;
 
 		void SetupDeferredPathway() {
 			Resize += (_, __) => {
@@ -88,6 +89,13 @@ void main() {
 	color = csv * accum;
 }
 			");
+
+			UniformLocs = Enumerable.Range(0, maxLights).Select(i => new[] {
+				Program.GetUniform($"uLights[{i}].pos"), 
+				Program.GetUniform($"uLights[{i}].color"), 
+				Program.GetUniform($"uLights[{i}].radius")
+			}).SelectMany(x => x).ToArray();
+			UniformLC = Program.GetUniform("uLightCount");
 		}
 
 		void RenderDeferredPathway() {
@@ -159,7 +167,7 @@ void main() {
 		
 				Program.Use();
 				Program.SetUniform("uInvProjectionViewMat", invProjView);
-				Program.SetUniform("uAmbientColor", vec3(0.2f));
+				Program.SetUniform("uAmbientColor", vec3(0.2f));	
 				Program.SetTextures(0, FBO.Textures, "uColor", "uDepth");
 
 				GL.Enable(EnableCap.ScissorTest);
@@ -169,14 +177,12 @@ void main() {
 						GL.Scissor(x * tileSize, y * tileSize, tileSize, tileSize);
 						var tc = 0;
 						tiles[ti].ForEach((tl, tli) => {
-							tc++;
 							var light = tl.Light;
-							var prefix = $"uLights[{tli}].";
-							Program.SetUniform(prefix + "pos", light.Position);
-							Program.SetUniform(prefix + "color", light.Color);
-							Program.SetUniform(prefix + "radius", light.Radius);
+							GL.Uniform3(UniformLocs[tc++], 1, ref light.Position.X);
+							GL.Uniform3(UniformLocs[tc++], 1, ref light.Color.X);
+							GL.Uniform1(UniformLocs[tc++], light.Radius);
 						});
-						Program.SetUniform("uLightCount", tc);
+						GL.Uniform1(UniformLC, tc / 3);
 						GL.DrawElements(PrimitiveType.Triangles, 6, DrawElementsType.UnsignedInt, IntPtr.Zero);
 					}
 				}
