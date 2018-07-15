@@ -22,10 +22,10 @@ namespace OpenEQ.Engine {
 		readonly List<PointLight> Lights = new List<PointLight>();
 		
 		public EngineCore() : base(
-			1280, 720, new GraphicsMode(new ColorFormat(32), 32, 0), "OpenEQ", 
+			1280, 720, new GraphicsMode(new ColorFormat(8, 8, 8, 8), 16, 0), "OpenEQ", 
 			GameWindowFlags.Default, DisplayDevice.Default, 4, 1, GraphicsContextFlags.ForwardCompatible
 		) {
-			VSync = VSyncMode.Off;
+			//VSync = VSyncMode.Off;
 			Stopwatch.Start();
 			Gui = new Gui(new GuiRenderer()) {
 				new Window("Status") {
@@ -132,16 +132,19 @@ namespace OpenEQ.Engine {
 			if(FrameTimes.Count == 200)
 				FrameTimes.RemoveAt(0);
 			FrameTimes.Add(e.Time);
-			
-			RenderDeferredPathway();
 
-			GL.Enable(EnableCap.Blend);
-			GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
-			GL.Enable(EnableCap.DepthTest);
-			GL.ActiveTexture(TextureUnit.Texture0);
-			GL.DepthMask(false);
-			Models.ForEach(model => model.Draw(translucent: true));
-			GL.DepthMask(true);
+			Profile("Deferred render", RenderDeferredPathway);
+
+			Profile("Forward render", () => {
+				GL.Enable(EnableCap.Blend);
+				GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+				GL.Enable(EnableCap.DepthTest);
+				GL.ActiveTexture(TextureUnit.Texture0);
+				GL.DepthMask(false);
+				Models.ForEach(model => model.Draw(translucent: true));
+				GL.DepthMask(true);
+				GL.Flush();
+			});
 
 			Gui.Render((float) e.Time);
 
