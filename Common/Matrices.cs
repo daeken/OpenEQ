@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Numerics;
 
 namespace OpenEQ.Common {
 	public struct Mat2 {
@@ -227,6 +228,24 @@ namespace OpenEQ.Common {
 			_02, _12, _22, _32, 
 			_03, _13, _23, _33
 		);
+
+		public Mat4 Invert {
+			get {
+				var nmat = new Matrix4x4(
+					(float) _00, (float) _01, (float) _02, (float) _03, 
+					(float) _10, (float) _11, (float) _12, (float) _13,
+					(float) _20, (float) _21, (float) _22, (float) _23,
+					(float) _30, (float) _31, (float) _32, (float) _33
+				);
+				Matrix4x4.Invert(nmat, out var inmat);
+				return new Mat4(
+					inmat.M11, inmat.M12, inmat.M13, inmat.M14, 
+					inmat.M21, inmat.M22, inmat.M23, inmat.M24, 
+					inmat.M31, inmat.M32, inmat.M33, inmat.M34, 
+					inmat.M41, inmat.M42, inmat.M43, inmat.M44 
+				);
+			}
+		}
 
 		public static Mat4 Identity = new Mat4(
 			1, 0, 0, 0, 

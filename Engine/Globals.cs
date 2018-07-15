@@ -1,5 +1,7 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using OpenEQ.Common;
 using static System.Math;
 
@@ -68,11 +70,21 @@ namespace OpenEQ.Engine {
 		
 		public static LazyProperty<T> lazy<T>(Func<T> func) => new LazyProperty<T>(func);
 
+		static Dictionary<string, List<double>> ProfileRunning = new Dictionary<string, List<double>>();
 		public static void Profile(string name, Action func) {
-			var pre = Stopwatch.Elapsed.TotalMilliseconds;
+#if DEBUG
+			var pre = Stopwatch.ElapsedTicks;
 			func();
-			var post = Stopwatch.Elapsed.TotalMilliseconds;
-			Console.WriteLine($"{name} took {post - pre} ms");
+			var post = Stopwatch.ElapsedTicks;
+			var ms = (double) (post - pre) / System.Diagnostics.Stopwatch.Frequency * 1000;
+			var pr = ProfileRunning.ContainsKey(name)
+				? ProfileRunning[name]
+				: ProfileRunning[name] = new List<double>();
+			pr.Add(ms);
+			Console.WriteLine($"{name} took {Round(ms, 2)} ms (average {Round(pr.Average(), 2)} over {pr.Count} samples)");
+#else
+			func();
+#endif
 		}
 	}
 }
