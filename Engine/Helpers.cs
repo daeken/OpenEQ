@@ -1,13 +1,14 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using OpenEQ.Common;
 using static OpenEQ.Engine.Globals;
 
 namespace OpenEQ.Engine {
 	public static class Helpers {
 		public static (float[], uint[]) MakeSphereGeometry(int slices, int rings) {
-			var vertices = new List<Vec3>();
+			var vertices = new List<Vector3>();
 			var index = 0;
 			var grid = new List<List<int>>();
 			for(var iy = 0; iy <= rings; ++iy) {
@@ -17,9 +18,9 @@ namespace OpenEQ.Engine {
 					var u = ix / (float) slices;
 
 					var vert = vec3(
-						-Math.Cos(u * Math.PI * 2) * Math.Sin(v * Math.PI),
-						Math.Cos(v * Math.PI),
-						Math.Sin(u * Math.PI * 2) * Math.Sin(v * Math.PI)
+						-MathF.Cos(u * MathF.PI * 2) * MathF.Sin(v * MathF.PI),
+						MathF.Cos(v * MathF.PI),
+						MathF.Sin(u * MathF.PI * 2) * MathF.Sin(v * MathF.PI)
 					);
 
 					vertices.Add(vert);
@@ -45,9 +46,9 @@ namespace OpenEQ.Engine {
 
 			var buf = new List<float>();
 			for(var i = 0; i < vertices.Count; ++i) {
-				buf.Add((float) vertices[i].X);
-				buf.Add((float) vertices[i].Y);
-				buf.Add((float) vertices[i].Z);
+				buf.Add(vertices[i].X);
+				buf.Add(vertices[i].Y);
+				buf.Add(vertices[i].Z);
 			}
 
 			return (buf.ToArray(), indices.Select(x => new[] { (uint) x.Item1, (uint) x.Item2, (uint) x.Item3 }).SelectMany(x => x).ToArray());

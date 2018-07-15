@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Numerics;
 using System.Security.Cryptography;
 using ImageLib;
 using MoreLinq;
@@ -57,10 +58,10 @@ namespace OpenEQ.ConverterCore {
 						var objname = instance.Reference.Value.Replace("_ACTORDEF", "");
 						if(!objMap.ContainsKey(objname)) continue;
 						zone.Add(new OESInstance(
-							objMap[objname], instance.Position, instance.Scale, 
-							Quaternion.FromAxisAngle(new Vec3(0, 0, 1), -instance.Rotation.Z) * 
-							Quaternion.FromAxisAngle(new Vec3(0, 1, 0), -instance.Rotation.Y) * 
-							Quaternion.FromAxisAngle(new Vec3(1, 0, 0), -instance.Rotation.X)
+							objMap[objname], instance.Position, instance.Scale,
+							Quaternion.CreateFromAxisAngle(new Vector3(0, 0, 1), instance.Rotation.Z) * 
+							Quaternion.CreateFromAxisAngle(new Vector3(0, 1, 0), instance.Rotation.Y) * 
+							Quaternion.CreateFromAxisAngle(new Vector3(1, 0, 0), instance.Rotation.X)
 						));
 					}
 				}

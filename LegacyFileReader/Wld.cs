@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Numerics;
 using System.Text;
 using OpenEQ.Common;
 using static System.Console;
@@ -73,14 +74,14 @@ namespace OpenEQ.LegacyFileReader {
 
 	public class Fragment15 {
 		public Reference<string> Reference;
-		public Vec3 Position, Rotation, Scale;
+		public Vector3 Position, Rotation, Scale;
 
 		public override string ToString() => $"Fragment15(Reference={Reference}, Position={Position}, Rotation={Rotation}, Scale={Scale})";
 	}
 
 	public class Fragment1B {
 		public uint? Attenuation;
-		public Vec3 Color;
+		public Vector3 Color;
 
 		public override string ToString() => $"Fragment1B(Attenuation={Attenuation}, Color={Color})";
 	}
@@ -97,7 +98,7 @@ namespace OpenEQ.LegacyFileReader {
 	public class Fragment28 {
 		public Reference<Fragment1C> Reference;
 		public uint Flags;
-		public Vec3 Pos;
+		public Vector3 Pos;
 		public float Radius;
 
 		public override string ToString() => $"Fragment28(Reference={Reference}, Flags=0x{Flags:X}, Pos={Pos}, Radius={Radius})";
@@ -130,8 +131,8 @@ namespace OpenEQ.LegacyFileReader {
 
 	public class Fragment36 {
 		public Reference<Fragment31> TextureListReference;
-		public Vec3[] Vertices, Normals;
-		public Vec2[] TexCoords;
+		public Vector3[] Vertices, Normals;
+		public Vector2[] TexCoords;
 		public (bool Collidable, uint A, uint B, uint C)[] Polygons;
 		public (uint Count, uint Index)[] PolyTexs;
 	}
@@ -281,8 +282,8 @@ namespace OpenEQ.LegacyFileReader {
 			var rot = Br.ReadVec3();
 			var scale = Br.ReadVec3();
 
-			scale = scale.Z > 0.0001 ? new Vec3(scale.Z) : Vec3.One;
-			rot = new Vec3(rot.Z / 256 * Math.PI, rot.Y / 256 * Math.PI, rot.X / 256 * Math.PI);
+			scale = scale.Z > 0.0001 ? new Vector3(scale.Z) : Vector3.One;
+			rot = new Vector3(rot.Z / 256 * MathF.PI, rot.Y / 256 * MathF.PI, rot.X / 256 * MathF.PI);
 			
 			return new Fragment15 {
 				Reference = reference, 
@@ -296,14 +297,14 @@ namespace OpenEQ.LegacyFileReader {
 			var flags = Br.ReadUInt32();
 			Br.ReadUInt32();
 			uint? attenuation = null;
-			Vec3 color;
+			Vector3 color;
 			if((flags & (1 << 4)) != 0) {
 				if((flags & (1 << 3)) != 0)
 					attenuation = Br.ReadUInt32();
 				Br.ReadSingle();
 				color = Br.ReadVec3();
 			} else
-				color = new Vec3(Br.ReadSingle());
+				color = new Vector3(Br.ReadSingle());
 			return new Fragment1B { Attenuation = attenuation, Color = color };
 		}
 
@@ -391,13 +392,13 @@ namespace OpenEQ.LegacyFileReader {
 			var vertTexCount = Br.ReadUInt16();
 			
 			Br.ReadUInt16();
-			var scale = (double) (1UL << Br.ReadUInt16());
+			var scale = (float) (1UL << Br.ReadUInt16());
 			var vertices = Enumerable.Range(0, vertCount)
-				.Select(_ => new Vec3(Br.ReadInt16(), Br.ReadInt16(), Br.ReadInt16()) / scale + center).ToArray();
+				.Select(_ => new Vector3(Br.ReadInt16(), Br.ReadInt16(), Br.ReadInt16()) / scale + center).ToArray();
 			var texcoords = Enumerable.Range(0, tcCount)
-				.Select(_ => NewFormat ? Br.ReadVec2() : new Vec2(Br.ReadInt16(), Br.ReadInt16()) / 256).ToArray();
+				.Select(_ => NewFormat ? Br.ReadVec2() : new Vector2(Br.ReadInt16(), Br.ReadInt16()) / 256).ToArray();
 			var normals = Enumerable.Range(0, normalCount)
-				.Select(_ => new Vec3(Br.ReadSByte(), Br.ReadSByte(), Br.ReadSByte()) / 127).ToArray();
+				.Select(_ => new Vector3(Br.ReadSByte(), Br.ReadSByte(), Br.ReadSByte()) / 127).ToArray();
 			var colors = Enumerable.Range(0, colorCount)
 				.Select(_ => Br.ReadUInt32()).ToArray();
 			var polygons = Enumerable.Range(0, polyCount)

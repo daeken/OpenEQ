@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Numerics;
 using ImageLib;
 using OpenTK.Graphics.OpenGL4;
 using OpenEQ.Common;
@@ -16,7 +17,7 @@ namespace OpenEQ.Engine {
 		static Program DeferredProgram, ForwardProgram, FireProgram;
 		static Texture FlameTexture;
 
-		public Mesh(Material material, float[] vdata, uint[] indices, Mat4[] modelMatrices) {
+		public Mesh(Material material, float[] vdata, uint[] indices, Matrix4x4[] modelMatrices) {
 			if(DeferredProgram == null) {
 				DeferredProgram = new Program(@"
 #version 410
@@ -162,7 +163,7 @@ void main() {
 			
 			GL.BindBuffer(BufferTarget.ArrayBuffer, Mbo = GL.GenBuffer());
 			GL.BufferData(BufferTarget.ArrayBuffer, modelMatrices.Length * 16 * 4, 
-				modelMatrices.Select(x => x.AsArray).SelectMany(x => x).Select(x => (float) x).ToArray(), BufferUsageHint.StaticDraw);
+				modelMatrices.Select(x => x.AsArray()).SelectMany(x => x).ToArray(), BufferUsageHint.StaticDraw);
 			pp = 3; // aModelMat
 			GL.EnableVertexAttribArray(pp);
 			GL.VertexAttribPointer(pp, 4, VertexAttribPointerType.Float, false, 4 * 16, 0);
@@ -181,7 +182,7 @@ void main() {
 			InstanceCount = modelMatrices.Length;
 		}
 
-		public static void SetProjectionView(Mat4 mat) {
+		public static void SetProjectionView(Matrix4x4 mat) {
 			GL.ActiveTexture(TextureUnit.Texture0);
 			foreach(var program in new[] { DeferredProgram, ForwardProgram, FireProgram }) {
 				program.Use();

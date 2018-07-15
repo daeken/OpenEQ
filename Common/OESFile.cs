@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Numerics;
 using System.Text;
 using MoreLinq;
 
@@ -162,25 +163,21 @@ namespace OpenEQ.Common {
 						bw.Write(1U);
 						bw.Write(fv);
 						break;
-					case Vec2 v2v:
+					case Vector2 v2v:
 						bw.Write(2U);
 						bw.Write(v2v);
 						break;
-					case Vec3 v3v:
+					case Vector3 v3v:
 						bw.Write(3U);
 						bw.Write(v3v);
 						break;
-					case Vec4 v4v:
+					case Vector4 v4v:
 						bw.Write(4U);
 						bw.Write(v4v);
 						break;
-					case Mat3 m3v:
-						bw.Write(9U);
-						m3v.AsArray.ForEach(x => bw.Write((float) x));
-						break;
-					case Mat4 m4v:
+					case Matrix4x4 m4v:
 						bw.Write(16U);
-						m4v.AsArray.ForEach(x => bw.Write((float) x));
+						m4v.AsArray().ForEach(bw.Write);
 						break;
 					case string sv:
 						bw.Write(64);
@@ -204,7 +201,6 @@ namespace OpenEQ.Common {
 					case 2: value = br.ReadVec2(); break;
 					case 3: value = br.ReadVec3(); break;
 					case 4: value = br.ReadVec4(); break;
-					case 9: throw new NotImplementedException(); // TODO
 					case 16: throw new NotImplementedException(); // TODO
 					case 64: value = br.ReadUTF8String(); break;
 					default: throw new NotImplementedException();
@@ -265,13 +261,13 @@ namespace OpenEQ.Common {
 
 	public class OESInstance : OESChunk {
 		public OESObject Object;
-		public Vec3 Position, Scale;
+		public Vector3 Position, Scale;
 		public Quaternion Rotation;
 		public string SkinName;
 
 		public OESInstance(string typeCode, uint id) : base(typeCode, id) {}
 		
-		public OESInstance(OESObject obj, Vec3 position, Vec3 scale, Quaternion rotation, string skinName = "") : base("inst") {
+		public OESInstance(OESObject obj, Vector3 position, Vector3 scale, Quaternion rotation, string skinName = "") : base("inst") {
 			Object = obj;
 			Position = position;
 			Scale = scale;
@@ -297,12 +293,12 @@ namespace OpenEQ.Common {
 	}
 
 	public class OESLight : OESChunk {
-		public Vec3 Position, Color;
+		public Vector3 Position, Color;
 		public float Radius, Attenuation;
 
 		public OESLight(string typeCode, uint id) : base(typeCode, id) {}
 		
-		public OESLight(Vec3 position, Vec3 color, float radius, float attenuation) : base("lit") {
+		public OESLight(Vector3 position, Vector3 color, float radius, float attenuation) : base("lit") {
 			Position = position;
 			Color = color;
 			Radius = radius;

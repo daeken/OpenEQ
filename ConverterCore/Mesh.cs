@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using MoreLinq;
 using OpenEQ.Common;
 using OpenEQ.LegacyFileReader;
@@ -7,8 +8,8 @@ using static System.Console;
 
 namespace OpenEQ.ConverterCore {
 	public class MeshPiece {
-		public readonly List<Vec3> Vertices, Normals;
-		public readonly List<Vec2> TexCoords;
+		public readonly List<Vector3> Vertices, Normals;
+		public readonly List<Vector2> TexCoords;
 		public readonly List<(bool, uint, uint, uint)> Polygons;
 		public readonly List<(uint Flags, uint AnimSpeed, List<string> Filenames)> Textures;
 		public readonly List<(uint Count, uint Index)> PolyTexs;
@@ -38,9 +39,9 @@ namespace OpenEQ.ConverterCore {
 		public List<(float[] VertexBuffer, uint[] IndexBuffer, bool Collidable, (uint Flags, uint AnimSpeed, List<string> Filenames) Texture)>
 			Bake()
 		{
-			var verts = new List<Vec3>();
-			var normals = new List<Vec3>();
-			var texCoords = new List<Vec2>();
+			var verts = new List<Vector3>();
+			var normals = new List<Vector3>();
+			var texCoords = new List<Vector2>();
 			var textures = new List<(uint Flags, uint AnimSpeed, List<string> Filenames)>();
 			var polygons = new Dictionary<(int TextureIndex, bool Collidable), List<(uint, uint, uint)>>();
 
@@ -48,8 +49,8 @@ namespace OpenEQ.ConverterCore {
 				var vertoff = (uint) verts.Count;
 				var texoff = textures.Count;
 				verts.AddRange(piece.Vertices);
-				normals.AddRange(piece.Normals.Concat(Enumerable.Range(0, piece.Vertices.Count - piece.Normals.Count).Select(x => Vec3.One)));
-				texCoords.AddRange(piece.TexCoords.Concat(Enumerable.Range(0, piece.Vertices.Count - piece.TexCoords.Count).Select(x => Vec2.Zero)));
+				normals.AddRange(piece.Normals.Concat(Enumerable.Range(0, piece.Vertices.Count - piece.Normals.Count).Select(x => Vector3.One)));
+				texCoords.AddRange(piece.TexCoords.Concat(Enumerable.Range(0, piece.Vertices.Count - piece.TexCoords.Count).Select(x => Vector2.Zero)));
 				textures.AddRange(piece.Textures);
 				var pi = 0;
 				foreach(var (ptc, ti) in piece.PolyTexs) {
@@ -92,9 +93,9 @@ namespace OpenEQ.ConverterCore {
 			return meshes;
 		}
 
-		(float[], uint[]) SplitPolyMesh(List<Vec3> vb, List<Vec3> nb, List<Vec2> tcb, List<(uint, uint, uint)> polys) {
+		(float[], uint[]) SplitPolyMesh(List<Vector3> vb, List<Vector3> nb, List<Vector2> tcb, List<(uint, uint, uint)> polys) {
 			var ovb = new List<float>();
-			var vmap = new Dictionary<(Vec3, Vec3, Vec2), uint>();
+			var vmap = new Dictionary<(Vector3, Vector3, Vector2), uint>();
 			var oib = new List<uint>();
 
 			uint Add(uint i) {
@@ -103,9 +104,9 @@ namespace OpenEQ.ConverterCore {
 				if(vmap.ContainsKey(key))
 					return vmap[key];
 				var ind = vmap[key] = (uint) (ovb.Count / 8);
-				ovb.AddRange(v.ToArray().Select(x => (float) x));
-				ovb.AddRange(n.ToArray().Select(x => (float) x));
-				ovb.AddRange(t.ToArray().Select(x => (float) x));
+				ovb.AddRange(v.AsArray());
+				ovb.AddRange(n.AsArray());
+				ovb.AddRange(t.AsArray());
 				return ind;
 			}
 
