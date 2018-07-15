@@ -44,7 +44,6 @@ namespace OpenEQ.Engine {
 
 			Resize += (_, e) => {
 				Gui.Dimensions = new Vector2(Width, Height);
-				Console.WriteLine($"{Width} {Height}");
 				Gui.Scale = new Vector2(2f);
 				ProjectionMat = Matrix4x4.CreatePerspectiveFieldOfView(45 * (MathF.PI / 180), (float) Width / Height, 1, 5000);
 			};
