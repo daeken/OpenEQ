@@ -4,11 +4,7 @@ using MoreLinq;
 
 namespace OpenEQ.Engine {
 	public class Model {
-		public readonly List<Mesh> Meshes = new List<Mesh>();
-
-		public Model() {}
-		
-		Model(List<Mesh> meshes) => Meshes = meshes;
+		readonly List<Mesh> Meshes = new List<Mesh>();
 
 		public void Add(Mesh mesh) => Meshes.Add(mesh);
 
