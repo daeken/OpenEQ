@@ -192,13 +192,16 @@ void main() {
 		}
 
 		public void Draw(bool translucent) {
+			var cp = translucent ? ForwardProgram : DeferredProgram;
+			var setMasked = false;
 			if(Material == null) { // TODO: Unhack
 				if(!translucent) return;
 				FireProgram.Use();
 				FireProgram.SetUniform("uTime", Time);
 				FlameTexture.Use();
 			} else {
-				var cp = translucent ? ForwardProgram : DeferredProgram;
+				if(Material.Flags == MaterialFlag.Transparent) return;
+				
 				if(translucent && !Material.Flags.HasFlag(MaterialFlag.Translucent))
 					return;
 				if(!translucent && Material.Flags.HasFlag(MaterialFlag.Translucent))
@@ -206,20 +209,17 @@ void main() {
 
 				cp.Use();
 				Material.Use();
-				switch(Material.Flags) {
-					case MaterialFlag x when x.HasFlag(MaterialFlag.Masked):
-						cp.SetUniform("uMasked", 1);
-						break;
-					case MaterialFlag.Transparent:
-						return;
-					default:
-						cp.SetUniform("uMasked", 0);
-						break;
+				if(Material.Flags.HasFlag(MaterialFlag.Masked)) {
+					cp.SetUniform("uMasked", 1);
+					setMasked = true;
 				}
 			}
 
 			GL.BindVertexArray(Vao);
 			GL.DrawElementsInstanced(PrimitiveType.Triangles, ElementCount, DrawElementsType.UnsignedInt, IntPtr.Zero, InstanceCount);
+			
+			if(setMasked)
+				cp.SetUniform("uMasked", 0);
 		}
 	}
 }
