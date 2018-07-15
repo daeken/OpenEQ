@@ -125,17 +125,17 @@ void main() {
 			IReadOnlyList<IEnumerable<(double Dist, PointLight Light)>> tiles = null;
 
 			Profile("- Tile determination", () => {
+				var cforward = Vector3.Transform(FpsCamera.Forward, Camera.LookRotation).Normalized();
+				var cp = cforward.Y != 0 || cforward.Z != 0 ? vec3(1, 0, 0) : vec3(0, 1, 0);
+				var perp = cforward.Cross(cp).Normalized();
 				var tileLists = Enumerable.Range(0, tw * th).Select(i => new List<(double Dist, PointLight Light)>()).ToArray();
 				foreach(var light in Lights) {
 					var toLight = Camera.Position - light.Position;
 					var tll = toLight.Length();
 					if(tll > light.Radius) {
 						var lspos = screenPos(light.Position);
-						toLight /= tll;
-						var cp = toLight.Y != 0 || toLight.Z != 0 ? vec3(1, 0, 0) : vec3(0, 1, 0);
-						var perp = toLight.Cross(cp).Normalized();
-						var espos = screenPos(light.Position + perp * light.Radius);
-						var pradius = (espos - lspos).Length();
+						var ppos = Camera.Position + cforward * tll;
+						var pradius = (screenDim - screenPos(ppos + perp * light.Radius)).Length();
 						if(lspos.X + pradius < 0 || lspos.Y + pradius < 0 || lspos.X - pradius > Width || lspos.Y - pradius > Height)
 							continue;
 						pradius *= pradius;

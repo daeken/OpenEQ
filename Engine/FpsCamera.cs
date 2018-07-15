@@ -11,9 +11,9 @@ namespace OpenEQ.Engine {
 		public static Matrix4x4 Matrix;
 		public Matrix4x4 LookRotation = Matrix4x4.Identity;
 		
-		static readonly Vector3 Up = new Vector3(0, 0, 1);
-		static readonly Vector3 Right = vec3(1, 0, 0);
-		static readonly Vector3 Forward = new Vector3(0, 1, 0);
+		public static readonly Vector3 Up = new Vector3(0, 0, 1);
+		public static readonly Vector3 Right = vec3(1, 0, 0);
+		public static readonly Vector3 Forward = new Vector3(0, 1, 0);
 
 		public FpsCamera(Vector3 pos) {
 			Pitch = Yaw = 0;
@@ -26,10 +26,10 @@ namespace OpenEQ.Engine {
 		}
 
 		public void Look(float pitchmod, float yawmod) {
-			var eps = 0.0000001f;
+			var eps = 0.0001f;
 			Pitch = clamp(Pitch + pitchmod, -PI / 2 + eps, PI / 2 - eps);
 			Yaw += yawmod;
-			LookRotation = Matrix4x4.CreateFromAxisAngle(Right, Pitch) * Matrix4x4.CreateFromAxisAngle(Up, Yaw);
+			LookRotation = Matrix4x4.CreateFromAxisAngle(Right, Pitch) * Matrix4x4.CreateFromAxisAngle(Up, Yaw + eps);
 		}
 
 		public void Update() {
