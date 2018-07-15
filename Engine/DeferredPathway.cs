@@ -1,11 +1,16 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using MoreLinq;
 using OpenTK.Graphics.OpenGL4;
 using OpenEQ.Common;
+using OpenTK;
 using static OpenEQ.Engine.Globals;
 using static System.Console;
+using Vector2 = System.Numerics.Vector2;
+using Vector3 = System.Numerics.Vector3;
+using Vector4 = System.Numerics.Vector4;
 
 namespace OpenEQ.Engine {
 	public partial class EngineCore {
@@ -88,10 +93,10 @@ void main() {
 		void RenderDeferredPathway() {
 			var screenDim = vec2(Width, Height) / 2;
 			var projView = FpsCamera.Matrix * ProjectionMat;
-			var invProjView = projView.Invert;
-			Vec2 screenPos(Vec3 wpos) {
-				var ipos = projView * vec4(wpos, 1);
-				return (ipos.XY / ipos.W + 1) * screenDim;
+			Matrix4x4.Invert(projView, out var invProjView);
+			Vector2 screenPos(Vector3 wpos) {
+				var ipos = Vector4.Transform(vec4(wpos, 1), projView);
+				return (ipos.XY() / ipos.W).Add(1) * screenDim;
 			}
 			
 			Profile("- G-buffer render", () => {
@@ -123,14 +128,14 @@ void main() {
 				tiles = Enumerable.Range(0, tw * th).Select(i => new List<(double Dist, PointLight Light)>()).ToArray();
 				foreach(var light in Lights) {
 					var toLight = Camera.Position - light.Position;
-					var tll = toLight.Length;
+					var tll = toLight.Length();
 					if(tll > light.Radius) {
 						var lspos = screenPos(light.Position);
 						toLight /= tll;
 						var cp = toLight.Y != 0 || toLight.Z != 0 ? vec3(1, 0, 0) : vec3(0, 1, 0);
-						var perp = toLight.Cross(cp).Normalized;
+						var perp = toLight.Cross(cp).Normalized();
 						var espos = screenPos(light.Position + perp * light.Radius);
-						var pradius = (espos - lspos).Length;
+						var pradius = (espos - lspos).Length();
 						if(lspos.X + pradius < 0 || lspos.Y + pradius < 0 || lspos.X - pradius > Width || lspos.Y - pradius > Height)
 							continue;
 						pradius *= pradius;
@@ -154,7 +159,7 @@ void main() {
 		
 				Program.Use();
 				Program.SetUniform("uInvProjectionViewMat", invProjView);
-				Program.SetUniform("uAmbientColor", vec3(0.2));
+				Program.SetUniform("uAmbientColor", vec3(0.2f));
 				Program.SetTextures(0, FBO.Textures, "uColor", "uDepth");
 
 				GL.Enable(EnableCap.ScissorTest);
@@ -175,7 +180,6 @@ void main() {
 					}
 				}
 				GL.Disable(EnableCap.ScissorTest);
-				GL.DepthMask(true);
 				GL.Flush();
 			});
 		}

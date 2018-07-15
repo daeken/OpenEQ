@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using NsimGui;
 using OpenEQ.Common;
 using OpenTK.Graphics.OpenGL4;
@@ -82,7 +83,7 @@ void main() {
 			Program.Use();
 			GL.ActiveTexture(TextureUnit.Texture0);
 			Program.SetUniform("uTex", 0);
-			Program.SetUniform("uProjectionMat", new Mat4(
+			Program.SetUniform("uProjectionMat", new Matrix4x4(
 				2f / dimensions.Item1, 0, 0, 0, 
 				0, 2f / -dimensions.Item2, 0, 0, 
 				0, 0, -1, 0, 

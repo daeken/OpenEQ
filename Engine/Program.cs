@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using MoreLinq;
 using OpenTK.Graphics.OpenGL4;
 using OpenEQ.Common;
@@ -58,10 +59,10 @@ namespace OpenEQ.Engine {
 			: Locations[name] = GL.GetAttribLocation(ProgramId, name);
 
 		public void SetUniform(string name, int val) => GL.Uniform1(GetUniform(name), val);
-		public void SetUniform(string name, double val) => GL.Uniform1(GetUniform(name), (float) val);
-		public void SetUniform(string name, Vec2 val) => GL.Uniform2(GetUniform(name), 1, new[] { (float) val.X, (float) val.Y });
-		public void SetUniform(string name, Vec3 val) => GL.Uniform3(GetUniform(name), 1, new[] { (float) val.X, (float) val.Y, (float) val.Z });
-		public void SetUniform(string name, Mat4 val) => GL.UniformMatrix4(GetUniform(name), 1, false, val.AsArray.Select(x => (float) x).ToArray());
+		public void SetUniform(string name, float val) => GL.Uniform1(GetUniform(name), val);
+		public void SetUniform(string name, Vector2 val) => GL.Uniform2(GetUniform(name), 1, ref val.X);
+		public void SetUniform(string name, Vector3 val) => GL.Uniform3(GetUniform(name), 1, ref val.X);
+		public void SetUniform(string name, Matrix4x4 val) => GL.UniformMatrix4(GetUniform(name), 1, false, ref val.M11);
 
 		public void SetTexture(string name, int tu, int tex) {
 			GL.ActiveTexture(TextureUnit.Texture0 + tu);

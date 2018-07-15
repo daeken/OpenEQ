@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Numerics;
 using ImageLib;
 using OpenEQ.Engine;
 using MoreLinq;
@@ -28,11 +29,11 @@ namespace OpenEQ {
 					var zone = OESFile.Read<OESZone>(ms);
 					WriteLine($"Loading {zone.Name}");
 					
-					engine.Add(FromMeshes(FromSkin(zone.Find<OESSkin>().First(), zip), new[] { Mat4.Identity }, zone.Find<OESStaticMesh>()));
+					engine.Add(FromMeshes(FromSkin(zone.Find<OESSkin>().First(), zip), new[] { Matrix4x4.Identity }, zone.Find<OESStaticMesh>()));
 
-					var objInstances = zone.Find<OESObject>().ToDictionary(x => x, x => new List<Mat4>());
+					var objInstances = zone.Find<OESObject>().ToDictionary(x => x, x => new List<Matrix4x4>());
 					zone.Find<OESInstance>().ForEach(inst => {
-						objInstances[inst.Object].Add(Mat4.Scale(inst.Scale) * inst.Rotation.ToMatrix() * Mat4.Translation(inst.Position));
+						objInstances[inst.Object].Add(Matrix4x4.CreateScale(inst.Scale) * Matrix4x4.CreateFromQuaternion(inst.Rotation) * Matrix4x4.CreateTranslation(inst.Position));
 					});
 					foreach(var (obj, instances) in objInstances) {
 						engine.Add(FromMeshes(
@@ -47,7 +48,7 @@ namespace OpenEQ {
 			}
 		}
 
-		static Model FromMeshes(IReadOnlyList<Material> mats, Mat4[] instances, IEnumerable<OESStaticMesh> meshes) {
+		static Model FromMeshes(IReadOnlyList<Material> mats, Matrix4x4[] instances, IEnumerable<OESStaticMesh> meshes) {
 			var model = new Model();
 			meshes.ForEach((sm, i) => model.Add(new Mesh(mats[i], sm.VertexBuffer.ToArray(), sm.IndexBuffer.ToArray(), instances)));
 			return model;

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using NsimGui;
 using NsimGui.Widgets;
 using OpenTK;
@@ -9,6 +10,7 @@ using OpenTK.Graphics.OpenGL4;
 using OpenTK.Input;
 using OpenEQ.Common;
 using Vector2 = System.Numerics.Vector2;
+using Vector3 = System.Numerics.Vector3;
 using static OpenEQ.Engine.Globals;
 
 namespace OpenEQ.Engine {
@@ -25,7 +27,7 @@ namespace OpenEQ.Engine {
 			1280, 720, new GraphicsMode(new ColorFormat(8, 8, 8, 8), 16, 0), "OpenEQ", 
 			GameWindowFlags.Default, DisplayDevice.Default, 4, 1, GraphicsContextFlags.ForwardCompatible
 		) {
-			//VSync = VSyncMode.Off;
+			VSync = VSyncMode.Off;
 			Stopwatch.Start();
 			Gui = new Gui(new GuiRenderer()) {
 				new Window("Status") {
@@ -42,14 +44,15 @@ namespace OpenEQ.Engine {
 
 			Resize += (_, e) => {
 				Gui.Dimensions = new Vector2(Width, Height);
+				Console.WriteLine($"{Width} {Height}");
 				Gui.Scale = new Vector2(2f);
-				ProjectionMat = Mat4.Perspective(45 * (Math.PI / 180), (double) Width / Height, 1, 5000);
+				ProjectionMat = Matrix4x4.CreatePerspectiveFieldOfView(45 * (MathF.PI / 180), (float) Width / Height, 1, 5000);
 			};
 			
 			SetupDeferredPathway();
 		}
 
-		public void AddLight(Vec3 pos, float radius, float attenuation, Vec3 color) =>
+		public void AddLight(Vector3 pos, float radius, float attenuation, Vector3 color) =>
 			Lights.Add(new PointLight(pos, radius, attenuation, color));
 
 		public void Add(Model model) => Models.Add(model);
@@ -75,43 +78,43 @@ namespace OpenEQ.Engine {
 				return;
 			var movement = vec3();
 			var movescale = KeyState.Keys.Contains(Key.WinLeft) ? 250 : 30;
-			var pitchscale = .5;
-			var yawscale = 1;
+			var pitchscale = .5f;
+			var yawscale = 1.25f;
 			var updatedCamera = false;
 			foreach(var key in KeyState.Keys)
 				switch(key) {
 					case Key.W:
-						movement += vec3(0, -e.Time * movescale, 0);
+						movement += vec3(0, (float) e.Time * movescale, 0);
 						break;
 					case Key.S:
-						movement += vec3(0, e.Time * movescale, 0);
+						movement += vec3(0, (float) -e.Time * movescale, 0);
 						break;
 					case Key.A:
-						movement += vec3(e.Time * movescale, 0, 0);
+						movement += vec3((float) -e.Time * movescale, 0, 0);
 						break;
 					case Key.D:
-						movement += vec3(-e.Time * movescale, 0, 0);
+						movement += vec3((float) e.Time * movescale, 0, 0);
 						break;
 					case Key.Space:
-						movement += vec3(0, 0, e.Time * movescale);
+						movement += vec3(0, 0, (float) e.Time * movescale);
 						break;
 					case Key.ShiftLeft:
-						movement += vec3(0, 0, -e.Time * movescale);
+						movement += vec3(0, 0, (float) -e.Time * movescale);
 						break;
 					case Key.Up:
-						Camera.Look(-e.Time * pitchscale, 0);
+						Camera.Look((float) e.Time * pitchscale, 0);
 						updatedCamera = true;
 						break;
 					case Key.Down:
-						Camera.Look(e.Time * pitchscale, 0);
+						Camera.Look((float) -e.Time * pitchscale, 0);
 						updatedCamera = true;
 						break;
 					case Key.Left:
-						Camera.Look(0, e.Time * yawscale);
+						Camera.Look(0, (float) e.Time * yawscale);
 						updatedCamera = true;
 						break;
 					case Key.Right:
-						Camera.Look(0, -e.Time * yawscale);
+						Camera.Look(0, (float) -e.Time * yawscale);
 						updatedCamera = true;
 						break;
 					case Key.Escape:
@@ -119,7 +122,7 @@ namespace OpenEQ.Engine {
 						Exit();
 						break;
 				}
-			if(movement.Length > 0) {
+			if(movement.Length() > 0) {
 				Camera.Move(movement);
 				updatedCamera = true;
 			}
