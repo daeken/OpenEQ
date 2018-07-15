@@ -6,7 +6,7 @@ using static OpenEQ.Engine.Globals;
 namespace OpenEQ.Engine {
 	public class FpsCamera {
 		public Vector3 Position;
-		public float Pitch, Yaw;
+		float Pitch, Yaw;
 
 		public static Matrix4x4 Matrix;
 		public Matrix4x4 LookRotation = Matrix4x4.Identity;
