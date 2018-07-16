@@ -33,7 +33,7 @@ namespace OpenEQ.ConverterCore {
 		}
 
 		bool ConvertZone(string name) {
-			var fns = FindFiles($"{name}*.s3d").Where(fn => !fn.Contains("_chr")).ToList();
+			var fns = FindFiles($"{name}.s3d").Concat(FindFiles($"{name}_*.s3d")).Where(fn => !fn.Contains("_chr")).ToList();
 			if(!fns.Contains($"{name}_obj.s3d")) return false;
 
 			var s3ds = fns.AsParallel().Select(fn => new S3D(fn, File.OpenRead(Filename(fn)))).ToList();
@@ -75,8 +75,8 @@ namespace OpenEQ.ConverterCore {
 					if(wld.Filename == name + ".wld") continue;
 
 					foreach(var (instname, instance) in wld.GetFragments<Fragment15>()) {
-						var objname = instance.Reference.Value.Replace("_ACTORDEF", "");
-						if(!objMap.ContainsKey(objname)) continue;
+						var objname = instance.Reference.Value?.Replace("_ACTORDEF", "");
+						if(objname == null || !objMap.ContainsKey(objname)) continue;
 						zone.Add(new OESInstance(
 							objMap[objname], instance.Position, instance.Scale,
 							Quaternion.CreateFromAxisAngle(new Vector3(0, 0, 1), instance.Rotation.Z) * 
