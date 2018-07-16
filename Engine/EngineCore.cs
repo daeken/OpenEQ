@@ -77,7 +77,7 @@ namespace OpenEQ.Engine {
 			if(KeyState.Count == 0)
 				return;
 			var movement = vec3();
-			var movescale = KeyState.Keys.Contains(Key.WinLeft) ? 250 : 30;
+			var movescale = KeyState.Keys.Contains(Key.ShiftLeft) ? 250 : 30;
 			var pitchscale = .5f;
 			var yawscale = 1.25f;
 			var updatedCamera = false;
@@ -95,10 +95,10 @@ namespace OpenEQ.Engine {
 					case Key.D:
 						movement += vec3((float) e.Time * movescale, 0, 0);
 						break;
-					case Key.Space:
+					case Key.E:
 						movement += vec3(0, 0, (float) e.Time * movescale);
 						break;
-					case Key.ShiftLeft:
+					case Key.Q:
 						movement += vec3(0, 0, (float) -e.Time * movescale);
 						break;
 					case Key.Up:
@@ -118,7 +118,7 @@ namespace OpenEQ.Engine {
 						updatedCamera = true;
 						break;
 					case Key.Escape:
-					case Key.Q:
+					case Key.Tilde:
 						Exit();
 						break;
 				}
@@ -146,7 +146,7 @@ namespace OpenEQ.Engine {
 				GL.DepthMask(false);
 				Models.ForEach(model => model.Draw(translucent: true));
 				GL.DepthMask(true);
-				GL.Flush();
+				GL.Finish();
 			});
 
 			Gui.Render((float) e.Time);

@@ -73,7 +73,7 @@ uniform sampler2D uColor, uDepth;
 uniform vec3 uAmbientColor;
 uniform Light uLights[" + maxLights + @"];
 uniform int uLightCount;
-out vec3 color;
+out vec4 color;
 
 void main() {
 	gl_FragDepth = texture(uDepth, vTexCoord).x; // Copy depth from FBO to screen depth buffer
@@ -86,10 +86,11 @@ void main() {
 		float dist = length(light.pos - pos);
 		accum += light.color * pow(1 - min(dist / light.radius, 1), 3);
 	}
-	color = csv * accum;
+	color = vec4(csv * accum, 1);
 }
 			");
 
+			Program.Use();
 			UniformLocs = Enumerable.Range(0, maxLights).Select(i => new[] {
 				Program.GetUniform($"uLights[{i}].pos"), 
 				Program.GetUniform($"uLights[{i}].color"), 
@@ -122,7 +123,7 @@ void main() {
 				Models.ForEach(model => model.Draw(translucent: false));
 		
 				FrameBuffer.Unbind();
-				GL.Flush();
+				GL.Finish();
 			});
 			
 			GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
@@ -187,7 +188,7 @@ void main() {
 					}
 				}
 				GL.Disable(EnableCap.ScissorTest);
-				GL.Flush();
+				GL.Finish();
 			});
 		}
 	}
