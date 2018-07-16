@@ -52,7 +52,7 @@ namespace ImageLib {
 			for(var y = 0; y < image.Size.Height; ++y)
 				Array.Copy(image.Data, y * stride, imem, y * stride + y + 1, stride);
 			using(var ms = new MemoryStream()) {
-				using(var ds = new ZlibStream(ms, CompressionMode.Compress, CompressionLevel.BestCompression, leaveOpen: true)) {
+				using(var ds = new ZlibStream(ms, CompressionMode.Compress, CompressionLevel.BestSpeed, leaveOpen: true)) {
 					ds.Write(imem, 0, imem.Length);
 					ds.Flush();
 				}
