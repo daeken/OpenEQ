@@ -109,6 +109,11 @@ namespace OpenEQ.Common {
 		protected void Resolve<T>(uint id, Action<T> func) where T : OESChunk => OESFile.Resolve(id, func);
 	}
 
+	public class OESRoot : OESChunk {
+		public OESRoot(string typeCode, uint id) : base(typeCode, id) {}
+		public OESRoot() : base("root") {}
+	}
+
 	public class OESMaterial : OESChunk {
 		public bool AlphaMask, Transparent, Emissive;
 		

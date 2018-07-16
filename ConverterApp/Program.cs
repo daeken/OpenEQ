@@ -10,9 +10,13 @@ namespace OpenEQ.ConverterApp {
 			Console.WriteLine("Starting conversion");
 			sw.Start();
 			var converter = new Converter(args[0]);
-			var success = converter.ConvertZone(args[1]);
+			var type = converter.Convert(args[1]);
 			sw.Stop();
-			Console.WriteLine(success ? "Zone converted" : "Zone not found");
+			switch(type) {
+				case ConvertedType.None: Console.WriteLine("Conversion failed"); break;
+				case ConvertedType.Zone: Console.WriteLine("Zone converted"); break;
+				case ConvertedType.Characters: Console.WriteLine("Characters converted"); break;
+			}
 			Console.WriteLine($"Took {sw.ElapsedMilliseconds} ms");
 		}
 	}

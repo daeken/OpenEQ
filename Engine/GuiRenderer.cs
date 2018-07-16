@@ -78,7 +78,7 @@ void main() {
 			GL.Disable(EnableCap.CullFace);
 			GL.Enable(EnableCap.ScissorTest);
 			
-			GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+			GL.BlendFunc(BlendingFactorSrc.SrcAlpha, BlendingFactorDest.OneMinusSrcAlpha);
 			
 			Program.Use();
 			GL.ActiveTexture(TextureUnit.Texture0);

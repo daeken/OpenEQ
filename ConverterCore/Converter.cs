@@ -13,12 +13,24 @@ using static System.Console;
 using Extensions = OpenEQ.Common.Extensions;
 
 namespace OpenEQ.ConverterCore {
+	public enum ConvertedType {
+		None, 
+		Zone, 
+		Characters
+	}
+	
 	public class Converter {
 		public string BasePath;
 		
 		public Converter(string basePath) => BasePath = basePath;
 
-		public bool ConvertZone(string name) {
+		public ConvertedType Convert(string name) {
+			if(name.EndsWith("_chr"))
+				return ConvertCharacters(name) ? ConvertedType.Characters : ConvertedType.None;
+			return ConvertZone(name) ? ConvertedType.Zone : ConvertedType.None;
+		}
+
+		bool ConvertZone(string name) {
 			var fns = FindFiles($"{name}*.s3d").Where(fn => !fn.Contains("_chr")).ToList();
 			if(!fns.Contains($"{name}_obj.s3d")) return false;
 
@@ -73,6 +85,29 @@ namespace OpenEQ.ConverterCore {
 				}
 
 				OESFile.Write(zip.CreateEntry("main.oes", CompressionLevel.Optimal).Open(), zone);
+			}
+
+			return true;
+		}
+
+		bool ConvertCharacters(string name) {
+			var fns = FindFiles($"{name}*.s3d").ToList();
+			if(fns.Count == 0) return false;
+
+			var s3ds = fns.AsParallel().Select(fn => new S3D(fn, File.OpenRead(Filename(fn)))).ToList();
+			var wlds = s3ds.AsParallel().Select(s3d => s3d.Where(fn => fn.EndsWith(".wld")).Select(fn => new Wld(s3d, fn)))
+				.SelectMany(x => x).ToList();
+
+			foreach(var wld in wlds) {
+				WriteLine($"<h1>{wld.Filename}</h1>");
+				Debugging.OutputHTML(wld);
+			}
+
+			var zn = $"{name}_oes.zip";
+			if(File.Exists(zn)) File.Delete(zn);
+			using(var zip = ZipFile.Open(zn, ZipArchiveMode.Create)) {
+				var root = new OESRoot();
+				OESFile.Write(zip.CreateEntry("main.oes", CompressionLevel.Optimal).Open(), root);
 			}
 
 			return true;
