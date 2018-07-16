@@ -79,8 +79,6 @@ namespace OpenEQ.Engine {
 				GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int) TextureMagFilter.Linear);
 				GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int) TextureWrapMode.ClampToEdge);
 				GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int) TextureWrapMode.ClampToEdge);
-				if(att == FrameBufferAttachment.Depth || att == FrameBufferAttachment.Depth16)
-					GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureCompareMode, (int) TextureCompareMode.CompareRefToTexture);
 				GL.FramebufferTexture2D(FramebufferTarget.FramebufferExt, glatt, TextureTarget.Texture2D, tex, 0);
 				return tex;
 			}).ToArray();
