@@ -135,6 +135,7 @@ namespace OpenEQ.LegacyFileReader {
 		public Vector2[] TexCoords;
 		public (bool Collidable, uint A, uint B, uint C)[] Polygons;
 		public (uint Count, uint Index)[] PolyTexs;
+		public (uint Count, uint Index)[] VertBones;
 	}
 	
 	public class Fragment37 {
@@ -152,7 +153,7 @@ namespace OpenEQ.LegacyFileReader {
 
 		readonly string StringHash;
 
-		readonly (string Name, object Fragment)[] Fragments;
+		internal readonly (string Name, object Fragment)[] Fragments;
 		readonly Dictionary<string, int> NameIndex = new Dictionary<string, int>();
 		
 		public Wld(S3D s3d, string fn) {
@@ -404,7 +405,7 @@ namespace OpenEQ.LegacyFileReader {
 			var polygons = Enumerable.Range(0, polyCount)
 				.Select(_ => (Br.ReadUInt16() == 0, (uint) Br.ReadUInt16(), (uint) Br.ReadUInt16(), (uint) Br.ReadUInt16())).ToArray();
 			var vertPieces = Enumerable.Range(0, vertPieceCount)
-				.Select(_ => (Br.ReadUInt16(), Br.ReadUInt16())).ToArray();
+				.Select(_ => ((uint) Br.ReadUInt16(), (uint) Br.ReadUInt16())).ToArray();
 			var polyTex = Enumerable.Range(0, polyTexCount)
 				.Select(_ => ((uint) Br.ReadUInt16(), (uint) Br.ReadUInt16())).ToArray();
 			
@@ -414,7 +415,8 @@ namespace OpenEQ.LegacyFileReader {
 				Normals = normals, 
 				TexCoords = texcoords, 
 				Polygons = polygons, 
-				PolyTexs = polyTex
+				PolyTexs = polyTex, 
+				VertBones = vertPieces
 			};
 		}
 		

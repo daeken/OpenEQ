@@ -12,6 +12,7 @@ using OpenEQ.Common;
 using Vector2 = System.Numerics.Vector2;
 using Vector3 = System.Numerics.Vector3;
 using static OpenEQ.Engine.Globals;
+using Size = NsimGui.Size;
 
 namespace OpenEQ.Engine {
 	public partial class EngineCore : GameWindow {
@@ -139,7 +140,7 @@ namespace OpenEQ.Engine {
 
 			Profile("Forward render", () => {
 				GL.Enable(EnableCap.Blend);
-				GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+				GL.BlendFunc(BlendingFactorSrc.SrcAlpha, BlendingFactorDest.OneMinusSrcAlpha);
 				GL.Enable(EnableCap.DepthTest);
 				GL.ActiveTexture(TextureUnit.Texture0);
 				GL.DepthMask(false);
