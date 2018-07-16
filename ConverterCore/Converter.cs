@@ -21,7 +21,9 @@ namespace OpenEQ.ConverterCore {
 	
 	public class Converter {
 		public string BasePath;
-		
+
+		Dictionary<(string, string), string> TextureMap;
+
 		public Converter(string basePath) => BasePath = basePath;
 
 		public ConvertedType Convert(string name) {
@@ -37,10 +39,16 @@ namespace OpenEQ.ConverterCore {
 			var s3ds = fns.AsParallel().Select(fn => new S3D(fn, File.OpenRead(Filename(fn)))).ToList();
 			var wlds = s3ds.AsParallel().Select(s3d => s3d.Where(fn => fn.EndsWith(".wld")).Select(fn => new Wld(s3d, fn)))
 				.SelectMany(x => x).ToList();
-
+			
 			var zn = $"{name}_oes.zip";
 			if(File.Exists(zn)) File.Delete(zn);
 			using(var zip = ZipFile.Open(zn, ZipArchiveMode.Create)) {
+				var texs = wlds
+					.Select(x =>
+						x.GetFragments<Fragment03>().Select(y => y.Fragment.Filenames.Select(z => (x.S3D, z))))
+					.SelectMany(x => x).SelectMany(x => x).Distinct();
+				TextureMap = texs.AsParallel().Select(x => ((x.Item1.Filename, x.Item2), ConvertTexture(x.Item1, zip, x.Item2))).ToDictionary();
+
 				var zone = new OESZone(name);
 				
 				foreach(var wld in wlds) {
@@ -117,9 +125,6 @@ namespace OpenEQ.ConverterCore {
 			var mesh = new Mesh();
 			pieces.ForEach(mesh.Add);
 			var baked = mesh.Bake();
-			var textureFns = baked.Select(x => x.Texture.Filenames).SelectMany(x => x).OrderBy(x => x)
-				.Distinct();
-			var textureMap = Extensions.ToDictionary(textureFns.AsParallel().Select(fn => (fn, ConvertTexture(wld.S3D, zip, fn))));
 			var skin = new OESSkin();
 			target.Add(skin);
 			foreach(var (vb, ib, collidable, texture) in baked) {
@@ -137,7 +142,7 @@ namespace OpenEQ.ConverterCore {
 				else {
 					if(texture.Filenames.Count > 1)
 						mat.Add(new OESEffect("animated") { ["speed"] = texture.AnimSpeed });
-					texture.Filenames.ForEach(fn => mat.Add(new OESTexture(textureMap[fn])));
+					texture.Filenames.ForEach(fn => mat.Add(new OESTexture(TextureMap[(wld.S3D.Filename, fn)])));
 				}
 
 				skin.Add(mat);
@@ -155,7 +160,7 @@ namespace OpenEQ.ConverterCore {
 			var dimg = Dds.Load(data);
 			var scaled = dimg.Images[0];//.UpscaleFfmpeg(4);
 			lock(zip) {
-				var entry = zip.CreateEntry(ofn, CompressionLevel.NoCompression).Open();
+				var entry = zip.CreateEntry(ofn, CompressionLevel.Optimal).Open();
 				Png.Encode(scaled, entry);
 				entry.Close();
 			}

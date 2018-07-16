@@ -46,9 +46,6 @@ namespace OpenEQ.Common {
 			bw.Write(v.W);
 		}
 
-		public static Dictionary<KeyT, ValueT> ToDictionary<KeyT, ValueT>(this IEnumerable<(KeyT Key, ValueT Value)> e) =>
-			e.ToDictionary(x => x.Key, x => x.Value);
-		
 		public static Vector2 XY(this Vector3 v) => new Vector2(v.X, v.Y);
 		public static Vector2 XY(this Vector4 v) => new Vector2(v.X, v.Y);
 		
