@@ -149,7 +149,7 @@ namespace OpenEQ.ConverterCore {
 
 				var zone = new OESZone(name);
 				var objs = zon.Objects.Select((obj, i) => {
-					var root = i == 0 ? (OESChunk) zone : new OESObject();
+					var root = obj.IsTer ? (OESChunk) zone : new OESObject();
 					if(root != zone)
 						zone.Add(root);
 					var skin = new OESSkin();
@@ -160,11 +160,11 @@ namespace OpenEQ.ConverterCore {
 						skin.Add(new OESMaterial(false, false, false) { new OESTexture(TextureMap[(ename, (string) mat.Properties["e_TextureDiffuse0"])]) });
 						root.Add(new OESStaticMesh(mesh.Key.Collidable, mesh.Value, obj.VertexBuffer));
 					});
-					return root;
+					return obj.IsTer ? null : root;
 				}).ToList();
 				
 				zon.Placeables.ForEach(instance => {
-					if(instance.ObjId == 0 || objs.Count <= instance.ObjId) return;
+					if(objs.Count <= instance.ObjId || objs[instance.ObjId] == null) return;
 					
 					zone.Add(new OESInstance(
 						(OESObject) objs[instance.ObjId], 
@@ -175,9 +175,7 @@ namespace OpenEQ.ConverterCore {
 						Quaternion.CreateFromAxisAngle(new Vector3(1, 0, 0), instance.Rotation.Z)));
 				});
 				
-				zon.Lights.ForEach(light => {
-					zone.Add(new OESLight(light.Position, light.Color, light.Radius, 200));
-				});
+				zon.Lights.ForEach(light => zone.Add(new OESLight(light.Position, light.Color, light.Radius, 200)));
 				
 				OESFile.Write(zip.CreateEntry("main.oes", CompressionLevel.Optimal).Open(), zone);
 			}
