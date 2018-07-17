@@ -290,7 +290,7 @@ namespace ImageLib {
 						_dds.Images[_level] = Decompress.Image(_imageBits, _w2, _h2, _compressionMode);
 						_dds.Images[_level].SwapRB();
 						//_dds.Images[_level].FlipY();
-					} catch {
+					} catch(Exception e) {
 						// Unexpected end of file. Perhaps mipmaps weren't fully written to file.
 						// We'll at least provide them with what we've extracted so far.
 
@@ -666,15 +666,14 @@ namespace ImageLib {
 			static Image Linear(byte[] Data, int W, int H, uint bpp) {
 				uint _a, _r, _g, _b, _c, _pos;
 
-				var size = (W, H);
-				var _stride = W * 4;
-				var _pixels = new uint[W * H * 4];
+				var _stride = W;
+				var _pixels = new uint[W * H];
 
 				switch(bpp) {
 					case 15: // CompressionMode.A1R5G5B5:
 						_pos = 0;
 						for(var _y = 0; _y < H; _y++) {
-							var _xy = _y * (_stride >> 2);
+							var _xy = _y * _stride;
 
 							for(var _x = 0; _x < W; _x++) {
 								_c = Data[_pos++];
@@ -695,7 +694,7 @@ namespace ImageLib {
 						_a = 0xFFU << 24;
 
 						for(var _y = 0; _y < H; _y++) {
-							var _xy = _y * (_stride >> 2);
+							var _xy = _y * _stride;
 
 							for(var _x = 0; _x < W; _x++) {
 								_c = Data[_pos++];

@@ -4,6 +4,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.Serialization;
 using System.Security.Cryptography;
 using ImageLib;
 using MoreLinq;
@@ -29,10 +30,12 @@ namespace OpenEQ.ConverterCore {
 		public ConvertedType Convert(string name) {
 			if(name.EndsWith("_chr"))
 				return ConvertCharacters(name) ? ConvertedType.Characters : ConvertedType.None;
-			return ConvertZone(name) ? ConvertedType.Zone : ConvertedType.None;
+			if(ConvertWldZone(name) || ConvertEqgZone(name))
+				return ConvertedType.Zone;
+			return ConvertedType.None;
 		}
 
-		bool ConvertZone(string name) {
+		bool ConvertWldZone(string name) {
 			var fns = FindFiles($"{name}.s3d").Concat(FindFiles($"{name}_*.s3d")).Where(fn => !fn.Contains("_chr")).ToList();
 			if(!fns.Contains($"{name}_obj.s3d")) return false;
 
@@ -116,6 +119,67 @@ namespace OpenEQ.ConverterCore {
 			using(var zip = ZipFile.Open(zn, ZipArchiveMode.Create)) {
 				var root = new OESRoot();
 				OESFile.Write(zip.CreateEntry("main.oes", CompressionLevel.Optimal).Open(), root);
+			}
+
+			return true;
+		}
+
+		bool ConvertEqgZone(string name) {
+			var ename = $"{name}.eqg";
+			if(!Exists(ename)) return false;
+			
+			var eqg = new S3D(ename, File.OpenRead(Filename(ename)));
+			Zon zon;
+			var zname = $"{name}.zon";
+			if(eqg.Contains(zname))
+				zon = new Zon(eqg, eqg.Open(zname));
+			else if(Exists(zname))
+				zon = new Zon(eqg, File.OpenRead(zname));
+			else
+				return false;
+			
+			var zn = $"{name}_oes.zip";
+			if(File.Exists(zn)) File.Delete(zn);
+			using(var zip = ZipFile.Open(zn, ZipArchiveMode.Create)) {
+				var texs = zon.Objects.Select(x => x.Materials.Values.Select(y => 
+					y.Properties.Values.Where(z => z is string w && w.ToLower().EndsWith(".dds")).Select(z => 
+						(string) z)).SelectMany(y => y)).SelectMany(x => x).OrderBy(x => x).Distinct();
+				TextureMap = texs.AsParallel()
+					.Select(x => ((ename, x), ConvertTexture(eqg, zip, x))).ToDictionary();
+
+				var zone = new OESZone(name);
+				var objs = zon.Objects.Select((obj, i) => {
+					var root = i == 0 ? (OESChunk) zone : new OESObject();
+					if(root != zone)
+						zone.Add(root);
+					var skin = new OESSkin();
+					root.Add(skin);
+					obj.Meshes.ForEach(mesh => {
+						if(!obj.Materials.ContainsKey(mesh.Key.MatIndex)) return;
+						var mat = obj.Materials[mesh.Key.MatIndex];
+						skin.Add(new OESMaterial(false, false, false) { new OESTexture(TextureMap[(ename, (string) mat.Properties["e_TextureDiffuse0"])]) });
+						root.Add(new OESStaticMesh(mesh.Key.Collidable, mesh.Value, obj.VertexBuffer));
+					});
+					return root;
+				}).ToList();
+				
+				zon.Placeables.ForEach(instance => {
+					if(instance.ObjId == 0 || objs.Count <= instance.ObjId) return;
+					
+					zone.Add(new OESInstance(
+						(OESObject) objs[instance.ObjId], 
+						instance.Position, 
+						new Vector3(instance.Scale), 
+						Quaternion.CreateFromAxisAngle(new Vector3(0, 0, 1), instance.Rotation.X) * 
+						Quaternion.CreateFromAxisAngle(new Vector3(0, 1, 0), instance.Rotation.Y) * 
+						Quaternion.CreateFromAxisAngle(new Vector3(1, 0, 0), instance.Rotation.Z)));
+				});
+				
+				zon.Lights.ForEach(light => {
+					zone.Add(new OESLight(light.Position, light.Color, light.Radius, 200));
+				});
+				
+				OESFile.Write(zip.CreateEntry("main.oes", CompressionLevel.Optimal).Open(), zone);
 			}
 
 			return true;

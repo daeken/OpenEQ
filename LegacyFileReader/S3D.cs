@@ -72,6 +72,8 @@ namespace OpenEQ.LegacyFileReader {
 		public IEnumerator<string> GetEnumerator() => Files.Keys.GetEnumerator();
 		IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
+		public bool Contains(string fn) => Files.ContainsKey(fn.ToLower());
+
 		public IEnumerable<(string, byte[])> GetAllFiles() => Files.Keys.Select(fn => (fn, this[fn]));
 	}
 }
