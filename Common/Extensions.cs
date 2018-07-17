@@ -49,6 +49,10 @@ namespace OpenEQ.Common {
 		public static Vector2 XY(this Vector3 v) => new Vector2(v.X, v.Y);
 		public static Vector2 XY(this Vector4 v) => new Vector2(v.X, v.Y);
 		
+		public static Vector3 XZY(this Vector3 v) => new Vector3(v.X, v.Z, v.Y);
+		public static Vector3 YXZ(this Vector3 v) => new Vector3(v.Y, v.X, v.Z);
+		public static Vector3 ZYX(this Vector3 v) => new Vector3(v.Z, v.Y, v.X);
+		
 		public static Vector2 Add(this Vector2 v, float right) => new Vector2(v.X + right, v.Y + right);
 
 		public static Vector3 Cross(this Vector3 left, Vector3 right) => Vector3.Cross(left, right);

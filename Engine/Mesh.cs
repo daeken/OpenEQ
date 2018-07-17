@@ -134,7 +134,7 @@ vec4 fire(float time, vec2 tc) {
 
 void main() {
 	float time = uTime * 1.3 + length(vPosition);
-	vec2 tc = mod(vTexCoord, 1);
+	vec2 tc = abs(mod(vTexCoord, 1));
 	if(tc.y > .95) discard;
 	color = (fire(mod(time, 10), tc) + fire(mod(time + .05, 10), tc)) / 2;
 }

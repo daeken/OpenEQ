@@ -168,7 +168,7 @@ void main() {
 		
 				Program.Use();
 				Program.SetUniform("uInvProjectionViewMat", invProjView);
-				Program.SetUniform("uAmbientColor", vec3(0.2f));	
+				Program.SetUniform("uAmbientColor", vec3(0.4f));	
 				Program.SetTextures(0, FBO.Textures, "uColor", "uDepth");
 
 				GL.Enable(EnableCap.ScissorTest);
