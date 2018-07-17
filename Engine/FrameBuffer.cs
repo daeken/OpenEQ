@@ -35,7 +35,7 @@ namespace OpenEQ.Engine {
 			Textures = Attachments.Select((att, i) => {
 				var tex = GL.GenTexture();
 				GL.BindTexture(TextureTarget.Texture2D, tex);
-				var pif = PixelInternalFormat.Rgb;
+				var pif = PixelInternalFormat.Rgb16f;
 				var pf = PixelFormat.Rgb;
 				var glatt = FramebufferAttachment.Aux0;
 				var pt = PixelType.HalfFloat;
@@ -63,6 +63,7 @@ namespace OpenEQ.Engine {
 						pt = PixelType.UnsignedByte;
 						break;
 					case FrameBufferAttachment.Rgb:
+						pif = PixelInternalFormat.Rgb;
 						pt = PixelType.UnsignedByte;
 						break;
 					case FrameBufferAttachment.Xyzw:

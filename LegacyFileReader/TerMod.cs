@@ -56,6 +56,9 @@ namespace OpenEQ.LegacyFileReader {
 					}).ToDictionary()));
 			}).ToDictionary();
 			
+			if(isTer)
+				Materials.Values.ForEach(mat => WriteLine($"{mat.Name} {mat.Shader} ({string.Join(", ", mat.Properties.Select(x => $"{x.Key}={x.Value}"))})"));
+			
 			VertexBuffer = Enumerable.Range(0, numVert).Select(x => {
 				var v = br.ReadVec3().AsArray().Concat(br.ReadVec3().AsArray());
 				if(version == 3)

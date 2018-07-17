@@ -26,7 +26,7 @@ namespace OpenEQ.Engine {
 			Resize += (_, __) => {
 				if(FBO == null)
 					FBO = new FrameBuffer(Width, Height,
-						FrameBufferAttachment.Rgba, 
+						FrameBufferAttachment.Rgba, FrameBufferAttachment.Xyz, 
 						FrameBufferAttachment.Depth);
 				else
 					FBO.Resize(Width, Height);
@@ -69,7 +69,7 @@ struct Light {
 };
 
 uniform mat4 uInvProjectionViewMat;
-uniform sampler2D uColor, uDepth;
+uniform sampler2D uColor, uNormal, uDepth;
 uniform vec3 uAmbientColor;
 uniform Light uLights[" + maxLights + @"];
 uniform int uLightCount;
@@ -78,13 +78,16 @@ out vec4 color;
 void main() {
 	gl_FragDepth = texture(uDepth, vTexCoord).x; // Copy depth from FBO to screen depth buffer
 	vec3 csv = texture(uColor, vTexCoord).rgb;
+	vec3 normal = normalize(texture(uNormal, vTexCoord).xyz);
 	vec4 sspos = uInvProjectionViewMat * (vec4(vTexCoord.xy, gl_FragDepth, 1) * 2 - 1);
 	vec3 pos = sspos.xyz / sspos.w;
 	vec3 accum = uAmbientColor;
 	for(int i = 0; i < uLightCount; ++i) {
 		Light light = uLights[i];
-		float dist = length(light.pos - pos);
-		accum += light.color * pow(1 - min(dist / light.radius, 1), 3);
+		vec3 toLight = light.pos - pos;
+		float dist = length(toLight);
+		float intensity = min(max(dot(normal, toLight / dist), 0.0) + .5, 1);
+		accum += light.color * pow(1 - min(dist / light.radius, 1), 3) * intensity;
 	}
 	color = vec4(csv * accum, 1);
 }
@@ -168,8 +171,8 @@ void main() {
 		
 				Program.Use();
 				Program.SetUniform("uInvProjectionViewMat", invProjView);
-				Program.SetUniform("uAmbientColor", vec3(0.4f));	
-				Program.SetTextures(0, FBO.Textures, "uColor", "uDepth");
+				Program.SetUniform("uAmbientColor", vec3(0.25f));	
+				Program.SetTextures(0, FBO.Textures, "uColor", "uNormal", "uDepth");
 
 				GL.Enable(EnableCap.ScissorTest);
 				var ti = 0;
