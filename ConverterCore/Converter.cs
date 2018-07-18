@@ -157,7 +157,14 @@ namespace OpenEQ.ConverterCore {
 					obj.Meshes.ForEach(mesh => {
 						if(!obj.Materials.ContainsKey(mesh.Key.MatIndex)) return;
 						var mat = obj.Materials[mesh.Key.MatIndex];
-						skin.Add(new OESMaterial(false, false, false) { new OESTexture(TextureMap[(ename, (string) mat.Properties["e_TextureDiffuse0"])]) });
+						if(mat.Properties.ContainsKey("e_TextureNormal0") && (string) mat.Properties["e_TextureNormal0"] != "None") {
+							skin.Add(new OESMaterial(false, false, false) {
+								new OESEffect("diffuse+normal"),
+								new OESTexture(TextureMap[(ename, (string) mat.Properties["e_TextureDiffuse0"])]),
+								new OESTexture(TextureMap[(ename, (string) mat.Properties["e_TextureNormal0"])])
+							});
+						} else
+							skin.Add(new OESMaterial(false, false, false) { new OESTexture(TextureMap[(ename, (string) mat.Properties["e_TextureDiffuse0"])]) });
 						var (vb, ib) = OptimizeBuffers(obj.VertexBuffer, mesh.Value);
 						root.Add(new OESStaticMesh(mesh.Key.Collidable, ib, vb));
 					});

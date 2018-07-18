@@ -77,6 +77,8 @@ namespace OpenEQ {
 							return mat.AlphaMask
 								? (Material) new DeferredDiffuseMaskedMaterial(textures, aniSpeed)
 								: new DeferredDiffuseMaterial(textures, aniSpeed);
+					case "diffuse+normal":
+						return new DeferredDiffuseNormalMaterial(textures);
 					case "fire":
 						return new FireMaterial();
 					default:
