@@ -86,7 +86,7 @@ void main() {
 		Light light = uLights[i];
 		vec3 toLight = light.pos - pos;
 		float dist = length(toLight);
-		float intensity = min(max(dot(normal, toLight / dist), 0.0) + .5, 1);
+		float intensity = min(max(dot(normal, toLight / dist), 0.0), 1);
 		accum += light.color * pow(1 - min(dist / light.radius, 1), 3) * intensity;
 	}
 	color = vec4(csv * accum, 1);
