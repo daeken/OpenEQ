@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Numerics;
 using MoreLinq;
 
 namespace OpenEQ.Engine {
@@ -8,6 +9,6 @@ namespace OpenEQ.Engine {
 
 		public void Add(Mesh mesh) => Meshes.Add(mesh);
 
-		public void Draw(bool translucent) => Meshes.ForEach(mesh => mesh.Draw(translucent));
+		public void Draw(Matrix4x4 projView, bool forward) => Meshes.ForEach(mesh => mesh.Draw(projView, forward));
 	}
 }
