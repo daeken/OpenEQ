@@ -158,7 +158,8 @@ namespace OpenEQ.ConverterCore {
 						if(!obj.Materials.ContainsKey(mesh.Key.MatIndex)) return;
 						var mat = obj.Materials[mesh.Key.MatIndex];
 						skin.Add(new OESMaterial(false, false, false) { new OESTexture(TextureMap[(ename, (string) mat.Properties["e_TextureDiffuse0"])]) });
-						root.Add(new OESStaticMesh(mesh.Key.Collidable, mesh.Value, obj.VertexBuffer));
+						var (vb, ib) = OptimizeBuffers(obj.VertexBuffer, mesh.Value);
+						root.Add(new OESStaticMesh(mesh.Key.Collidable, ib, vb));
 					});
 					return obj.IsTer ? null : root;
 				}).ToList();
@@ -181,6 +182,30 @@ namespace OpenEQ.ConverterCore {
 			}
 
 			return true;
+		}
+
+		(float[] VertexBuffer, uint[] IndexBuffer) OptimizeBuffers(IReadOnlyList<float> vb, IReadOnlyList<uint> ib) {
+			var pvb = (0, vb.Count, 8).Range().Select(i => (
+				new Vector3(vb[i++], vb[i++], vb[i++]),
+				new Vector3(vb[i++], vb[i++], vb[i++]), 
+				new Vector2(vb[i++], vb[i])
+			)).ToList();
+
+			var ovb = new List<float>();
+			var vertMap = new Dictionary<(Vector3, Vector3, Vector2), uint>();
+
+			uint Add((Vector3, Vector3, Vector2) vert) {
+				if(vertMap.ContainsKey(vert)) return vertMap[vert];
+
+				var ind = vertMap[vert] = (uint) vertMap.Count;
+				ovb.AddRange(vert.Item1.AsArray());
+				ovb.AddRange(vert.Item2.AsArray());
+				ovb.AddRange(vert.Item3.AsArray());
+				return ind;
+			}
+
+			var oib = ib.Select(x => Add(pvb[(int) x])).ToArray();
+			return (ovb.ToArray(), oib);
 		}
 
 		void CreateMeshAndSkin(Wld wld, ZipArchive zip, OESChunk target, IEnumerable<MeshPiece> pieces) {

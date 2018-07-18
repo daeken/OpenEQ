@@ -68,5 +68,13 @@ namespace OpenEQ.Common {
 			mat.M31, mat.M32, mat.M33, mat.M34, 
 			mat.M41, mat.M42, mat.M43, mat.M44 
 		};
+
+		public static IEnumerable<int> Range(this int count) => Enumerable.Range(0, count);
+		public static IEnumerable<int> Range(this (int Start, int End) tuple) =>
+			Enumerable.Range(tuple.Start, tuple.End - tuple.Start);
+		public static IEnumerable<int> Range(this (int Start, int End, int Step) tuple) {
+			for(var i = tuple.Start; i < tuple.End; i += tuple.Step)
+				yield return i;
+		}
 	}
 }
