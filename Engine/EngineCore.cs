@@ -19,10 +19,10 @@ namespace OpenEQ.Engine {
 		public readonly Gui Gui;
 		
 		readonly List<Model> Models = new List<Model>();
-
 		readonly List<double> FrameTimes = new List<double>();
-		
 		readonly List<PointLight> Lights = new List<PointLight>();
+
+		Matrix4x4 ProjectionView;
 		
 		public EngineCore() : base(
 			1280, 720, new GraphicsMode(new ColorFormat(8, 8, 8, 8), 16, 0), "OpenEQ", 
@@ -136,6 +136,8 @@ namespace OpenEQ.Engine {
 				FrameTimes.RemoveAt(0);
 			FrameTimes.Add(e.Time);
 
+			ProjectionView = FpsCamera.Matrix * ProjectionMat;
+
 			Profile("Deferred render", RenderDeferredPathway);
 
 			Profile("Forward render", () => {
@@ -144,7 +146,7 @@ namespace OpenEQ.Engine {
 				GL.Enable(EnableCap.DepthTest);
 				GL.ActiveTexture(TextureUnit.Texture0);
 				GL.DepthMask(false);
-				Models.ForEach(model => model.Draw(translucent: true));
+				Models.ForEach(model => model.Draw(ProjectionView, forward: true));
 				GL.DepthMask(true);
 				GL.Finish();
 			});

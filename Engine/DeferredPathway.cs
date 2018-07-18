@@ -104,10 +104,9 @@ void main() {
 
 		void RenderDeferredPathway() {
 			var screenDim = vec2(Width, Height) / 2;
-			var projView = FpsCamera.Matrix * ProjectionMat;
-			Matrix4x4.Invert(projView, out var invProjView);
+			Matrix4x4.Invert(ProjectionView, out var invProjView);
 			Vector2 screenPos(Vector3 wpos) {
-				var ipos = Vector4.Transform(vec4(wpos, 1), projView);
+				var ipos = Vector4.Transform(vec4(wpos, 1), ProjectionView);
 				return (ipos.XY() / ipos.W).Add(1) * screenDim;
 			}
 			
@@ -121,9 +120,7 @@ void main() {
 				GL.Enable(EnableCap.DepthTest);
 				GL.Disable(EnableCap.Blend);
 
-				Mesh.SetProjectionView(projView);
-		
-				Models.ForEach(model => model.Draw(translucent: false));
+				Models.ForEach(model => model.Draw(ProjectionView, forward: false));
 		
 				FrameBuffer.Unbind();
 				GL.Finish();

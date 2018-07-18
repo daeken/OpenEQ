@@ -8,10 +8,11 @@ using ImageLib;
 using OpenEQ.Engine;
 using MoreLinq;
 using OpenEQ.Common;
+using OpenEQ.Materials;
 using static System.Console;
 
 namespace OpenEQ {
-	class Program {
+	class App {
 		static void Main(string[] args) {
 			var engine = new EngineCore();
 
@@ -56,17 +57,31 @@ namespace OpenEQ {
 
 		static List<Material> FromSkin(OESSkin skin, ZipArchive zip) =>
 			skin.Find<OESMaterial>().Select(mat => {
-				if(mat.Find<OESEffect>().Any(x => x.Name == "fire"))
-					return null; // TODO: Unhack
-				return new Material(
-						(mat.Transparent ? MaterialFlag.Translucent : MaterialFlag.Normal) |
-						(mat.AlphaMask ? MaterialFlag.Masked : MaterialFlag.Normal),
-						mat.Find<OESEffect>().FirstOrDefault(x => x.Name == "animated")?.Get<uint>("speed") ?? 0,
-						mat.Find<OESTexture>().Select(x => {
-							using(var tzs = zip.GetEntry(x.Filename).Open())
-								return Png.Decode(tzs);
-						}).ToArray()
-					);
+				var effect = mat.Find<OESEffect>().FirstOrDefault();
+				effect = effect ?? new OESEffect("default");
+
+				var textures = mat.Find<OESTexture>().Select(x => {
+					using(var tzs = zip.GetEntry(x.Filename).Open())
+						return Png.Decode(tzs);
+				}).ToArray();
+				
+				switch(effect.Name) {
+					case "default":
+					case "animated":
+						var aniSpeed = effect.Name == "animated" ? (uint) effect["speed"] / 1000f : 0;
+						if(mat.Transparent)
+							return mat.AlphaMask
+								? (Material) new ForwardDiffuseMaskedMaterial(textures, aniSpeed)
+								: new ForwardDiffuseMaterial(textures, aniSpeed);
+						else
+							return mat.AlphaMask
+								? (Material) new DeferredDiffuseMaskedMaterial(textures, aniSpeed)
+								: new DeferredDiffuseMaterial(textures, aniSpeed);
+					case "fire":
+						return new FireMaterial();
+					default:
+						throw new NotImplementedException($"Unknown OESEffect name: {effect.Name}");
+				}
 			}).ToList();
 	}
 }
