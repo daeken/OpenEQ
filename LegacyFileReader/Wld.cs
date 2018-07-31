@@ -286,7 +286,7 @@ namespace OpenEQ.LegacyFileReader {
 
 		Fragment03 Read03() =>
 			new Fragment03 {
-				Filenames = Enumerable.Range(0, Br.ReadInt32() + 1).Select(_ => ReadDecodeString(Br.ReadUInt16()).TrimEnd('\0')).ToArray()
+				Filenames = (Br.ReadInt32() + 1).Times(() => ReadDecodeString(Br.ReadUInt16()).TrimEnd('\0')).ToArray()
 			};
 		
 		Fragment04 Read04() {
@@ -295,7 +295,7 @@ namespace OpenEQ.LegacyFileReader {
 			if((flags & (1 << 2)) != 0)
 				Br.ReadUInt32();
 			var frameTime = (flags & (1 << 3)) != 0 ? Br.ReadUInt32() : 0;
-			var refs = Enumerable.Range(0, refCount).Select(_ => ReadRef<Fragment03>()).ToArray();
+			var refs = refCount.Times(ReadRef<Fragment03>).ToArray();
 			return new Fragment04 {
 				FrameTime = frameTime, 
 				References = refs
@@ -387,7 +387,7 @@ namespace OpenEQ.LegacyFileReader {
 				}
 			}
 
-			var refs = Enumerable.Range(0, numRefs).Select(x => ReadRef<object>()).ToArray();
+			var refs = numRefs.Times(ReadRef<object>).ToArray();
 			
 			// TODO: Read and understand the encoded string that follows.  See wlddoc
 
@@ -484,7 +484,7 @@ namespace OpenEQ.LegacyFileReader {
 		Fragment31 Read31() {
 			Br.ReadUInt32();
 			return new Fragment31 {
-				References = Enumerable.Range(0, Br.ReadInt32()).Select(_ => ReadRef<Fragment30>()).ToArray()
+				References = Br.ReadInt32().Times(ReadRef<Fragment30>).ToArray()
 			};
 		}
 
@@ -512,20 +512,13 @@ namespace OpenEQ.LegacyFileReader {
 			
 			Br.ReadUInt16();
 			var scale = (float) (1UL << Br.ReadUInt16());
-			var vertices = Enumerable.Range(0, vertCount)
-				.Select(_ => new Vector3(Br.ReadInt16(), Br.ReadInt16(), Br.ReadInt16()) / scale + center).ToArray();
-			var texcoords = Enumerable.Range(0, tcCount)
-				.Select(_ => NewFormat ? Br.ReadVec2() : new Vector2(Br.ReadInt16(), Br.ReadInt16()) / 256).ToArray();
-			var normals = Enumerable.Range(0, normalCount)
-				.Select(_ => new Vector3(Br.ReadSByte(), Br.ReadSByte(), Br.ReadSByte()) / 127).ToArray();
-			var colors = Enumerable.Range(0, colorCount)
-				.Select(_ => Br.ReadUInt32()).ToArray();
-			var polygons = Enumerable.Range(0, polyCount)
-				.Select(_ => (Br.ReadUInt16() == 0, (uint) Br.ReadUInt16(), (uint) Br.ReadUInt16(), (uint) Br.ReadUInt16())).ToArray();
-			var vertPieces = Enumerable.Range(0, vertPieceCount)
-				.Select(_ => ((uint) Br.ReadUInt16(), (uint) Br.ReadUInt16())).ToArray();
-			var polyTex = Enumerable.Range(0, polyTexCount)
-				.Select(_ => ((uint) Br.ReadUInt16(), (uint) Br.ReadUInt16())).ToArray();
+			var vertices = vertCount.Times(() => new Vector3(Br.ReadInt16(), Br.ReadInt16(), Br.ReadInt16()) / scale + center).ToArray();
+			var texcoords = tcCount.Times(() => NewFormat ? Br.ReadVec2() : new Vector2(Br.ReadInt16(), Br.ReadInt16()) / 256).ToArray();
+			var normals = normalCount.Times(() => new Vector3(Br.ReadSByte(), Br.ReadSByte(), Br.ReadSByte()) / 127).ToArray();
+			var colors = colorCount.Times(() => Br.ReadUInt32()).ToArray();
+			var polygons = polyCount.Times(() => (Br.ReadUInt16() == 0, (uint) Br.ReadUInt16(), (uint) Br.ReadUInt16(), (uint) Br.ReadUInt16())).ToArray();
+			var vertPieces = vertPieceCount.Times(() => ((uint) Br.ReadUInt16(), (uint) Br.ReadUInt16())).ToArray();
+			var polyTex = polyTexCount.Times(() => ((uint) Br.ReadUInt16(), (uint) Br.ReadUInt16())).ToArray();
 			
 			return new Fragment36 {
 				TextureListReference = texRef, 

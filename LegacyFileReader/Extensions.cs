@@ -14,8 +14,10 @@ namespace OpenEQ.LegacyFileReader {
 
 		public static IEnumerable<int> Times(this int count) => Enumerable.Range(0, count);
 		public static IEnumerable<int> Times(this uint count) => ((int) count).Times();
+		public static IEnumerable<int> Times(this ushort count) => ((int) count).Times();
 
 		public static IEnumerable<T> Times<T>(this int count, Func<T> func) => count.Times().Select(x => func());
 		public static IEnumerable<T> Times<T>(this uint count, Func<T> func) => ((int) count).Times(func);
+		public static IEnumerable<T> Times<T>(this ushort count, Func<T> func) => ((int) count).Times(func);
 	}
 }
