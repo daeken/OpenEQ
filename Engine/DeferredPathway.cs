@@ -22,15 +22,16 @@ namespace OpenEQ.Engine {
 		int[] UniformLocs;
 		int UniformLC;
 
+		bool DeferredSetup;
+
 		void SetupDeferredPathway() {
-			Resize += (_, __) => {
-				if(FBO == null)
-					FBO = new FrameBuffer(Width, Height,
-						FrameBufferAttachment.Rgba, FrameBufferAttachment.Xyz, 
-						FrameBufferAttachment.Depth);
-				else
-					FBO.Resize(Width, Height);
-			};
+			if(DeferredSetup || !DeferredEnabled)
+				return;
+			DeferredSetup = true;
+			FBO = new FrameBuffer(Width, Height,
+				FrameBufferAttachment.Rgba, FrameBufferAttachment.Xyz, 
+				FrameBufferAttachment.Depth);
+			Resize += (_, __) => FBO.Resize(Width, Height);
 			
 			GL.BindVertexArray(QuadVAO = GL.GenVertexArray());
 			GL.BindBuffer(BufferTarget.ArrayBuffer, GL.GenBuffer());

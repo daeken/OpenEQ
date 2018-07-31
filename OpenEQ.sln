@@ -16,6 +16,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ConverterCore", "ConverterC
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ImageLib", "ImageLib\ImageLib.csproj", "{F5855B21-D53B-4457-9C5C-CA01B1044AAE}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Netcode", "Netcode\Netcode.csproj", "{4A743973-FBA5-44B9-B86B-077221C89AB1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NetClient", "NetClient\NetClient.csproj", "{98D2C75D-2177-453D-B5A3-74CF6894640E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -54,5 +58,13 @@ Global
 		{F5855B21-D53B-4457-9C5C-CA01B1044AAE}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F5855B21-D53B-4457-9C5C-CA01B1044AAE}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F5855B21-D53B-4457-9C5C-CA01B1044AAE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4A743973-FBA5-44B9-B86B-077221C89AB1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4A743973-FBA5-44B9-B86B-077221C89AB1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4A743973-FBA5-44B9-B86B-077221C89AB1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4A743973-FBA5-44B9-B86B-077221C89AB1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{98D2C75D-2177-453D-B5A3-74CF6894640E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{98D2C75D-2177-453D-B5A3-74CF6894640E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{98D2C75D-2177-453D-B5A3-74CF6894640E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{98D2C75D-2177-453D-B5A3-74CF6894640E}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
