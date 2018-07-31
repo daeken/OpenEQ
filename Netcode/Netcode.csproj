@@ -1,0 +1,10 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <AssemblyName>OpenEQ.Netcode</AssemblyName>
+    <RootNamespace>OpenEQ.Netcode</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Ionic.Zlib" Version="1.9.1.5" />
+  </ItemGroup>
+</Project>
