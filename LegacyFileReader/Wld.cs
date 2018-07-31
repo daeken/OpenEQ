@@ -34,9 +34,9 @@ namespace OpenEQ.LegacyFileReader {
 				case null:
 					return $"Ref<{typeof(T).Name}>(unknown)";
 				case string s:
-					return $"Ret(\"{s}\")";
+					return $"Ref(\"{s}\")";
 				case var val:
-					return $"Ref<{typeof(T).Name}>({Name}: {val})";
+					return $"Ref({(string.IsNullOrEmpty(Name) ? "" : $"{Name}: ")}{val})";
 			}
 		}
 	}
@@ -51,7 +51,7 @@ namespace OpenEQ.LegacyFileReader {
 		public uint FrameTime;
 		public Reference<Fragment03>[] References;
 
-		public override string ToString() => $"Fragment04(FrameTime={FrameTime}, References=[{string.Join(", ", References.Select(x => x.ToString()))}])";
+		public override string ToString() => $"Fragment04(FrameTime={FrameTime}, References={References.Stringify()})";
 	}
 
 	public class Fragment05 {
@@ -60,16 +60,47 @@ namespace OpenEQ.LegacyFileReader {
 		public override string ToString() => $"Fragment05(Reference={Reference})";
 	}
 
+	public class Track {
+		public string Name;
+		public uint Flags;
+		public Reference<Fragment13> PieceTrack;
+		public Track[] Children;
+
+		public override string ToString() => $"Track(Name={Name}, Flags=0x{Flags:X}, PieceTrack={PieceTrack}, Children={Children.Stringify()})";
+	}
+
 	public class Fragment10 {
+		public Track Root;
+		public Reference<Fragment2D>[] Meshes;
+		
+		public override string ToString() => $"Fragment10(RootTrack={Root}, Meshes={Meshes.Stringify()})";
 	}
 
 	public class Fragment11 {
+		public Reference<Fragment10> Reference;
+
+		public override string ToString() => $"Fragment11(Reference={Reference})";
 	}
 
 	public class Fragment12 {
+		public uint Flags;
+		public (Vector3? Rotation, Vector3? Shift)[] Frames;
+		
+		public override string ToString() => $"Fragment12(Flags=0x{Flags:X}, Frames={Frames.Length})";
 	}
 
 	public class Fragment13 {
+		public Reference<Fragment12> Reference;
+		public uint? MaybeSpeed; // TODO Determine
+		
+		public override string ToString() => $"Fragment13(Reference={Reference}, MaybeSpeed={MaybeSpeed?.ToString() ?? "null"})";
+	}
+
+	public class Fragment14 {
+		public Reference<string> Name;
+		public Reference<object>[] References;
+
+		public override string ToString() => $"Fragment14(Name={Name}, References={References.Stringify()})";
 	}
 
 	public class Fragment15 {
@@ -93,6 +124,7 @@ namespace OpenEQ.LegacyFileReader {
 	}
 
 	public class Fragment22 {
+		public override string ToString() => $"{GetType().Name} UNIMPLEMENTED";
 	}
 
 	public class Fragment28 {
@@ -105,15 +137,21 @@ namespace OpenEQ.LegacyFileReader {
 	}
 
 	public class Fragment29 {
+		public override string ToString() => $"{GetType().Name} UNIMPLEMENTED";
 	}
 
 	public class Fragment2A {
+		public override string ToString() => $"{GetType().Name} UNIMPLEMENTED";
 	}
 
 	public class Fragment2D {
+		public Reference<Fragment36> Reference;
+
+		public override string ToString() => $"Fragment2D(Reference={Reference})";
 	}
 
 	public class Fragment2F {
+		public override string ToString() => $"{GetType().Name} UNIMPLEMENTED";
 	}
 
 	public class Fragment30 {
@@ -126,7 +164,7 @@ namespace OpenEQ.LegacyFileReader {
 	public class Fragment31 {
 		public Reference<Fragment30>[] References;
 
-		public override string ToString() => $"Fragment31(References=[{string.Join(", ", References.Select(x => x.ToString()))}])";
+		public override string ToString() => $"Fragment31(References={References.Stringify()})";
 	}
 
 	public class Fragment36 {
@@ -136,9 +174,18 @@ namespace OpenEQ.LegacyFileReader {
 		public (bool Collidable, uint A, uint B, uint C)[] Polygons;
 		public (uint Count, uint Index)[] PolyTexs;
 		public (uint Count, uint Index)[] VertBones;
+
+		public override string ToString() => $"Fragmen36(Vertices={Vertices.Length}, Polygons={Polygons.Length}, Textures={PolyTexs.Length}, Bones={VertBones.Length})";
 	}
 	
 	public class Fragment37 {
+		public override string ToString() => $"{GetType().Name} UNIMPLEMENTED";
+	}
+
+	public class FragmentIgnored {
+		public uint Type;
+
+		public override string ToString() => $"Fragment{Type:X02} ignored";
 	}
 	
 	public class Wld {
@@ -197,20 +244,15 @@ namespace OpenEQ.LegacyFileReader {
 					case 0x03: Add(Read03()); break;
 					case 0x04: Add(Read04()); break;
 					case 0x05: Add(Read05()); break;
-					case 0x08: break;
-					case 0x09: break;
 					case 0x10: Add(Read10()); break;
 					case 0x11: Add(Read11()); break;
 					case 0x12: Add(Read12()); break;
 					case 0x13: Add(Read13()); break;
-					case 0x14: break;
+					case 0x14: Add(Read14()); break;
 					case 0x15: Add(Read15()); break;
-					case 0x16: break;
 					case 0x1B: Add(Read1B()); break;
 					case 0x1C: Add(Read1C()); break;
-					case 0x21: break;
 					case 0x22: Add(Read22()); break;
-					case 0x26: break; // TODO: Figure out -- totally unknown
 					case 0x28: Add(Read28()); break;
 					case 0x29: Add(Read29()); break;
 					case 0x2A: Add(Read2A()); break;
@@ -218,12 +260,19 @@ namespace OpenEQ.LegacyFileReader {
 					case 0x2F: Add(Read2F()); break;
 					case 0x30: Add(Read30()); break;
 					case 0x31: Add(Read31()); break;
-					case 0x32: break;
-					case 0x33: break;
-					case 0x34: break; // TODO: Figure out -- totally unknown
-					case 0x35: break;
 					case 0x36: Add(Read36()); break;
 					case 0x37: Add(Read37()); break;
+					case 0x08:
+					case 0x09:
+					case 0x16:
+					case 0x21:
+					case 0x26: // TODO: Figure out -- totally unknown
+					case 0x32:
+					case 0x33:
+					case 0x34: // TODO: Figure out -- totally unknown
+					case 0x35:
+						Add(new FragmentIgnored { Type = type });
+						break;
 					default:
 						WriteLine($"Unhandled fragment type 0x{type:X02}");
 						break;
@@ -260,19 +309,89 @@ namespace OpenEQ.LegacyFileReader {
 		}
 
 		Fragment10 Read10() {
-			return new Fragment10();
+			var flags = Br.ReadUInt32();
+			var trackCount = Br.ReadUInt32();
+			var polyAniRef = ReadRef<object>(); // TODO: Should point to Fragment18
+			if(flags.HasBit(0))
+				for(var i = 0; i < 3; ++i)
+					Br.ReadUInt32();
+			if(flags.HasBit(1))
+				Br.ReadSingle();
+			var tracks = trackCount.Times(() => {
+				var name = (string) GetReference(Br.ReadInt32());
+				var tflags = Br.ReadUInt32();
+				var sref = ReadRef<Fragment13>();
+				var mref = ReadRef<Fragment2D>();
+				var children = Br.ReadUInt32().Times(() => Br.ReadInt32()).ToArray();
+
+				return (name, tflags, sref, mref, children);
+			}).ToList();
+
+			Track ConvertTrack((string Name, uint Flags, Reference<Fragment13> Sref, Reference<Fragment2D> Mref, int[] Children) track) =>
+				new Track { Name = track.Name, Flags = track.Flags, PieceTrack = track.Sref, Children = track.Children.Select(i => ConvertTrack(tracks[i])).ToArray() };
+
+			var meshes = flags.HasBit(9)
+				? Br.ReadUInt32().Times(ReadRef<Fragment2D>).ToArray()
+				: tracks.Select(x => x.Item4).ToArray();
+			
+			return new Fragment10 { Root = ConvertTrack(tracks[0]), Meshes = meshes };
 		}
 
-		Fragment11 Read11() {
-			return new Fragment11();
-		}
+		Fragment11 Read11() => new Fragment11 { Reference = ReadRef<Fragment10>() };
 
-		Fragment12 Read12() {
-			return new Fragment12();
-		}
-		
+		Fragment12 Read12() => 
+			new Fragment12 {
+				Flags = Br.ReadUInt32(), 
+				Frames = Br.ReadUInt32().Times(() => {
+					var rotDenom = Br.ReadInt16();
+					var rotX = (float) Br.ReadInt16();
+					var rotY = (float) Br.ReadInt16();
+					var rotZ = (float) Br.ReadInt16();
+					var shiftX = (float) Br.ReadInt16();
+					var shiftY = (float) Br.ReadInt16();
+					var shiftZ = (float) Br.ReadInt16();
+					var shiftDenom = Br.ReadInt16();
+						
+					return (
+						rotDenom == 0 ? (Vector3?) null : new Vector3(rotX / rotDenom, rotY / rotDenom, rotZ / rotDenom), 
+						shiftDenom == 0 ? (Vector3?) null : new Vector3(shiftX / shiftDenom, shiftY / shiftDenom, shiftZ / shiftDenom)
+					);
+				}).ToArray()
+			};
+
 		Fragment13 Read13() {
-			return new Fragment13();
+			var reference = ReadRef<Fragment12>();
+			var flags = Br.ReadUInt32();
+			uint? speed = null;
+			if((flags & 1 << 0) != 0)
+				speed = Br.ReadUInt32();
+			return new Fragment13 { Reference = reference, MaybeSpeed = speed };
+		}
+
+		Fragment14 Read14() {
+			var flags = Br.ReadUInt32();
+			var name = ReadRef<string>();
+			var size = Br.ReadUInt32();
+			var numRefs = Br.ReadInt32();
+			var frag2 = Br.ReadUInt32();
+			if((flags & (1 << 0)) != 0)
+				Br.ReadUInt32();
+			if((flags & (1 << 1)) != 0)
+				for(var i = 0; i < 7; ++i)
+					Br.ReadUInt32();
+			for(var i = 0; i < size; ++i) {
+				var count = Br.ReadUInt32();
+				for(var j = 0; j < count; ++j) {
+					Br.ReadUInt32();
+					Br.ReadSingle();
+				}
+			}
+
+			var refs = Enumerable.Range(0, numRefs).Select(x => ReadRef<object>()).ToArray();
+			
+			// TODO: Read and understand the encoded string that follows.  See wlddoc
+
+			return new Fragment14 { Name = name, References = refs };
 		}
 		
 		Fragment15 Read15() {
@@ -324,6 +443,7 @@ namespace OpenEQ.LegacyFileReader {
 			var flags = Br.ReadUInt32();
 			return new Fragment28 {
 				Reference = reference,
+				Flags = flags, 
 				Pos = Br.ReadVec3(),
 				Radius = Br.ReadSingle()
 			};
@@ -337,9 +457,7 @@ namespace OpenEQ.LegacyFileReader {
 			return new Fragment2A();
 		}
 
-		Fragment2D Read2D() {
-			return new Fragment2D();
-		}
+		Fragment2D Read2D() => new Fragment2D { Reference = ReadRef<Fragment36>() };
 
 		Fragment2F Read2F() {
 			return new Fragment2F();

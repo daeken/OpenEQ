@@ -111,7 +111,9 @@ namespace OpenEQ.ConverterCore {
 
 			foreach(var wld in wlds) {
 				WriteLine($"<h1>{wld.Filename}</h1>");
+				WriteLine("<il>");
 				Debugging.OutputHTML(wld);
+				WriteLine("</il>");
 			}
 
 			var zn = $"{name}_oes.zip";
