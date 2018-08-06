@@ -21,6 +21,7 @@ namespace OpenEQ.Engine {
 		public readonly Gui Gui;
 		
 		readonly List<Model> Models = new List<Model>();
+		readonly List<AniModel> AniModels = new List<AniModel>();
 		readonly List<double> FrameTimes = new List<double>();
 		readonly List<PointLight> Lights = new List<PointLight>();
 
@@ -52,6 +53,7 @@ namespace OpenEQ.Engine {
 			Lights.Add(new PointLight(pos, radius, attenuation, color));
 
 		public void Add(Model model) => Models.Add(model);
+		public void Add(AniModel model) => AniModels.Add(model);
 
 		void UpdateMouseButton(MouseButton button, bool state) {
 			switch(button) {
@@ -155,10 +157,11 @@ namespace OpenEQ.Engine {
 					GL.ClearColor(0, 0, 0, 1);
 					GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 		
-					GL.Enable(EnableCap.CullFace);
+					GL.Disable(EnableCap.CullFace);
 					GL.Disable(EnableCap.Blend);
 					GL.Enable(EnableCap.DepthTest);
 					Models.ForEach(model => model.Draw(ProjectionView, forward: false));
+					AniModels.ForEach(model => model.Draw(ProjectionView, forward: false));
 				}
 				GL.Enable(EnableCap.Blend);
 				GL.BlendFunc(BlendingFactorSrc.SrcAlpha, BlendingFactorDest.OneMinusSrcAlpha);
@@ -166,6 +169,7 @@ namespace OpenEQ.Engine {
 				GL.ActiveTexture(TextureUnit.Texture0);
 				GL.DepthMask(false);
 				Models.ForEach(model => model.Draw(ProjectionView, forward: true));
+				AniModels.ForEach(model => model.Draw(ProjectionView, forward: true));
 				GL.DepthMask(true);
 				GL.Finish();
 			});

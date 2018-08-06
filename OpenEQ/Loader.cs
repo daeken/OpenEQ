@@ -47,6 +47,32 @@ namespace OpenEQ {
 			return model;
 		}
 
+		internal static void LoadCharacter(string path, string name, EngineCore engine) {
+			using(var zip = ZipFile.OpenRead(path)) {
+				using(var ms = new MemoryStream()) {
+					using(var temp = zip.GetEntry("main.oes")?.Open())
+						temp?.CopyTo(ms);
+					ms.Position = 0;
+					var root = OESFile.Read<OESRoot>(ms);
+					var model = root.Find<OESCharacter>().First(x => x.Name == name);
+					WriteLine($"Loading {model.Name}");
+
+					var materials = FromSkin(model.Find<OESSkin>().First(), zip);
+
+					var anisets = model.Find<OESAnimationSet>().Select(x => (x.Name, x.Find<OESAnimationBuffer>().ToList())).ToDictionary();
+					
+					var animodel = new AniModel();
+					engine.Add(animodel);
+					
+					model.Find<OESAnimatedMesh>().ForEach((oam, i) => {
+						var animations = anisets.Select(kv => (kv.Key, kv.Value[i])).ToDictionary();
+						animations[""] = oam.Find<OESAnimationBuffer>().First();
+						animodel.Add(new AnimatedMesh(materials[i], animations.Select(kv => (kv.Key, kv.Value.VertexBuffers)).ToDictionary(), oam.IndexBuffer.ToArray()));
+					});
+				}
+			}
+		}
+
 		static List<Material> FromSkin(OESSkin skin, ZipArchive zip) =>
 			skin.Find<OESMaterial>().Select(mat => {
 				var effect = mat.Find<OESEffect>().FirstOrDefault();

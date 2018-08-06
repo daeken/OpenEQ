@@ -145,13 +145,13 @@ namespace OpenEQ.ConverterCore {
 
 		class AniTreePrecursor {
 			public uint Index;
-			public (Vector3? Rotate, Vector3? Translate)[] Frames;
+			public (Quaternion Rotate, Vector3 Translate)[] Frames;
 			public AniTreePrecursor[] Children;
 		}
 
 		class AniTreeFrame {
 			public uint Index;
-			public (Vector3? Rotate, Vector3? Translate) Transform;
+			public (Quaternion Rotate, Vector3 Translate) Transform;
 			public AniTreeFrame[] Children;
 		}
 
@@ -170,6 +170,7 @@ namespace OpenEQ.ConverterCore {
 				var piecetrack = ptref.Value;
 				if(prefix != "" && wld.GetFragment<Fragment13>(prefix + ptref.Name) is Fragment13 rep)
 					piecetrack = rep;
+
 				return new AniTreePrecursor { Index = index, Frames = piecetrack.Reference.Value.Frames, Children = track.Children.Select(i => BuildAniTreePrecursor(prefix, (uint) i)).ToArray() };
 			}
 
@@ -192,8 +193,8 @@ namespace OpenEQ.ConverterCore {
 					var matrices = new Dictionary<uint, Matrix4x4>();
 
 					void BuildBoneMatrices(AniTreeFrame cur, Matrix4x4 mat) {
-						if(cur.Transform.Translate != null)
-							mat = Matrix4x4.CreateTranslation(cur.Transform.Translate.Value) * mat;
+						mat = Matrix4x4.CreateTranslation(cur.Transform.Translate) * mat;
+						mat = Matrix4x4.CreateFromQuaternion(cur.Transform.Rotate) * mat;
 						matrices[cur.Index] = mat;
 						cur.Children.ForEach(x => BuildBoneMatrices(x, mat));
 					}
@@ -218,15 +219,19 @@ namespace OpenEQ.ConverterCore {
 			}
 
 			(List<uint>, Dictionary<string, OESAnimationBuffer>) RewriteBuffers(List<uint> indices, Dictionary<string, List<List<float>>> vertices) {
+				var oinds = new List<uint>();
 				var indmap = new Dictionary<uint, uint>();
-				var oind = indices.Select(x => indmap.ContainsKey(x) ? indmap[x] : (indmap[x] = (uint) indmap.Count)).ToList();
-				indmap = indmap.Select(kv => (kv.Value, kv.Key)).ToDictionary();
+				foreach(var index in indices) {
+					if(!indmap.ContainsKey(index))
+						indmap[index] = (uint) indmap.Count;
+					oinds.Add(indmap[index]);
+				}
+				var indexorder = indmap.OrderBy(x => x.Value).Select(x => x.Key).ToList();
 
-				List<float> Remap(List<float> vb) =>
-					indmap.Keys.OrderBy(x => x).Select(x => vb.Skip((int) x * 8).Take(8)).SelectMany(x => x).ToList();
-				
-				var overts = vertices.Select(kv => (kv.Key, new OESAnimationBuffer(kv.Value.Select(Remap).ToList()))).ToDictionary();
-				return (oind, overts);
+				IReadOnlyList<float> Remap(List<float> verts) => 
+					indexorder.Select(i => verts.Skip((int) i * 8).Take(8)).SelectMany(x => x).ToList();
+
+				return (oinds, vertices.Select(kv => (kv.Key, new OESAnimationBuffer(kv.Value.Select(Remap).ToList()))).ToDictionary());
 			}
 
 			var asets = prefixes.Where(x => x != "").Select(x => (x, new OESAnimationSet(x, 0f))).ToDictionary();
@@ -385,11 +390,10 @@ namespace OpenEQ.ConverterCore {
 			var md5 = string.Join("", MD5.Create().ComputeHash(data).Select(x => $"{x:X02}")).Substring(0, 10);
 
 			var ofn = $"{fn.Split('.', 2)[0]}-{md5}.png";
-			WriteLine(fn);
 			Image image;
 			try {
 				image = data[0] == 'B' && data[1] == 'M'
-					? Bmp.Load(data)
+					? Bmp.Load(data).FlipY()
 					: Dds.Load(data).Images[0];
 			} catch(Exception) {
 				image = new Image(ColorMode.Rgb, (1, 1), new byte[] { 0xff, 0xff, 0 });

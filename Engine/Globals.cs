@@ -66,7 +66,7 @@ namespace OpenEQ.Engine {
 
 		static readonly Dictionary<string, List<float>> ProfileRunning = new Dictionary<string, List<float>>();
 		public static void Profile(string name, Action func) {
-#if DEBUG
+#if false//DEBUG
 			var pre = Stopwatch.ElapsedTicks;
 			func();
 			var post = Stopwatch.ElapsedTicks;

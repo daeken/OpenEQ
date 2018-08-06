@@ -26,6 +26,10 @@ namespace OpenEQ {
 			Loader.LoadZoneFile($"../ConverterApp/{name}_oes.zip", Engine);
 		}
 
+		public void LoadCharacter(string filename, string name) {
+			Loader.LoadCharacter($"../ConverterApp/{filename}_oes.zip", name, Engine);
+		}
+
 		public void Start() {
 			Engine.Run();
 		}

@@ -75,7 +75,7 @@ namespace OpenEQ.LegacyFileReader {
 
 	public class Fragment12 {
 		public uint Flags;
-		public (Vector3? Rotation, Vector3? Shift)[] Frames;
+		public (Quaternion Rotation, Vector3 Shift)[] Frames;
 		
 		public override string ToString() => $"Fragment12(Flags=0x{Flags:X}, Frames={Frames.Length})";
 	}
@@ -276,7 +276,7 @@ namespace OpenEQ.LegacyFileReader {
 		public IEnumerable<(string Name, T Fragment)> GetFragments<T>() => Fragments.Where(x => x.Fragment is T).Select(x => (x.Name, (T) x.Fragment));
 
 		public T GetFragment<T>(string name) where T : class =>
-			NameIndex.ContainsKey(name) && Fragments[NameIndex[name]] is T frag ? frag : null;
+			NameIndex.ContainsKey(name) && Fragments[NameIndex[name]].Fragment is T frag ? frag : null;
 
 		Fragment03 Read03() =>
 			new Fragment03 {
@@ -334,7 +334,7 @@ namespace OpenEQ.LegacyFileReader {
 			new Fragment12 {
 				Flags = Br.ReadUInt32(), 
 				Frames = Br.ReadUInt32().Times(() => {
-					var rotDenom = Br.ReadInt16();
+					var rotW = (float) Br.ReadInt16();
 					var rotX = (float) Br.ReadInt16();
 					var rotY = (float) Br.ReadInt16();
 					var rotZ = (float) Br.ReadInt16();
@@ -344,8 +344,8 @@ namespace OpenEQ.LegacyFileReader {
 					var shiftDenom = Br.ReadInt16();
 						
 					return (
-						rotDenom == 0 ? (Vector3?) null : new Vector3(rotX / rotDenom, rotY / rotDenom, rotZ / rotDenom), 
-						shiftDenom == 0 ? (Vector3?) null : new Vector3(shiftX / shiftDenom, shiftY / shiftDenom, shiftZ / shiftDenom)
+						new Quaternion(rotX / 16384, rotY / 16384, rotZ / 16384, rotW / 16384), 
+						new Vector3(shiftX / shiftDenom, shiftY / shiftDenom, shiftZ / shiftDenom)
 					);
 				}).ToArray()
 			};

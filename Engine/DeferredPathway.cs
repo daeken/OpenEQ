@@ -29,7 +29,7 @@ namespace OpenEQ.Engine {
 				return;
 			DeferredSetup = true;
 			FBO = new FrameBuffer(Width, Height,
-				FrameBufferAttachment.Rgba, FrameBufferAttachment.Xyz, 
+				FrameBufferAttachment.Rgb, FrameBufferAttachment.Xyz, 
 				FrameBufferAttachment.Depth);
 			Resize += (_, __) => FBO.Resize(Width, Height);
 			
@@ -122,6 +122,7 @@ void main() {
 				GL.Disable(EnableCap.Blend);
 
 				Models.ForEach(model => model.Draw(ProjectionView, forward: false));
+				AniModels.ForEach(model => model.Draw(ProjectionView, forward: false));
 		
 				FrameBuffer.Unbind();
 				GL.Finish();

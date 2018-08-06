@@ -8,31 +8,10 @@ using OpenTK.Graphics.OpenGL4;
 namespace OpenEQ.Materials {
 	public class FireMaterial : Material {
 		public override bool Deferred => false;
-		static Program Program;
-		static Texture Texture;
-		
-		public FireMaterial() {
-			if(Program == null) {
-				Program = new Program(@"
+
+		protected override string FragmentShader => @"
 #version 410
 precision highp float;
-layout (location = 0) in vec4 aPosition;
-layout (location = 1) in vec3 aNormal;
-layout (location = 2) in vec2 aTexCoord;
-layout (location = 3) in mat4 aModelMat;
-uniform mat4 uProjectionViewMat;
-out vec3 vPosition;
-out vec2 vTexCoord;
-void main() {
-	vec4 pos = aModelMat * aPosition;
-	gl_Position = uProjectionViewMat * pos;
-	vPosition = pos.xyz;
-	vTexCoord = aTexCoord;
-}
-					", @"
-#version 410
-precision highp float;
-in vec3 vPosition;
 in vec2 vTexCoord;
 out vec4 color;
 uniform float uTime;
@@ -70,23 +49,29 @@ vec4 fire(float time, vec2 tc) {
 }
 
 void main() {
-	float time = uTime * 1.3 + length(vPosition);
+	float time = uTime * 1.3;
 	vec2 tc = abs(mod(vTexCoord, 1));
 	if(tc.y > .95) discard;
 	color = (fire(mod(time, 10), tc) + fire(mod(time + .05, 10), tc)) / 2;
 }
-				");
-				Program.SetUniform("uTex", 0);
+		";
+		static Texture Texture;
+
+		
+		public FireMaterial() {
+			if(Texture == null) {
 				var img = Png.Decode(File.OpenRead("flame.png"));
 				img.FlipY();
 				Texture = new Texture(img, true);
 			}
 		}
 
-		public override void Use(Matrix4x4 projView) {
-			Program.Use();
-			Program.SetUniform("uProjectionViewMat", projView);
-			Program.SetUniform("uTime", Globals.Time);
+		public override void Use(Matrix4x4 projView, MaterialUse use) {
+			var program = GetProgram(use);
+			program.Use();
+			program.SetUniform("uTex", 0);
+			program.SetUniform("uProjectionViewMat", projView);
+			program.SetUniform("uTime", Globals.Time);
 			GL.ActiveTexture(TextureUnit.Texture0);
 			Texture.Use();
 		}

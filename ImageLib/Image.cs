@@ -32,7 +32,7 @@ namespace ImageLib {
 			Buffer.BlockCopy(data, 0, Data, 0, 4 * size.Width * size.Height);
 		}
 
-		public void FlipY() {
+		public Image FlipY() {
 			var stride = Size.Width * PixelSize(ColorMode);
 			var temp = new byte[stride];
 			for(var y = 0; y < Size.Height; ++y) {
@@ -42,6 +42,7 @@ namespace ImageLib {
 				Array.Copy(Data, stride * inv, Data, stride * y, stride);
 				Array.Copy(temp, 0, Data, stride * inv, stride);
 			}
+			return this;
 		}
 
 		public void SwapRB() {

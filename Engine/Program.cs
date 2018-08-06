@@ -9,21 +9,29 @@ using static System.Console;
 
 namespace OpenEQ.Engine {
 	public class Program {
+		static readonly Dictionary<(string, string), int> ProgramCache = new Dictionary<(string, string), int>();
 		static readonly Dictionary<string, int> ShaderCache = new Dictionary<string, int>();
 		int ProgramId;
 		readonly Dictionary<string, int> Locations = new Dictionary<string, int>();
 		static int CurrentProgramId = -1;
 
 		public Program(string vs, string fs) {
-			ProgramId = GL.CreateProgram();
-			GL.AttachShader(ProgramId, CompileShader(vs, ShaderType.VertexShader));
-			GL.AttachShader(ProgramId, CompileShader(fs, ShaderType.FragmentShader));
-			GL.LinkProgram(ProgramId);
-			
-			GL.GetProgram(ProgramId, GetProgramParameterName.LinkStatus, out var status);
-			if(status != 1) {
-				WriteLine($"Program linking failed: {GL.GetProgramInfoLog(ProgramId)}");
-				throw new Exception("Shader linking failed");
+			var key = (vs, fs);
+			if(ProgramCache.ContainsKey(key))
+				ProgramId = ProgramCache[key];
+			else {
+				ProgramId = GL.CreateProgram();
+				GL.AttachShader(ProgramId, CompileShader(vs, ShaderType.VertexShader));
+				GL.AttachShader(ProgramId, CompileShader(fs, ShaderType.FragmentShader));
+				GL.LinkProgram(ProgramId);
+
+				GL.GetProgram(ProgramId, GetProgramParameterName.LinkStatus, out var status);
+				if(status != 1) {
+					WriteLine($"Program linking failed: {GL.GetProgramInfoLog(ProgramId)}");
+					throw new Exception("Shader linking failed");
+				}
+				
+				ProgramCache[key] = ProgramId;
 			}
 		}
 		
