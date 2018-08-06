@@ -6,6 +6,8 @@ using System.Numerics;
 
 namespace OpenEQ.Common {
 	public static class Extensions {
+		public static string Stringify<T>(this T[] arr) => arr == null ? "null" : $"[{string.Join(", ", arr.Select(x => x.ToString()))}]";
+		
 		internal static void WriteBool(this BinaryWriter bw, bool value) => bw.Write(value ? 1U : 0U);
 		internal static bool ReadBool(this BinaryReader br) => br.ReadUInt32() != 0;
 

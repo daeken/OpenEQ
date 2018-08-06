@@ -49,8 +49,8 @@ namespace OpenEQ.ConverterCore {
 				var vertoff = (uint) verts.Count;
 				var texoff = textures.Count;
 				verts.AddRange(piece.Vertices);
-				normals.AddRange(piece.Normals.Concat(Enumerable.Range(0, piece.Vertices.Count - piece.Normals.Count).Select(x => Vector3.One)));
-				texCoords.AddRange(piece.TexCoords.Concat(Enumerable.Range(0, piece.Vertices.Count - piece.TexCoords.Count).Select(x => Vector2.Zero)));
+				normals.AddRange(piece.Normals);
+				texCoords.AddRange(piece.TexCoords);
 				textures.AddRange(piece.Textures);
 				var pi = 0;
 				foreach(var (ptc, ti) in piece.PolyTexs) {

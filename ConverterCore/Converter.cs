@@ -109,21 +109,153 @@ namespace OpenEQ.ConverterCore {
 			var wlds = s3ds.AsParallel().Select(s3d => s3d.Where(fn => fn.EndsWith(".wld")).Select(fn => new Wld(s3d, fn)))
 				.SelectMany(x => x).ToList();
 
-			foreach(var wld in wlds) {
+			/*foreach(var wld in wlds) {
 				WriteLine($"<h1>{wld.Filename}</h1>");
 				WriteLine("<il>");
 				Debugging.OutputHTML(wld);
 				WriteLine("</il>");
-			}
+			}*/
 
 			var zn = $"{name}_oes.zip";
 			if(File.Exists(zn)) File.Delete(zn);
 			using(var zip = ZipFile.Open(zn, ZipArchiveMode.Create)) {
 				var root = new OESRoot();
+				foreach(var wld in wlds)
+					foreach(var (aname, actor) in wld.GetFragments<Fragment14>()) {
+						WriteLine(aname);
+						var model = new OESCharacter(aname.Substring(0, aname.Length - "_ACTORDEF".Length));
+						root.Add(model);
+						var skin = new OESSkin();
+						model.Add(skin);
+						foreach(var elem in actor.References)
+							switch(elem.Value) {
+								case Fragment11 f11:
+									GenerateAnimatedMeshes(wld, zip, model, skin, f11.Reference.Value);
+									break;
+								default:
+									WriteLine($"Unknown reference from 0x14 fragment to {elem.Value}");
+									break;
+							}
+					}
 				OESFile.Write(zip.CreateEntry("main.oes", CompressionLevel.Optimal).Open(), root);
 			}
 
 			return true;
+		}
+
+		class AniTreePrecursor {
+			public uint Index;
+			public (Vector3? Rotate, Vector3? Translate)[] Frames;
+			public AniTreePrecursor[] Children;
+		}
+
+		class AniTreeFrame {
+			public uint Index;
+			public (Vector3? Rotate, Vector3? Translate) Transform;
+			public AniTreeFrame[] Children;
+		}
+
+		void GenerateAnimatedMeshes(Wld wld, ZipArchive zip, OESCharacter model, OESSkin skin, Fragment10 f10) {
+			var prefixes = new List<string> { "" };
+			var rootName = f10.Tracks[0].PieceTrack.Name;
+			
+			foreach(var f13 in wld.GetFragments<Fragment13>())
+				if(f13.Name != rootName && f13.Name.EndsWith(rootName))
+					prefixes.Add(f13.Name.Substring(0, f13.Name.Length - rootName.Length));
+			prefixes = prefixes.Distinct().ToList();
+
+			AniTreePrecursor BuildAniTreePrecursor(string prefix, uint index) {
+				var track = f10.Tracks[index];
+				var ptref = track.PieceTrack;
+				var piecetrack = ptref.Value;
+				if(prefix != "" && wld.GetFragment<Fragment13>(prefix + ptref.Name) is Fragment13 rep)
+					piecetrack = rep;
+				return new AniTreePrecursor { Index = index, Frames = piecetrack.Reference.Value.Frames, Children = track.Children.Select(i => BuildAniTreePrecursor(prefix, (uint) i)).ToArray() };
+			}
+
+			AniTreeFrame[] BuildFrameTree(AniTreePrecursor pc) {
+				int GetMaxFrames(AniTreePrecursor pct) =>
+					pct.Children.Select(GetMaxFrames).Concat(new[] { pct.Frames.Length }).Max();
+
+				AniTreeFrame BuildFrame(AniTreePrecursor pct, int frame) =>
+					new AniTreeFrame { Index = pct.Index, Transform = pct.Frames[pct.Frames.Length > 1 ? frame : 0], Children = pct.Children.Select(x => BuildFrame(x, frame)).ToArray() };
+
+				return GetMaxFrames(pc).Times(i => BuildFrame(pc, i)).ToArray();
+			}
+			
+			var trees = prefixes.Select(x => (x, BuildFrameTree(BuildAniTreePrecursor(x, 0)))).ToDictionary();
+
+			var animationBuffers = new Dictionary<string, List<List<List<float>>>>();
+			foreach(var (name, frames) in trees) {
+				var frameBuffers = animationBuffers[name] = f10.Meshes.Length.Times(() => new List<List<float>>()).ToList();
+				foreach(var frame in frames) {
+					var matrices = new Dictionary<uint, Matrix4x4>();
+
+					void BuildBoneMatrices(AniTreeFrame cur, Matrix4x4 mat) {
+						if(cur.Transform.Translate != null)
+							mat = Matrix4x4.CreateTranslation(cur.Transform.Translate.Value) * mat;
+						matrices[cur.Index] = mat;
+						cur.Children.ForEach(x => BuildBoneMatrices(x, mat));
+					}
+					BuildBoneMatrices(frame, Matrix4x4.Identity);
+
+					f10.Meshes.ForEach((mr, i) => {
+						var curBuffer = new List<float>();
+						var mesh = mr.Value.Reference.Value;
+						var offset = 0U;
+						foreach(var (count, index) in mesh.VertBones) {
+							var mat = matrices[index];
+							for(var j = 0; j < count; ++j) {
+								curBuffer.AddRange(Vector3.Transform(mesh.Vertices[offset + j], mat).AsArray());
+								curBuffer.AddRange(Vector3.Transform(mesh.Normals[offset + j], mat).AsArray());
+								curBuffer.AddRange(mesh.TexCoords[offset + j].AsArray());
+							}
+							offset += count;
+						}
+						frameBuffers[i].Add(curBuffer);
+					});
+				}
+			}
+
+			(List<uint>, Dictionary<string, OESAnimationBuffer>) RewriteBuffers(List<uint> indices, Dictionary<string, List<List<float>>> vertices) {
+				var indmap = new Dictionary<uint, uint>();
+				var oind = indices.Select(x => indmap.ContainsKey(x) ? indmap[x] : (indmap[x] = (uint) indmap.Count)).ToList();
+				indmap = indmap.Select(kv => (kv.Value, kv.Key)).ToDictionary();
+
+				List<float> Remap(List<float> vb) =>
+					indmap.Keys.OrderBy(x => x).Select(x => vb.Skip((int) x * 8).Take(8)).SelectMany(x => x).ToList();
+				
+				var overts = vertices.Select(kv => (kv.Key, new OESAnimationBuffer(kv.Value.Select(Remap).ToList()))).ToDictionary();
+				return (oind, overts);
+			}
+
+			var asets = prefixes.Where(x => x != "").Select(x => (x, new OESAnimationSet(x, 0f))).ToDictionary();
+			f10.Meshes.Length.Times(i => {
+				var meshf = f10.Meshes[i].Value.Reference.Value;
+				var omats = meshf.TextureListReference.Value.References.Select(matref => {
+					var tfn = matref.Value.Reference.Value.Reference.Value.References[0].Value.Filenames[0];
+					return new OESMaterial(false, false, false) { new OESTexture(ConvertTexture(wld.S3D, zip, tfn)) };
+				}).ToList();
+				var offset = 0U;
+				meshf.PolyTexs.ForEach(v => {
+					var polys = meshf.Polygons.Skip((int) offset).Take((int) v.Count).Select(x => new[] { x.A, x.B, x.C }).SelectMany(x => x).ToList();
+					offset += v.Count;
+					skin.Add(omats[(int) v.Index]);
+					var (ibuffer, vbuffers) = RewriteBuffers(
+						polys, 
+						animationBuffers.Select(kv => (kv.Key, kv.Value[i])).ToDictionary()
+					);
+					var amesh = new OESAnimatedMesh(true, ibuffer, (uint) vbuffers[""].VertexBuffers[0].Count);
+					model.Add(amesh);
+					foreach(var prefix in prefixes) {
+						if(prefix == "")
+							amesh.Add(vbuffers[""]);
+						else
+							asets[prefix].Add(vbuffers[prefix]);
+					}
+				});
+			});
+			asets.ForEach(kv => model.Add(kv.Value));
 		}
 
 		bool ConvertEqgZone(string name) {
@@ -253,11 +385,12 @@ namespace OpenEQ.ConverterCore {
 			var md5 = string.Join("", MD5.Create().ComputeHash(data).Select(x => $"{x:X02}")).Substring(0, 10);
 
 			var ofn = $"{fn.Split('.', 2)[0]}-{md5}.png";
-			var dimg = Dds.Load(data);
-			var scaled = dimg.Images[0];//.UpscaleFfmpeg(4);
+			var image = data[0] == 'B' && data[1] == 'M'
+				? new Image(ColorMode.Rgb, (1, 1), new byte[] { 0xFF, 0xFF, 0 })
+				: Dds.Load(data).Images[0];
 			lock(zip) {
 				var entry = zip.CreateEntry(ofn, CompressionLevel.Optimal).Open();
-				Png.Encode(scaled, entry);
+				Png.Encode(image, entry);
 				entry.Close();
 			}
 

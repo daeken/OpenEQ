@@ -90,6 +90,9 @@ namespace OpenEQ.Common {
 				case "lit": instance = new OESLight(tc, id); break;
 				case "skin": instance = new OESSkin(tc, id); break;
 				case "mesh": instance = new OESStaticMesh(tc, id); break;
+				case "aset": instance = new OESAnimationSet(tc, id); break;
+				case "amsh": instance = new OESAnimatedMesh(tc, id); break;
+				case "abuf": instance = new OESAnimationBuffer(tc, id); break;
 				default: instance = new OESChunk(tc, id); break;
 			}
 			file.Add(instance);
@@ -112,6 +115,8 @@ namespace OpenEQ.Common {
 	public class OESRoot : OESChunk {
 		public OESRoot(string typeCode, uint id) : base(typeCode, id) {}
 		public OESRoot() : base("root") {}
+
+		public override string ToString() => "OESRoot";
 	}
 
 	public class OESMaterial : OESChunk {
@@ -136,6 +141,8 @@ namespace OpenEQ.Common {
 			Transparent = br.ReadBool();
 			Emissive = br.ReadBool();
 		}
+
+		public override string ToString() => $"OESMaterial(AlphaMask={AlphaMask}, Transparent={Transparent}, Emissive={Emissive})";
 	}
 
 	public class OESEffect : OESChunk {
@@ -213,6 +220,8 @@ namespace OpenEQ.Common {
 				Parameters[name] = value;
 			}
 		}
+
+		public override string ToString() => $"OESEffect(Name={Name})";
 	}
 
 	public class OESTexture : OESChunk {
@@ -224,6 +233,8 @@ namespace OpenEQ.Common {
 
 		protected override void SerializeData(BinaryWriter bw) => bw.WriteUTF8String(Filename);
 		protected override void DeserializeData(BinaryReader br) => Filename = br.ReadUTF8String();
+
+		public override string ToString() => $"OESTexture(Filename={Filename})";
 	}
 
 	public class OESZone : OESChunk {
@@ -235,6 +246,8 @@ namespace OpenEQ.Common {
 
 		protected override void SerializeData(BinaryWriter bw) => bw.WriteUTF8String(Name);
 		protected override void DeserializeData(BinaryReader br) => Name = br.ReadUTF8String();
+
+		public override string ToString() => $"OESZone(Name={Name})";
 	}
 
 	public class OESRegion : OESChunk {
@@ -243,14 +256,21 @@ namespace OpenEQ.Common {
 		public OESRegion() : base("regn") {}
 		
 		protected override void SerializeData(BinaryWriter bw) => throw new System.NotImplementedException();
+
+		public override string ToString() => $"OESRegion";
 	}
 
 	public class OESCharacter : OESChunk {
+		public string Name;
+		
 		public OESCharacter(string typeCode, uint id) : base(typeCode, id) {}
+
+		public OESCharacter(string name = "") : base("char") => Name = name;
 		
-		public OESCharacter() : base("char") {}
-		
-		protected override void SerializeData(BinaryWriter bw) => throw new System.NotImplementedException();
+		protected override void SerializeData(BinaryWriter bw) => bw.WriteUTF8String(Name ?? "");
+		protected override void DeserializeData(BinaryReader br) => Name = br.ReadUTF8String();
+
+		public override string ToString() => $"OESCharacter(Name={Name})";
 	}
 
 	public class OESObject : OESChunk {
@@ -262,6 +282,8 @@ namespace OpenEQ.Common {
 
 		protected override void SerializeData(BinaryWriter bw) => bw.WriteUTF8String(Name ?? "");
 		protected override void DeserializeData(BinaryReader br) => Name = br.ReadUTF8String();
+
+		public override string ToString() => $"OESObject(Name={Name})";
 	}
 
 	public class OESInstance : OESChunk {
@@ -295,6 +317,8 @@ namespace OpenEQ.Common {
 			Scale = br.ReadVec3();
 			Rotation = br.ReadQuaternion();
 		}
+
+		public override string ToString() => $"OESInstance(Object={Object}, Position={Position}, Scale={Scale}, Rotation={Rotation}, SkinName={SkinName})";
 	}
 
 	public class OESLight : OESChunk {
@@ -323,6 +347,8 @@ namespace OpenEQ.Common {
 			Radius = br.ReadSingle();
 			Attenuation = br.ReadSingle();
 		}
+
+		public override string ToString() => $"OESLight(Position={Position}, Color={Color}, Radius={Radius}, Attenuation={Attenuation})";
 	}
 
 	public class OESSkin : OESChunk {
@@ -334,6 +360,8 @@ namespace OpenEQ.Common {
 
 		protected override void SerializeData(BinaryWriter bw) => bw.WriteUTF8String(Name ?? "");
 		protected override void DeserializeData(BinaryReader br) => Name = br.ReadUTF8String();
+
+		public override string ToString() => $"OESSkin(Name={Name})";
 	}
 
 	public class OESStaticMesh : OESChunk {
@@ -364,6 +392,89 @@ namespace OpenEQ.Common {
 			IndexBuffer = Enumerable.Range(0, ibc).Select(_ => br.ReadUInt32()).ToList();
 			VertexBuffer = Enumerable.Range(0, vbc).Select(_ => br.ReadSingle()).ToList();
 		}
+
+		public override string ToString() => $"OESStaticMesh(Collidable={Collidable}, IndexBuffer.Count={IndexBuffer.Count}, VertexBuffer.Count={VertexBuffer.Count})";
+	}
+
+	public class OESAnimationSet : OESChunk {
+		public string Name;
+		public float Speed;
+		
+		public OESAnimationSet(string typeCode, uint id) : base(typeCode, id) {}
+
+		public OESAnimationSet(string name, float speed) : base("aset") {
+			Name = name;
+			Speed = speed;
+		}
+
+		protected override void SerializeData(BinaryWriter bw) {
+			bw.WriteUTF8String(Name);
+			bw.Write(Speed);
+		}
+
+		protected override void DeserializeData(BinaryReader br) {
+			Name = br.ReadUTF8String();
+			Speed = br.ReadSingle();
+		}
+
+		public override string ToString() => $"OESAnimationSet(Name={Name}, Speed={Speed})";
+	}
+
+	public class OESAnimatedMesh : OESChunk {
+		public bool Collidable;
+		public IReadOnlyList<uint> IndexBuffer;
+		public uint VertexCount;
+		public float Speed;
+
+		public OESAnimatedMesh(string typeCode, uint id) : base(typeCode, id) {}
+		
+		public OESAnimatedMesh(bool collidable, IReadOnlyList<uint> indexBuffer, uint vertexCount, float speed = 0) : base("amsh") {
+			Collidable = collidable;
+			IndexBuffer = indexBuffer;
+			VertexCount = vertexCount;
+			Speed = speed;
+		}
+
+		protected override void SerializeData(BinaryWriter bw) {
+			bw.WriteBool(Collidable);
+			bw.Write(IndexBuffer.Count);
+			bw.Write(VertexCount);
+			bw.Write(Speed);
+			IndexBuffer.ForEach(bw.Write);
+		}
+
+		protected override void DeserializeData(BinaryReader br) {
+			Collidable = br.ReadBool();
+			var ibc = br.ReadInt32();
+			VertexCount = br.ReadUInt32();
+			Speed = br.ReadSingle();
+			IndexBuffer = Enumerable.Range(0, ibc).Select(_ => br.ReadUInt32()).ToList();
+		}
+
+		public override string ToString() => $"OESAnimatedMesh(Collidable={Collidable}, IndexBuffer.Count={IndexBuffer.Count}, VertexCount={VertexCount}, Speed={Speed})";
+	}
+
+	public class OESAnimationBuffer : OESChunk {
+		public IReadOnlyList<IReadOnlyList<float>> VertexBuffers;
+		
+		public OESAnimationBuffer(string typeCode, uint id) : base(typeCode, id) {}
+
+		public OESAnimationBuffer(IReadOnlyList<IReadOnlyList<float>> vertexBuffers) : base("abuf") =>
+			VertexBuffers = vertexBuffers;
+
+		protected override void SerializeData(BinaryWriter bw) {
+			bw.Write(VertexBuffers.Count);
+			bw.Write(VertexBuffers[0].Count / 8);
+			VertexBuffers.ForEach(frame => frame.ForEach(bw.Write));
+		}
+
+		protected override void DeserializeData(BinaryReader br) {
+			var frameCount = br.ReadInt32();
+			var elemCount = br.ReadInt32() * 8;
+			VertexBuffers = Enumerable.Range(0, frameCount).Select(_ => Enumerable.Range(0, elemCount).Select(__ => br.ReadSingle()).ToList()).ToList();
+		}
+
+		public override string ToString() => $"OESAnimationBuffer(VertexBuffers.Count={VertexBuffers.Count}, VertexBufferCounts={VertexBuffers.Select(x => x.Count).ToArray().Stringify()})";
 	}
 
 	public class OESFile {
