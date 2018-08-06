@@ -385,9 +385,16 @@ namespace OpenEQ.ConverterCore {
 			var md5 = string.Join("", MD5.Create().ComputeHash(data).Select(x => $"{x:X02}")).Substring(0, 10);
 
 			var ofn = $"{fn.Split('.', 2)[0]}-{md5}.png";
-			var image = data[0] == 'B' && data[1] == 'M'
-				? new Image(ColorMode.Rgb, (1, 1), new byte[] { 0xFF, 0xFF, 0 })
-				: Dds.Load(data).Images[0];
+			WriteLine(fn);
+			Image image;
+			try {
+				image = data[0] == 'B' && data[1] == 'M'
+					? Bmp.Load(data)
+					: Dds.Load(data).Images[0];
+			} catch(Exception) {
+				image = new Image(ColorMode.Rgb, (1, 1), new byte[] { 0xff, 0xff, 0 });
+			}
+
 			lock(zip) {
 				var entry = zip.CreateEntry(ofn, CompressionLevel.Optimal).Open();
 				Png.Encode(image, entry);
