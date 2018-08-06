@@ -20,6 +20,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Netcode", "Netcode\Netcode.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NetClient", "NetClient\NetClient.csproj", "{98D2C75D-2177-453D-B5A3-74CF6894640E}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OesDumper", "OesDumper\OesDumper.csproj", "{53203E05-E529-4CEF-AEF2-07B4302563CB}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -66,5 +68,9 @@ Global
 		{98D2C75D-2177-453D-B5A3-74CF6894640E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{98D2C75D-2177-453D-B5A3-74CF6894640E}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{98D2C75D-2177-453D-B5A3-74CF6894640E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{53203E05-E529-4CEF-AEF2-07B4302563CB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{53203E05-E529-4CEF-AEF2-07B4302563CB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{53203E05-E529-4CEF-AEF2-07B4302563CB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{53203E05-E529-4CEF-AEF2-07B4302563CB}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

@@ -60,20 +60,11 @@ namespace OpenEQ.LegacyFileReader {
 		public override string ToString() => $"Fragment05(Reference={Reference})";
 	}
 
-	public class Track {
-		public string Name;
-		public uint Flags;
-		public Reference<Fragment13> PieceTrack;
-		public Track[] Children;
-
-		public override string ToString() => $"Track(Name={Name}, Flags=0x{Flags:X}, PieceTrack={PieceTrack}, Children={Children.Stringify()})";
-	}
-
 	public class Fragment10 {
-		public Track Root;
+		public (string Name, uint Flags, Reference<Fragment13> PieceTrack, Reference<Fragment2D> Mesh, int[] Children)[] Tracks;
 		public Reference<Fragment2D>[] Meshes;
 		
-		public override string ToString() => $"Fragment10(RootTrack={Root}, Meshes={Meshes.Stringify()})";
+		public override string ToString() => $"Fragment10(Tracks={Tracks.Stringify()}, Meshes={Meshes.Stringify()})";
 	}
 
 	public class Fragment11 {
@@ -97,10 +88,10 @@ namespace OpenEQ.LegacyFileReader {
 	}
 
 	public class Fragment14 {
-		public Reference<string> Name;
+		public Reference<string> Magic;
 		public Reference<object>[] References;
 
-		public override string ToString() => $"Fragment14(Name={Name}, References={References.Stringify()})";
+		public override string ToString() => $"Fragment14(Magic={Magic}, References={References.Stringify()})";
 	}
 
 	public class Fragment15 {
@@ -175,7 +166,7 @@ namespace OpenEQ.LegacyFileReader {
 		public (uint Count, uint Index)[] PolyTexs;
 		public (uint Count, uint Index)[] VertBones;
 
-		public override string ToString() => $"Fragmen36(Vertices={Vertices.Length}, Polygons={Polygons.Length}, Textures={PolyTexs.Length}, Bones={VertBones.Length})";
+		public override string ToString() => $"Fragment36(Vertices={Vertices.Length}, Polygons={Polygons.Length}, Textures={PolyTexs.Length}, Bones={VertBones.Length})";
 	}
 	
 	public class Fragment37 {
@@ -284,6 +275,9 @@ namespace OpenEQ.LegacyFileReader {
 
 		public IEnumerable<(string Name, T Fragment)> GetFragments<T>() => Fragments.Where(x => x.Fragment is T).Select(x => (x.Name, (T) x.Fragment));
 
+		public T GetFragment<T>(string name) where T : class =>
+			NameIndex.ContainsKey(name) && Fragments[NameIndex[name]] is T frag ? frag : null;
+
 		Fragment03 Read03() =>
 			new Fragment03 {
 				Filenames = (Br.ReadInt32() + 1).Times(() => ReadDecodeString(Br.ReadUInt16()).TrimEnd('\0')).ToArray()
@@ -325,16 +319,13 @@ namespace OpenEQ.LegacyFileReader {
 				var children = Br.ReadUInt32().Times(() => Br.ReadInt32()).ToArray();
 
 				return (name, tflags, sref, mref, children);
-			}).ToList();
-
-			Track ConvertTrack((string Name, uint Flags, Reference<Fragment13> Sref, Reference<Fragment2D> Mref, int[] Children) track) =>
-				new Track { Name = track.Name, Flags = track.Flags, PieceTrack = track.Sref, Children = track.Children.Select(i => ConvertTrack(tracks[i])).ToArray() };
+			}).ToArray();
 
 			var meshes = flags.HasBit(9)
 				? Br.ReadUInt32().Times(ReadRef<Fragment2D>).ToArray()
 				: tracks.Select(x => x.Item4).ToArray();
 			
-			return new Fragment10 { Root = ConvertTrack(tracks[0]), Meshes = meshes };
+			return new Fragment10 { Tracks = tracks, Meshes = meshes };
 		}
 
 		Fragment11 Read11() => new Fragment11 { Reference = ReadRef<Fragment10>() };
@@ -370,7 +361,7 @@ namespace OpenEQ.LegacyFileReader {
 
 		Fragment14 Read14() {
 			var flags = Br.ReadUInt32();
-			var name = ReadRef<string>();
+			var magic = ReadRef<string>();
 			var size = Br.ReadUInt32();
 			var numRefs = Br.ReadInt32();
 			var frag2 = Br.ReadUInt32();
@@ -391,7 +382,7 @@ namespace OpenEQ.LegacyFileReader {
 			
 			// TODO: Read and understand the encoded string that follows.  See wlddoc
 
-			return new Fragment14 { Name = name, References = refs };
+			return new Fragment14 { Magic = magic, References = refs };
 		}
 		
 		Fragment15 Read15() {
@@ -513,8 +504,8 @@ namespace OpenEQ.LegacyFileReader {
 			Br.ReadUInt16();
 			var scale = (float) (1UL << Br.ReadUInt16());
 			var vertices = vertCount.Times(() => new Vector3(Br.ReadInt16(), Br.ReadInt16(), Br.ReadInt16()) / scale + center).ToArray();
-			var texcoords = tcCount.Times(() => NewFormat ? Br.ReadVec2() : new Vector2(Br.ReadInt16(), Br.ReadInt16()) / 256).ToArray();
-			var normals = normalCount.Times(() => new Vector3(Br.ReadSByte(), Br.ReadSByte(), Br.ReadSByte()) / 127).ToArray();
+			var texcoords = tcCount.Times(() => NewFormat ? Br.ReadVec2() : new Vector2(Br.ReadInt16(), Br.ReadInt16()) / 256).Concat((vertCount - normalCount).Times(() => Vector2.Zero)).ToArray();
+			var normals = normalCount.Times(() => new Vector3(Br.ReadSByte(), Br.ReadSByte(), Br.ReadSByte()) / 127).Concat((vertCount - normalCount).Times(() => Vector3.One)).ToArray();
 			var colors = colorCount.Times(() => Br.ReadUInt32()).ToArray();
 			var polygons = polyCount.Times(() => (Br.ReadUInt16() == 0, (uint) Br.ReadUInt16(), (uint) Br.ReadUInt16(), (uint) Br.ReadUInt16())).ToArray();
 			var vertPieces = vertPieceCount.Times(() => ((uint) Br.ReadUInt16(), (uint) Br.ReadUInt16())).ToArray();
