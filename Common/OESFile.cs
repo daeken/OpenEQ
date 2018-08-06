@@ -79,6 +79,7 @@ namespace OpenEQ.Common {
 
 			OESChunk instance;
 			switch(tc) {
+				case "root": instance = new OESRoot(tc, id); break;
 				case "mat": instance = new OESMaterial(tc, id); break;
 				case "fx": instance = new OESEffect(tc, id); break;
 				case "tex": instance = new OESTexture(tc, id); break;

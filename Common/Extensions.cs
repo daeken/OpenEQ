@@ -1,8 +1,10 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Linq;
 using System.Numerics;
+using MoreLinq.Extensions;
 
 namespace OpenEQ.Common {
 	public static class Extensions {
@@ -78,5 +80,25 @@ namespace OpenEQ.Common {
 			for(var i = tuple.Start; i < tuple.End; i += tuple.Step)
 				yield return i;
 		}
+		
+		public static IEnumerable<int> Times(this int count) => Enumerable.Range(0, count);
+		public static IEnumerable<int> Times(this uint count) => ((int) count).Times();
+		public static IEnumerable<int> Times(this ushort count) => ((int) count).Times();
+
+		public static IEnumerable<T> Times<T>(this int count, Func<T> func) => count.Times().Select(x => func());
+		public static IEnumerable<T> Times<T>(this uint count, Func<T> func) => ((int) count).Times(func);
+		public static IEnumerable<T> Times<T>(this ushort count, Func<T> func) => ((int) count).Times(func);
+
+		public static IEnumerable<T> Times<T>(this int count, Func<int, T> func) => count.Times().Select(func);
+		public static IEnumerable<T> Times<T>(this uint count, Func<int, T> func) => count.Times().Select(func);
+		public static IEnumerable<T> Times<T>(this ushort count, Func<int, T> func) => count.Times().Select(func);
+
+		public static void Times(this int count, Action func) => count.Times().ForEach(_ => func());
+		public static void Times(this uint count, Action func) => count.Times().ForEach(_ => func());
+		public static void Times(this ushort count, Action func) => count.Times().ForEach(_ => func());
+
+		public static void Times(this int count, Action<int> func) => count.Times().ForEach(func);
+		public static void Times(this uint count, Action<int> func) => count.Times().ForEach(func);
+		public static void Times(this ushort count, Action<int> func) => count.Times().ForEach(func);
 	}
 }

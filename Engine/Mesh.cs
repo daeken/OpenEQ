@@ -11,17 +11,17 @@ using static OpenEQ.Engine.Globals;
 namespace OpenEQ.Engine {
 	public class Mesh {
 		public Material Material;
-		readonly int Vao, Pbo, Ibo, Mbo;
-		readonly int ElementCount, InstanceCount;
+		readonly int Vao;
+		readonly Buffer<uint> IndexBuffer;
+		readonly Buffer<float> VertexBuffer;
+		readonly Buffer<Matrix4x4> ModelMatrixBuffer;
 
 		public Mesh(Material material, float[] vdata, uint[] indices, Matrix4x4[] modelMatrices) {
 			Material = material;
 			
 			GL.BindVertexArray(Vao = GL.GenVertexArray());
-			GL.BindBuffer(BufferTarget.ElementArrayBuffer, Ibo = GL.GenBuffer());
-			GL.BufferData(BufferTarget.ElementArrayBuffer, indices.Length * 4, indices, BufferUsageHint.StaticDraw);
-			GL.BindBuffer(BufferTarget.ArrayBuffer, Pbo = GL.GenBuffer());
-			GL.BufferData(BufferTarget.ArrayBuffer, vdata.Length * 4, vdata, BufferUsageHint.StaticDraw);
+			IndexBuffer = new Buffer<uint>(indices, BufferTarget.ElementArrayBuffer);
+			VertexBuffer = new Buffer<float>(vdata);
 			var pp = 0; // aPosition
 			GL.EnableVertexAttribArray(pp);
 			GL.VertexAttribPointer(pp, 3, VertexAttribPointerType.Float, false, (3 + 3 + 2) * 4, 0);
@@ -32,9 +32,7 @@ namespace OpenEQ.Engine {
 			GL.EnableVertexAttribArray(pp);
 			GL.VertexAttribPointer(pp, 2, VertexAttribPointerType.Float, false, (3 + 3 + 2) * 4, (3 + 3) * 4);
 			
-			GL.BindBuffer(BufferTarget.ArrayBuffer, Mbo = GL.GenBuffer());
-			GL.BufferData(BufferTarget.ArrayBuffer, modelMatrices.Length * 16 * 4, 
-				modelMatrices.Select(x => x.AsArray()).SelectMany(x => x).ToArray(), BufferUsageHint.StaticDraw);
+			ModelMatrixBuffer = new Buffer<Matrix4x4>(modelMatrices);
 			pp = 3; // aModelMat
 			GL.EnableVertexAttribArray(pp);
 			GL.VertexAttribPointer(pp, 4, VertexAttribPointerType.Float, false, 4 * 16, 0);
@@ -48,17 +46,14 @@ namespace OpenEQ.Engine {
 			GL.EnableVertexAttribArray(pp + 3);
 			GL.VertexAttribPointer(pp + 3, 4, VertexAttribPointerType.Float, false, 4 * 16, 12 * 4);
 			GL.VertexAttribDivisor(pp + 3, 1);
-
-			ElementCount = indices.Length;
-			InstanceCount = modelMatrices.Length;
 		}
 
 		public void Draw(Matrix4x4 projView, bool forward) {
 			if(forward && Material.Deferred || !forward && !Material.Deferred) return;
-			Material.Use(projView);
+			Material.Use(projView, MaterialUse.Static);
 
 			GL.BindVertexArray(Vao);
-			GL.DrawElementsInstanced(PrimitiveType.Triangles, ElementCount, DrawElementsType.UnsignedInt, IntPtr.Zero, InstanceCount);
+			GL.DrawElementsInstanced(PrimitiveType.Triangles, IndexBuffer.Length, DrawElementsType.UnsignedInt, IntPtr.Zero, ModelMatrixBuffer.Length);
 		}
 	}
 }

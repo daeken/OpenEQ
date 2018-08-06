@@ -5,6 +5,12 @@
     <RootNamespace>OpenEQ.Engine</RootNamespace>
     <LangVersion>7.2</LangVersion>
   </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="morelinq" Version="3.0.0" />
     <PackageReference Include="OpenTK.NETCore" Version="1.1.2749.6433" />
