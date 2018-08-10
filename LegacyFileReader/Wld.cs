@@ -221,10 +221,9 @@ namespace OpenEQ.LegacyFileReader {
 				var type = Br.ReadUInt32();
 				var spos = Fp.Position;
 				var nr = Br.ReadInt32();
-				var name = nr <= 0 && type != 0x35 ? GetString(-nr) : null;
+				var name = nr <= 0 && type != 0x35 ? GetString(-nr) : "";
 
 				void Add<T>(T obj) {
-					//WriteLine(obj);
 					Fragments[i] = (name, obj);
 					NameIndex[name] = i;
 				}
@@ -504,7 +503,7 @@ namespace OpenEQ.LegacyFileReader {
 			Br.ReadUInt16();
 			var scale = (float) (1UL << Br.ReadUInt16());
 			var vertices = vertCount.Times(() => new Vector3(Br.ReadInt16(), Br.ReadInt16(), Br.ReadInt16()) / scale + center).ToArray();
-			var texcoords = tcCount.Times(() => NewFormat ? Br.ReadVec2() : new Vector2(Br.ReadInt16(), Br.ReadInt16()) / 256).Concat((vertCount - normalCount).Times(() => Vector2.Zero)).ToArray();
+			var texcoords = tcCount.Times(() => NewFormat ? Br.ReadVec2() : new Vector2(Br.ReadInt16(), Br.ReadInt16()) / 256).Concat((vertCount - tcCount).Times(() => Vector2.Zero)).ToArray();
 			var normals = normalCount.Times(() => new Vector3(Br.ReadSByte(), Br.ReadSByte(), Br.ReadSByte()) / 127).Concat((vertCount - normalCount).Times(() => Vector3.One)).ToArray();
 			var colors = colorCount.Times(() => Br.ReadUInt32()).ToArray();
 			var polygons = polyCount.Times(() => (Br.ReadUInt16() == 0, (uint) Br.ReadUInt16(), (uint) Br.ReadUInt16(), (uint) Br.ReadUInt16())).ToArray();
