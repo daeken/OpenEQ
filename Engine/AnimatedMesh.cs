@@ -8,7 +8,9 @@ using OpenTK.Graphics.OpenGL4;
 
 namespace OpenEQ.Engine {
 	public class AnimatedMesh {
-		readonly Material Material;
+		public bool Enabled = true;
+		
+		public readonly Material Material;
 		readonly Buffer<uint> IndexBuffer;
 		readonly Dictionary<string, (IReadOnlyList<int> Vaos, IReadOnlyList<Buffer<float>> Buffers)> Animations;
 		
@@ -52,6 +54,7 @@ namespace OpenEQ.Engine {
 		}
 
 		public void Draw(Matrix4x4 projView, bool forward) {
+			if(!Enabled) return;
 			if(forward && Material.Deferred || !forward && !Material.Deferred) return;
 			Material.Use(projView, MaterialUse.Animated);
 			var ctime = Globals.Time;

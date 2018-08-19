@@ -8,6 +8,8 @@ namespace OpenEQ {
 		
 		readonly List<BaseView> Views = new List<BaseView>();
 
+		public AniModel LastModelLoaded;
+
 		public Controller() =>
 			Engine.UpdateFrame += (s, e) => Views.ForEach(view => view.Update(Engine.Gui));
 
@@ -27,7 +29,7 @@ namespace OpenEQ {
 		}
 
 		public void LoadCharacter(string filename, string name) {
-			Loader.LoadCharacter($"../ConverterApp/{filename}_oes.zip", name, Engine);
+			LastModelLoaded = Loader.LoadCharacter($"../ConverterApp/{filename}_oes.zip", name, Engine);
 		}
 
 		public void Start() {

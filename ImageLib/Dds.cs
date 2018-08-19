@@ -125,17 +125,17 @@ namespace ImageLib {
 
 		public static Dds Load(string Filename) {
 			using(var _stream = File.OpenRead(Filename)) {
-				return Load(_stream);
+				return Load(Path.GetFileName(Filename), _stream);
 			}
 		}
 
-		public static Dds Load(byte[] FileContents) {
+		public static Dds Load(string name, byte[] FileContents) {
 			using(var _stream = new MemoryStream(FileContents)) {
-				return Load(_stream);
+				return Load(name, _stream);
 			}
 		}
 
-		public static Dds Load(Stream Source) {
+		public static Dds Load(string name, Stream Source) {
 			var _dds = new Dds();
 
 			using(var _data = new BinaryReader(Source)) {
@@ -287,7 +287,7 @@ namespace ImageLib {
 							_compressionMode = FOURCC_V8U8;
 						}
 
-						_dds.Images[_level] = Decompress.Image(_imageBits, _w2, _h2, _compressionMode);
+						_dds.Images[_level] = Decompress.Image($"{name}#_level0", _imageBits, _w2, _h2, _compressionMode);
 						_dds.Images[_level].SwapRB();
 						//_dds.Images[_level].FlipY();
 					} catch(Exception e) {
@@ -311,9 +311,9 @@ namespace ImageLib {
 		}
 
 		static class Decompress {
-			public static Image Image(byte[] Data, int W, int H, uint CompressionMode) {
+			public static Image Image(string name, byte[] Data, int W, int H, uint CompressionMode) {
 				if(CompressionMode == 15 || CompressionMode == 16 || CompressionMode == 24 || CompressionMode == 32)
-					return Linear(Data, W, H, CompressionMode);
+					return Linear(name, Data, W, H, CompressionMode);
 
 				var size = (W < 4 ? 4 : W, H < 4 ? 4 : H);
 
@@ -356,7 +356,7 @@ namespace ImageLib {
 						$"{(char) ((CompressionMode >> 16) & 0xFF)}{(char) ((CompressionMode >> 24) & 0xFF)}' not supported.");
 				}
 
-				return new Image(ColorMode.Rgba, size, _pixels);
+				return new Image(ColorMode.Rgba, size, _pixels, name);
 			}
 
 			static void DXT1(ushort[] Data, uint[] Pixels, int W, int H, int Stride) {
@@ -663,7 +663,7 @@ namespace ImageLib {
 				}
 			}
 
-			static Image Linear(byte[] Data, int W, int H, uint bpp) {
+			static Image Linear(string name, byte[] Data, int W, int H, uint bpp) {
 				uint _a, _r, _g, _b, _c, _pos;
 
 				var _stride = W;
@@ -734,7 +734,7 @@ namespace ImageLib {
 						break;
 				}
 
-				return new Image(ColorMode.Rgba, (W, H), _pixels);
+				return new Image(ColorMode.Rgba, (W, H), _pixels, name);
 			}
 		}
 

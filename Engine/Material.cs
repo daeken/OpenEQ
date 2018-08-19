@@ -93,14 +93,11 @@ void main() {
 		protected Program GetProgram(MaterialUse use) {
 			switch(use) {
 				case MaterialUse.Static:
-					if(StaticProgram == null)
-						StaticProgram = new Program(GenerateVertexShader(MaterialUse.Static), FragmentShader);
-					return StaticProgram;
+					return StaticProgram ?? (StaticProgram =
+						       new Program(GenerateVertexShader(MaterialUse.Static), FragmentShader));
 				case MaterialUse.Animated:
-					if(AnimatedProgram == null)
-						AnimatedProgram = new Program(GenerateVertexShader(MaterialUse.Animated), FragmentShader);
-					AnimatedProgram.SetUniform("uModelMat", Matrix4x4.Identity);
-					return AnimatedProgram;
+					return AnimatedProgram ?? (AnimatedProgram =
+						       new Program(GenerateVertexShader(MaterialUse.Animated), FragmentShader));
 			}
 			return null;
 		}

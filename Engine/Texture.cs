@@ -5,8 +5,11 @@ namespace OpenEQ.Engine {
 	public class Texture {
 		readonly int Id;
 		readonly bool Transparent;
+
+		readonly string Name;
 		
 		public Texture(Image image, bool transparent) {
+			Name = image.Name ?? "unknown";
 			Transparent = transparent;
 			GL.BindTexture(TextureTarget.Texture2D, Id = GL.GenTexture());
 			var filter = (int) (transparent ? TextureMinFilter.Linear : TextureMinFilter.LinearMipmapLinear);
@@ -41,5 +44,7 @@ namespace OpenEQ.Engine {
 		~Texture() => GL.DeleteTexture(Id);
 
 		public void Use() => GL.BindTexture(TextureTarget.Texture2D, Id);
+
+		public override string ToString() => $"`{Name}`";
 	}
 }

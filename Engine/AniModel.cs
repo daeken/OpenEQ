@@ -3,7 +3,7 @@ using System.Numerics;
 
 namespace OpenEQ.Engine {
 	public class AniModel {
-		readonly List<AnimatedMesh> Meshes = new List<AnimatedMesh>();
+		public readonly List<AnimatedMesh> Meshes = new List<AnimatedMesh>();
 
 		public void Add(AnimatedMesh mesh) => Meshes.Add(mesh);
 

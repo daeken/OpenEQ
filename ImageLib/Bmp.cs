@@ -5,10 +5,10 @@ using SixLabors.ImageSharp.PixelFormats;
 
 namespace ImageLib {
 	public static class Bmp {
-		public static Image Load(byte[] data) {
+		public static Image Load(string name, byte[] data) {
 			using(var ms = new MemoryStream(data))
 				using(var simage = new BmpDecoder().Decode<Rgb24>(Configuration.Default, ms))
-					return new Image(ColorMode.Rgb, (simage.Width, simage.Height), simage.Frames[0].SavePixelData());
+					return new Image(ColorMode.Rgb, (simage.Width, simage.Height), simage.Frames[0].SavePixelData(), name);
 		}
 	}
 }
