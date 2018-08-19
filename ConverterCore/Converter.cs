@@ -230,6 +230,12 @@ namespace OpenEQ.ConverterCore {
 				IReadOnlyList<float> Remap(List<float> verts) => 
 					indexorder.Select(i => verts.Skip((int) i * 8).Take(8)).SelectMany(x => x).ToList();
 
+				for(var i = 0; i < oinds.Count; i += 3) {
+					var temp = oinds[i + 1];
+					oinds[i + 1] = oinds[i + 2];
+					oinds[i + 2] = temp;
+				}
+
 				return (oinds, vertices.Select(kv => (kv.Key, new OESAnimationBuffer(kv.Value.Select(Remap).ToList()))).ToDictionary());
 			}
 

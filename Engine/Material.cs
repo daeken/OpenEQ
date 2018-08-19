@@ -104,6 +104,7 @@ void main() {
 		
 		public abstract void Use(Matrix4x4 projView, MaterialUse use);
 
+		public void SetModelMatrix(Matrix4x4 modelMat) => AnimatedProgram.SetUniform("uModelMat", modelMat);
 		public void SetInterpolation(float interp) => AnimatedProgram.SetUniform("uInterp", interp);
 	}
 }

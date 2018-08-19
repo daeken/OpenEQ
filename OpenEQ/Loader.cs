@@ -47,7 +47,7 @@ namespace OpenEQ {
 			return model;
 		}
 
-		internal static AniModel LoadCharacter(string path, string name, EngineCore engine) {
+		internal static AniModel LoadCharacter(string path, string name) {
 			using(var zip = ZipFile.OpenRead(path)) {
 				using(var ms = new MemoryStream()) {
 					using(var temp = zip.GetEntry("main.oes")?.Open())
@@ -62,7 +62,6 @@ namespace OpenEQ {
 					var anisets = model.Find<OESAnimationSet>().Select(x => (x.Name, x.Find<OESAnimationBuffer>().ToList())).ToDictionary();
 					
 					var animodel = new AniModel();
-					engine.Add(animodel);
 					
 					model.Find<OESAnimatedMesh>().ForEach((oam, i) => {
 						var animations = anisets.Select(kv => (kv.Key, kv.Value[i])).ToDictionary();

@@ -7,6 +7,6 @@ namespace OpenEQ.Engine {
 
 		public void Add(AnimatedMesh mesh) => Meshes.Add(mesh);
 
-		public void Draw(Matrix4x4 projView, bool forward) => Meshes.ForEach(mesh => mesh.Draw(projView, forward));
+		public void Draw(Matrix4x4 projView, Matrix4x4 modelMat, string animation, float aniTime, bool forward) => Meshes.ForEach(mesh => mesh.Draw(projView, modelMat, animation, aniTime, forward));
 	}
 }

@@ -53,17 +53,16 @@ namespace OpenEQ.Engine {
 			}).ToDictionary();
 		}
 
-		public void Draw(Matrix4x4 projView, bool forward) {
+		public void Draw(Matrix4x4 projView, Matrix4x4 modelMat, string animation, float aniTime, bool forward) {
 			if(!Enabled) return;
 			if(forward && Material.Deferred || !forward && !Material.Deferred) return;
 			Material.Use(projView, MaterialUse.Animated);
-			var ctime = Globals.Time;
-			var fps = 1f / 10;
-			var frameCount = (int) (ctime / fps);
-			Material.SetInterpolation(ctime % fps / fps);
+			Material.SetModelMatrix(modelMat);
+			const float fps = 1f / 10;
+			var frameCount = (int) (aniTime / fps);
+			Material.SetInterpolation(aniTime % fps / fps);
 
-			var aniName = ctime % 10 > 5 ? "D05" : "C05";
-			GL.BindVertexArray(Animations[aniName].Vaos[frameCount % Animations[aniName].Vaos.Count]);
+			GL.BindVertexArray(Animations[animation].Vaos[frameCount % Animations[animation].Vaos.Count]);
 			GL.DrawElements(PrimitiveType.Triangles, IndexBuffer.Length, DrawElementsType.UnsignedInt, IntPtr.Zero);
 		}
 	}

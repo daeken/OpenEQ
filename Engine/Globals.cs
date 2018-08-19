@@ -9,10 +9,11 @@ using static System.MathF;
 namespace OpenEQ.Engine {
 	public static class Globals {
 		public static Matrix4x4 ProjectionMat;
-		public static readonly FpsCamera Camera = new FpsCamera(vec3(0, -14, 8));
+		public static readonly FpsCamera Camera = new FpsCamera(vec3());
 		
-		public readonly static Stopwatch Stopwatch = new Stopwatch();
+		public static readonly Stopwatch Stopwatch = new Stopwatch();
 		public static float Time => Stopwatch.ElapsedMilliseconds / 1000f;
+		public static float FrameTime;
 		
 		public static Vector2 vec2() => new Vector2();
 		public static Vector2 vec2(float v) => new Vector2(v);

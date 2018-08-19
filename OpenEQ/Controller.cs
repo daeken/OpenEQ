@@ -1,6 +1,7 @@
 ﻿using System.Collections.Generic;
 using OpenEQ.Engine;
 using OpenEQ.Views;
+using static OpenEQ.Engine.Globals;
 
 namespace OpenEQ {
 	public class Controller {
@@ -29,7 +30,9 @@ namespace OpenEQ {
 		}
 
 		public void LoadCharacter(string filename, string name) {
-			LastModelLoaded = Loader.LoadCharacter($"../ConverterApp/{filename}_oes.zip", name, Engine);
+			var model = LastModelLoaded = Loader.LoadCharacter($"../ConverterApp/{filename}_oes.zip", name);
+			var instance = new AniModelInstance(model) { Animation = "C05", Position = vec3(-153, 149, 80) };
+			Engine.Add(instance);
 		}
 
 		public void Start() {
