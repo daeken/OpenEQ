@@ -44,7 +44,7 @@ namespace OpenEQ.Engine {
 
 			Resize += (_, e) => {
 				Gui.Dimensions = new Vector2(Width, Height);
-				Gui.Scale = new Vector2(2f);
+				Gui.Scale = new Vector2(1.5f);
 				ProjectionMat = Matrix4x4.CreatePerspectiveFieldOfView(45 * (MathF.PI / 180), (float) Width / Height, 1, 5000);
 			};
 		}
@@ -157,7 +157,7 @@ namespace OpenEQ.Engine {
 					GL.ClearColor(0, 0, 0, 1);
 					GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 		
-					GL.Disable(EnableCap.CullFace);
+					GL.Enable(EnableCap.CullFace);
 					GL.Disable(EnableCap.Blend);
 					GL.Enable(EnableCap.DepthTest);
 					Models.ForEach(model => model.Draw(ProjectionView, forward: false));

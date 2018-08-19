@@ -60,7 +60,7 @@ void main() {
 		
 		public FireMaterial() {
 			if(Texture == null) {
-				var img = Png.Decode(File.OpenRead("flame.png"));
+				var img = Png.Decode("flame.png", File.OpenRead("flame.png"));
 				img.FlipY();
 				Texture = new Texture(img, true);
 			}

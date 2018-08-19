@@ -14,22 +14,25 @@ namespace ImageLib {
 		public readonly (int Width, int Height) Size;
 		public readonly byte[] Data;
 		public readonly int Stride, PixelBytes;
+		public readonly string Name;
 		
-		public Image(ColorMode colorMode, (int Width, int Height) size, byte[] data) {
+		public Image(ColorMode colorMode, (int Width, int Height) size, byte[] data, string name = null) {
 			ColorMode = colorMode;
 			Size = size;
 			Data = data;
 			PixelBytes = PixelSize(ColorMode);
 			Stride = Size.Width * PixelBytes;
 			Debug.Assert(Data.Length == PixelBytes * Size.Width * Size.Height);
+			Name = name;
 		}
 
-		public Image(ColorMode colorMode, (int Width, int Height) size, uint[] data) {
+		public Image(ColorMode colorMode, (int Width, int Height) size, uint[] data, string name = null) {
 			ColorMode = colorMode;
 			Size = size;
 			Debug.Assert(data.Length == Size.Width * Size.Height);
 			Data = new byte[size.Width * size.Height * PixelSize(colorMode)];
 			Buffer.BlockCopy(data, 0, Data, 0, 4 * size.Width * size.Height);
+			Name = name;
 		}
 
 		public Image FlipY() {
@@ -74,7 +77,7 @@ namespace ImageLib {
 				}
 			}
 			
-			return new Image(ColorMode, ns, nd);
+			return new Image(ColorMode, ns, nd, Name);
 		}
 
 		public static void SampleNearest(Image im, float u, float v, byte[] odata, int offset) {
@@ -139,7 +142,7 @@ namespace ImageLib {
 			Process.Start("ffmpeg", $"-i {tfn} -vf scale={ns.Width}:{ns.Height}:flags=lanczos {otfn}").WaitForExit();
 
 			using(var fp = File.OpenRead(otfn))
-				return Png.Decode(fp);
+				return Png.Decode(Name, fp);
 		}
 
 		public static int PixelSize(ColorMode mode) {

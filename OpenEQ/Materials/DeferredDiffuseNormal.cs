@@ -34,6 +34,7 @@ namespace OpenEQ.Materials {
 			program.SetUniform("uDiffuseTex", 0);
 			program.SetUniform("uNormalTex", 1);
 			program.SetUniform("uProjectionViewMat", projView);
+			program.SetUniform("uModelMat", Matrix4x4.Identity);
 			GL.ActiveTexture(TextureUnit.Texture0);
 			Textures[0].Use();
 			GL.ActiveTexture(TextureUnit.Texture1);

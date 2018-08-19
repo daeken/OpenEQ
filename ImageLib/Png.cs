@@ -64,7 +64,7 @@ namespace ImageLib {
 			bw.Flush();
 		}
 
-		public static Image Decode(Stream stream) {
+		public static Image Decode(string name, Stream stream) {
 			var br = new BeBinaryReader(stream, Encoding.Default, leaveOpen: true);
 
 			ColorMode colorMode = ColorMode.Greyscale;
@@ -157,7 +157,7 @@ namespace ImageLib {
 					}
 				}
 			
-			return new Image(colorMode, size, data);
+			return new Image(colorMode, size, data, name);
 		}
 	}
 }

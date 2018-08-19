@@ -1,6 +1,7 @@
 ﻿using System.Linq;
 using System.Numerics;
 using ImageLib;
+using OpenEQ.Common;
 using OpenEQ.Engine;
 using OpenTK.Graphics.OpenGL4;
 
@@ -35,11 +36,14 @@ void main() {
 			program.Use();
 			program.SetUniform("uTex", 0);
 			program.SetUniform("uProjectionViewMat", projView);
+			program.SetUniform("uModelMat", Matrix4x4.Identity);
 			GL.ActiveTexture(TextureUnit.Texture0);
 			if(AnimationSpeed == 0)
 				Textures[0].Use();
 			else
 				Textures[(int) (Globals.Time / AnimationSpeed) % Textures.Length].Use();
 		}
+
+		public override string ToString() => $"DeferredDiffuse{Textures.Stringify()}";
 	}
 }

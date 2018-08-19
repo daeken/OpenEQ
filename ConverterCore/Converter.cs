@@ -239,7 +239,10 @@ namespace OpenEQ.ConverterCore {
 				var meshf = f10.Meshes[i].Value.Reference.Value;
 				var omats = meshf.TextureListReference.Value.References.Select(matref => {
 					var tfn = matref.Value.Reference.Value.Reference.Value.References[0].Value.Filenames[0];
-					return new OESMaterial(false, false, false) { new OESTexture(ConvertTexture(wld.S3D, zip, tfn)) };
+					var tf = matref.Value.Flags;
+					WriteLine($"\t{System.Convert.ToString(tf, 2).Substring(tf > 0x1000000 ? 24 : 0)} -- {tfn}");
+					var transparent = (tf & 7) == 7;
+					return new OESMaterial(transparent, transparent, false) { new OESTexture(ConvertTexture(wld.S3D, zip, tfn)) };
 				}).ToList();
 				var offset = 0U;
 				meshf.PolyTexs.ForEach(v => {
@@ -393,8 +396,8 @@ namespace OpenEQ.ConverterCore {
 			Image image;
 			try {
 				image = data[0] == 'B' && data[1] == 'M'
-					? Bmp.Load(data).FlipY()
-					: Dds.Load(data).Images[0];
+					? Bmp.Load(fn, data).FlipY()
+					: Dds.Load(fn, data).Images[0];
 			} catch(Exception) {
 				image = new Image(ColorMode.Rgb, (1, 1), new byte[] { 0xff, 0xff, 0 });
 			}

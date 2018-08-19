@@ -47,7 +47,7 @@ namespace OpenEQ {
 			return model;
 		}
 
-		internal static void LoadCharacter(string path, string name, EngineCore engine) {
+		internal static AniModel LoadCharacter(string path, string name, EngineCore engine) {
 			using(var zip = ZipFile.OpenRead(path)) {
 				using(var ms = new MemoryStream()) {
 					using(var temp = zip.GetEntry("main.oes")?.Open())
@@ -69,6 +69,8 @@ namespace OpenEQ {
 						animations[""] = oam.Find<OESAnimationBuffer>().First();
 						animodel.Add(new AnimatedMesh(materials[i], animations.Select(kv => (kv.Key, kv.Value.VertexBuffers)).ToDictionary(), oam.IndexBuffer.ToArray()));
 					});
+
+					return animodel;
 				}
 			}
 		}
@@ -80,7 +82,7 @@ namespace OpenEQ {
 
 				var textures = mat.Find<OESTexture>().Select(x => {
 					using(var tzs = zip.GetEntry(x.Filename)?.Open())
-						return Png.Decode(tzs);
+						return Png.Decode(Path.GetFileName(x.Filename), tzs);
 				}).ToArray();
 				
 				switch(effect.Name) {
