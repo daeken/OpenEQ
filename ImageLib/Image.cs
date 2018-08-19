@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 
 namespace ImageLib {
 	public enum ColorMode {
@@ -145,6 +146,34 @@ namespace ImageLib {
 				return Png.Decode(Name, fp);
 		}
 
+
+		public Image AlphaFromIntensity() {
+			switch(ColorMode) {
+				case ColorMode.Rgb:
+					var odata = new byte[Size.Width * Size.Height * 4];
+					var oi = 0;
+					for(var i = 0; i < Size.Width * Size.Height * 3; ) {
+						var r = Data[i++];
+						var g = Data[i++];
+						var b = Data[i++];
+						odata[oi++] = r;
+						odata[oi++] = g;
+						odata[oi++] = b;
+						odata[oi++] = ClampByte((r + g + b) / 3f);
+					}
+					return new Image(ColorMode.Rgba, Size, odata, Name);
+				case ColorMode.Rgba:
+					var ordata = Data.Select(x => x).ToArray();
+					for(var i = 0; i < Size.Width * Size.Height * 4; i += 4) {
+						var r = ordata[i + 0];
+						var g = ordata[i + 1];
+						var b = ordata[i + 2];
+						ordata[i + 3] = ClampByte((r + g + b) / 3f / 255f * (ordata[i + 3] / 255f) * 255);
+					}
+					return new Image(ColorMode.Rgba, Size, ordata, Name);
+				default: throw new NotImplementedException();
+			}
+		}
 		public static int PixelSize(ColorMode mode) {
 			switch(mode) {
 				case ColorMode.Greyscale: return 1;
@@ -152,6 +181,6 @@ namespace ImageLib {
 				case ColorMode.Rgba: return 4;
 				default: throw new NotImplementedException();
 			}
-		} 
+		}
 	}
 }
