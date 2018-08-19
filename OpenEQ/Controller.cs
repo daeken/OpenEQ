@@ -36,7 +36,7 @@ namespace OpenEQ {
 		}
 
 		public void Start() {
-			Engine.Run();
+			Engine.Start();
 		}
 	}
 }

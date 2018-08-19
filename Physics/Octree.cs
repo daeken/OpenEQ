@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+﻿using System;
 using System.Linq;
 using System.Numerics;
 
@@ -16,9 +16,11 @@ namespace Physics {
 		 */
 		public readonly Octree A, B, C, D, E, F, G, H;
 
-		public Mesh Leaf;
+		public readonly Mesh Leaf;
+		public readonly AABB BoundingBox;
 
-		public Octree(Mesh mesh, int maxTrisPerLeaf) {
+		public Octree(Mesh mesh, int maxTrisPerLeaf, AABB? boundingBox = null) {
+			BoundingBox = boundingBox ?? mesh.BoundingBox;
 			if(mesh.Triangles.Count <= maxTrisPerLeaf) {
 				Leaf = mesh;
 				return;
@@ -27,8 +29,8 @@ namespace Physics {
 			Mesh BuildSub(AABB bb) =>
 				new Mesh(mesh.Triangles.Where(bb.Contains));
 
-			var c = mesh.BoundingBox.Min;
-			var hs = mesh.BoundingBox.Size / 2;
+			var c = BoundingBox.Min;
+			var hs = BoundingBox.Size / 2;
 			var nodes = new[] {
 				new AABB(c, hs), 
 				new AABB(new Vector3(c.X + hs.X, c.Y, c.Z), hs), 
@@ -39,7 +41,7 @@ namespace Physics {
 				new AABB(new Vector3(c.X + hs.X, c.Y, c.Z + hs.Z), hs), 
 				new AABB(new Vector3(c.X, c.Y + hs.Y, c.Z + hs.Z), hs), 
 				new AABB(new Vector3(c.X + hs.X, c.Y + hs.Y, c.Z + hs.Z), hs)
-			}.AsParallel().AsOrdered().Select(BuildSub).AsSequential().Select(x => new Octree(x, maxTrisPerLeaf)).ToList();
+			}.AsParallel().AsOrdered().Select(x => (BuildSub(x), x)).AsSequential().Select(x => new Octree(x.Item1, maxTrisPerLeaf, x.Item2)).ToList();
 			
 			A = nodes[0];
 			B = nodes[1];

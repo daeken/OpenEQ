@@ -18,5 +18,7 @@ namespace Physics {
 		public bool Contains(Vector3 point) =>
 			Min.X <= point.X && Min.Y <= point.Y && Min.Z <= point.Z && 
 			Max.X >= point.X && Max.Y >= point.Y && Max.Z >= point.Z;
+
+		public override string ToString() => $"AABB(Min={Min}, Max={Max})";
 	}
 }

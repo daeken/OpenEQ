@@ -9,6 +9,7 @@ using OpenTK.Graphics;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Input;
 using OpenEQ.Common;
+using Physics;
 using Vector2 = System.Numerics.Vector2;
 using Vector3 = System.Numerics.Vector3;
 using static OpenEQ.Engine.Globals;
@@ -54,6 +55,28 @@ namespace OpenEQ.Engine {
 
 		public void Add(Model model) => Models.Add(model);
 		public void Add(AniModelInstance modelInstance) => AniModels.Add(modelInstance);
+
+		public void Start() {
+			var cmesh = new Physics.Mesh(new Triangle[0]);
+			foreach(var model in Models) {
+				if(!model.IsFixed) continue;
+				foreach(var mesh in model.Meshes) {
+					if(!mesh.IsCollidable) continue;
+					if(mesh.ModelMatrices.Length == 1 && mesh.ModelMatrices[0] == Matrix4x4.Identity)
+						cmesh += mesh.PhysicsMesh;
+					else
+						cmesh = mesh.ModelMatrices.AsParallel().Aggregate(cmesh, (current, mat) => current + new MeshInstance(mesh.PhysicsMesh, mat).Bake());
+				}
+			}
+
+			Console.WriteLine($"Physics mesh created for zone.  {cmesh.Triangles.Count} triangles in {cmesh.BoundingBox}");
+			
+			var octree = new Physics.Octree(cmesh.WithBounding, 500);
+			
+			Console.WriteLine($"Built octree");
+			
+			Run();
+		}
 
 		void UpdateMouseButton(MouseButton button, bool state) {
 			switch(button) {
