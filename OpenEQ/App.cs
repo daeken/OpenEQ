@@ -17,7 +17,7 @@ namespace OpenEQ {
 		static void Main(string[] args) {
 			var controller = new Controller();
 			controller.LoadZone(args[0]);
-			controller.LoadCharacter("gfaydark_chr", "WAS");
+			controller.LoadCharacter("gfaydark_chr", "ORC");
 			controller.AddView(new StatusView(controller));
 			//controller.AddView(new ModelMeshView(controller));
 			controller.Start();

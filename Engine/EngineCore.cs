@@ -21,7 +21,7 @@ namespace OpenEQ.Engine {
 		public readonly Gui Gui;
 		
 		readonly List<Model> Models = new List<Model>();
-		readonly List<AniModel> AniModels = new List<AniModel>();
+		readonly List<AniModelInstance> AniModels = new List<AniModelInstance>();
 		readonly List<double> FrameTimes = new List<double>();
 		readonly List<PointLight> Lights = new List<PointLight>();
 
@@ -53,7 +53,7 @@ namespace OpenEQ.Engine {
 			Lights.Add(new PointLight(pos, radius, attenuation, color));
 
 		public void Add(Model model) => Models.Add(model);
-		public void Add(AniModel model) => AniModels.Add(model);
+		public void Add(AniModelInstance modelInstance) => AniModels.Add(modelInstance);
 
 		void UpdateMouseButton(MouseButton button, bool state) {
 			switch(button) {
@@ -140,6 +140,7 @@ namespace OpenEQ.Engine {
 		}
 
 		protected override void OnRenderFrame(FrameEventArgs e) {
+			FrameTime = Time;
 			if(FrameTimes.Count == 200)
 				FrameTimes.RemoveAt(0);
 			FrameTimes.Add(e.Time);
