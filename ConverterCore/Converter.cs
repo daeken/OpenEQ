@@ -122,7 +122,6 @@ namespace OpenEQ.ConverterCore {
 				var root = new OESRoot();
 				foreach(var wld in wlds)
 					foreach(var (aname, actor) in wld.GetFragments<Fragment14>()) {
-						WriteLine(aname);
 						var model = new OESCharacter(aname.Substring(0, aname.Length - "_ACTORDEF".Length));
 						root.Add(model);
 						var skin = new OESSkin();
@@ -240,7 +239,6 @@ namespace OpenEQ.ConverterCore {
 				var omats = meshf.TextureListReference.Value.References.Select(matref => {
 					var tfn = matref.Value.Reference.Value.Reference.Value.References[0].Value.Filenames[0];
 					var tf = matref.Value.Flags;
-					WriteLine($"\t{System.Convert.ToString(tf, 2).Substring(tf > 0x1000000 ? 24 : 0)} -- {tfn}");
 					var transparent = (tf & 7) == 7;
 					return new OESMaterial(transparent, transparent, false) { new OESTexture(ConvertTexture(wld.S3D, zip, tfn)) };
 				}).ToList();
