@@ -9,8 +9,9 @@ namespace Physics {
 		public readonly AABB BoundingBox;
 		public readonly IReadOnlyList<Triangle> Triangles;
 		
-		public Mesh(IEnumerable<Triangle> triangles) {
+		public Mesh(IEnumerable<Triangle> triangles, bool skipBounding = false) {
 			Triangles = triangles.ToList();
+			if(Triangles.Count == 0 || skipBounding) return;
 			var min = Triangles.First().A;
 			var max = min;
 			foreach(var point in Triangles.Select(x => x.AsArray).SelectMany(x => x)) {
@@ -20,6 +21,8 @@ namespace Physics {
 			BoundingBox = new AABB(min, max - min);
 		}
 		
-		public static Mesh operator+(Mesh left, Mesh right) => new Mesh(left.Triangles.Concat(right.Triangles));
+		public Mesh WithBounding => new Mesh(Triangles);
+		
+		public static Mesh operator+(Mesh left, Mesh right) => new Mesh(left.Triangles.Concat(right.Triangles), skipBounding: true);
 	}
 }

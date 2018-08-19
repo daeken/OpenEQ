@@ -6,6 +6,7 @@ using System.Numerics;
 using ImageLib;
 using OpenTK.Graphics.OpenGL4;
 using OpenEQ.Common;
+using Physics;
 using static OpenEQ.Engine.Globals;
 
 namespace OpenEQ.Engine {
@@ -15,8 +16,11 @@ namespace OpenEQ.Engine {
 		readonly Buffer<uint> IndexBuffer;
 		readonly Buffer<float> VertexBuffer;
 		readonly Buffer<Matrix4x4> ModelMatrixBuffer;
+		public readonly Matrix4x4[] ModelMatrices;
+		public readonly Physics.Mesh PhysicsMesh;
+		public readonly bool IsCollidable;
 
-		public Mesh(Material material, float[] vdata, uint[] indices, Matrix4x4[] modelMatrices) {
+		public Mesh(Material material, float[] vdata, uint[] indices, Matrix4x4[] modelMatrices, bool isCollidable) {
 			Material = material;
 			
 			GL.BindVertexArray(Vao = GL.GenVertexArray());
@@ -46,6 +50,20 @@ namespace OpenEQ.Engine {
 			GL.EnableVertexAttribArray(pp + 3);
 			GL.VertexAttribPointer(pp + 3, 4, VertexAttribPointerType.Float, false, 4 * 16, 12 * 4);
 			GL.VertexAttribDivisor(pp + 3, 1);
+
+			ModelMatrices = modelMatrices;
+
+			IsCollidable = isCollidable;
+			
+			if(isCollidable)
+				PhysicsMesh = new Physics.Mesh((indices.Length / 3).Times(i => {
+					Vector3 GetPoint(int off) {
+						var voff = indices[i + off] * 8;
+						return vec3(vdata[voff + 0], vdata[voff + 1], vdata[voff + 2]);
+					}
+	
+					return new Triangle(GetPoint(0), GetPoint(1), GetPoint(2));
+				}));
 		}
 
 		public void Draw(Matrix4x4 projView, bool forward) {

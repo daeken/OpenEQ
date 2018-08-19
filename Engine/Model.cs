@@ -5,7 +5,10 @@ using MoreLinq;
 
 namespace OpenEQ.Engine {
 	public class Model {
-		readonly List<Mesh> Meshes = new List<Mesh>();
+		public readonly List<Mesh> Meshes = new List<Mesh>();
+		public readonly bool IsFixed;
+
+		public Model(bool isFixed = true) => IsFixed = isFixed;
 
 		public void Add(Mesh mesh) => Meshes.Add(mesh);
 
