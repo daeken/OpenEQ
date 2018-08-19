@@ -1,0 +1,25 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Numerics;
+using static System.MathF;
+
+namespace Physics {
+	public class Mesh {
+		public readonly AABB BoundingBox;
+		public readonly IReadOnlyList<Triangle> Triangles;
+		
+		public Mesh(IEnumerable<Triangle> triangles) {
+			Triangles = triangles.ToList();
+			var min = Triangles.First().A;
+			var max = min;
+			foreach(var point in Triangles.Select(x => x.AsArray).SelectMany(x => x)) {
+				min = new Vector3(Min(min.X, point.X), Min(min.Y, point.Y), Min(min.Z, point.Z));
+				max = new Vector3(Max(max.X, point.X), Max(max.Y, point.Y), Max(max.Z, point.Z));
+			}
+			BoundingBox = new AABB(min, max - min);
+		}
+		
+		public static Mesh operator+(Mesh left, Mesh right) => new Mesh(left.Triangles.Concat(right.Triangles));
+	}
+}
