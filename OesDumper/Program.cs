@@ -7,7 +7,7 @@ using OpenEQ.Common;
 using static System.Console;
 
 namespace OesDumper {
-	class Program {
+	internal class Program {
 		static void Main(string[] args) {
 			using(var zip = ZipFile.OpenRead(args[0])) {
 				using(var ms = new MemoryStream()) {

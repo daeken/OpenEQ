@@ -5,7 +5,7 @@ using MoreLinq;
 using static System.Console;
 
 namespace NetClient {
-	class Program {
+	internal class Program {
 		static string Input(string prompt) {
 			Write($"{prompt} > ");
 			return ReadLine().TrimEnd();

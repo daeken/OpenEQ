@@ -4,7 +4,7 @@ using System.IO;
 using OpenEQ.ConverterCore;
 
 namespace OpenEQ.ConverterApp {
-	class Program {
+	internal class Program {
 		static void Main(string[] args) {
 			var sw = new Stopwatch();
 			Console.WriteLine("Starting conversion");
