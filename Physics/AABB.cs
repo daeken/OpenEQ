@@ -1,7 +1,7 @@
 ﻿using System.Numerics;
 
 namespace Physics {
-	public struct AABB {
+	public struct AABB : ICollidable {
 		public readonly Vector3 Min, Max;
 		public readonly Vector3 Size;
 

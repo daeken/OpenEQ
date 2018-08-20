@@ -3,7 +3,7 @@ using System.Linq;
 using System.Numerics;
 
 namespace Physics {
-	public class Octree {
+	public class Octree : ICollidable {
 		/*
 		 * A -- min, min, min
 		 * B -- max, min, min

@@ -1,9 +1,9 @@
-﻿using System.Collections.Generic;
-using System.Numerics;
+﻿using System.Numerics;
 
 namespace Physics {
-	public struct Triangle {
+	public struct Triangle : ICollidable {
 		public readonly Vector3 A, B, C;
+		public readonly Vector3 Normal;
 
 		public Vector3[] AsArray => new[] { A, B, C }; 
 
@@ -11,6 +11,8 @@ namespace Physics {
 			A = a;
 			B = b;
 			C = c;
+
+			Normal = Vector3.Cross(b - a, c - a);
 		}
 	}
 }
