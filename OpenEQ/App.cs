@@ -13,7 +13,7 @@ using OpenEQ.Views;
 using static System.Console;
 
 namespace OpenEQ {
-	class App {
+	internal class App {
 		static void Main(string[] args) {
 			var controller = new Controller();
 			controller.LoadZone(args[0]);

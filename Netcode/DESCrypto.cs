@@ -26,8 +26,8 @@ using System;
 using System.Diagnostics;
 
 namespace OpenEQ.Netcode {
-	class DESCrypto {
-		private static readonly uint[] spBoxes = {
+	internal class DESCrypto {
+		static readonly uint[] spBoxes = {
 			0x00808200, 0x00000000, 0x00008000, 0x00808202, 0x00808002, 0x00008202, 0x00000002, 0x00008000,
 			0x00000200, 0x00808200, 0x00808202, 0x00000200, 0x00800202, 0x00808002, 0x00800000, 0x00000002,
 			0x00000202, 0x00800200, 0x00800200, 0x00008200, 0x00008200, 0x00808000, 0x00808000, 0x00800202,
@@ -94,7 +94,7 @@ namespace OpenEQ.Netcode {
 			0x08020820, 0x00020800, 0x00020800, 0x00000820, 0x00000820, 0x00020020, 0x08000000, 0x08020800
 		};
 
-		private static readonly byte[] PC1 = {
+		static readonly byte[] PC1 = {
 			57-1, 49-1, 41-1, 33-1, 25-1, 17-1,  9-1,
 			1-1, 58-1, 50-1, 42-1, 34-1, 26-1, 18-1,
 			10-1,  2-1, 59-1, 51-1, 43-1, 35-1, 27-1,
@@ -106,9 +106,9 @@ namespace OpenEQ.Netcode {
 			21-1, 13-1,  5-1, 28-1, 20-1, 12-1,  4-1
 		};
 
-		private static readonly byte[] leftRotTotal = { 0x01, 0x02, 0x04, 0x06, 0x08, 0x0A, 0x0C, 0x0E, 0x0F, 0x11, 0x13, 0x15, 0x17, 0x19, 0x1B, 0x1C };
+		static readonly byte[] leftRotTotal = { 0x01, 0x02, 0x04, 0x06, 0x08, 0x0A, 0x0C, 0x0E, 0x0F, 0x11, 0x13, 0x15, 0x17, 0x19, 0x1B, 0x1C };
 
-		private static readonly byte[] PC2 = {
+		static readonly byte[] PC2 = {
 			14-1, 17-1, 11-1, 24-1,  1-1,  5-1,
 			3-1, 28-1, 15-1,  6-1, 21-1, 10-1,
 			23-1, 19-1, 12-1,  4-1, 26-1,  8-1,
@@ -350,7 +350,7 @@ namespace OpenEQ.Netcode {
 		}
 
 
-		private uint CipherFunct(uint r, int n) {
+		uint CipherFunct(uint r, int n) {
 			uint res = 0;
 			byte[] subkey = keySchedule;
 			int i = n << 3;
@@ -409,7 +409,7 @@ namespace OpenEQ.Netcode {
 			}
 		}
 
-		private static void BSwap(byte[] byteBuff) {
+		static void BSwap(byte[] byteBuff) {
 			byte t = byteBuff[0];
 			byteBuff[0] = byteBuff[3];
 			byteBuff[3] = t;

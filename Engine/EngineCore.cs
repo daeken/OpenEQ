@@ -62,9 +62,9 @@ namespace OpenEQ.Engine {
 		public void Add(AniModelInstance modelInstance) => AniModels.Add(modelInstance);
 
 		public void Start() {
-			World = new World(new CollisionSystemSAP()) { Gravity = new JVector(0, 0, 1) };
+			World = new World(new CollisionSystemSAP()) { Gravity = new Vector3(0, 0, 1) };
 
-			var ov = new List<JVector>();
+			var ov = new List<Vector3>();
 			var oi = new List<TriangleVertexIndices>();
 			Console.WriteLine("Building mesh for physics");
 			foreach(var model in Models) {
@@ -77,7 +77,7 @@ namespace OpenEQ.Engine {
 							? (IEnumerable<Vector3>) pv
 							: pv.AsParallel().AsOrdered().Select(x => Vector3.Transform(x, mat));
 						var offset = ov.Count;
-						ov.AddRange(tv.Select(x => new JVector(x.X, x.Y, x.Z)));
+						ov.AddRange(tv.Select(x => new Vector3(x.X, x.Y, x.Z)));
 						oi.AddRange(pi.Select(x => new TriangleVertexIndices(x.I0 + offset, x.I1 + offset, x.I2 + offset)));
 					}
 				}
