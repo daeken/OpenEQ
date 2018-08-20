@@ -2,6 +2,11 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using Jitter;
+using Jitter.Collision;
+using Jitter.Collision.Shapes;
+using Jitter.Dynamics;
+using Jitter.LinearMath;
 using NsimGui;
 using NsimGui.Widgets;
 using OpenTK;
@@ -9,11 +14,9 @@ using OpenTK.Graphics;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Input;
 using OpenEQ.Common;
-using Physics;
 using Vector2 = System.Numerics.Vector2;
 using Vector3 = System.Numerics.Vector3;
 using static OpenEQ.Engine.Globals;
-using Size = NsimGui.Size;
 
 namespace OpenEQ.Engine {
 	public partial class EngineCore : GameWindow {
@@ -29,6 +32,8 @@ namespace OpenEQ.Engine {
 		public double FPS => FrameTimes.Count == 0 ? 0 : 1 / (FrameTimes.Sum() / FrameTimes.Count);
 
 		Matrix4x4 ProjectionView;
+
+		World World;
 		
 		public EngineCore() : base(
 			1280, 720, new GraphicsMode(new ColorFormat(8, 8, 8, 8), 16, 0), "OpenEQ", 
@@ -57,23 +62,32 @@ namespace OpenEQ.Engine {
 		public void Add(AniModelInstance modelInstance) => AniModels.Add(modelInstance);
 
 		public void Start() {
-			var cmesh = new Physics.Mesh(new Triangle[0]);
+			World = new World(new CollisionSystemSAP()) { Gravity = new JVector(0, 0, 1) };
+
+			var ov = new List<JVector>();
+			var oi = new List<TriangleVertexIndices>();
+			Console.WriteLine("Building mesh for physics");
 			foreach(var model in Models) {
 				if(!model.IsFixed) continue;
 				foreach(var mesh in model.Meshes) {
 					if(!mesh.IsCollidable) continue;
-					if(mesh.ModelMatrices.Length == 1 && mesh.ModelMatrices[0] == Matrix4x4.Identity)
-						cmesh += mesh.PhysicsMesh;
-					else
-						cmesh = mesh.ModelMatrices.AsParallel().Aggregate(cmesh, (current, mat) => current + new MeshInstance(mesh.PhysicsMesh, mat).Bake());
+					var (pv, pi) = mesh.PhysicsMesh;
+					foreach(var mat in mesh.ModelMatrices) {
+						var tv = mat == Matrix4x4.Identity
+							? (IEnumerable<Vector3>) pv
+							: pv.AsParallel().AsOrdered().Select(x => Vector3.Transform(x, mat));
+						var offset = ov.Count;
+						ov.AddRange(tv.Select(x => new JVector(x.X, x.Y, x.Z)));
+						oi.AddRange(pi.Select(x => new TriangleVertexIndices(x.I0 + offset, x.I1 + offset, x.I2 + offset)));
+					}
 				}
 			}
-
-			Console.WriteLine($"Physics mesh created for zone.  {cmesh.Triangles.Count} triangles in {cmesh.BoundingBox}");
 			
-			var octree = new Physics.Octree(cmesh.WithBounding, 500);
+			Console.WriteLine($"Building octree for {ov.Count} vertices across {oi.Count} triangles");
+			var octree = new Octree(ov, oi);
+			Console.WriteLine("Built octree");
 			
-			Console.WriteLine($"Built octree");
+			//World.AddBody(new RigidBody(new TriangleMeshShape(octree)) { IsStatic = true });
 			
 			Run();
 		}
@@ -105,6 +119,8 @@ namespace OpenEQ.Engine {
 		protected override void OnKeyUp(KeyboardKeyEventArgs e) => KeyState.Remove(e.Key);
 
 		protected override void OnUpdateFrame(FrameEventArgs e) {
+			World.Step((float) e.Time, true);
+			
 			var movement = vec3();
 			var movescale = KeyState.Keys.Contains(Key.ShiftLeft) ? 250 : 30;
 			var pitchscale = .5f;
