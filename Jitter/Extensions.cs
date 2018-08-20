@@ -42,7 +42,7 @@ namespace Jitter {
 			vector = Vector3.Normalize(vector);
 		}
 
-		public static void Set(this Vector3 vec, float x, float y, float z) {
+		public static void Set(this ref Vector3 vec, float x, float y, float z) {
 			vec.X = x;
 			vec.Y = y;
 			vec.Z = z;
