@@ -93,16 +93,16 @@ namespace Jitter.Collision.Shapes {
         /// <param name="direction">The direction.</param>
         /// <param name="result">The result.</param>
         public override void SupportMapping(ref Vector3 direction, out Vector3 result) {
-			var r = MathF.Sqrt(direction.X * direction.X + direction.Z * direction.Z);
+			var r = MathF.Sqrt(direction.X * direction.X + direction.Y * direction.Y);
 
-			if(MathF.Abs(direction.Y) > 0.0f) {
+			if(MathF.Abs(direction.Z) > 0.0f) {
 				var dir = Vector3.Normalize(direction);
 				result = dir * radius;
-				result.Y += MathF.Sign(direction.Y) * 0.5f * length;
+				result.Z += MathF.Sign(direction.Z) * 0.5f * length;
 			} else if(r > 0.0f) {
 				result.X = direction.X / r * radius;
-				result.Y = 0.0f;
-				result.Z = direction.Z / r * radius;
+				result.Y = direction.Y / r * radius;
+				result.Z = 0.0f;
 			} else {
 				result.X = 0.0f;
 				result.Y = 0.0f;

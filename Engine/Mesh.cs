@@ -66,8 +66,8 @@ namespace OpenEQ.Engine {
 					cvdata, 
 					(indices.Length / 3).Times(i => {
 						var offset = i * 3;
-						return new TriangleVertexIndices((int) indices[offset + 0], (int) indices[offset + 1],
-							(int) indices[offset + 2]);
+						return new TriangleVertexIndices((int) indices[offset + 0], (int) indices[offset + 2],
+							(int) indices[offset + 1]);
 					}).Where(ind => {
 						var a = cvdata[ind.I0];
 						var b = cvdata[ind.I1];
