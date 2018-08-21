@@ -62,7 +62,7 @@ namespace OpenEQ.Engine {
 		public void Add(AniModelInstance modelInstance) => AniModels.Add(modelInstance);
 
 		public void Start() {
-			World = new World(new CollisionSystemSAP()) { Gravity = new Vector3(0, 0, 1) };
+			World = new World(new CollisionSystemSAP()) { Gravity = new Vector3(0, 0, -100) };
 
 			var ov = new List<Vector3>();
 			var oi = new List<TriangleVertexIndices>();
@@ -88,6 +88,7 @@ namespace OpenEQ.Engine {
 			Console.WriteLine("Built octree");
 			
 			World.AddBody(new RigidBody(new TriangleMeshShape(octree)) { IsStatic = true });
+			World.AddBody(Camera.RigidBody);
 			
 			Run();
 		}
@@ -119,13 +120,10 @@ namespace OpenEQ.Engine {
 		protected override void OnKeyUp(KeyboardKeyEventArgs e) => KeyState.Remove(e.Key);
 
 		protected override void OnUpdateFrame(FrameEventArgs e) {
-			World.Step((float) e.Time, true);
-			
 			var movement = vec3();
-			var movescale = KeyState.Keys.Contains(Key.ShiftLeft) ? 250 : 30;
+			var movescale = KeyState.Keys.Contains(Key.ShiftLeft) ? 250 : 75;
 			var pitchscale = .5f;
 			var yawscale = 1.25f;
-			var updatedCamera = false;
 			foreach(var key in KeyState.Keys)
 				switch(key) {
 					case Key.W:
@@ -148,32 +146,26 @@ namespace OpenEQ.Engine {
 						break;
 					case Key.Up:
 						Camera.Look((float) e.Time * pitchscale, 0);
-						updatedCamera = true;
 						break;
 					case Key.Down:
 						Camera.Look((float) -e.Time * pitchscale, 0);
-						updatedCamera = true;
 						break;
 					case Key.Left:
 						Camera.Look(0, (float) e.Time * yawscale);
-						updatedCamera = true;
 						break;
 					case Key.Right:
 						Camera.Look(0, (float) -e.Time * yawscale);
-						updatedCamera = true;
 						break;
 					case Key.Escape:
 					case Key.Tilde:
 						Exit();
 						break;
 				}
-			if(movement.Length() > 0) {
+			if(movement.Length() > 0)
 				Camera.Move(movement);
-				updatedCamera = true;
-			}
 
-			if(updatedCamera)
-				Camera.Update();
+			World.Step((float) e.Time, true);
+			Camera.Update();
 
 			base.OnUpdateFrame(e);
 		}
