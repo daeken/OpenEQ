@@ -87,7 +87,7 @@ namespace OpenEQ.Engine {
 			var octree = new Octree(ov, oi);
 			Console.WriteLine("Built octree");
 			
-			//World.AddBody(new RigidBody(new TriangleMeshShape(octree)) { IsStatic = true });
+			World.AddBody(new RigidBody(new TriangleMeshShape(octree)) { IsStatic = true });
 			
 			Run();
 		}

@@ -57,17 +57,25 @@ namespace OpenEQ.Engine {
 
 			IsCollidable = isCollidable;
 
-			if(isCollidable)
+			if(isCollidable) {
+				var cvdata = (vdata.Length / 8).Times(i => {
+					var offset = i * 8;
+					return new Vector3(vdata[offset + 0], vdata[offset + 1], vdata[offset + 2]);
+				}).ToList();
 				PhysicsMesh = (
-					(vdata.Length / 8).Times(i => {
-						var offset = i * 8;
-						return new Vector3(vdata[offset + 0], vdata[offset + 1], vdata[offset + 2]);
-					}).ToList(), 
+					cvdata, 
 					(indices.Length / 3).Times(i => {
 						var offset = i * 3;
-						return new TriangleVertexIndices((int) indices[offset + 0], (int) indices[offset + 1], (int) indices[offset + 2]);
+						return new TriangleVertexIndices((int) indices[offset + 0], (int) indices[offset + 1],
+							(int) indices[offset + 2]);
+					}).Where(ind => {
+						var a = cvdata[ind.I0];
+						var b = cvdata[ind.I1];
+						var c = cvdata[ind.I2];
+						return (a - b).LengthSquared() > 0.00001 && (b - c).LengthSquared() > 0.00001 && (c - a).LengthSquared() > 0.00001;
 					}).ToList()
 				);
+			}
 		}
 
 		public void Draw(Matrix4x4 projView, bool forward) {
