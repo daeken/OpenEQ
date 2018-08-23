@@ -16,9 +16,9 @@
     <PackageReference Include="OpenTK.NETCore" Version="1.1.2749.6433" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\CollisionManager\CollisionManager.csproj" />
     <ProjectReference Include="..\Common\Common.csproj" />
     <ProjectReference Include="..\ImageLib\ImageLib.csproj" />
-    <ProjectReference Include="..\Jitter\Jitter.csproj" />
     <ProjectReference Include="..\NsimGui\NsimGui.csproj" />
   </ItemGroup>
 </Project>
