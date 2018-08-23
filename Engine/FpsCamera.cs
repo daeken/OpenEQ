@@ -1,16 +1,12 @@
 ﻿using System;
 using System.Numerics;
-using Jitter.Collision.Shapes;
-using Jitter.Dynamics;
-using Jitter.LinearMath;
 using OpenEQ.Common;
 using static System.MathF;
 using static OpenEQ.Engine.Globals;
 
 namespace OpenEQ.Engine {
 	public class FpsCamera {
-		public RigidBody RigidBody;
-		public Vector3 Position => RigidBody.Position;
+		public Vector3 Position;
 		float Pitch, Yaw;
 
 		public static Matrix4x4 Matrix;
@@ -21,14 +17,13 @@ namespace OpenEQ.Engine {
 		public static readonly Vector3 Forward = new Vector3(0, 1, 0);
 
 		public FpsCamera(Vector3 pos) {
-			RigidBody = new RigidBody(new CapsuleShape(10, 3)) { IsParticle = true };
-			RigidBody.Position = pos;
+			Position = pos;
 			Pitch = Yaw = 0;
 			Update();
 		}
 
 		public void Move(Vector3 movement) {
-			RigidBody.LinearVelocity += Vector3.Transform(movement, LookRotation);
+			Position += Vector3.Transform(movement, LookRotation);
 		}
 
 		public void Look(float pitchmod, float yawmod) {

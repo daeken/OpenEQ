@@ -2,11 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
-using Jitter;
-using Jitter.Collision;
-using Jitter.Collision.Shapes;
-using Jitter.Dynamics;
-using Jitter.LinearMath;
+using CollisionManager;
 using NsimGui;
 using NsimGui.Widgets;
 using OpenTK;
@@ -33,8 +29,8 @@ namespace OpenEQ.Engine {
 
 		Matrix4x4 ProjectionView;
 
-		World World;
-		
+		Octree Octree;
+
 		public EngineCore() : base(
 			1280, 720, new GraphicsMode(new ColorFormat(8, 8, 8, 8), 16, 0), "OpenEQ", 
 			GameWindowFlags.Default, DisplayDevice.Default, 4, 1, GraphicsContextFlags.ForwardCompatible
@@ -62,33 +58,29 @@ namespace OpenEQ.Engine {
 		public void Add(AniModelInstance modelInstance) => AniModels.Add(modelInstance);
 
 		public void Start() {
-			World = new World(new CollisionSystemSAP()) { Gravity = new Vector3(0, 0, -100) };
-
-			var ov = new List<Vector3>();
-			var oi = new List<TriangleVertexIndices>();
+			var ot = new List<Triangle>();
 			Console.WriteLine("Building mesh for physics");
 			foreach(var model in Models) {
 				if(!model.IsFixed) continue;
 				foreach(var mesh in model.Meshes) {
 					if(!mesh.IsCollidable) continue;
-					var (pv, pi) = mesh.PhysicsMesh;
+					var pt = mesh.PhysicsMesh;
 					foreach(var mat in mesh.ModelMatrices) {
-						var tv = mat == Matrix4x4.Identity
-							? (IEnumerable<Vector3>) pv
-							: pv.AsParallel().AsOrdered().Select(x => Vector3.Transform(x, mat));
-						var offset = ov.Count;
-						ov.AddRange(tv.Select(x => new Vector3(x.X, x.Y, x.Z)));
-						oi.AddRange(pi.Select(x => new TriangleVertexIndices(x.I0 + offset, x.I1 + offset, x.I2 + offset)));
+						if(mat == Matrix4x4.Identity)
+							ot.AddRange(pt);
+						else
+							ot.AddRange(pt.AsParallel().Select(x => new Triangle(
+									Vector3.Transform(x.A, mat), 
+									Vector3.Transform(x.B, mat), 
+									Vector3.Transform(x.C, mat)
+								)));
 					}
 				}
 			}
 			
-			Console.WriteLine($"Building octree for {ov.Count} vertices across {oi.Count} triangles");
-			var octree = new Octree(ov, oi);
+			Console.WriteLine($"Building octree for {ot.Count} triangles");
+			Octree = new Octree(new CollisionManager.Mesh(ot), 500);
 			Console.WriteLine("Built octree");
-			
-			World.AddBody(new RigidBody(new TriangleMeshShape(octree)) { IsStatic = true });
-			World.AddBody(Camera.RigidBody);
 			
 			Run();
 		}
@@ -164,7 +156,12 @@ namespace OpenEQ.Engine {
 			if(movement.Length() > 0)
 				Camera.Move(movement);
 
-			World.Step((float) e.Time, true);
+			var downray = vec3(0.00001f, 0.00001f, -1).Normalized();
+			var hit = Octree.FindIntersection(Camera.Position + vec3(0, 0, 10), downray);
+			if(hit != null) {
+				Camera.Position.Z = hit.Value.Item2.Z + 10;
+			}
+
 			Camera.Update();
 
 			base.OnUpdateFrame(e);

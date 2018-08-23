@@ -3,10 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using CollisionManager;
 using ImageLib;
-using Jitter.Collision;
-using Jitter.Dynamics;
-using Jitter.LinearMath;
 using OpenTK.Graphics.OpenGL4;
 using OpenEQ.Common;
 using static OpenEQ.Engine.Globals;
@@ -19,7 +17,7 @@ namespace OpenEQ.Engine {
 		readonly Buffer<float> VertexBuffer;
 		readonly Buffer<Matrix4x4> ModelMatrixBuffer;
 		public readonly Matrix4x4[] ModelMatrices;
-		public readonly (List<Vector3> Positions, List<TriangleVertexIndices> Triangles) PhysicsMesh;
+		public readonly List<Triangle> PhysicsMesh;
 		public readonly bool IsCollidable;
 
 		public Mesh(Material material, float[] vdata, uint[] indices, Matrix4x4[] modelMatrices, bool isCollidable) {
@@ -57,25 +55,16 @@ namespace OpenEQ.Engine {
 
 			IsCollidable = isCollidable;
 
-			if(isCollidable) {
-				var cvdata = (vdata.Length / 8).Times(i => {
-					var offset = i * 8;
-					return new Vector3(vdata[offset + 0], vdata[offset + 1], vdata[offset + 2]);
+			if(isCollidable)
+				PhysicsMesh = (indices.Length / 3).Times(i => {
+					i *= 3;
+					Vector3 GetPoint(int off) {
+						var voff = indices[i + off] * 8;
+						return vec3(vdata[voff + 0], vdata[voff + 1], vdata[voff + 2]);
+					}
+	
+					return new Triangle(GetPoint(0), GetPoint(1), GetPoint(2));
 				}).ToList();
-				PhysicsMesh = (
-					cvdata, 
-					(indices.Length / 3).Times(i => {
-						var offset = i * 3;
-						return new TriangleVertexIndices((int) indices[offset + 0], (int) indices[offset + 2],
-							(int) indices[offset + 1]);
-					}).Where(ind => {
-						var a = cvdata[ind.I0];
-						var b = cvdata[ind.I1];
-						var c = cvdata[ind.I2];
-						return (a - b).LengthSquared() > 0.00001 && (b - c).LengthSquared() > 0.00001 && (c - a).LengthSquared() > 0.00001;
-					}).ToList()
-				);
-			}
 		}
 
 		public void Draw(Matrix4x4 projView, bool forward) {
