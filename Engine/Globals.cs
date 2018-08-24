@@ -3,13 +3,15 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Numerics;
+using CollisionManager;
 using OpenEQ.Common;
 using static System.MathF;
 
 namespace OpenEQ.Engine {
 	public static class Globals {
 		public static Matrix4x4 ProjectionMat;
-		public static readonly FpsCamera Camera = new FpsCamera(vec3(0, 0, 50));
+		public static readonly FpsCamera Camera = new FpsCamera(vec3(-372, -97, 100));
+		public static CollisionHelper Collider;
 		
 		public static readonly Stopwatch Stopwatch = new Stopwatch();
 		public static float Time => Stopwatch.ElapsedMilliseconds / 1000f;

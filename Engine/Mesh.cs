@@ -55,7 +55,7 @@ namespace OpenEQ.Engine {
 
 			IsCollidable = isCollidable;
 
-			if(isCollidable)
+			if(IsCollidable)
 				PhysicsMesh = (indices.Length / 3).Times(i => {
 					i *= 3;
 					Vector3 GetPoint(int off) {

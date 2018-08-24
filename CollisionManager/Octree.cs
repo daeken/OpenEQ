@@ -27,6 +27,7 @@ namespace CollisionManager {
 				Leaf = mesh;
 				if(mesh.Triangles.Count == 0)
 					Empty = true;
+				BoundingBox = Leaf.BoundingBox;
 				return;
 			}
 
@@ -57,12 +58,15 @@ namespace CollisionManager {
 			H = nodes[7];
 			
 			Nodes = nodes;
+			
+			BoundingBox = new AABB(Nodes.Select(x => x.BoundingBox).ToList());
 		}
 
 		public (Triangle, Vector3)? FindIntersection(Vector3 origin, Vector3 direction) {
+			if(!BoundingBox.IntersectedBy(origin, direction)) return null;
 			if(Leaf != null) {
 				(Triangle, Vector3)? closest = null;
-				float distance = 1000000;
+				var distance = float.PositiveInfinity;
 				foreach(var triangle in Leaf.Triangles) {
 					var hit = triangle.FindIntersection(origin, direction);
 					if(hit != null && hit.Value.Item2 < distance) {
@@ -72,14 +76,20 @@ namespace CollisionManager {
 				}
 				return closest;
 			}
-			var nodesByDistance = Nodes.Where(x => !x.Empty).Select(x => (x, (x.BoundingBox.Center - origin).LengthSquared())).OrderBy(x => x.Item2);
-			foreach(var node in nodesByDistance) {
-				if(!node.Item1.BoundingBox.IntersectedBy(origin, direction)) continue;
-				var ret = node.Item1.FindIntersection(origin, direction);
-				if(ret != null)
-					return ret;
+
+			(Triangle, Vector3)? closestBox = null;
+			var boxDist = float.PositiveInfinity;
+			foreach(var node in Nodes) {
+				var ret = node.FindIntersection(origin, direction);
+				if(ret != null) {
+					var dist = (ret.Value.Item2 - origin).LengthSquared();
+					if(dist < boxDist) {
+						closestBox = ret;
+						boxDist = dist;
+					}
+				}
 			}
-			return null;
+			return closestBox;
 		}
 	}
 }
