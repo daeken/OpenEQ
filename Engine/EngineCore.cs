@@ -30,6 +30,26 @@ namespace OpenEQ.Engine {
 
 		Matrix4x4 ProjectionView;
 
+		bool MouseLooking;
+		(double, double) MouseBeforeLook;
+
+		(double X, double Y) MousePosition {
+			get {
+				var state = OpenTK.Input.Mouse.GetCursorState();
+				return (state.X, state.Y);
+			}
+			set => OpenTK.Input.Mouse.SetPosition(value.X, value.Y);
+		}
+
+		Vector2 MouseDelta {
+			get {
+				var state = OpenTK.Input.Mouse.GetState();
+				return vec2(state.X, state.Y);
+			}
+		}
+
+		Vector2 LastMouseDelta;
+
 		public EngineCore() : base(
 			1280, 720, new GraphicsMode(new ColorFormat(8, 8, 8, 8), 16, 0), "OpenEQ", 
 			GameWindowFlags.Default, DisplayDevice.Default, 4, 1, GraphicsContextFlags.ForwardCompatible
@@ -38,7 +58,10 @@ namespace OpenEQ.Engine {
 			Stopwatch.Start();
 			Gui = new Gui(new GuiRenderer());
 			
-			MouseMove += (_, e) => Gui.MousePosition = (e.X, e.Y);
+			MouseMove += (_, e) => {
+				if(!MouseLooking)
+					Gui.MousePosition = (e.X, e.Y);
+			};
 			MouseDown += (_, e) => UpdateMouseButton(e.Button, true);
 			MouseUp += (_, e) => UpdateMouseButton(e.Button, false);
 			MouseWheel += (_, e) => Gui.WheelDelta += e.Delta;
@@ -90,7 +113,20 @@ namespace OpenEQ.Engine {
 					Gui.MouseLeft = state;
 					break;
 				case MouseButton.Right:
-					Gui.MouseRight = state;
+					if(Gui.MouseWanted)
+						Gui.MouseRight = state;
+					else {
+						if(state) {
+							MouseLooking = true;
+							MouseBeforeLook = MousePosition;
+							CursorVisible = false;
+							LastMouseDelta = MouseDelta;
+						} else {
+							MouseLooking = false;
+							CursorVisible = true;
+							MousePosition = MouseBeforeLook;
+						}
+					}
 					break;
 			}
 		}
@@ -117,7 +153,7 @@ namespace OpenEQ.Engine {
 		protected override void OnUpdateFrame(FrameEventArgs e) {
 			var movement = vec3();
 			var movescale = KeyState.Keys.Contains(Key.ShiftLeft) ? 250 : 75;
-			var pitchscale = .5f;
+			var pitchscale = 1.25f;
 			var yawscale = 1.25f;
 			foreach(var key in KeyState.Keys)
 				switch(key) {
@@ -134,16 +170,16 @@ namespace OpenEQ.Engine {
 						movement += vec3((float) e.Time * movescale, 0, 0);
 						break;
 					case Key.Up:
-						Camera.Look((float) e.Time * pitchscale, 0);
+						Camera.Look((float) e.Time * yawscale, 0);
 						break;
 					case Key.Down:
-						Camera.Look((float) -e.Time * pitchscale, 0);
+						Camera.Look((float) -e.Time * yawscale, 0);
 						break;
 					case Key.Left:
-						Camera.Look(0, (float) e.Time * yawscale);
+						Camera.Look(0, (float) e.Time * pitchscale);
 						break;
 					case Key.Right:
-						Camera.Look(0, (float) -e.Time * yawscale);
+						Camera.Look(0, (float) -e.Time * pitchscale);
 						break;
 					case Key.Home:
 						Camera.Position.Z = 1000;
@@ -155,6 +191,12 @@ namespace OpenEQ.Engine {
 				}
 			if(movement.Length() > 0)
 				Camera.Move(movement);
+			var mdelta = MouseDelta - LastMouseDelta;
+			LastMouseDelta = MouseDelta;
+			if(MouseLooking && (mdelta.X != 0 || mdelta.Y != 0)) {
+				var oscale = -0.005f;
+				Camera.Look(mdelta.Y * pitchscale * oscale, mdelta.X * yawscale * oscale);
+			}
 
 			Camera.Update((float) e.Time);
 

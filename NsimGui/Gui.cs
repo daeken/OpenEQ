@@ -28,6 +28,8 @@ namespace NsimGui {
 			set => IO.DisplayFramebufferScale = value;
 		}
 
+		public bool MouseWanted => IO.WantCaptureMouse;
+
 		public (int X, int Y) MousePosition {
 			get => ((int) (IO.MousePosition.X * Scale.X), (int) (IO.MousePosition.Y * Scale.Y));
 			set => IO.MousePosition = new Vector2(value.X, value.Y) / Scale;
