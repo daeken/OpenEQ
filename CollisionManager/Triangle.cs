@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Numerics;
+using OpenEQ.Common;
 
 namespace CollisionManager {
 	public struct Triangle {
@@ -14,7 +15,7 @@ namespace CollisionManager {
 			A = a;
 			B = b;
 			C = c;
-			Normal = Vector3.Cross(b - a, c - a);
+			Normal = Vector3.Cross(b - a, c - a).Normalized();
 		}
 
 		// Moller-Trumbore

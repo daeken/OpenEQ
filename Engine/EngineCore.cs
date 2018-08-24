@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Numerics;
 using CollisionManager;
@@ -28,8 +29,6 @@ namespace OpenEQ.Engine {
 		public double FPS => FrameTimes.Count == 0 ? 0 : 1 / (FrameTimes.Sum() / FrameTimes.Count);
 
 		Matrix4x4 ProjectionView;
-
-		Octree Octree;
 
 		public EngineCore() : base(
 			1280, 720, new GraphicsMode(new ColorFormat(8, 8, 8, 8), 16, 0), "OpenEQ", 
@@ -79,7 +78,7 @@ namespace OpenEQ.Engine {
 			}
 			
 			Console.WriteLine($"Building octree for {ot.Count} triangles");
-			Octree = new Octree(new CollisionManager.Mesh(ot), 500);
+			Collider = new CollisionHelper(new Octree(new CollisionManager.Mesh(ot), 500));
 			Console.WriteLine("Built octree");
 			
 			Run();
@@ -130,12 +129,6 @@ namespace OpenEQ.Engine {
 					case Key.D:
 						movement += vec3((float) e.Time * movescale, 0, 0);
 						break;
-					case Key.E:
-						movement += vec3(0, 0, (float) e.Time * movescale);
-						break;
-					case Key.Q:
-						movement += vec3(0, 0, (float) -e.Time * movescale);
-						break;
 					case Key.Up:
 						Camera.Look((float) e.Time * pitchscale, 0);
 						break;
@@ -148,6 +141,9 @@ namespace OpenEQ.Engine {
 					case Key.Right:
 						Camera.Look(0, (float) -e.Time * yawscale);
 						break;
+					case Key.Space:
+						Camera.Position.Z = 1000;
+						break;
 					case Key.Escape:
 					case Key.Tilde:
 						Exit();
@@ -156,13 +152,7 @@ namespace OpenEQ.Engine {
 			if(movement.Length() > 0)
 				Camera.Move(movement);
 
-			var downray = vec3(0.00001f, 0.00001f, -1).Normalized();
-			var hit = Octree.FindIntersection(Camera.Position + vec3(0, 0, 10), downray);
-			if(hit != null) {
-				Camera.Position.Z = hit.Value.Item2.Z + 10;
-			}
-
-			Camera.Update();
+			Camera.Update((float) e.Time);
 
 			base.OnUpdateFrame(e);
 		}
