@@ -102,6 +102,10 @@ namespace OpenEQ.Engine {
 				case Key.L:
 					DeferredEnabled = !DeferredEnabled;
 					break;
+				case Key.Space:
+					if(Camera.OnGround)
+						Camera.FallingVelocity = -50;
+					break;
 				default:
 					KeyState[e.Key] = true;
 					break;
@@ -141,7 +145,7 @@ namespace OpenEQ.Engine {
 					case Key.Right:
 						Camera.Look(0, (float) -e.Time * yawscale);
 						break;
-					case Key.Space:
+					case Key.Home:
 						Camera.Position.Z = 1000;
 						break;
 					case Key.Escape:
