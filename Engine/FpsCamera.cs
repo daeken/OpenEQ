@@ -18,6 +18,7 @@ namespace OpenEQ.Engine {
 		public static readonly Vector3 Forward = new Vector3(0, 1, 0);
 
 		public float FallingVelocity;
+		public bool OnGround;
 
 		public const float CameraHeight = 7.5f;
 
@@ -62,7 +63,10 @@ namespace OpenEQ.Engine {
 		}
 
 		public void Update(float timestep) {
-			Position.Z += 1;
+			if(FallingVelocity < 0)
+				Position.Z -= FallingVelocity * timestep;
+
+			Position.Z += 1 - CameraHeight;
 			var downray = vec3(0.00001f, 0.00001f, -1).Normalized();
 			var spreadScale = 1f;
 			var offsets = new[] {
@@ -72,13 +76,15 @@ namespace OpenEQ.Engine {
 				vec3(0, 1, 0), 
 				vec3(0, -1, 0)
 			}.Select(x => Collider.FindIntersection(Position + x * spreadScale, downray)).Where(x => x != null).OrderBy(x => Abs(x.Value.Item2.Z - Position.Z));
-			Position.Z -= 1;
+			Position.Z -= 1 - CameraHeight;
 			var hit = offsets.FirstOrDefault();
-			var dist = hit != null ? Position.Z - CameraHeight - hit.Value.Item2.Z : 1000;
-			var angle = hit != null ? MathF.Abs(Vector3.Dot(hit.Value.Item1.Normal, vec3(0, 0, 1))) : 1;
-			if(dist < 1 && angle > 0.25f) { // Todo: Figure out what a reasonable default is
+			var dist = hit != null ? Position.Z - CameraHeight - hit.Value.Item2.Z : float.PositiveInfinity;
+			var angle = hit != null ? Abs(Vector3.Dot(hit.Value.Item1.Normal, vec3(0, 0, 1))) : 1;
+			OnGround = false;
+			if(FallingVelocity >= 0 && dist < 1 && angle > 0.25f) { // Todo: Figure out what a reasonable default is
 				Position.Z -= dist;
 				FallingVelocity = 0;
+				OnGround = true;
 			} else {
 				if(angle < 0.25f && hit != null) {
 					var normal = hit.Value.Item1.Normal;
@@ -89,8 +95,10 @@ namespace OpenEQ.Engine {
 				FallingVelocity += 250 * timestep;
 				var delta = FallingVelocity * timestep;
 				Position.Z -= Math.Min(delta, dist);
-				if(delta > dist)
+				if(delta > dist) {
 					FallingVelocity = 0;
+					OnGround = true;
+				}
 			}
 
 			var at = Vector3.Normalize(Vector3.Transform(Forward, LookRotation));
