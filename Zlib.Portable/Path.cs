@@ -1,143 +1,117 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+﻿#pragma warning disable 414
+namespace System.IO {
+	public static class Path2 {
+		internal const int MAX_PATH = 260;
 
-namespace System.IO
-{
-    public static class Path2
-    {
+		internal const int MAX_DIRECTORY_PATH = 248;
 
-        internal const int MAX_PATH = 260;
+	    /// <summary>
+	    ///     Provides a platform-specific character used to separate directory levels in a path string that reflects a
+	    ///     hierarchical file system organization.
+	    /// </summary>
+	    /// <filterpriority>1</filterpriority>
+	    public static readonly char DirectorySeparatorChar;
 
-        internal const int MAX_DIRECTORY_PATH = 248;
+	    /// <summary>
+	    ///     Provides a platform-specific alternate character used to separate directory levels in a path string that
+	    ///     reflects a hierarchical file system organization.
+	    /// </summary>
+	    /// <filterpriority>1</filterpriority>
+	    public static readonly char AltDirectorySeparatorChar;
 
-        /// <summary>Provides a platform-specific character used to separate directory levels in a path string that reflects a hierarchical file system organization.</summary>
-        /// <filterpriority>1</filterpriority>
-        public readonly static char DirectorySeparatorChar;
+	    /// <summary>Provides a platform-specific volume separator character.</summary>
+	    /// <filterpriority>1</filterpriority>
+	    public static readonly char VolumeSeparatorChar;
 
-        /// <summary>Provides a platform-specific alternate character used to separate directory levels in a path string that reflects a hierarchical file system organization.</summary>
-        /// <filterpriority>1</filterpriority>
-        public readonly static char AltDirectorySeparatorChar;
+		internal static readonly char[] TrimEndChars;
 
-        /// <summary>Provides a platform-specific volume separator character.</summary>
-        /// <filterpriority>1</filterpriority>
-        public readonly static char VolumeSeparatorChar;
+		static readonly char[] RealInvalidPathChars;
 
-        /// <summary>Provides a platform-specific array of characters that cannot be specified in path string arguments passed to members of the <see cref="T:System.IO.Path" /> class.</summary>
-        /// <returns>A character array of invalid path characters for the current platform.</returns>
-        /// <filterpriority>1</filterpriority>
-        [Obsolete("Please use GetInvalidPathChars or GetInvalidFileNameChars instead.")]
-        public readonly static char[] InvalidPathChars;
+		static readonly char[] InvalidFileNameChars;
 
-        internal readonly static char[] TrimEndChars;
+	    /// <summary>A platform-specific separator character used to separate path strings in environment variables.</summary>
+	    /// <filterpriority>1</filterpriority>
+	    public static readonly char PathSeparator;
 
-        private readonly static char[] RealInvalidPathChars;
+		internal static readonly int MaxPath;
 
-        private readonly static char[] InvalidFileNameChars;
+		static readonly int MaxDirectoryLength;
 
-        /// <summary>A platform-specific separator character used to separate path strings in environment variables.</summary>
-        /// <filterpriority>1</filterpriority>
-        public readonly static char PathSeparator;
+		internal static readonly int MaxLongPath;
 
-        internal readonly static int MaxPath;
+		static readonly string Prefix;
 
-        private readonly static int MaxDirectoryLength;
+		static readonly char[] s_Base32Char;
 
-        internal readonly static int MaxLongPath;
+		static Path2() {
+			DirectorySeparatorChar = '\\';
+			AltDirectorySeparatorChar = '/';
+			VolumeSeparatorChar = ':';
+			TrimEndChars = new[] { '\t', '\n', '\v', '\f', '\r', ' ', '\u0085', '\u00A0' };
+			RealInvalidPathChars = new[] {
+				'\"', '<', '>', '|', '\0', '\u0001', '\u0002', '\u0003', '\u0004', '\u0005', '\u0006', '\a', '\b', '\t',
+				'\n', '\v', '\f', '\r', '\u000E', '\u000F', '\u0010', '\u0011', '\u0012', '\u0013', '\u0014', '\u0015',
+				'\u0016', '\u0017', '\u0018', '\u0019', '\u001A', '\u001B', '\u001C', '\u001D', '\u001E', '\u001F'
+			};
+			InvalidFileNameChars = new[] {
+				'\"', '<', '>', '|', '\0', '\u0001', '\u0002', '\u0003', '\u0004', '\u0005', '\u0006', '\a', '\b', '\t',
+				'\n', '\v', '\f', '\r', '\u000E', '\u000F', '\u0010', '\u0011', '\u0012', '\u0013', '\u0014', '\u0015',
+				'\u0016', '\u0017', '\u0018', '\u0019', '\u001A', '\u001B', '\u001C', '\u001D', '\u001E', '\u001F', ':',
+				'*', '?', '\\', '/'
+			};
+			PathSeparator = ';';
+			MaxPath = 260;
+			MaxDirectoryLength = 255;
+			MaxLongPath = 32000;
+			Prefix = "\\\\?\\";
+			s_Base32Char = new[] {
+				'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u',
+				'v', 'w', 'x', 'y', 'z', '0', '1', '2', '3', '4', '5'
+			};
+		}
 
-        private readonly static string Prefix;
+		internal static void CheckInvalidPathChars(string path, bool checkAdditional = false) {
+			if(path != null) {
+				if(!HasIllegalCharacters(path, checkAdditional)) {
+				} else
+					throw new ArgumentException("The path has invalid characters.", "path");
+			} else
+				throw new ArgumentNullException("path");
+		}
 
-        private readonly static char[] s_Base32Char;
+		internal static bool HasIllegalCharacters(string path, bool checkAdditional) {
+			var num = 0;
+			while(num < path.Length) {
+				int num1 = path[num];
+				if(num1 == 34 || num1 == 60 || num1 == 62 || num1 == 124 || num1 < 32) return true;
 
-        static Path2()
-        {
-            Path2.DirectorySeparatorChar = '\\';
-            Path2.AltDirectorySeparatorChar = '/';
-            Path2.VolumeSeparatorChar = ':';
-            char[] chrArray = new char[] { '\"', '<', '>', '|', '\0', '\u0001', '\u0002', '\u0003', '\u0004', '\u0005', '\u0006', '\a', '\b', '\t', '\n', '\v', '\f', '\r', '\u000E', '\u000F', '\u0010', '\u0011', '\u0012', '\u0013', '\u0014', '\u0015', '\u0016', '\u0017', '\u0018', '\u0019', '\u001A', '\u001B', '\u001C', '\u001D', '\u001E', '\u001F' };
-            Path2.InvalidPathChars = chrArray;
-            char[] chrArray1 = new char[] { '\t', '\n', '\v', '\f', '\r', ' ', '\u0085', '\u00A0' };
-            Path2.TrimEndChars = chrArray1;
-            char[] chrArray2 = new char[] { '\"', '<', '>', '|', '\0', '\u0001', '\u0002', '\u0003', '\u0004', '\u0005', '\u0006', '\a', '\b', '\t', '\n', '\v', '\f', '\r', '\u000E', '\u000F', '\u0010', '\u0011', '\u0012', '\u0013', '\u0014', '\u0015', '\u0016', '\u0017', '\u0018', '\u0019', '\u001A', '\u001B', '\u001C', '\u001D', '\u001E', '\u001F' };
-            Path2.RealInvalidPathChars = chrArray2;
-            char[] chrArray3 = new char[] { '\"', '<', '>', '|', '\0', '\u0001', '\u0002', '\u0003', '\u0004', '\u0005', '\u0006', '\a', '\b', '\t', '\n', '\v', '\f', '\r', '\u000E', '\u000F', '\u0010', '\u0011', '\u0012', '\u0013', '\u0014', '\u0015', '\u0016', '\u0017', '\u0018', '\u0019', '\u001A', '\u001B', '\u001C', '\u001D', '\u001E', '\u001F', ':', '*', '?', '\\', '/' };
-            Path2.InvalidFileNameChars = chrArray3;
-            Path2.PathSeparator = ';';
-            Path2.MaxPath = 260;
-            Path2.MaxDirectoryLength = 255;
-            Path2.MaxLongPath = 32000;
-            Path2.Prefix = "\\\\?\\";
-            char[] chrArray4 = new char[] { 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', '0', '1', '2', '3', '4', '5' };
-            Path2.s_Base32Char = chrArray4;
-        }
+				if(!checkAdditional || num1 != 63 && num1 != 42)
+					num++;
+				else
+					return true;
+			}
 
-        internal static void CheckInvalidPathChars(string path, bool checkAdditional = false)
-        {
-            if (path != null)
-            {
-                if (!Path2.HasIllegalCharacters(path, checkAdditional))
-                {
-                    return;
-                }
-                else
-                {
-                    throw new ArgumentException("The path has invalid characters.", "path");
-                }
-            }
-            else
-            {
-                throw new ArgumentNullException("path");
-            }
-        }
+			return false;
+		}
 
-        internal static bool HasIllegalCharacters(string path, bool checkAdditional)
-        {
-            int num = 0;
-            while (num < path.Length)
-            {
-                int num1 = path[num];
-                if (num1 == 34 || num1 == 60 || num1 == 62 || num1 == 124 || num1 < 32)
-                {
-                    return true;
-                }
-                else
-                {
-                    if (!checkAdditional || num1 != 63 && num1 != 42)
-                    {
-                        num++;
-                    }
-                    else
-                    {
-                        return true;
-                    }
-                }
-            }
-            return false;
-        }
+		public static string GetFileName(string path) {
+			char chr;
+			if(path != null) {
+				CheckInvalidPathChars(path, false);
+				var length = path.Length;
+				var num = length;
+				do {
+					var num1 = num - 1;
+					num = num1;
+					if(num1 < 0) return path;
+					chr = path[num];
+				} while(chr != DirectorySeparatorChar && chr != AltDirectorySeparatorChar &&
+				        chr != VolumeSeparatorChar);
 
-        public static string GetFileName(string path)
-        {
-            char chr;
-            if (path != null)
-            {
-                Path2.CheckInvalidPathChars(path, false);
-                int length = path.Length;
-                int num = length;
-                do
-                {
-                    int num1 = num - 1;
-                    num = num1;
-                    if (num1 < 0)
-                    {
-                        return path;
-                    }
-                    chr = path[num];
-                }
-                while (chr != Path2.DirectorySeparatorChar && chr != Path2.AltDirectorySeparatorChar && chr != Path2.VolumeSeparatorChar);
-                return path.Substring(num + 1, length - num - 1);
-            }
-            return path;
-        }
-    }
+				return path.Substring(num + 1, length - num - 1);
+			}
+
+			return path;
+		}
+	}
 }
