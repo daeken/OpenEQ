@@ -24,6 +24,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OesDumper", "OesDumper\OesD
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CollisionManager", "CollisionManager\CollisionManager.csproj", "{13753CFB-C9EC-4E6B-BB49-FE928B37DFE8}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Zlib.Portable", "Zlib.Portable\Zlib.Portable.csproj", "{AD1688BF-75A9-4C42-B6D0-40AA3B28A102}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -78,5 +80,9 @@ Global
 		{13753CFB-C9EC-4E6B-BB49-FE928B37DFE8}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{13753CFB-C9EC-4E6B-BB49-FE928B37DFE8}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{13753CFB-C9EC-4E6B-BB49-FE928B37DFE8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AD1688BF-75A9-4C42-B6D0-40AA3B28A102}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AD1688BF-75A9-4C42-B6D0-40AA3B28A102}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AD1688BF-75A9-4C42-B6D0-40AA3B28A102}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AD1688BF-75A9-4C42-B6D0-40AA3B28A102}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

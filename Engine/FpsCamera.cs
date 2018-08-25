@@ -29,12 +29,16 @@ namespace OpenEQ.Engine {
 
 		public void Move(Vector3 movement) {
 			if(movement.LengthSquared() < 0.0001) return;
-			movement = ClipMovement(Vector3.Transform(movement, LookRotation));
-			// TODO: Figure out what a reasonable max is
-			if(movement.Z > 1)
-				movement.Z = 1;
-			else if(movement.Z < -1)
-				movement.Z = -1;
+			movement = Vector3.Transform(movement, LookRotation);
+			if(PhysicsEnabled) {
+				movement = ClipMovement(movement);
+				// TODO: Figure out what a reasonable max is
+				if(movement.Z > 1)
+					movement.Z = 1;
+				else if(movement.Z < -1)
+					movement.Z = -1;
+			}
+
 			Position += movement;
 		}
 
@@ -63,41 +67,45 @@ namespace OpenEQ.Engine {
 		}
 
 		public void Update(float timestep) {
-			if(FallingVelocity < 0)
-				Position.Z -= FallingVelocity * timestep;
+			if(PhysicsEnabled) {
+				if(FallingVelocity < 0)
+					Position.Z -= FallingVelocity * timestep;
 
-			Position.Z += 1 - CameraHeight;
-			var downray = vec3(0.00001f, 0.00001f, -1).Normalized();
-			var spreadScale = 1f;
-			var offsets = new[] {
-				Vector3.Zero, 
-				vec3(1, 0, 0), 
-				vec3(-1, 0, 0), 
-				vec3(0, 1, 0), 
-				vec3(0, -1, 0)
-			}.Select(x => Collider.FindIntersection(Position + x * spreadScale, downray)).Where(x => x != null).OrderBy(x => Abs(x.Value.Item2.Z - Position.Z));
-			Position.Z -= 1 - CameraHeight;
-			var hit = offsets.FirstOrDefault();
-			var dist = hit != null ? Position.Z - CameraHeight - hit.Value.Item2.Z : float.PositiveInfinity;
-			var angle = hit != null ? Abs(Vector3.Dot(hit.Value.Item1.Normal, vec3(0, 0, 1))) : 1;
-			OnGround = false;
-			if(FallingVelocity >= 0 && dist < 1 && angle > 0.25f) { // Todo: Figure out what a reasonable default is
-				Position.Z -= dist;
-				FallingVelocity = 0;
-				OnGround = true;
-			} else {
-				if(angle < 0.25f && hit != null) {
-					var normal = hit.Value.Item1.Normal;
-					Position.X += normal.X * timestep;
-					Position.Y += normal.Y * timestep;
-				}
-
-				FallingVelocity += 250 * timestep;
-				var delta = FallingVelocity * timestep;
-				Position.Z -= Math.Min(delta, dist);
-				if(delta > dist) {
+				Position.Z += 1 - CameraHeight;
+				var downray = vec3(0.00001f, 0.00001f, -1).Normalized();
+				var spreadScale = 1f;
+				var offsets = new[] {
+						Vector3.Zero,
+						vec3(1, 0, 0),
+						vec3(-1, 0, 0),
+						vec3(0, 1, 0),
+						vec3(0, -1, 0)
+					}.Select(x => Collider.FindIntersection(Position + x * spreadScale, downray)).Where(x => x != null)
+					.OrderBy(x => Abs(x.Value.Item2.Z - Position.Z));
+				Position.Z -= 1 - CameraHeight;
+				var hit = offsets.FirstOrDefault();
+				var dist = hit != null ? Position.Z - CameraHeight - hit.Value.Item2.Z : float.PositiveInfinity;
+				var angle = hit != null ? Abs(Vector3.Dot(hit.Value.Item1.Normal, vec3(0, 0, 1))) : 1;
+				OnGround = false;
+				if(FallingVelocity >= 0 && dist < 1 && angle > 0.25f) {
+					// Todo: Figure out what a reasonable default is
+					Position.Z -= dist;
 					FallingVelocity = 0;
 					OnGround = true;
+				} else {
+					if(angle < 0.25f && hit != null) {
+						var normal = hit.Value.Item1.Normal;
+						Position.X += normal.X * timestep;
+						Position.Y += normal.Y * timestep;
+					}
+
+					FallingVelocity += 250 * timestep;
+					var delta = FallingVelocity * timestep;
+					Position.Z -= Math.Min(delta, dist);
+					if(delta > dist) {
+						FallingVelocity = 0;
+						OnGround = true;
+					}
 				}
 			}
 
