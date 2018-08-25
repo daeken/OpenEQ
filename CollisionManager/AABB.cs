@@ -7,6 +7,15 @@ namespace CollisionManager {
 		public readonly Vector3 Min, Max;
 		public readonly Vector3 Size;
 		public readonly Vector3 Center;
+
+		public Plane[] Planes => new[] {
+			new Plane(Vector3.UnitX, Min.X), 
+			new Plane(-Vector3.UnitX, -Max.X), 
+			new Plane(Vector3.UnitY, Min.Y), 
+			new Plane(-Vector3.UnitY, -Max.Y), 
+			new Plane(Vector3.UnitZ, Min.Z), 
+			new Plane(-Vector3.UnitZ, -Max.Z)
+		};
 		
 		public AABB(Vector3 min, Vector3 size) {
 			Min = min;
@@ -22,9 +31,11 @@ namespace CollisionManager {
 			Center = Min + Size / 2;
 		}
 
-		// TODO: Make this handle cases where a portion of a triangle is within this AABB!
 		public bool Contains(Triangle tri) =>
-			Contains(tri.A) || Contains(tri.B) || Contains(tri.C) || IntersectedBy(tri);
+			Contains(tri.A) && Contains(tri.B) && Contains(tri.C);
+
+		public bool StrictlyContains(Triangle tri) =>
+			StrictlyContains(tri.A) && StrictlyContains(tri.B) && StrictlyContains(tri.C);
 
 		static readonly Vector3[] BoxNormals = {
 			new Vector3(1, 0, 0), 
@@ -90,8 +101,12 @@ namespace CollisionManager {
 			Min.X <= point.X && Min.Y <= point.Y && Min.Z <= point.Z && 
 			Max.X >= point.X && Max.Y >= point.Y && Max.Z >= point.Z;
 
+		public bool StrictlyContains(Vector3 point) =>
+			Min.X < point.X && Min.Y < point.Y && Min.Z < point.Z && 
+			Max.X > point.X && Max.Y > point.Y && Max.Z > point.Z;
+
 		public bool IntersectedBy(Vector3 origin, Vector3 direction) {
-			//if(Contains(origin)) return true;
+			if(Contains(origin)) return true;
 			
 			var tmin = (Min.X - origin.X) / direction.X;
 			var tmax = (Max.X - origin.X) / direction.X;
@@ -111,6 +126,13 @@ namespace CollisionManager {
 			if(tzmin > tzmax) { var temp = tzmin; tzmin = tzmax; tzmax = temp; }
 
 			return tmin <= tzmax && tzmin <= tmax;
+		}
+
+		public bool Touching(AABB other) {
+			if(Min.X == other.Max.X || Max.X == other.Min.X) return true;
+			if(Min.Y == other.Max.Y || Max.Y == other.Min.Y) return true;
+			if(Min.Z == other.Max.Z || Max.Z == other.Min.Z) return true;
+			return false;
 		}
 
 		public override string ToString() => $"AABB(Min={Min}, Max={Max})";

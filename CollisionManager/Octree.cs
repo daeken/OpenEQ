@@ -1,6 +1,8 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using static System.Console;
 
 namespace CollisionManager {
 	public class Octree {
@@ -27,12 +29,44 @@ namespace CollisionManager {
 				Leaf = mesh;
 				if(mesh.Triangles.Count == 0)
 					Empty = true;
-				BoundingBox = Leaf.BoundingBox;
+				//BoundingBox = Leaf.BoundingBox;
 				return;
 			}
 
-			Mesh BuildSub(AABB bb) =>
-				new Mesh(mesh.Triangles.Where(bb.Contains));
+			Mesh BuildSub(AABB bb) {
+				var planes = bb.Planes;
+				
+				var tris = new List<Triangle>();
+				foreach(var tri in mesh.Triangles) {
+					if(bb.Contains(tri)) {
+						tris.Add(tri);
+						continue;
+					}
+					if(!bb.IntersectedBy(tri)) continue;
+					
+					var inside = tri.AsArray.Where(bb.Contains).ToArray();
+					//if(inside.Length != 0) continue;
+					//WriteLine($"Triangle {tri} intersects {bb} and {inside.Length} points are inside");
+					var splitting = new List<Triangle> { tri };
+					foreach(var plane in planes) {
+						splitting = splitting.Select(x => x.Split(plane)).SelectMany(x => x).ToList();
+						//WriteLine($"Split into {splitting.Count} pieces");
+						if(splitting.Count == 0)
+							break;
+					}
+					//foreach(var stri in splitting)
+					//	WriteLine($"{(bb.Contains(stri) ? "Inside" : "      ")} {stri}");
+					//WriteLine($"Got {splitting.Count} triangles after all the splits");
+					splitting = splitting.Where(bb.Contains).ToList();
+					//WriteLine($"{splitting.Count} triangles are actually inside");
+					if(splitting.Count == 0 && !tri.BoundingBox.Touching(bb))
+						Console.WriteLine($"Wtf? {tri} {bb}");
+					//if((inside.Length == 1 && splitting.Count != 1) || (inside.Length == 1 && splitting.Count != 1) || splitting.Count == 0)
+					//	Environment.Exit(0);
+					tris.AddRange(splitting);
+				}
+				return new Mesh(tris);
+			}
 
 			var c = BoundingBox.Min;
 			var hs = BoundingBox.Size / 2;
@@ -46,7 +80,7 @@ namespace CollisionManager {
 				new AABB(new Vector3(c.X + hs.X, c.Y, c.Z + hs.Z), hs), 
 				new AABB(new Vector3(c.X, c.Y + hs.Y, c.Z + hs.Z), hs), 
 				new AABB(new Vector3(c.X + hs.X, c.Y + hs.Y, c.Z + hs.Z), hs)
-			}.AsParallel().AsOrdered().Select(x => (BuildSub(x), x)).AsSequential().Select(x => new Octree(x.Item1, maxTrisPerLeaf, x.Item2)).ToArray();
+			}/*.AsParallel().AsOrdered()*/.Select(x => (BuildSub(x), x))/*.AsSequential()*/.Select(x => new Octree(x.Item1, maxTrisPerLeaf, x.Item2)).ToArray();
 			
 			A = nodes[0];
 			B = nodes[1];
@@ -80,6 +114,7 @@ namespace CollisionManager {
 			(Triangle, Vector3)? closestBox = null;
 			var boxDist = float.PositiveInfinity;
 			foreach(var node in Nodes) {
+				if(node.Empty) continue;
 				var ret = node.FindIntersection(origin, direction);
 				if(ret != null) {
 					var dist = (ret.Value.Item2 - origin).LengthSquared();
