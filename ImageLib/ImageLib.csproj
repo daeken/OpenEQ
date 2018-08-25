@@ -6,6 +6,8 @@
     <PackageReference Include="Be.IO-netstandard" Version="1.0.3" />
     <PackageReference Include="Crc32.NET" Version="1.2.0" />
     <PackageReference Include="SixLabors.ImageSharp" Version="1.0.0-beta0004" />
-    <PackageReference Include="Zlib.Portable" Version="1.11.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Zlib.Portable\Zlib.Portable.csproj" />
   </ItemGroup>
 </Project>

@@ -24,7 +24,7 @@ namespace CollisionManager {
 			var edge2 = C - A;
 			var h = Vector3.Cross(direction, edge2);
 			var a = Vector3.Dot(edge1, h);
-			if(a > -Epsilon && a < Epsilon) return null; // If it's < Epsilon, it's facing away from us; we can cull later if needed
+			if(a < Epsilon) return null; // If it's < Epsilon but > -Epsilon, this is a miss; < -Epsilon means hitting a triangle on the opposite face
 			var f = 1 / a;
 			var s = origin - A;
 			var u = f * Vector3.Dot(s, h);

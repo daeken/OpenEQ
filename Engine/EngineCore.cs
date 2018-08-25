@@ -142,6 +142,9 @@ namespace OpenEQ.Engine {
 					if(Camera.OnGround)
 						Camera.FallingVelocity = -50;
 					break;
+				case Key.P:
+					PhysicsEnabled = !PhysicsEnabled;
+					break;
 				default:
 					KeyState[e.Key] = true;
 					break;

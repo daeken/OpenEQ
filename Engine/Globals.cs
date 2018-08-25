@@ -9,6 +9,8 @@ using static System.MathF;
 
 namespace OpenEQ.Engine {
 	public static class Globals {
+		public static bool PhysicsEnabled;
+		
 		public static Matrix4x4 ProjectionMat;
 		public static readonly FpsCamera Camera = new FpsCamera(vec3(-372, -97, 100));
 		public static CollisionHelper Collider;
