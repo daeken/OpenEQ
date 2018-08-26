@@ -8,10 +8,10 @@ using static System.Console;
 
 namespace CollisionManager {
 	public class Octree {
-		public readonly Octree[] Nodes;
-		public readonly Mesh Leaf;
-		public readonly AABB BoundingBox;
-		public readonly bool Empty;
+		readonly Octree[] Nodes;
+		readonly Mesh Leaf;
+		readonly AABB BoundingBox;
+		readonly bool Empty;
 
 		public Octree(Mesh mesh, int maxTrisPerLeaf, AABB? boundingBox = null) {
 			BoundingBox = boundingBox ?? mesh.BoundingBox;
