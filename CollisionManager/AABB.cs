@@ -8,19 +8,10 @@ namespace CollisionManager {
 		public readonly Vector3 Size;
 		public readonly Vector3 Center;
 
-		public Plane[] Planes => new[] {
-			new Plane(Vector3.UnitX, Min.X), 
-			new Plane(-Vector3.UnitX, -Max.X), 
-			new Plane(Vector3.UnitY, Min.Y), 
-			new Plane(-Vector3.UnitY, -Max.Y), 
-			new Plane(Vector3.UnitZ, Min.Z), 
-			new Plane(-Vector3.UnitZ, -Max.Z)
-		};
-
 		public Plane[] MidPlanes => new[] {
-			new Plane(Vector3.UnitX, Center.X), 
+			new Plane(Vector3.UnitZ, Center.Z), 
 			new Plane(Vector3.UnitY, Center.Y), 
-			new Plane(Vector3.UnitZ, Center.Z)
+			new Plane(Vector3.UnitX, Center.X)
 		};
 		
 		public AABB(Vector3 min, Vector3 size) {
