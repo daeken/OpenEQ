@@ -115,10 +115,17 @@ namespace OpenEQ.Netcode {
 
 				case ZoneOp.HPUpdate:
 					break;
+				
+				case ZoneOp.SpawnDoor:
+					for(var i = 0; i < packet.Data.Length; i += 92) {
+						var door = new Door(packet.Data, i);
+						WriteLine(door);
+					}
+					break;
 
 				default:
-					//WriteLine($"Unhandled packet in ZoneStream: {(ZoneOp) packet.Opcode} (0x{packet.Opcode:X04})");
-					//Hexdump(packet.Data);
+					WriteLine($"Unhandled packet in ZoneStream: {(ZoneOp) packet.Opcode} (0x{packet.Opcode:X04})");
+					Hexdump(packet.Data);
 					break;
 			}
 		}

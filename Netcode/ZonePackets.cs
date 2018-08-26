@@ -1806,6 +1806,156 @@ namespace OpenEQ.Netcode {
 		}
 	}
 
+	public struct Door : IEQStruct {
+		public string Name;
+		public float[] Position;
+		public float Heading;
+		public uint Incline;
+		public uint Size;
+		public byte DoorID;
+		public byte OpenType;
+		public byte StateAtSpawn;
+		public byte InvertState;
+		public uint Param;
+
+		public Door(string Name, float[] Position, float Heading, uint Incline, uint Size, byte DoorID, byte OpenType, byte StateAtSpawn, byte InvertState, uint Param) : this() {
+			this.Name = Name;
+			this.Position = Position;
+			this.Heading = Heading;
+			this.Incline = Incline;
+			this.Size = Size;
+			this.DoorID = DoorID;
+			this.OpenType = OpenType;
+			this.StateAtSpawn = StateAtSpawn;
+			this.InvertState = InvertState;
+			this.Param = Param;
+		}
+
+		public Door(byte[] data, int offset = 0) : this() {
+			Unpack(data, offset);
+		}
+		public Door(BinaryReader br) : this() {
+			Unpack(br);
+		}
+		public void Unpack(byte[] data, int offset = 0) {
+			using(var ms = new MemoryStream(data, offset, data.Length - offset)) {
+				using(var br = new BinaryReader(ms)) {
+					Unpack(br);
+				}
+			}
+		}
+		public void Unpack(BinaryReader br) {
+			Name = br.ReadString(32);
+			Position = new float[3];
+			for(var i = 0; i < 3; ++i) {
+				Position[i] = br.ReadSingle();
+			}
+			Heading = br.ReadSingle();
+			Incline = br.ReadUInt32();
+			Size = br.ReadUInt32();
+			br.ReadBytes(4);
+			DoorID = br.ReadByte();
+			OpenType = br.ReadByte();
+			StateAtSpawn = br.ReadByte();
+			InvertState = br.ReadByte();
+			Param = br.ReadUInt32();
+			br.ReadBytes(24);
+		}
+
+		public byte[] Pack() {
+			using(var ms = new MemoryStream()) {
+				using(var bw = new BinaryWriter(ms)) {
+					Pack(bw);
+					return ms.ToArray();
+				}
+			}
+		}
+		public void Pack(BinaryWriter bw) {
+			bw.Write(Name.ToBytes(32));
+			for(var i = 0; i < 3; ++i) {
+				bw.Write(Position[i]);
+			}
+			bw.Write(Heading);
+			bw.Write(Incline);
+			bw.Write(Size);
+			bw.Write(new byte[4]);
+			bw.Write(DoorID);
+			bw.Write(OpenType);
+			bw.Write(StateAtSpawn);
+			bw.Write(InvertState);
+			bw.Write(Param);
+			bw.Write(new byte[24]);
+		}
+
+		public override string ToString() {
+			var ret = "struct Door {\n";
+			ret += "\tName = ";
+			try {
+				ret += $"{ Indentify(Name) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tPosition = ";
+			try {
+				ret += "{\n";
+				for(int i = 0, e = Position.Length; i < e; ++i)
+					ret += $"\t\t{ Indentify(Position[i], 2) }" + (i != e - 1 ? "," : "") + "\n";
+				ret += "\t},\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tHeading = ";
+			try {
+				ret += $"{ Indentify(Heading) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tIncline = ";
+			try {
+				ret += $"{ Indentify(Incline) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tSize = ";
+			try {
+				ret += $"{ Indentify(Size) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tDoorID = ";
+			try {
+				ret += $"{ Indentify(DoorID) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tOpenType = ";
+			try {
+				ret += $"{ Indentify(OpenType) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tStateAtSpawn = ";
+			try {
+				ret += $"{ Indentify(StateAtSpawn) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tInvertState = ";
+			try {
+				ret += $"{ Indentify(InvertState) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			ret += "\tParam = ";
+			try {
+				ret += $"{ Indentify(Param) },\n";
+			} catch(NullReferenceException) {
+				ret += "!!NULL!!\n";
+			}
+			return ret + "}";
+		}
+	}
+
 	public struct CharInventory : IEQStruct {
 		public uint ItemCount;
 		public SerializedItem[] Items;

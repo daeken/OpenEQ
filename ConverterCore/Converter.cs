@@ -42,7 +42,14 @@ namespace OpenEQ.ConverterCore {
 			var s3ds = fns.AsParallel().Select(fn => new S3D(fn, File.OpenRead(Filename(fn)))).ToList();
 			var wlds = s3ds.AsParallel().Select(s3d => s3d.Where(fn => fn.EndsWith(".wld")).Select(fn => new Wld(s3d, fn)))
 				.SelectMany(x => x).ToList();
-			
+
+			foreach(var wld in wlds) {
+				WriteLine($"<h1>{wld.Filename}</h1>");
+				WriteLine("<il>");
+				Debugging.OutputHTML(wld);
+				WriteLine("</il>");
+			}
+
 			var zn = $"{name}_oes.zip";
 			if(File.Exists(zn)) File.Delete(zn);
 			using(var zip = ZipFile.Open(zn, ZipArchiveMode.Create)) {
@@ -109,12 +116,12 @@ namespace OpenEQ.ConverterCore {
 			var wlds = s3ds.AsParallel().Select(s3d => s3d.Where(fn => fn.EndsWith(".wld")).Select(fn => new Wld(s3d, fn)))
 				.SelectMany(x => x).ToList();
 
-			/*foreach(var wld in wlds) {
+			foreach(var wld in wlds) {
 				WriteLine($"<h1>{wld.Filename}</h1>");
 				WriteLine("<il>");
 				Debugging.OutputHTML(wld);
 				WriteLine("</il>");
-			}*/
+			}
 
 			var zn = $"{name}_oes.zip";
 			if(File.Exists(zn)) File.Delete(zn);

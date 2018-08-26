@@ -111,7 +111,7 @@ namespace NetClient {
 			};
 
 			worldStream.ZoneServer += (_, zs) => {
-				WriteLine($"Got zone server at {zs.Host}:{zs.Port}.  Connecting"); 
+				WriteLine($"Got zone server at {zs.Host}:{zs.Port}.  Connecting");
 				ConnectZone(charName, zs.Host, zs.Port);
 			};
 		}
@@ -119,10 +119,10 @@ namespace NetClient {
 		static void ConnectZone(string charName, string host, ushort port) {
 			var zoneStream = new ZoneStream(host, port, charName);
 			zoneStream.Spawned += (_, mob) => {
-				WriteLine($"Spawn {mob.Name}");
+				//WriteLine($"Spawn {mob.Name}");
 			};
 			zoneStream.PositionUpdated += (_, update) => {
-				WriteLine($"Position updated: {update.ID} {update.Position}");
+				//WriteLine($"Position updated: {update.ID} {update.Position}");
 			};
 		}
 	}

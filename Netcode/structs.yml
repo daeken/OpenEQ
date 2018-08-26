@@ -1,5 +1,7 @@
 ---
 
+# This is all based on the EQEmu Underfoot patchset
+
 login:
   enums:
     ServerStatus<uint32>:
@@ -658,3 +660,13 @@ zone:
       - float: Z
       - float: DeltaZ
       - ClientUpdatePositionSub2: Sub2
+    
+    Door:
+      - string[32]: Name
+      - float[3]: Position
+      - float: Heading
+      - uint32: Incline, Size
+      - skip[4]: unknown0054
+      - uint8: DoorID, OpenType, StateAtSpawn, InvertState
+      - uint32: Param
+      - skip[24]: unknown0068
