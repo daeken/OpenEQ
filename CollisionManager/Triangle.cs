@@ -8,7 +8,7 @@ namespace CollisionManager {
 		const float Epsilon = 0.00001f;
 		
 		public Vector3 A, B, C;
-		public Vector3 Normal;
+		public Vector3 Normal, Center;
 
 		public Vector3[] AsArray => new[] { A, B, C };
 		
@@ -27,6 +27,7 @@ namespace CollisionManager {
 			B = b;
 			C = c;
 			Normal = Vector3.Cross(b - a, c - a).Normalized();
+			Center = (a + b + c) / 3;
 		}
 
 		// Moller-Trumbore
