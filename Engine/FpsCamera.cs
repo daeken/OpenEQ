@@ -60,10 +60,12 @@ namespace OpenEQ.Engine {
 		}
 
 		public void Look(float pitchmod, float yawmod) {
-			var eps = 0.0001f;
+			var eps = 0.01f;
 			Pitch = clamp(Pitch + pitchmod, -PI / 2 + eps, PI / 2 - eps);
 			Yaw += yawmod;
-			LookRotation = Matrix4x4.CreateFromAxisAngle(Right, Pitch) * Matrix4x4.CreateFromAxisAngle(Up, Yaw + eps);
+			LookRotation = Matrix4x4.CreateFromAxisAngle(Right, Pitch);
+			if(Yaw != 0)
+				LookRotation *= Matrix4x4.CreateFromAxisAngle(Up, Yaw);
 		}
 
 		public void Update(float timestep) {
