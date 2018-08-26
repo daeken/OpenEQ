@@ -16,6 +16,12 @@ namespace CollisionManager {
 			new Plane(Vector3.UnitZ, Min.Z), 
 			new Plane(-Vector3.UnitZ, -Max.Z)
 		};
+
+		public Plane[] MidPlanes => new[] {
+			new Plane(Vector3.UnitX, Center.X), 
+			new Plane(Vector3.UnitY, Center.Y), 
+			new Plane(Vector3.UnitZ, Center.Z)
+		};
 		
 		public AABB(Vector3 min, Vector3 size) {
 			Min = min;
