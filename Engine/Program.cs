@@ -11,27 +11,27 @@ namespace OpenEQ.Engine {
 	public class Program {
 		static readonly Dictionary<(string, string), int> ProgramCache = new Dictionary<(string, string), int>();
 		static readonly Dictionary<string, int> ShaderCache = new Dictionary<string, int>();
-		int ProgramId;
+		readonly int Id;
 		readonly Dictionary<string, int> Locations = new Dictionary<string, int>();
-		static int CurrentProgramId = -1;
+		public static Program Current;
 
 		public Program(string vs, string fs) {
 			var key = (vs, fs);
 			if(ProgramCache.ContainsKey(key))
-				ProgramId = ProgramCache[key];
+				Id = ProgramCache[key];
 			else {
-				ProgramId = GL.CreateProgram();
-				GL.AttachShader(ProgramId, CompileShader(vs, ShaderType.VertexShader));
-				GL.AttachShader(ProgramId, CompileShader(fs, ShaderType.FragmentShader));
-				GL.LinkProgram(ProgramId);
+				Id = GL.CreateProgram();
+				GL.AttachShader(Id, CompileShader(vs, ShaderType.VertexShader));
+				GL.AttachShader(Id, CompileShader(fs, ShaderType.FragmentShader));
+				GL.LinkProgram(Id);
 
-				GL.GetProgram(ProgramId, GetProgramParameterName.LinkStatus, out var status);
+				GL.GetProgram(Id, GetProgramParameterName.LinkStatus, out var status);
 				if(status != 1) {
-					WriteLine($"Program linking failed: {GL.GetProgramInfoLog(ProgramId)}");
+					WriteLine($"Program linking failed: {GL.GetProgramInfoLog(Id)}");
 					throw new Exception("Shader linking failed");
 				}
 				
-				ProgramCache[key] = ProgramId;
+				ProgramCache[key] = Id;
 			}
 		}
 		
@@ -52,19 +52,18 @@ namespace OpenEQ.Engine {
 		}
 
 		public void Use() {
-			if(CurrentProgramId == ProgramId)
-				return;
-			GL.UseProgram(ProgramId);
-			CurrentProgramId = ProgramId;
+			if(Current == this) return;
+			GL.UseProgram(Id);
+			Current = this;
 		}
 
 		public int GetUniform(string name) => Locations.ContainsKey(name)
 			? Locations[name]
-			: Locations[name] = GL.GetUniformLocation(ProgramId, name);
+			: Locations[name] = GL.GetUniformLocation(Id, name);
 		
 		public int GetAttribute(string name) => Locations.ContainsKey(name)
 			? Locations[name]
-			: Locations[name] = GL.GetAttribLocation(ProgramId, name);
+			: Locations[name] = GL.GetAttribLocation(Id, name);
 
 		public void SetUniform(string name, int val) => GL.Uniform1(GetUniform(name), val);
 		public void SetUniform(string name, float val) => GL.Uniform1(GetUniform(name), val);
