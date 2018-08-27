@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -42,8 +43,33 @@ namespace OpenEQ {
 		}
 
 		static Model FromMeshes(IReadOnlyList<Material> mats, Matrix4x4[] instances, IEnumerable<OESStaticMesh> meshes) {
+			IEnumerable<float> TransformBuffer(IReadOnlyList<float> buffer, Matrix4x4 mat) {
+				if(mat == Matrix4x4.Identity) {
+					foreach(var elem in buffer)
+						yield return elem;
+					yield break;
+				}
+				Debug.Assert(Matrix4x4.Invert(mat, out var imat));
+				for(var i = 0; i < buffer.Count; i += 8) {
+					var vert = Vector3.Transform(new Vector3(buffer[i + 0], buffer[i + 1], buffer[i + 2]), mat);
+					var normal = Vector3.Transform(new Vector3(buffer[i + 3], buffer[i + 4], buffer[i + 5]), imat);
+					yield return vert.X;
+					yield return vert.Y;
+					yield return vert.Z;
+					yield return normal.X;
+					yield return normal.Y;
+					yield return normal.Z;
+					yield return buffer[i + 6];
+					yield return buffer[i + 7];
+				}
+			}
+			
 			var model = new Model();
-			meshes.ForEach((sm, i) => model.Add(new Mesh(mats[i], sm.VertexBuffer.ToArray(), sm.IndexBuffer.ToArray(), instances, sm.Collidable)));
+			meshes.ForEach((sm, i) => model.Add(new Mesh(
+				mats[i],
+				instances.Select(instance => TransformBuffer(sm.VertexBuffer, instance)).SelectMany(x => x).ToArray(), 
+				instances.Select((_, j) => sm.IndexBuffer.Select(v => (uint) (v + j * sm.VertexBuffer.Count / 8))).SelectMany(x => x).ToArray(), 
+				sm.Collidable)));
 			return model;
 		}
 
