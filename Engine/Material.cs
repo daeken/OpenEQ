@@ -29,7 +29,7 @@ precision highp float;
 layout (location = 0) in vec4 aPosition;
 layout (location = 1) in vec3 aNormal;
 layout (location = 2) in vec2 aTexCoord;
-layout (location = 3) in mat4 aModelMat;
+uniform mat4 uModelMat;
 uniform mat4 uProjectionViewMat;
 out vec2 vTexCoord;
 					";
@@ -39,12 +39,12 @@ out vec3 vNormal;
 						";
 					ret += @"
 void main() {
-	gl_Position = uProjectionViewMat * aModelMat * aPosition;
+	gl_Position = uProjectionViewMat * uModelMat * aPosition;
 	vTexCoord = aTexCoord;
 					";
 					if(WantNormals)
 						ret += @"
-	mat3 nmat = transpose(inverse(mat3(aModelMat)));
+	mat3 nmat = transpose(inverse(mat3(uModelMat)));
 	vNormal = normalize(nmat * aNormal);
 						";
 					ret += @"
@@ -104,7 +104,11 @@ void main() {
 		
 		public abstract void Use(Matrix4x4 projView, MaterialUse use);
 
-		public void SetModelMatrix(Matrix4x4 modelMat) => AnimatedProgram.SetUniform("uModelMat", modelMat);
+		public void SetModelMatrix(Matrix4x4 modelMat) {
+			StaticProgram?.SetUniform("uModelMat", modelMat);
+			AnimatedProgram?.SetUniform("uModelMat", modelMat);
+		}
+
 		public void SetInterpolation(float interp) => AnimatedProgram.SetUniform("uInterp", interp);
 	}
 }

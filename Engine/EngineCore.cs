@@ -86,22 +86,12 @@ namespace OpenEQ.Engine {
 				if(!model.IsFixed) continue;
 				foreach(var mesh in model.Meshes) {
 					if(!mesh.IsCollidable) continue;
-					var pt = mesh.PhysicsMesh;
-					foreach(var mat in mesh.ModelMatrices) {
-						if(mat == Matrix4x4.Identity)
-							ot.AddRange(pt);
-						else
-							ot.AddRange(pt.AsParallel().Select(x => new Triangle(
-									Vector3.Transform(x.A, mat), 
-									Vector3.Transform(x.B, mat), 
-									Vector3.Transform(x.C, mat)
-								)));
-					}
+					ot.AddRange(mesh.PhysicsMesh);
 				}
 			}
 			
 			Console.WriteLine($"Building octree for {ot.Count} triangles");
-			Collider = new CollisionHelper(new Octree(new CollisionManager.Mesh(ot), 200));
+			Collider = new CollisionHelper(new Octree(new CollisionManager.Mesh(ot), 2500));
 			Console.WriteLine("Built octree");
 			
 			Run();
