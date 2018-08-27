@@ -91,29 +91,21 @@ void main() {
 			));
 
 			foreach(var cset in commandSets) {
-				int vao, ibo, vbo;
-				GL.BindVertexArray(vao = GL.GenVertexArray());
-				GL.BindBuffer(BufferTarget.ElementArrayBuffer, ibo = GL.GenBuffer());
-				GL.BufferData(BufferTarget.ElementArrayBuffer, cset.IBufferData.Length * 2, cset.IBufferData, BufferUsageHint.StreamDraw);
-				GL.BindBuffer(BufferTarget.ArrayBuffer, vbo = GL.GenBuffer());
-				GL.BufferData(BufferTarget.ArrayBuffer, cset.VBufferData.Length, cset.VBufferData, BufferUsageHint.StreamDraw);
-				var pp = Program.GetAttribute("aPosition");
-				GL.EnableVertexAttribArray(pp);
-				GL.VertexAttribPointer(pp, 2, VertexAttribPointerType.Float, false, 20, 0);
-				pp = Program.GetAttribute("aUV");
-				GL.EnableVertexAttribArray(pp);
-				GL.VertexAttribPointer(pp, 2, VertexAttribPointerType.Float, false, 20, 8);
-				pp = Program.GetAttribute("aColor");
-				GL.EnableVertexAttribArray(pp);
-				GL.VertexAttribPointer(pp, 4, VertexAttribPointerType.UnsignedByte, true, 20, 16);
-				foreach(var cmd in cset.Commands) {
-					GL.BindTexture(TextureTarget.Texture2D, cmd.TextureId);
-					GL.Scissor(cmd.Scissor.X, cmd.Scissor.Y, cmd.Scissor.Width, cmd.Scissor.Height);
-					GL.DrawElements(PrimitiveType.Triangles, cmd.ElementCount, DrawElementsType.UnsignedShort, cmd.IndexOffset * 2);
-				}
-				GL.DeleteVertexArray(vao);
-				GL.DeleteBuffer(ibo);
-				GL.DeleteBuffer(vbo);
+				var vao = new Vao();
+				var indexBuffer = new Buffer<ushort>(cset.IBufferData, BufferTarget.ElementArrayBuffer, BufferUsageHint.StreamDraw);
+				var vertexBuffer = new Buffer<byte>(cset.VBufferData, usage: BufferUsageHint.StreamDraw);
+				vao.Attach(indexBuffer);
+				vao.Attach(vertexBuffer, (0, VertexAttribPointerType.Float, 2), (1, VertexAttribPointerType.Float, 2), (2, VertexAttribPointerType.UnsignedByte, 4));
+				vao.Bind(() => {
+					foreach(var cmd in cset.Commands) {
+						GL.BindTexture(TextureTarget.Texture2D, cmd.TextureId);
+						GL.Scissor(cmd.Scissor.X, cmd.Scissor.Y, cmd.Scissor.Width, cmd.Scissor.Height);
+						GL.DrawElements(PrimitiveType.Triangles, cmd.ElementCount, DrawElementsType.UnsignedShort, cmd.IndexOffset * 2);
+					}
+				});
+				vao.Destroy();
+				indexBuffer.Destroy();
+				vertexBuffer.Destroy();
 			}
 			
 			GL.Disable(EnableCap.Blend);

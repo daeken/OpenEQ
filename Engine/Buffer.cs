@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using OpenTK.Graphics.OpenGL4;
@@ -7,9 +8,10 @@ using OpenTK.Graphics.OpenGL4;
 namespace OpenEQ.Engine {
 	public class Buffer<T> where T : struct {
 		public readonly int Length;
-
+		public readonly BufferTarget Target;
 		readonly int Object;
-		readonly BufferTarget Target;
+
+		bool Destroyed;
 
 		public unsafe Buffer(T[] data, BufferTarget target = BufferTarget.ArrayBuffer, BufferUsageHint usage = BufferUsageHint.StaticDraw) {
 			Object = GL.GenBuffer();
@@ -17,6 +19,10 @@ namespace OpenEQ.Engine {
 			Length = data.Length;
 			Bind();
 			switch(data) {
+				case byte[] vdata:
+					fixed(byte* p = vdata)
+						GL.BufferData(target, vdata.Length, (IntPtr) p, usage);
+					break;
 				case float[] vdata:
 					fixed(float* p = vdata)
 						GL.BufferData(target, vdata.Length * 4, (IntPtr) p, usage);
@@ -42,8 +48,17 @@ namespace OpenEQ.Engine {
 			}
 		}
 
-		~Buffer() => GL.DeleteBuffer(Object);
-		
-		public void Bind() => GL.BindBuffer(Target, Object);
+		~Buffer() => Destroy();
+
+		public void Destroy() {
+			if(Destroyed) return;
+			Destroyed = true;
+			GL.DeleteBuffer(Object);
+		}
+
+		public void Bind() {
+			Debug.Assert(!Destroyed);
+			GL.BindBuffer(Target, Object);
+		}
 	}
 }

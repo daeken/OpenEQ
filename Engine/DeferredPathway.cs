@@ -17,7 +17,7 @@ namespace OpenEQ.Engine {
 		const int maxLights = 64;
 		
 		FrameBuffer FBO;
-		int QuadVAO;
+		Vao QuadVAO;
 		Program Program;
 		int[] UniformLocs;
 		int UniformLC;
@@ -32,10 +32,10 @@ namespace OpenEQ.Engine {
 				FrameBufferAttachment.Rgb, FrameBufferAttachment.Xyz, 
 				FrameBufferAttachment.Depth);
 			Resize += (_, __) => FBO.Resize(Width, Height);
-			
-			GL.BindVertexArray(QuadVAO = GL.GenVertexArray());
-			GL.BindBuffer(BufferTarget.ArrayBuffer, GL.GenBuffer());
-			GL.BufferData(BufferTarget.ArrayBuffer, 6 * 2 * 4, new[] {
+
+			QuadVAO = new Vao();
+			QuadVAO.Attach(new Buffer<uint>(new[] { 0U, 1U, 2U, 3U, 4U, 5U }, BufferTarget.ElementArrayBuffer));
+			QuadVAO.Attach(new Buffer<float>(new[] {
 				-1f, -1f, 
 				1f, -1f, 
 				1f,  1f, 
@@ -43,12 +43,7 @@ namespace OpenEQ.Engine {
 				-1f, -1f, 
 				1f,  1f, 
 				-1f,  1f
-			}, BufferUsageHint.StaticDraw);
-			GL.BindBuffer(BufferTarget.ElementArrayBuffer, GL.GenBuffer());
-			GL.BufferData(BufferTarget.ElementArrayBuffer, 6 * 4, new[] { 0, 1, 2, 3, 4, 5 }, BufferUsageHint.StaticDraw);
-			
-			GL.EnableVertexAttribArray(0);
-			GL.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, 0, 0);
+			}), (0, typeof(Vector2)));
 
 			Program = new Program(@"
 #version 410
@@ -166,31 +161,31 @@ void main() {
 
 			Profile("- Tile render", () => {
 				GL.Enable(EnableCap.DepthTest);
-				GL.BindVertexArray(QuadVAO);
-		
-				Program.Use();
-				Program.SetUniform("uInvProjectionViewMat", invProjView);
-				Program.SetUniform("uAmbientColor", vec3(0.25f));	
-				Program.SetTextures(0, FBO.Textures, "uColor", "uNormal", "uDepth");
+				QuadVAO.Bind(() => {
+					Program.Use();
+					Program.SetUniform("uInvProjectionViewMat", invProjView);
+					Program.SetUniform("uAmbientColor", vec3(0.25f));	
+					Program.SetTextures(0, FBO.Textures, "uColor", "uNormal", "uDepth");
 
-				GL.Enable(EnableCap.ScissorTest);
-				var ti = 0;
-				for(var x = 0; x < tw; ++x) {
-					for(var y = 0; y < th; ++y, ++ti) {
-						GL.Scissor(x * tileSize, y * tileSize, tileSize, tileSize);
-						var tc = 0;
-						tiles[ti].ForEach((tl, tli) => {
-							var light = tl.Light;
-							GL.Uniform3(UniformLocs[tc++], 1, ref light.Position.X);
-							GL.Uniform3(UniformLocs[tc++], 1, ref light.Color.X);
-							GL.Uniform1(UniformLocs[tc++], light.Radius);
-						});
-						GL.Uniform1(UniformLC, tc / 3);
-						GL.DrawElements(PrimitiveType.Triangles, 6, DrawElementsType.UnsignedInt, IntPtr.Zero);
+					GL.Enable(EnableCap.ScissorTest);
+					var ti = 0;
+					for(var x = 0; x < tw; ++x) {
+						for(var y = 0; y < th; ++y, ++ti) {
+							GL.Scissor(x * tileSize, y * tileSize, tileSize, tileSize);
+							var tc = 0;
+							tiles[ti].ForEach((tl, tli) => {
+								var light = tl.Light;
+								GL.Uniform3(UniformLocs[tc++], 1, ref light.Position.X);
+								GL.Uniform3(UniformLocs[tc++], 1, ref light.Color.X);
+								GL.Uniform1(UniformLocs[tc++], light.Radius);
+							});
+							GL.Uniform1(UniformLC, tc / 3);
+							GL.DrawElements(PrimitiveType.Triangles, 6, DrawElementsType.UnsignedInt, IntPtr.Zero);
+						}
 					}
-				}
-				GL.Disable(EnableCap.ScissorTest);
-				GL.Finish();
+					GL.Disable(EnableCap.ScissorTest);
+					GL.Finish();
+				});
 			});
 		}
 	}
