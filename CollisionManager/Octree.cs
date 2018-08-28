@@ -12,14 +12,17 @@ namespace CollisionManager {
 		readonly Mesh Leaf;
 		readonly AABB BoundingBox;
 		readonly bool Empty;
+		readonly float Diameter;
 
-		public Octree(Mesh mesh, int maxTrisPerLeaf, AABB? boundingBox = null) {
+		public Octree(Mesh mesh, int maxTrisPerLeaf, AABB? boundingBox = null, int depth = 0) {
 			BoundingBox = boundingBox ?? mesh.BoundingBox;
+			Diameter = BoundingBox.Size.ComponentMax();
 			if(mesh.Triangles.Count <= maxTrisPerLeaf) {
 				Leaf = mesh;
 				if(mesh.Triangles.Count == 0)
 					Empty = true;
 				BoundingBox = Leaf.BoundingBox;
+				Diameter = BoundingBox.Size.ComponentMax();
 				return;
 			}
 
@@ -33,21 +36,26 @@ namespace CollisionManager {
 				}
 
 				var plane = planes[planeIdx];
-				var sideA = Vector3.Dot(tri.A, plane.Normal) - plane.Distance >= 0;
-				var sideB = Vector3.Dot(tri.B, plane.Normal) - plane.Distance >= 0;
-				var sideC = Vector3.Dot(tri.C, plane.Normal) - plane.Distance >= 0;
+				var sideA = Vector3.Dot(tri.A, plane.Normal) - plane.Distance >= -0.0001f;
+				var sideB = Vector3.Dot(tri.B, plane.Normal) - plane.Distance >= -0.0001f;
+				var sideC = Vector3.Dot(tri.C, plane.Normal) - plane.Distance >= -0.0001f;
 
 				if(sideA == sideB && sideB == sideC)
 					Divide(tri, nodeIdx | ((sideA ? 1 : 0) << planeIdx), planeIdx + 1);
-				else
-					foreach(var sub in tri.Split(plane)) {
-						var side = Vector3.Dot(sub.Center, plane.Normal) - plane.Distance >= 0;
-						Divide(sub, nodeIdx | ((side ? 1 : 0) << planeIdx), planeIdx + 1);
-					}
+				else {
+					Divide(tri, nodeIdx, planeIdx + 1);
+					Divide(tri, nodeIdx | (1 << planeIdx), planeIdx + 1);
+				}
 			}
 			
 			Parallel.ForEach(mesh.Triangles, tri => Divide(tri, 0, 0));
 
+			if(triLists.Count(x => x.Count != 0) == 1 && depth >= 30) {
+				Leaf = mesh;
+				BoundingBox = Leaf.BoundingBox;
+				return;
+			}
+			
 			var mm = (BoundingBox.Min, BoundingBox.Center);
 			var ms = BoundingBox.Size / 2;
 			var boundingMins = new[] {
@@ -61,7 +69,7 @@ namespace CollisionManager {
 				mm.Select(1, 1, 1)
 			};
 			
-			Nodes = triLists.Select((x, i) => new Octree(new Mesh(x), maxTrisPerLeaf, new AABB(boundingMins[i], ms))).ToArray();
+			Nodes = triLists.Select((x, i) => new Octree(new Mesh(x), maxTrisPerLeaf, new AABB(boundingMins[i], ms), depth + 1)).ToArray();
 		}
 
 		public (Triangle, Vector3)? FindIntersectionSlow(Vector3 origin, Vector3 direction) {
@@ -93,6 +101,72 @@ namespace CollisionManager {
 				}
 			}
 			return closestBox;
+		}
+
+		public (Triangle, Vector3)? FindIntersectionCustom(Vector3 origin, Vector3 direction, float? spread = null) {
+			Vector3? perp1 = null, perp2 = null;
+			if(spread != null) {
+				perp1 = Vector3.Normalize(Vector3.Cross(direction.Y == 0 && direction.Z == 0 ? Vector3.UnitY : Vector3.UnitX, direction)) * spread.Value;
+				perp2 = Vector3.Normalize(Vector3.Cross(perp1.Value, direction)) * spread.Value;
+			}
+			return !BoundingBox.Contains(origin)
+				? FindIntersectionSlow(origin, direction)
+				: SubIntersectionCustom(origin, direction, perp1, perp2);
+		}
+
+		(Triangle, Vector3)? SubIntersectionCustom(Vector3 _origin, Vector3 direction, Vector3? spread1, Vector3? spread2) {
+			var origin = _origin;
+			if(Leaf != null) {
+				(Triangle, Vector3)? closest = null;
+				var distance = float.PositiveInfinity;
+				foreach(var triangle in Leaf.Triangles) {
+					var hit = triangle.FindIntersection(origin, direction);
+					if(hit == null && spread1 != null && spread2 != null) {
+						hit = triangle.FindIntersection(origin + spread1.Value, direction);
+						if(hit == null) hit = triangle.FindIntersection(origin - spread1.Value, direction);
+						if(hit == null) hit = triangle.FindIntersection(origin + spread2.Value, direction);
+						if(hit == null) hit = triangle.FindIntersection(origin - spread2.Value, direction);
+					}
+
+					if(hit != null && hit.Value.Item2 < distance) {
+						distance = hit.Value.Item2;
+						closest = (triangle, hit.Value.Item1);
+					}
+				}
+				return closest;
+			}
+			
+			var planes = BoundingBox.MidPlanes;
+			var side = (
+				X: Vector3.Dot(origin, planes[2].Normal) - planes[2].Distance >= 0,
+				Y: Vector3.Dot(origin, planes[1].Normal) - planes[1].Distance >= 0,
+				Z: Vector3.Dot(origin, planes[0].Normal) - planes[0].Distance >= 0
+			);
+			var xDist = side.X == direction.X < 0
+				? planes[2].RayDistance(origin, direction)
+				: float.PositiveInfinity;
+			var yDist = side.Y == direction.Y < 0
+				? planes[1].RayDistance(origin, direction)
+				: float.PositiveInfinity;
+			var zDist = side.Z == direction.Z < 0
+				? planes[0].RayDistance(origin, direction)
+				: float.PositiveInfinity;
+			for(var i = 0; i < 3; ++i) {
+				var idx = (side.Z ? 1 : 0) | (side.Y ? 2 : 0) | (side.X ? 4 : 0);
+				var ret = Nodes[idx].SubIntersectionCustom(origin, direction, spread1, spread2);
+				if(ret != null) return ret;
+
+				var minDist = MathF.Min(MathF.Min(xDist, yDist), zDist);
+				if(float.IsInfinity(minDist) || minDist > Diameter) return null;
+				
+				origin = _origin + direction * minDist;
+				if(!BoundingBox.Contains(origin)) return null;
+				if(minDist == xDist) { side.X = !side.X; xDist = float.PositiveInfinity; }
+				else if(minDist == yDist) { side.Y = !side.Y; yDist = float.PositiveInfinity; }
+				else if(minDist == zDist) { side.Z = !side.Z; zDist = float.PositiveInfinity; }
+			}
+
+			return null;
 		}
 
 		public (Triangle, Vector3)? FindIntersection(Vector3 _origin, Vector3 _direction) {

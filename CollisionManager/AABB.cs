@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Diagnostics.Contracts;
 using System.Linq;
 using System.Numerics;
 
@@ -8,17 +9,19 @@ namespace CollisionManager {
 		public readonly Vector3 Size;
 		public readonly Vector3 Center;
 
-		public Plane[] MidPlanes => new[] {
-			new Plane(Vector3.UnitZ, Center.Z), 
-			new Plane(Vector3.UnitY, Center.Y), 
-			new Plane(Vector3.UnitX, Center.X)
-		};
+		public readonly Plane[] MidPlanes;
 		
 		public AABB(Vector3 min, Vector3 size) {
 			Min = min;
 			Max = min + size;
 			Size = size;
 			Center = min + size / 2;
+
+			MidPlanes = new[] {
+				new Plane(Vector3.UnitZ, Center.Z),
+				new Plane(Vector3.UnitY, Center.Y),
+				new Plane(Vector3.UnitX, Center.X)
+			};
 		}
 
 		public AABB(IReadOnlyList<AABB> set) {
@@ -26,6 +29,12 @@ namespace CollisionManager {
 			Max = set.Select(x => x.Max).Aggregate(Vector3.Max);
 			Size = Max - Min;
 			Center = Min + Size / 2;
+
+			MidPlanes = new[] {
+				new Plane(Vector3.UnitZ, Center.Z),
+				new Plane(Vector3.UnitY, Center.Y),
+				new Plane(Vector3.UnitX, Center.X)
+			};
 		}
 
 		public bool Contains(Triangle tri) =>
@@ -94,6 +103,7 @@ namespace CollisionManager {
 			return (min, max);
 		}
 
+		[Pure]
 		public bool Contains(Vector3 point) =>
 			Min.X <= point.X && Min.Y <= point.Y && Min.Z <= point.Z && 
 			Max.X >= point.X && Max.Y >= point.Y && Max.Z >= point.Z;

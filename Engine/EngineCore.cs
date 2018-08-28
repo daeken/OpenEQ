@@ -91,7 +91,7 @@ namespace OpenEQ.Engine {
 			}
 			
 			Console.WriteLine($"Building octree for {ot.Count} triangles");
-			Collider = new CollisionHelper(new Octree(new CollisionManager.Mesh(ot), 2500));
+			Collider = new CollisionHelper(new Octree(new CollisionManager.Mesh(ot), 500));
 			Console.WriteLine("Built octree");
 			
 			Run();

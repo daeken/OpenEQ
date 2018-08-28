@@ -5,6 +5,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Numerics;
+using System.Threading.Tasks;
 using ImageLib;
 using MoreLinq;
 using OpenEQ.Common;
@@ -67,7 +68,7 @@ namespace OpenEQ {
 			var model = new Model();
 			meshes.ForEach((sm, i) => model.Add(new Mesh(
 				mats[i],
-				instances.Select(instance => TransformBuffer(sm.VertexBuffer, instance)).SelectMany(x => x).ToArray(), 
+				instances.AsParallel().Select(instance => TransformBuffer(sm.VertexBuffer, instance)).AsSequential().SelectMany(x => x).ToArray(), 
 				instances.Select((_, j) => sm.IndexBuffer.Select(v => (uint) (v + j * sm.VertexBuffer.Count / 8))).SelectMany(x => x).ToArray(), 
 				sm.Collidable)));
 			return model;
