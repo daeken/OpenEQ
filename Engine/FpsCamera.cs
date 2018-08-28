@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Linq;
 using System.Numerics;
+using Microsoft.Scripting.Utils;
 using OpenEQ.Common;
 using static System.MathF;
 using static OpenEQ.Engine.Globals;
@@ -43,20 +44,19 @@ namespace OpenEQ.Engine {
 		}
 
 		Vector3 ClipMovement(Vector3 movement, int iterations = 3) {
+			//Console.WriteLine($"Clipping {movement} {iterations}");
 			const float padding = 2f;
 			var moveLen = movement.Length();
-			var moveDir = movement / moveLen;
-			var hit = Collider.FindIntersection(Position, moveDir);
-			if(hit != null) {
-				var dist = (hit.Value.Item2 - Position).Length();
-				if(dist > moveLen + padding) return movement;
-				if(iterations == 0) return moveDir * (dist - padding);
-				var triNormal = hit.Value.Item1.Normal;
-				var backoff = Vector3.Dot(movement, triNormal);
-				movement -= triNormal * backoff;// - moveDir * padding;
-				return ClipMovement(movement, iterations - 1);
-			}
-			return movement;
+			var moveDir = movement.Normalized();
+			var hit = Collider.FindIntersection(Position, moveDir, 0.5f);
+			if(hit == null) return movement;
+			var dist = (hit.Value.Item2 - Position).Length();
+			if(dist > moveLen + padding) return movement;
+			if(iterations == 0) return moveDir * (dist - padding);
+			var triNormal = hit.Value.Item1.Normal;
+			var backoff = Vector3.Dot(movement, triNormal);
+			movement -= triNormal * backoff;
+			return ClipMovement(movement, iterations - 1);
 		}
 
 		public void Look(float pitchmod, float yawmod) {
@@ -75,17 +75,8 @@ namespace OpenEQ.Engine {
 
 				Position.Z += 1 - CameraHeight;
 				var downray = vec3(0.00001f, 0.00001f, -1).Normalized();
-				var spreadScale = 1f;
-				var offsets = new[] {
-						Vector3.Zero,
-						vec3(1, 0, 0),
-						vec3(-1, 0, 0),
-						vec3(0, 1, 0),
-						vec3(0, -1, 0)
-					}.Select(x => Collider.FindIntersection(Position + x * spreadScale, downray)).Where(x => x != null)
-					.OrderBy(x => Abs(x.Value.Item2.Z - Position.Z));
+				var hit = Collider.FindIntersection(Position, downray, 0.5f);
 				Position.Z -= 1 - CameraHeight;
-				var hit = offsets.FirstOrDefault();
 				var dist = hit != null ? Position.Z - CameraHeight - hit.Value.Item2.Z : float.PositiveInfinity;
 				var angle = hit != null ? Abs(Vector3.Dot(hit.Value.Item1.Normal, vec3(0, 0, 1))) : 1;
 				OnGround = false;
