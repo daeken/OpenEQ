@@ -106,7 +106,7 @@ void main() {
 				return (ipos.XY() / ipos.W).Add(1) * screenDim;
 			}
 			
-			Profile("- G-buffer render", () => {
+			NoProfile("- G-buffer render", () => {
 				GL.Viewport(0, 0, Width, Height);
 				FBO.Bind();
 				GL.ClearColor(0, 0, 0, 1);
@@ -130,7 +130,7 @@ void main() {
 			var th = (int) Math.Ceiling((float) Height / tileSize);
 			IReadOnlyList<IEnumerable<(double Dist, PointLight Light)>> tiles = null;
 
-			Profile("- Tile determination", () => {
+			NoProfile("- Tile determination", () => {
 				var cforward = Vector3.Transform(FpsCamera.Forward, Camera.LookRotation).Normalized();
 				var cp = cforward.Y != 0 || cforward.Z != 0 ? vec3(1, 0, 0) : vec3(0, 1, 0);
 				var perp = cforward.Cross(cp).Normalized();
@@ -159,7 +159,7 @@ void main() {
 				tiles = tileLists.Select(tile => tile.Count <= maxLights ? tile : tile.OrderBy(x => x.Item1).Take(maxLights)).ToList();
 			});
 
-			Profile("- Tile render", () => {
+			NoProfile("- Tile render", () => {
 				GL.Enable(EnableCap.DepthTest);
 				QuadVAO.Bind(() => {
 					Program.Use();

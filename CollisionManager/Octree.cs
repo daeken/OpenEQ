@@ -15,7 +15,8 @@ namespace CollisionManager {
 		readonly float Diameter;
 
 		public Octree(Mesh mesh, int maxTrisPerLeaf, AABB? boundingBox = null, int depth = 0) {
-			BoundingBox = boundingBox ?? mesh.BoundingBox;
+			BoundingBox = boundingBox/*?.Union(mesh.BoundingBox)*/ ?? mesh.BoundingBox;
+			if(BoundingBox.Size == Vector3.Zero) { Empty = true; return; }
 			Diameter = BoundingBox.Size.ComponentMax();
 			if(mesh.Triangles.Count <= maxTrisPerLeaf) {
 				Leaf = mesh;
@@ -49,8 +50,10 @@ namespace CollisionManager {
 			}
 			
 			Parallel.ForEach(mesh.Triangles, tri => Divide(tri, 0, 0));
-
-			if(triLists.Count(x => x.Count != 0) == 1 && depth >= 30) {
+			
+			var fc = triLists.First(x => x.Count != 0).Count;
+			if(triLists.All(x => x.Count == fc)) {
+				WriteLine($"Making premature leaf with {fc} triangles instead of {maxTrisPerLeaf}");
 				Leaf = mesh;
 				BoundingBox = Leaf.BoundingBox;
 				return;
@@ -73,7 +76,7 @@ namespace CollisionManager {
 		}
 
 		public (Triangle, Vector3)? FindIntersectionSlow(Vector3 origin, Vector3 direction) {
-			if(!BoundingBox.IntersectedBy(origin, direction)) return null;
+			if(Empty || !BoundingBox.IntersectedBy(origin, direction)) return null;
 			if(Leaf != null) {
 				(Triangle, Vector3)? closest = null;
 				var distance = float.PositiveInfinity;
@@ -115,6 +118,7 @@ namespace CollisionManager {
 		}
 
 		(Triangle, Vector3)? SubIntersectionCustom(Vector3 _origin, Vector3 direction, Vector3? spread1, Vector3? spread2) {
+			if(Empty) return null;
 			var origin = _origin;
 			if(Leaf != null) {
 				(Triangle, Vector3)? closest = null;
@@ -170,7 +174,7 @@ namespace CollisionManager {
 		}
 
 		public (Triangle, Vector3)? FindIntersection(Vector3 _origin, Vector3 _direction) {
-			// https://github.com/dotnet/coreclr/issues/19674
+			// TODO: https://github.com/dotnet/coreclr/issues/19674
 			var origin = _origin;
 			var direction = _direction;
 			

@@ -37,6 +37,12 @@ namespace CollisionManager {
 			};
 		}
 
+		public AABB Union(AABB b) {
+			var min = Vector3.Max(Min, b.Min);
+			var max = Vector3.Min(Max, b.Max);
+			return new AABB(min, min.X >= max.X || min.Y >= max.Y || min.Z >= max.Z ? Vector3.Zero : max - min);
+		}
+
 		public bool Contains(Triangle tri) =>
 			Contains(tri.A) && Contains(tri.B) && Contains(tri.C);
 
