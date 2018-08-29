@@ -80,8 +80,11 @@ namespace OpenEQ.Engine {
 					case Buffer<ushort> _: Attach(VertexAttribPointerType.UnsignedShort, 2); break;
 					case Buffer<int> _: Attach(VertexAttribPointerType.Int, 4); break;
 					case Buffer<uint> _: Attach(VertexAttribPointerType.UnsignedInt, 4); break;
-					case Buffer<float> _: Attach(VertexAttribPointerType.Float, 4); break;
+					
+					case Buffer<float> _:
+					case Buffer<Vector2> _: case Buffer<Vector3> _: case Buffer<Vector4> _:
 					case Buffer<Matrix4x4> _: Attach(VertexAttribPointerType.Float, 4); break;
+					
 					default:
 						throw new NotImplementedException($"Unsupported buffer type in Vao.Attach: {typeof(T)}");
 				}

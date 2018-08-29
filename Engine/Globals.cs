@@ -12,7 +12,7 @@ namespace OpenEQ.Engine {
 		public static bool PhysicsEnabled;
 		
 		public static Matrix4x4 ProjectionMat;
-		public static readonly FpsCamera Camera = new FpsCamera(vec3(-372, -97, 100));
+		public static readonly FpsCamera Camera = new FpsCamera(vec3(116, 848, 80));
 		public static CollisionHelper Collider;
 		
 		public static readonly Stopwatch Stopwatch = new Stopwatch();
@@ -71,7 +71,7 @@ namespace OpenEQ.Engine {
 
 		static readonly Dictionary<string, List<float>> ProfileRunning = new Dictionary<string, List<float>>();
 		public static void Profile(string name, Action func) {
-#if false//DEBUG
+#if DEBUG
 			var pre = Stopwatch.ElapsedTicks;
 			func();
 			var post = Stopwatch.ElapsedTicks;
@@ -85,5 +85,7 @@ namespace OpenEQ.Engine {
 			func();
 #endif
 		}
+
+		public static void NoProfile(string name, Action func) => func();
 	}
 }

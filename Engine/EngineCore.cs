@@ -91,8 +91,10 @@ namespace OpenEQ.Engine {
 			}
 			
 			Console.WriteLine($"Building octree for {ot.Count} triangles");
-			Collider = new CollisionHelper(new Octree(new CollisionManager.Mesh(ot), 500));
+			Collider = new CollisionHelper(new Octree(new CollisionManager.Mesh(ot), 250));
 			Console.WriteLine("Built octree");
+			
+			//Debugging.Add(new Wireframe(ot));
 			
 			Run();
 		}
@@ -206,10 +208,10 @@ namespace OpenEQ.Engine {
 
 			if(DeferredEnabled) {
 				SetupDeferredPathway();
-				Profile("Deferred render", RenderDeferredPathway);
+				NoProfile("Deferred render", RenderDeferredPathway);
 			}
 
-			Profile("Forward render", () => {
+			NoProfile("Forward render", () => {
 				if(!DeferredEnabled) {
 					GL.Viewport(0, 0, Width, Height);
 					GL.ClearColor(0, 0, 0, 1);
@@ -231,6 +233,8 @@ namespace OpenEQ.Engine {
 				GL.DepthMask(true);
 				GL.Finish();
 			});
+			
+			Debugging.Draw(ProjectionView);
 
 			Gui.Render((float) e.Time);
 
