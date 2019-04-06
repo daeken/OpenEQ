@@ -1,8 +1,4 @@
-﻿using System;
-using System.Numerics;
-using OpenTK.Graphics.OpenGL4;
-using OpenEQ.Common;
-using static OpenEQ.Engine.Globals;
+﻿using System.Numerics;
 
 namespace OpenEQ.Engine {
 	public class PointLight {

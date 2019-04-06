@@ -1,10 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace OpenEQ.Netcode {
+﻿namespace OpenEQ.Netcode {
     public enum SessionOp : ushort {
         Request = 0x0001, 
         Response = 0x0002, 

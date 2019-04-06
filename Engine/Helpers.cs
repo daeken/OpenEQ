@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
-using OpenEQ.Common;
 using static OpenEQ.Engine.Globals;
 
 namespace OpenEQ.Engine {

@@ -1,6 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>netcoreapp2.1</TargetFramework>
+    <TargetFramework>netcoreapp3.0</TargetFramework>
+    <LangVersion>8</LangVersion>
     <AssemblyName>OpenEQ.ConverterCore</AssemblyName>
     <RootNamespace>OpenEQ.ConverterCore</RootNamespace>
   </PropertyGroup>
@@ -10,6 +11,6 @@
     <ProjectReference Include="..\LegacyFileReader\LegacyFileReader.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="morelinq" Version="3.0.0" />
+    <PackageReference Include="morelinq" Version="3.1.0" />
   </ItemGroup>
 </Project>

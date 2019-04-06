@@ -4,14 +4,12 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Numerics;
-using System.Runtime.Serialization;
 using System.Security.Cryptography;
 using ImageLib;
 using MoreLinq;
 using OpenEQ.Common;
 using OpenEQ.LegacyFileReader;
 using static System.Console;
-using Extensions = OpenEQ.Common.Extensions;
 
 namespace OpenEQ.ConverterCore {
 	public enum ConvertedType {

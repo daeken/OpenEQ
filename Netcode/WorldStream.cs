@@ -60,8 +60,8 @@ namespace OpenEQ.Netcode {
 					break;
 				case WorldOp.PostEnterWorld:
 					// The emu doesn't do anything with ApproveWorld and WorldClientReady so we may be able to just skip them both.
-					Send(AppPacket.Create(WorldOp.ApproveWorld, null));
-					Send(AppPacket.Create(WorldOp.WorldClientReady, null));
+					Send(AppPacket.Create(WorldOp.ApproveWorld));
+					Send(AppPacket.Create(WorldOp.WorldClientReady));
 					break;
 				case WorldOp.ApproveName:
 					CharacterCreateNameApproval?.Invoke(this, packet.Data[0] == 1);

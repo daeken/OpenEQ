@@ -1,7 +1,6 @@
-﻿using System;
-using System.Threading.Tasks;
-using OpenEQ.Netcode;
+﻿using System.Threading.Tasks;
 using MoreLinq;
+using OpenEQ.Netcode;
 using static System.Console;
 
 namespace NetClient {

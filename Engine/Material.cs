@@ -1,10 +1,4 @@
-﻿using System;
-using System.IO;
-using System.Linq;
-using System.Numerics;
-using ImageLib;
-using OpenTK.Graphics.OpenGL4;
-using static OpenEQ.Engine.Globals;
+﻿using System.Numerics;
 
 namespace OpenEQ.Engine {
 	public enum MaterialUse {

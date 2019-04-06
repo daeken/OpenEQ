@@ -14,7 +14,7 @@ namespace OpenEQ.Netcode {
 					WriteLine(e.StackTrace);
 					WriteLine("Outer stack trace:");
 					WriteLine(tlst);
-					System.Environment.Exit(0);
+					Environment.Exit(0);
 				}
 			}, longRunning ? TaskCreationOptions.LongRunning : TaskCreationOptions.None);
 		}

@@ -4,7 +4,6 @@ using System.Numerics;
 using MoreLinq;
 using OpenEQ.Common;
 using OpenEQ.LegacyFileReader;
-using static System.Console;
 
 namespace OpenEQ.ConverterCore {
 	public class MeshPiece {

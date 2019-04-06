@@ -4,7 +4,6 @@ using System.Diagnostics;
 using System.Linq;
 using System.Numerics;
 using CollisionManager;
-using OpenEQ.Common;
 using static System.MathF;
 
 namespace OpenEQ.Engine {
@@ -15,7 +14,7 @@ namespace OpenEQ.Engine {
 		public static readonly FpsCamera Camera = new FpsCamera(vec3(116, 848, 80));
 		public static CollisionHelper Collider;
 		
-		public static readonly Stopwatch Stopwatch = new Stopwatch();
+		public static readonly Stopwatch Stopwatch = Stopwatch.StartNew();
 		public static float Time => Stopwatch.ElapsedMilliseconds / 1000f;
 		public static float FrameTime;
 		
@@ -75,7 +74,7 @@ namespace OpenEQ.Engine {
 			var pre = Stopwatch.ElapsedTicks;
 			func();
 			var post = Stopwatch.ElapsedTicks;
-			var ms = (float) (post - pre) / System.Diagnostics.Stopwatch.Frequency * 1000;
+			var ms = (float) (post - pre) / Stopwatch.Frequency * 1000;
 			var pr = ProfileRunning.ContainsKey(name)
 				? ProfileRunning[name]
 				: ProfileRunning[name] = new List<float>();

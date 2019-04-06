@@ -1,11 +1,8 @@
 ﻿using System;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
-using static System.Console;
-using static OpenEQ.Netcode.Utility;
 using System.IO;
-using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using Ionic.Zlib;
+using static OpenEQ.Netcode.Utility;
 
 namespace OpenEQ.Netcode {
     public class Packet {

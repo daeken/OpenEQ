@@ -5,7 +5,6 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Numerics;
-using System.Threading.Tasks;
 using ImageLib;
 using MoreLinq;
 using OpenEQ.Common;
