@@ -3,14 +3,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using MoreLinq;
-using OpenTK.Graphics.OpenGL4;
 using OpenEQ.Common;
-using OpenTK;
+using OpenTK.Graphics.OpenGL4;
 using static OpenEQ.Engine.Globals;
-using static System.Console;
-using Vector2 = System.Numerics.Vector2;
-using Vector3 = System.Numerics.Vector3;
-using Vector4 = System.Numerics.Vector4;
 
 namespace OpenEQ.Engine {
 	public partial class EngineCore {
@@ -110,7 +105,8 @@ void main() {
 				GL.Viewport(0, 0, Width, Height);
 				FBO.Bind();
 				GL.ClearColor(0, 0, 0, 1);
-				GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+				GL.ClearStencil(0);
+				GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
 		
 				GL.Enable(EnableCap.CullFace);
 				GL.Enable(EnableCap.DepthTest);

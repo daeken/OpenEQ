@@ -1,11 +1,8 @@
-﻿using System.Security.Cryptography;
+﻿using System;
+using System.Collections.Generic;
 using static System.Console;
 using static System.Text.Encoding;
 using static OpenEQ.Netcode.Utility;
-using System;
-using System.IO;
-using System.Reflection;
-using System.Collections.Generic;
 
 namespace OpenEQ.Netcode {
 	public class LoginStream : EQStream {

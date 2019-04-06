@@ -1,0 +1,13 @@
+<UserControl
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Viewbox>
+        <DockPanel Height="400">
+            <StackPanel Margin="20" Orientation="Horizontal" DockPanel.Dock="Top">
+                <TextBlock Text="FPS:" />
+                <TextBlock Text="{`'%.1f' % engine.FPS`}" />
+            </StackPanel>
+        </DockPanel>
+    </Viewbox>
+</UserControl>

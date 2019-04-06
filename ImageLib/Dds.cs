@@ -23,10 +23,7 @@
  */
 
 using System;
-using System.Collections.Generic;
-using System.Drawing;
 using System.IO;
-using System.Linq;
 
 namespace ImageLib {
 	public class FileFormatException : Exception {
@@ -120,9 +117,6 @@ namespace ImageLib {
 			}
 		}
 
-		public Dds() {
-		}
-
 		public static Dds Load(string Filename) {
 			using(var _stream = File.OpenRead(Filename)) {
 				return Load(Path.GetFileName(Filename), _stream);
@@ -139,7 +133,7 @@ namespace ImageLib {
 			var _dds = new Dds();
 
 			using(var _data = new BinaryReader(Source)) {
-				if(_data.ReadInt32() != Dds.MAGIC_NUMBER) {
+				if(_data.ReadInt32() != MAGIC_NUMBER) {
 					throw new FileFormatException("DDSImage.Load() requires a .dds texture file stream");
 				}
 
@@ -300,9 +294,9 @@ namespace ImageLib {
 							_dds.Images = null;
 
 							throw new FileFormatException("Unable to read pixel data.");
-						} else {
-							Array.Resize<Image>(ref _dds.Images, _level);
 						}
+
+						Array.Resize(ref _dds.Images, _level);
 					}
 				}
 			}

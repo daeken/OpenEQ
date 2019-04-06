@@ -97,7 +97,7 @@ namespace System.IO {
 		public static string GetFileName(string path) {
 			char chr;
 			if(path != null) {
-				CheckInvalidPathChars(path, false);
+				CheckInvalidPathChars(path);
 				var length = path.Length;
 				var num = length;
 				do {

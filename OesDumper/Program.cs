@@ -1,7 +1,5 @@
-﻿using System;
-using System.IO;
+﻿using System.IO;
 using System.IO.Compression;
-using System.Linq;
 using MoreLinq;
 using OpenEQ.Common;
 using static System.Console;

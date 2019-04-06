@@ -2,8 +2,8 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
-using OpenEQ.Common;
 using MoreLinq;
+using OpenEQ.Common;
 using OpenTK.Graphics.OpenGL4;
 
 namespace OpenEQ.Engine {

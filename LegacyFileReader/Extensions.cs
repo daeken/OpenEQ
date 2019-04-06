@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using MoreLinq.Extensions;
-using OpenEQ.Common;
+﻿using System.IO;
 
 namespace OpenEQ.LegacyFileReader {
 	public static class Extensions {

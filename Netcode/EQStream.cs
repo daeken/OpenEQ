@@ -1,7 +1,7 @@
 ﻿using System;
+using System.Threading.Tasks;
 using static System.Console;
 using static OpenEQ.Netcode.Utility;
-using System.Threading.Tasks;
 
 namespace OpenEQ.Netcode {
 	public abstract class EQStream {
@@ -18,7 +18,7 @@ namespace OpenEQ.Netcode {
 		uint sessionID;
 
 		ushort lastAckRecieved, lastAckSent;
-		bool resendAck = false;
+		bool resendAck;
 		Packet[] sentPackets, futurePackets;
 
 		public bool Disconnecting;

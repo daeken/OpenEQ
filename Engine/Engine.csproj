@@ -1,9 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>netcoreapp2.1</TargetFramework>
+    <TargetFramework>netcoreapp3.0</TargetFramework>
+    <LangVersion>8</LangVersion>
     <AssemblyName>OpenEQ.Engine</AssemblyName>
     <RootNamespace>OpenEQ.Engine</RootNamespace>
-    <LangVersion>7.2</LangVersion>
+    <LangVersion>8</LangVersion>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -12,13 +13,15 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="morelinq" Version="3.0.0" />
-    <PackageReference Include="OpenTK.NETCore" Version="1.1.2749.6433" />
+    <PackageReference Include="IronPython" Version="2.7.10-alpha0" />
+    <PackageReference Include="morelinq" Version="3.1.0" />
+    <PackageReference Include="Noesis.App" Version="2.2.0-rc2" />
+    <PackageReference Include="OpenTK.NetStandard" Version="1.0.7-prerelease" />
+    <PackageReference Include="PrettyPrinter" Version="1.0.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\CollisionManager\CollisionManager.csproj" />
     <ProjectReference Include="..\Common\Common.csproj" />
     <ProjectReference Include="..\ImageLib\ImageLib.csproj" />
-    <ProjectReference Include="..\NsimGui\NsimGui.csproj" />
   </ItemGroup>
 </Project>

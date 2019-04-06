@@ -19,14 +19,14 @@ namespace OpenEQ.Netcode {
     public enum ValidationMode : byte {
         None = 0,
         Crc = 2
-    };
+    }
 
     [Flags]
     public enum FilterMode : byte {
         None = 0,
         Compressed = 1,
         Encoded = 4
-    };
+    }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct SessionResponse {

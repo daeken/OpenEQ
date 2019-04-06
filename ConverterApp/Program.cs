@@ -1,10 +1,9 @@
 ﻿using System;
 using System.Diagnostics;
-using System.IO;
 using OpenEQ.ConverterCore;
 
 namespace OpenEQ.ConverterApp {
-	internal class Program {
+	class Program {
 		static void Main(string[] args) {
 			var sw = new Stopwatch();
 			Console.WriteLine("Starting conversion");

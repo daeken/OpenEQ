@@ -23,7 +23,6 @@
 
 
 using System;
-using System.Diagnostics;
 
 namespace OpenEQ.Netcode {
 	internal class DESCrypto {
@@ -320,7 +319,7 @@ namespace OpenEQ.Netcode {
 			int indx = 0;
 
 			foreach(byte bitPos in PC1) {
-				keyPC1[indx++] = (byte) ((key[(int) bitPos >> 3] >> (7 ^ (bitPos & 7))) & 1);
+				keyPC1[indx++] = (byte) ((key[bitPos >> 3] >> (7 ^ (bitPos & 7))) & 1);
 			}
 
 			int j;
@@ -328,12 +327,12 @@ namespace OpenEQ.Netcode {
 				int b = keyBitSize >> 1;
 
 				for(j = 0; j < b; j++) {
-					int s = j + (int) leftRotTotal[i];
+					int s = j + leftRotTotal[i];
 					keyRot[j] = keyPC1[s < b ? s : s - b];
 				}
 
 				for(j = b; j < keyBitSize; j++) {
-					int s = j + (int) leftRotTotal[i];
+					int s = j + leftRotTotal[i];
 					keyRot[j] = keyPC1[s < keyBitSize ? s : s - b];
 				}
 
@@ -341,7 +340,7 @@ namespace OpenEQ.Netcode {
 
 				j = 0;
 				foreach(byte bitPos in PC2) {
-					if(keyRot[(int) bitPos] != 0) {
+					if(keyRot[bitPos] != 0) {
 						keySchedule[keyOffs + (j / 6)] |= (byte) (0x80 >> ((j % 6) + 2));
 					}
 					j++;
@@ -372,15 +371,15 @@ namespace OpenEQ.Netcode {
 			if(preSwap && BitConverter.IsLittleEndian)
 				BSwap(input);
 
-			int offs1 = (((int) (input[0]) >> 4)) << 1;
-			int offs2 = (1 << 5) + ((((int) input[0]) & 0xF) << 1);
+			int offs1 = ((input[0] >> 4)) << 1;
+			int offs2 = (1 << 5) + ((input[0] & 0xF) << 1);
 
 			uint d1 = permTab[offs1++] | permTab[offs2++];
 			uint d2 = permTab[offs1] | permTab[offs2];
 
 			int max = 8 << 1;
 			for(int i = 2, indx = 1; i < max; i += 2, indx++) {
-				int ii = (int) input[indx];
+				int ii = input[indx];
 				offs1 = (i << 5) + ((ii >> 4) << 1);
 				offs2 = ((i + 1) << 5) + ((ii & 0xF) << 1);
 

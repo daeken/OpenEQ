@@ -13,6 +13,7 @@
 * DO NOT EDIT
 *
 */
+
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -308,12 +309,12 @@ namespace OpenEQ.Netcode {
 			DeltaHeading = (short) (((int) ((_databuf >> 32) & 0x3FF) ^ 0x200) - 0x200);
 			DeltaY = (short) (((int) ((_databuf >> 42) & 0x1FFF) ^ 0x1000) - 0x1000);
 			_databuf = br.ReadUInt64();
-			Y = (int) (((int) (_databuf & 0x7FFFF) ^ 0x40000) - 0x40000);
+			Y = ((int) (_databuf & 0x7FFFF) ^ 0x40000) - 0x40000;
 			Animation = (short) (((int) ((_databuf >> 19) & 0x1FFF) ^ 0x1000) - 0x1000);
 			Heading = (ushort) ((_databuf >> 32) & 0xFFF);
-			X = (int) (((int) ((_databuf >> 44) & 0x7FFFF) ^ 0x40000) - 0x40000);
+			X = ((int) ((_databuf >> 44) & 0x7FFFF) ^ 0x40000) - 0x40000;
 			_databuf = br.ReadUInt32();
-			Z = (int) (((int) (_databuf & 0x7FFFF) ^ 0x40000) - 0x40000);
+			Z = ((int) (_databuf & 0x7FFFF) ^ 0x40000) - 0x40000;
 			DeltaZ = (short) (((int) ((_databuf >> 19) & 0x1FFF) ^ 0x1000) - 0x1000);
 		}
 
@@ -501,23 +502,23 @@ namespace OpenEQ.Netcode {
 		public void Unpack(BinaryReader br) {
 			uint _databuf;
 			_databuf = br.ReadUInt32();
-			Pet = (bool) ((_databuf & 0x1) != 0);
-			AFK = (bool) (((_databuf >> 1) & 0x1) != 0);
-			Sneak = (bool) (((_databuf >> 2) & 0x1) != 0);
-			LFG = (bool) (((_databuf >> 3) & 0x1) != 0);
-			Invisible = (bool) (((_databuf >> 5) & 0x1) != 0);
-			GM = (bool) (((_databuf >> 17) & 0x1) != 0);
+			Pet = (_databuf & 0x1) != 0;
+			AFK = ((_databuf >> 1) & 0x1) != 0;
+			Sneak = ((_databuf >> 2) & 0x1) != 0;
+			LFG = ((_databuf >> 3) & 0x1) != 0;
+			Invisible = ((_databuf >> 5) & 0x1) != 0;
+			GM = ((_databuf >> 17) & 0x1) != 0;
 			Roleplay = (Roleplay) ((_databuf >> 18) & 0x3);
 			Gender = (Gender) ((_databuf >> 20) & 0x3);
-			Linkdead = (bool) (((_databuf >> 22) & 0x1) != 0);
-			BetaBuffed = (bool) (((_databuf >> 23) & 0x1) != 0);
-			ShowHelm = (bool) (((_databuf >> 24) & 0x1) != 0);
-			Targetable = (bool) (((_databuf >> 26) & 0x1) != 0);
-			HotkeyTargetable = (bool) (((_databuf >> 27) & 0x1) != 0);
-			ShowName = (bool) (((_databuf >> 28) & 0x1) != 0);
-			Statue = (bool) (((_databuf >> 29) & 0x1) != 0);
-			Trader = (bool) (((_databuf >> 30) & 0x1) != 0);
-			Buyer = (bool) (((_databuf >> 31) & 0x1) != 0);
+			Linkdead = ((_databuf >> 22) & 0x1) != 0;
+			BetaBuffed = ((_databuf >> 23) & 0x1) != 0;
+			ShowHelm = ((_databuf >> 24) & 0x1) != 0;
+			Targetable = ((_databuf >> 26) & 0x1) != 0;
+			HotkeyTargetable = ((_databuf >> 27) & 0x1) != 0;
+			ShowName = ((_databuf >> 28) & 0x1) != 0;
+			Statue = ((_databuf >> 29) & 0x1) != 0;
+			Trader = ((_databuf >> 30) & 0x1) != 0;
+			Buyer = ((_databuf >> 31) & 0x1) != 0;
 		}
 
 		public byte[] Pack() {
@@ -682,12 +683,12 @@ namespace OpenEQ.Netcode {
 			DeltaHeading = (short) (((int) ((_databuf >> 32) & 0x3FF) ^ 0x200) - 0x200);
 			DeltaY = (short) (((int) ((_databuf >> 42) & 0x1FFF) ^ 0x1000) - 0x1000);
 			_databuf = br.ReadUInt64();
-			Y = (int) (((int) (_databuf & 0x7FFFF) ^ 0x40000) - 0x40000);
+			Y = ((int) (_databuf & 0x7FFFF) ^ 0x40000) - 0x40000;
 			Animation = (short) (((int) ((_databuf >> 19) & 0x3FF) ^ 0x200) - 0x200);
 			Heading = (ushort) ((_databuf >> 32) & 0xFFF);
-			X = (int) (((int) ((_databuf >> 44) & 0x7FFFF) ^ 0x40000) - 0x40000);
+			X = ((int) ((_databuf >> 44) & 0x7FFFF) ^ 0x40000) - 0x40000;
 			_databuf = br.ReadUInt32();
-			Z = (int) (((int) (_databuf & 0x7FFFF) ^ 0x40000) - 0x40000);
+			Z = ((int) (_databuf & 0x7FFFF) ^ 0x40000) - 0x40000;
 			DeltaZ = (short) (((int) ((_databuf >> 19) & 0x1FFF) ^ 0x1000) - 0x1000);
 		}
 

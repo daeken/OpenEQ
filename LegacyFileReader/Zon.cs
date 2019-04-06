@@ -7,7 +7,6 @@ using System.Numerics;
 using System.Text;
 using MoreLinq;
 using OpenEQ.Common;
-using static System.Console;
 
 namespace OpenEQ.LegacyFileReader {
 	public class Zon {

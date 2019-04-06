@@ -1,12 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Numerics;
 using CollisionManager;
-using ImageLib;
-using OpenTK.Graphics.OpenGL4;
 using OpenEQ.Common;
+using OpenTK.Graphics.OpenGL4;
 using static OpenEQ.Engine.Globals;
 
 namespace OpenEQ.Engine {

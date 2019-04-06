@@ -1,7 +1,5 @@
 ﻿using System;
-using System.Linq;
 using System.Numerics;
-using Microsoft.Scripting.Utils;
 using OpenEQ.Common;
 using static System.MathF;
 using static OpenEQ.Engine.Globals;

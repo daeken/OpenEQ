@@ -256,9 +256,9 @@ namespace OpenEQ.Common {
 		
 		public OESRegion() : base("regn") {}
 		
-		protected override void SerializeData(BinaryWriter bw) => throw new System.NotImplementedException();
+		protected override void SerializeData(BinaryWriter bw) => throw new NotImplementedException();
 
-		public override string ToString() => $"OESRegion";
+		public override string ToString() => "OESRegion";
 	}
 
 	public class OESCharacter : OESChunk {
