@@ -29,6 +29,8 @@ namespace OpenEQ.Engine {
 
 		public readonly View View;
 
+		public event Action ReloadUI;
+
 		public double FPS => FrameTimes.Count == 0 ? 0 : 1 / (FrameTimes.Sum() / FrameTimes.Count);
 
 		Matrix4x4 ProjectionView;
@@ -116,6 +118,8 @@ namespace OpenEQ.Engine {
 			Console.WriteLine($"Building octree for {ot.Count} triangles");
 			Collider = new CollisionHelper(new Octree(new CollisionManager.Mesh(ot), 250));
 			Console.WriteLine("Built octree");
+			
+			ReloadUI?.Invoke();
 
 			//Debugging.Add(new Wireframe(ot));
 
@@ -225,6 +229,9 @@ namespace OpenEQ.Engine {
 					case Key.Escape:
 					case Key.Tilde:
 						Exit();
+						break;
+					case Key.U:
+						ReloadUI?.Invoke();
 						break;
 				}
 			if(movement.Length() > 0)

@@ -33,11 +33,14 @@ namespace OpenEQ {
 				if(modelref.TryGetTarget(out var model))
 					model.Update();
 			});
-			
-			foreach(var fn in Directory.EnumerateFiles("UI", "*.py").Concat(Directory.EnumerateFiles("UI", "*.xaml"))) {
-				var engine = Python.CreateEngine();
-				var scope = engine.CreateScope();
-				engine.CreateScriptSourceFromString(@"
+
+			Engine.ReloadUI += () => {
+				((Grid) Engine.View.Content).Children.Clear();
+
+				foreach(var fn in Directory.EnumerateFiles("UI", "*.py").Concat(Directory.EnumerateFiles("UI", "*.xaml"))) {
+					var engine = Python.CreateEngine();
+					var scope = engine.CreateScope();
+					engine.CreateScriptSourceFromString(@"
 import clr
 clr.AddReference('Noesis.App')
 clr.AddReference('Noesis.GUI')
@@ -75,12 +78,14 @@ def loadXaml(xaml):
     for k, v in bindings.items():
         model[k] = v
     return model
-				").Execute(scope);
-				var source = fn.EndsWith(".xaml")
-					? engine.CreateScriptSourceFromString($"loadXaml('''{File.ReadAllText(fn)}''')")
-					: engine.CreateScriptSourceFromFile(fn);
-				source.Execute(scope);
-			}
+					").Execute(scope);
+					var source = fn.EndsWith(".xaml")
+						? engine.CreateScriptSourceFromString($"loadXaml('''{File.ReadAllText(fn)}''')")
+						: engine.CreateScriptSourceFromFile(fn);
+					source.Execute(scope);
+				}
+			};
+			
 			Engine.Start();
 		}
 
