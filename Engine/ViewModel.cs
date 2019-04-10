@@ -34,7 +34,6 @@ namespace OpenEQ.Engine {
 			set {
 				switch(value) {
 					case PythonFunction pf:
-						// ReSharper disable once PossibleInvalidCastException
 						this[key] = (Func<object>) (dynamic) pf;
 						return;
 					case Func<object> reactive: {
