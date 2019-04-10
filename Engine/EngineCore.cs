@@ -92,7 +92,7 @@ namespace OpenEQ.Engine {
 			Resize += (_, e) => {
 				View.SetSize(Width, Height);
 				ProjectionMat =
-					Matrix4x4.CreatePerspectiveFieldOfView(45 * (MathF.PI / 180), (float) Width / Height, 1, 5000);
+					Matrix4x4.CreatePerspectiveFieldOfView(45 * (MathF.PI / 180), (float) Width / Height, 1, 2000);
 			};
 		}
 		
@@ -264,7 +264,7 @@ namespace OpenEQ.Engine {
 				if(!DeferredEnabled) {
 					GL.Viewport(0, 0, Width, Height);
 					GL.ClearStencil(0);
-					GL.ClearColor(0, 0, 0, 1);
+					GL.ClearColor(0.45f, 0.45f, 0.45f, 1);
 					GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
 		
 					Models.ForEach(model => model.Draw(ProjectionView, forward: false));

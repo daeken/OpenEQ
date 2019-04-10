@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using System;
+using System.Numerics;
 
 namespace OpenEQ.Engine {
 	public enum MaterialUse {
@@ -11,6 +12,18 @@ namespace OpenEQ.Engine {
 		public virtual bool WantNormals => Deferred;
 		
 		protected abstract string FragmentShader { get; }
+
+		string FullFragmentShader => @"
+#version 410
+precision highp float;
+uniform vec3 uFogColor;
+uniform float uFogDensity;
+in vec4 vPosition;
+vec4 applyFog(vec4 color) {
+	float dist = log(vPosition.z);
+	return vec4(mix(color.rgb, uFogColor * mix(0.75 + (color.r + color.g + color.b) / 12, 0.75, smoothstep(log(1000), log(1050), dist)), clamp(pow(max(0, dist - log(250)), 3), 0, 1)), color.a);
+}
+		" + FragmentShader;
 
 		Program StaticProgram, AnimatedProgram;
 
@@ -26,6 +39,7 @@ layout (location = 2) in vec2 aTexCoord;
 uniform mat4 uModelMat;
 uniform mat4 uProjectionViewMat;
 out vec2 vTexCoord;
+out vec4 vPosition;
 					";
 					if(WantNormals)
 						ret += @"
@@ -33,7 +47,7 @@ out vec3 vNormal;
 						";
 					ret += @"
 void main() {
-	gl_Position = uProjectionViewMat * uModelMat * aPosition;
+	gl_Position = vPosition = uProjectionViewMat * uModelMat * aPosition;
 	vTexCoord = aTexCoord;
 					";
 					if(WantNormals)
@@ -60,6 +74,7 @@ uniform mat4 uModelMat;
 uniform mat4 uProjectionViewMat;
 uniform float uInterp;
 out vec2 vTexCoord;
+out vec4 vPosition;
 					";
 					if(WantNormals)
 						ret += @"
@@ -67,7 +82,7 @@ out vec3 vNormal;
 						";
 					ret += @"
 void main() {
-	gl_Position = uProjectionViewMat * uModelMat * mix(aPosition1, aPosition2, uInterp);
+	gl_Position = vPosition = uProjectionViewMat * uModelMat * mix(aPosition1, aPosition2, uInterp);
 	vTexCoord = mix(aTexCoord1, aTexCoord2, uInterp);
 					";
 					if(WantNormals)
@@ -83,20 +98,23 @@ void main() {
 			}
 			return null;
 		}
+
+		protected Program GetProgram(MaterialUse use) => use switch {
+			MaterialUse.Static =>
+				StaticProgram ??= new Program(GenerateVertexShader(MaterialUse.Static), FullFragmentShader),
+			MaterialUse.Animated =>
+				AnimatedProgram ??= new Program(GenerateVertexShader(MaterialUse.Animated), FullFragmentShader), 
+			_ => throw new NotImplementedException($"Unknown MaterialUse: {use}")
+		};
 		
-		protected Program GetProgram(MaterialUse use) {
-			switch(use) {
-				case MaterialUse.Static:
-					return StaticProgram ?? (StaticProgram =
-						       new Program(GenerateVertexShader(MaterialUse.Static), FragmentShader));
-				case MaterialUse.Animated:
-					return AnimatedProgram ?? (AnimatedProgram =
-						       new Program(GenerateVertexShader(MaterialUse.Animated), FragmentShader));
-			}
-			return null;
+		protected abstract void UseInternal(Matrix4x4 projView, MaterialUse use);
+
+		public void Use(Matrix4x4 projView, MaterialUse use) {
+			UseInternal(projView, use);
+			var program = GetProgram(use);
+			var fog = 0.6f;
+			program.SetUniform("uFogColor", new Vector3(fog));
 		}
-		
-		public abstract void Use(Matrix4x4 projView, MaterialUse use);
 
 		public void SetModelMatrix(Matrix4x4 modelMat) {
 			StaticProgram?.SetUniform("uModelMat", modelMat);

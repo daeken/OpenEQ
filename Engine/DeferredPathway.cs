@@ -156,6 +156,8 @@ void main() {
 			});
 
 			NoProfile("- Tile render", () => {
+				GL.ClearColor(0.2f, 0.2f, 0.2f, 1);
+				GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 				GL.Enable(EnableCap.DepthTest);
 				QuadVAO.Bind(() => {
 					Program.Use();

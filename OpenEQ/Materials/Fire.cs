@@ -9,8 +9,6 @@ namespace OpenEQ.Materials {
 		public override bool Deferred => false;
 
 		protected override string FragmentShader => @"
-#version 410
-precision highp float;
 in vec2 vTexCoord;
 out vec4 color;
 uniform float uTime;
@@ -52,6 +50,7 @@ void main() {
 	vec2 tc = abs(mod(vTexCoord, 1));
 	if(tc.y > .95) discard;
 	color = (fire(mod(time, 10), tc) + fire(mod(time + .05, 10), tc)) / 2;
+	color = applyFog(color);
 }
 		";
 		static Texture Texture;
@@ -65,7 +64,7 @@ void main() {
 			}
 		}
 
-		public override void Use(Matrix4x4 projView, MaterialUse use) {
+		protected override void UseInternal(Matrix4x4 projView, MaterialUse use) {
 			var program = GetProgram(use);
 			program.Use();
 			program.SetUniform("uTex", 0);
