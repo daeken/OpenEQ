@@ -1,0 +1,6 @@
+﻿# Requirements for structgen.py
+# Use following command:
+# For python 2.7 where install is located at C:\Python27
+# Prompt> C:\Python27\Scripts\pip.exe install -r requirements.txt
+
+pyyaml==5.1.2
