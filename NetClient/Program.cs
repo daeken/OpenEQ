@@ -1,4 +1,5 @@
-﻿using System.Threading.Tasks;
+﻿using System;
+using System.Threading.Tasks;
 using MoreLinq;
 using OpenEQ.Netcode;
 using static System.Console;
@@ -11,8 +12,14 @@ namespace NetClient {
 		}
 		
 		static void Main(string[] args) {
-			while(true) {
-				var loginStream = new LoginStream(args[0], int.Parse(args[1]));
+            WriteLine("Starting NETClient");
+
+            var host = GetIndexValueOrDefault(args, 0, "127.0.0.1", (string value) => value);
+            var port = GetIndexValueOrDefault(args, 1, 5999,        (string value) => int.Parse(value));
+            WriteLine($"Connecting to LoginServer @ {host}:{port}");
+
+            while(true) {
+				var loginStream = new LoginStream(host, port);
 				loginStream.LoginSuccess += (_, success) => {
 					if(success) {
 						WriteLine($"Login succeeded (accountID={loginStream.AccountID}).  Requesting server list");
@@ -41,14 +48,26 @@ namespace NetClient {
 					ConnectWorld(loginStream, server.Value);
 				};
 
-				loginStream.Login(Input("Username"), Input("Password"));
+                var username = Input("Username");
+                var password = Input("Password");
+
+                loginStream.Login(username, password);
 
 				while(!loginStream.Disconnecting)
 					Task.Delay(100).Wait();
 			}
 		}
 
-		static void ConnectWorld(LoginStream ls, ServerListElement server) {
+        private static TResult GetIndexValueOrDefault<TResult>(string[] args, int index, TResult defaultValue, Func<string, TResult> parser)
+        {
+            if (args.Length <= index)
+            {
+                return defaultValue;
+            }
+            return parser(args[index]);
+        }
+
+        static void ConnectWorld(LoginStream ls, ServerListElement server) {
 			WriteLine($"Selected {server}.  Connecting.");
 			var worldStream = new WorldStream(server.WorldIP, 9000, ls.AccountID, ls.SessionKey);
 			

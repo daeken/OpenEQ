@@ -54,16 +54,20 @@ namespace OpenEQ.Netcode {
 					Send(AppPacket.Create(LoginOp.Login, new Login(), CryptoBlob));
 					break;
 				case LoginOp.LoginAccepted:
-					if(packet.Data.Length < 90)
+					if(packet.Data.Length < 27)
 						LoginSuccess?.Invoke(this, false);
 					else {
 						var dec = Decrypt(packet.Data, 10);
 						var rep = new LoginReply(dec);
-						AccountID = rep.AcctID;
-						SessionKey = rep.Key;
-						LoginSuccess?.Invoke(this, true);
-					}
-
+                        if (String.IsNullOrWhiteSpace(rep.Key))
+                            LoginSuccess?.Invoke(this, false);
+                        else
+                        {
+                            AccountID = rep.AcctID;
+                            SessionKey = rep.Key;
+                            LoginSuccess?.Invoke(this, true);
+                        }
+                    }
 					break;
 				case LoginOp.ServerListResponse:
 					var header = packet.Get<ServerListHeader>();

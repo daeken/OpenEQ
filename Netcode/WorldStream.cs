@@ -34,7 +34,7 @@ namespace OpenEQ.Netcode {
 		}
 
 		protected override void HandleAppPacket(AppPacket packet) {
-			WriteLine($"Foo? {(WorldOp) packet.Opcode}");
+			WriteLine($"WorldStream: {(WorldOp) packet.Opcode}");
 			switch((WorldOp) packet.Opcode) {
 				case WorldOp.GuildsList:
 					break;
