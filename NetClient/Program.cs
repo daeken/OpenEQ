@@ -14,8 +14,8 @@ namespace NetClient {
 		static void Main(string[] args) {
             WriteLine("Starting NETClient");
 
-            var host = GetIndexValueOrDefault(args, 0, "127.0.0.1");
-            var port = GetIndexValueOrDefault(args, 1, 5999, (string value) => int.Parse(value));
+            var host = GetIndexValueOrDefault(args, 0, "127.0.0.1", (string value) => value);
+            var port = GetIndexValueOrDefault(args, 1, 5999,        (string value) => int.Parse(value));
             WriteLine($"Connecting to LoginServer @ {host}:{port}");
 
             while(true) {
@@ -58,10 +58,6 @@ namespace NetClient {
 			}
 		}
 
-        private static TResult GetIndexValueOrDefault<TResult>(string[] args, int index, TResult defaultValue)
-        {
-            return GetIndexValueOrDefault(args, index, defaultValue, (string value) => { return defaultValue; });
-        }
         private static TResult GetIndexValueOrDefault<TResult>(string[] args, int index, TResult defaultValue, Func<string, TResult> parser)
         {
             if (args.Length <= index)
