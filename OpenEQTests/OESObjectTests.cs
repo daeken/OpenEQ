@@ -7,13 +7,20 @@ namespace OpenEQTests
         [SetUp]
         public void Setup()
         {
-            oESObject = new OpenEQ.Common.OESObject() { Name = testObjectName };
+            oESObject = new OpenEQ.Common.OESObject(testObjectName);
         }
 
         [Test]
         public void Test1()
         {
-            Assert.That(testObjectName, Is.EqualTo(testObjectName.ToString()));
+            Assert.That(testObjectName, Is.Not.EqualTo(oESObject.ToString()));
+        }
+
+        [Test]
+        public void Test2()
+        {
+            OpenEQ.Common.OESObject oESOBJ = new OpenEQ.Common.OESObject();
+            Assert.That(oESOBJ.Name, Is.Not.EqualTo(oESOBJ.ToString()));
         }
     }
 }
