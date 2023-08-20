@@ -25,6 +25,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "OesDumper", "OesDumper\OesD
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "CollisionManager", "CollisionManager\CollisionManager.csproj", "{13753CFB-C9EC-4E6B-BB49-FE928B37DFE8}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenEQTests", "OpenEQTests\OpenEQTests.csproj", "{81EDA2BB-86F7-4D1B-9C21-F25E0B77809D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -75,8 +77,15 @@ Global
 		{13753CFB-C9EC-4E6B-BB49-FE928B37DFE8}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{13753CFB-C9EC-4E6B-BB49-FE928B37DFE8}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{13753CFB-C9EC-4E6B-BB49-FE928B37DFE8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{81EDA2BB-86F7-4D1B-9C21-F25E0B77809D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{81EDA2BB-86F7-4D1B-9C21-F25E0B77809D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{81EDA2BB-86F7-4D1B-9C21-F25E0B77809D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{81EDA2BB-86F7-4D1B-9C21-F25E0B77809D}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {0081734D-6248-4A69-89F8-7A6632A08593}
 	EndGlobalSection
 EndGlobal
