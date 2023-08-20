@@ -25,4 +25,4 @@ jobs:
       - name: Restore nuget packages
         run: nuget restore OpenEQ.sln
       - name: Build solution
-        run: msbuild -t:build -property:Configuration=Release OpenEQ.sln
+        run: dotnet build OpenEQ.sln
