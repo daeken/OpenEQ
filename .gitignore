@@ -4,3 +4,4 @@ obj
 .DS_Store
 *.pyc
 *.zip
+/.vs

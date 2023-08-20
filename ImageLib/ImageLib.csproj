@@ -1,14 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>netcoreapp3.0</TargetFramework>
+    <TargetFramework>netcoreapp3.1</TargetFramework>
     <LangVersion>8</LangVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Be.IO-netstandard" Version="1.0.3" />
     <PackageReference Include="Crc32.NET" Version="1.2.0" />
+    <PackageReference Include="DotNetZip" Version="1.16.0" />
     <PackageReference Include="SixLabors.ImageSharp" Version="1.0.0-beta0006" />
-  </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\Zlib.Portable\Zlib.Portable.csproj" />
   </ItemGroup>
 </Project>
