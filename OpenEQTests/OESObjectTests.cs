@@ -6,7 +6,7 @@ namespace OpenEQTests
     public class OESObjectTests
     {
         OpenEQ.Common.OESObject oESObject;
-        String testObjectName = "testObjectName";
+        String testObjectName = "Rackspace";
         [SetUp]
         public void Setup()
         {
