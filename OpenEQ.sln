@@ -1,28 +1,31 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenEQ", "OpenEQ\OpenEQ.csproj", "{1A3917DB-5837-4245-9D0F-A51C673557AF}"
+# Visual Studio Version 17
+VisualStudioVersion = 17.7.34009.444
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "OpenEQ", "OpenEQ\OpenEQ.csproj", "{1A3917DB-5837-4245-9D0F-A51C673557AF}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Engine", "Engine\Engine.csproj", "{1A8C4E75-ED20-431E-A2C8-96B01D19F3AF}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Engine", "Engine\Engine.csproj", "{1A8C4E75-ED20-431E-A2C8-96B01D19F3AF}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LegacyFileReader", "LegacyFileReader\LegacyFileReader.csproj", "{4904E549-5588-4AA3-8A7F-FD0A91642883}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "LegacyFileReader", "LegacyFileReader\LegacyFileReader.csproj", "{4904E549-5588-4AA3-8A7F-FD0A91642883}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ConverterApp", "ConverterApp\ConverterApp.csproj", "{4A964466-60D2-40D3-9185-852D1A8891CF}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ConverterApp", "ConverterApp\ConverterApp.csproj", "{4A964466-60D2-40D3-9185-852D1A8891CF}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Common", "Common\Common.csproj", "{369BB521-1704-4159-895D-02313992B88A}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Common", "Common\Common.csproj", "{369BB521-1704-4159-895D-02313992B88A}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ConverterCore", "ConverterCore\ConverterCore.csproj", "{21DE82AC-42AB-4686-B6A6-E469B65DCE06}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ConverterCore", "ConverterCore\ConverterCore.csproj", "{21DE82AC-42AB-4686-B6A6-E469B65DCE06}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ImageLib", "ImageLib\ImageLib.csproj", "{F5855B21-D53B-4457-9C5C-CA01B1044AAE}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ImageLib", "ImageLib\ImageLib.csproj", "{F5855B21-D53B-4457-9C5C-CA01B1044AAE}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Netcode", "Netcode\Netcode.csproj", "{4A743973-FBA5-44B9-B86B-077221C89AB1}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Netcode", "Netcode\Netcode.csproj", "{4A743973-FBA5-44B9-B86B-077221C89AB1}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NetClient", "NetClient\NetClient.csproj", "{98D2C75D-2177-453D-B5A3-74CF6894640E}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "NetClient", "NetClient\NetClient.csproj", "{98D2C75D-2177-453D-B5A3-74CF6894640E}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OesDumper", "OesDumper\OesDumper.csproj", "{53203E05-E529-4CEF-AEF2-07B4302563CB}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "OesDumper", "OesDumper\OesDumper.csproj", "{53203E05-E529-4CEF-AEF2-07B4302563CB}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CollisionManager", "CollisionManager\CollisionManager.csproj", "{13753CFB-C9EC-4E6B-BB49-FE928B37DFE8}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "CollisionManager", "CollisionManager\CollisionManager.csproj", "{13753CFB-C9EC-4E6B-BB49-FE928B37DFE8}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Zlib.Portable", "Zlib.Portable\Zlib.Portable.csproj", "{AD1688BF-75A9-4C42-B6D0-40AA3B28A102}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenEQTests", "OpenEQTests\OpenEQTests.csproj", "{81EDA2BB-86F7-4D1B-9C21-F25E0B77809D}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -30,14 +33,14 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{1A8C4E75-ED20-431E-A2C8-96B01D19F3AF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{1A8C4E75-ED20-431E-A2C8-96B01D19F3AF}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{1A8C4E75-ED20-431E-A2C8-96B01D19F3AF}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{1A8C4E75-ED20-431E-A2C8-96B01D19F3AF}.Release|Any CPU.Build.0 = Release|Any CPU
 		{1A3917DB-5837-4245-9D0F-A51C673557AF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{1A3917DB-5837-4245-9D0F-A51C673557AF}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{1A3917DB-5837-4245-9D0F-A51C673557AF}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{1A3917DB-5837-4245-9D0F-A51C673557AF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1A8C4E75-ED20-431E-A2C8-96B01D19F3AF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1A8C4E75-ED20-431E-A2C8-96B01D19F3AF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1A8C4E75-ED20-431E-A2C8-96B01D19F3AF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1A8C4E75-ED20-431E-A2C8-96B01D19F3AF}.Release|Any CPU.Build.0 = Release|Any CPU
 		{4904E549-5588-4AA3-8A7F-FD0A91642883}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{4904E549-5588-4AA3-8A7F-FD0A91642883}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{4904E549-5588-4AA3-8A7F-FD0A91642883}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -74,9 +77,15 @@ Global
 		{13753CFB-C9EC-4E6B-BB49-FE928B37DFE8}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{13753CFB-C9EC-4E6B-BB49-FE928B37DFE8}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{13753CFB-C9EC-4E6B-BB49-FE928B37DFE8}.Release|Any CPU.Build.0 = Release|Any CPU
-		{AD1688BF-75A9-4C42-B6D0-40AA3B28A102}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{AD1688BF-75A9-4C42-B6D0-40AA3B28A102}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{AD1688BF-75A9-4C42-B6D0-40AA3B28A102}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{AD1688BF-75A9-4C42-B6D0-40AA3B28A102}.Release|Any CPU.Build.0 = Release|Any CPU
+		{81EDA2BB-86F7-4D1B-9C21-F25E0B77809D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{81EDA2BB-86F7-4D1B-9C21-F25E0B77809D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{81EDA2BB-86F7-4D1B-9C21-F25E0B77809D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{81EDA2BB-86F7-4D1B-9C21-F25E0B77809D}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {0081734D-6248-4A69-89F8-7A6632A08593}
 	EndGlobalSection
 EndGlobal
