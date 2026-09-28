@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use bevy::ecs::system::NonSendMarker;
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
+use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused};
 use bevy::winit::{WINIT_WINDOWS, WinitSettings};
 use openeq_assets::loader;
 use openeq_render::Renderer;
@@ -84,7 +84,8 @@ fn main() -> AppExit {
         .insert_resource(WinitSettings::game())
         .insert_resource(Runtime::new(camera))
         .insert_resource(options)
-        .add_systems(Update, (update_camera, handle_hotkeys))
+        // Capture runs first so the camera sees this frame's grab state.
+        .add_systems(Update, (handle_cursor_capture, update_camera).chain())
         .add_systems(Last, render_frame)
         .run()
 }
@@ -132,15 +133,20 @@ fn parse_args() -> anyhow::Result<Options> {
 }
 
 /// WASD to move, mouse to look, shift to run, space/ctrl to rise and sink.
+///
+/// Mouse look only applies while the cursor is captured, so moving the mouse
+/// around the desktop does not spin the view.
 fn update_camera(
     keys: Res<ButtonInput<KeyCode>>,
     motion: Res<AccumulatedMouseMotion>,
     time: Res<Time>,
+    cursors: Query<&CursorOptions, With<PrimaryWindow>>,
     mut runtime: ResMut<Runtime>,
 ) {
     let camera = &mut runtime.camera;
 
-    let delta = motion.delta;
+    let captured = cursors.single().map(is_captured).unwrap_or(false);
+    let delta = if captured { motion.delta } else { Vec2::ZERO };
     if delta != Vec2::ZERO {
         // Yaw increases anticlockwise in EverQuest space, so moving the mouse
         // right (positive x) turns right by adding.
@@ -195,10 +201,53 @@ fn update_camera(
     camera.position = position;
 }
 
-fn handle_hotkeys(keys: Res<ButtonInput<KeyCode>>, mut exit: MessageWriter<AppExit>) {
-    if keys.just_pressed(KeyCode::Escape) {
-        exit.write(AppExit::Success);
+/// Click to capture the cursor, `Escape` to release, `Escape` again to quit.
+///
+/// Losing focus releases the capture as well, so clicking away to another
+/// window never leaves the pointer trapped.
+fn handle_cursor_capture(
+    mut cursors: Query<(Entity, &mut CursorOptions), With<PrimaryWindow>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut focus: MessageReader<WindowFocused>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    let Ok((entity, mut cursor)) = cursors.single_mut() else {
+        return;
+    };
+
+    let mut captured = is_captured(&cursor);
+    for event in focus.read() {
+        if event.window == entity && !event.focused && captured {
+            release_cursor(&mut cursor);
+            captured = false;
+        }
     }
+
+    if mouse.just_pressed(MouseButton::Left) && !captured {
+        cursor.visible = false;
+        cursor.grab_mode = CursorGrabMode::Locked;
+        tracing::debug!("cursor captured; escape releases it");
+        return;
+    }
+
+    if keys.just_pressed(KeyCode::Escape) {
+        if captured {
+            release_cursor(&mut cursor);
+            tracing::debug!("cursor released; escape again quits");
+        } else {
+            exit.write(AppExit::Success);
+        }
+    }
+}
+
+fn is_captured(options: &CursorOptions) -> bool {
+    options.grab_mode != CursorGrabMode::None
+}
+
+fn release_cursor(cursor: &mut CursorOptions) {
+    cursor.visible = true;
+    cursor.grab_mode = CursorGrabMode::None;
 }
 
 /// Builds the renderer on the first frame, then draws.

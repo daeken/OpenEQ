@@ -62,8 +62,10 @@ cargo run -p openeq-assets --bin wldscan -- /path/to/EverQuest/gfaydark.s3d
 cargo run -p openeq-net --bin eqlogin -- --host 127.0.0.1 --user me --pass secret
 ```
 
-Controls: `W`/`A`/`S`/`D` to move, mouse to look, `Shift` to run, `Space` and
-`Ctrl` to rise and sink, `Escape` to quit.
+Controls: click the window to capture the mouse, then `W`/`A`/`S`/`D` to move,
+the mouse to look, `Shift` to run, `Space` and `Ctrl` to rise and sink.
+`Escape` releases the mouse, and `Escape` again quits. Clicking away to another
+window releases it too, so the pointer never gets stuck.
 
 ## Documentation
 
