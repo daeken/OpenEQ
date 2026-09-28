@@ -45,7 +45,7 @@ client and verified against actual EQEmu behavior.
 - [x] Inspect native or GPU captures of each new window.
 - [x] Run workspace, original-asset/GPU, lint and format checks.
 - [x] Update architecture, launch instructions and exact parity limitations.
-- [ ] Commit and push verified changes to master.
+- [x] Commit and push verified changes to master (`e6c3db9`).
 
 ## World alignment and Kelethin lifts
 
