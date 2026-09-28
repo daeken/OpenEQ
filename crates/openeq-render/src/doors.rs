@@ -1,7 +1,7 @@
 //! Server-placed doors, lifts and props. Model buffers are shared by name;
 //! opening updates only an instance transform around the authored hinge.
 use crate::{GpuActor, GpuScene, Renderer, scene::Instance};
-use glam::{Quat, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use openeq_assets::{Scene, collision::CollisionWorld, loader, mesh::Geometry};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -24,6 +24,17 @@ struct Batch {
     actor: GpuActor,
     extent: Vec3,
     collision: Vec<Geometry>,
+    local_collision: CollisionWorld,
+}
+struct PlatformPose {
+    name: String,
+    origin: [f32; 3],
+    matrix: Mat4,
+}
+struct PlatformStep {
+    name: String,
+    previous: Mat4,
+    displacement: Vec3,
 }
 struct Motion {
     open: bool,
@@ -45,6 +56,8 @@ pub struct DoorRenderer {
     pub rendered_instances: usize,
     collision: CollisionWorld,
     collision_states: Vec<DoorState>,
+    platform_poses: BTreeMap<u8, PlatformPose>,
+    platform_steps: Vec<PlatformStep>,
 }
 impl DoorRenderer {
     pub fn load(base: &Path, zone: &str) -> anyhow::Result<Self> {
@@ -56,6 +69,8 @@ impl DoorRenderer {
             rendered_instances: 0,
             collision: CollisionWorld::default(),
             collision_states: Vec::new(),
+            platform_poses: BTreeMap::new(),
+            platform_steps: Vec::new(),
         })
     }
     pub fn update(&mut self, renderer: &Renderer, states: &[DoorState], time: f32) {
@@ -77,7 +92,7 @@ impl DoorRenderer {
                 continue;
             }
             let model = self.library.object_model(name).and_then(|model| {
-                let collision = model
+                let collision: Vec<_> = model
                     .meshes
                     .iter()
                     .filter(|mesh| {
@@ -92,6 +107,10 @@ impl DoorRenderer {
             match model {
                 Ok((scene, collision)) => {
                     let extent = scene.bounds_max - scene.bounds_min;
+                    let mut local_collision = CollisionWorld::default();
+                    for mesh in &collision {
+                        local_collision.add_geometry(mesh, Mat4::IDENTITY);
+                    }
                     tracing::info!(model=%name,"dynamic door model uploaded");
                     self.batches.insert(
                         name.clone(),
@@ -99,6 +118,7 @@ impl DoorRenderer {
                             actor: renderer.prepare_actor(scene),
                             extent,
                             collision,
+                            local_collision,
                         },
                     );
                 }
@@ -109,6 +129,9 @@ impl DoorRenderer {
             }
         }
         self.rendered_instances = 0;
+        let mut platform_poses = BTreeMap::new();
+        self.platform_steps.clear();
+        let mut platforms_changed = false;
         for (name, batch) in &mut self.batches {
             let mut instances = Vec::new();
             for state in groups.get(name).into_iter().flatten() {
@@ -127,7 +150,40 @@ impl DoorRenderer {
                     };
                 }
                 let progress = motion.progress(time, duration);
-                instances.push(transform(state, progress, batch.extent, time));
+                let instance = transform(state, progress, batch.extent, time);
+                if matches!(state.open_type, 59 | 60) {
+                    let matrix = Mat4::from_cols_array_2d(&instance.columns);
+                    if let Some(previous) = self.platform_poses.get(&state.id) {
+                        platforms_changed |= previous.matrix != matrix;
+                        let displacement =
+                            matrix.w_axis.truncate() - previous.matrix.w_axis.truncate();
+                        if previous.name == *name
+                            && previous.origin == state.position
+                            && previous.matrix.x_axis == matrix.x_axis
+                            && previous.matrix.y_axis == matrix.y_axis
+                            && previous.matrix.z_axis == matrix.z_axis
+                            && displacement.is_finite()
+                            && displacement.length_squared() > 1e-10
+                        {
+                            self.platform_steps.push(PlatformStep {
+                                name: name.clone(),
+                                previous: previous.matrix,
+                                displacement,
+                            });
+                        }
+                    } else {
+                        platforms_changed = true;
+                    }
+                    platform_poses.insert(
+                        state.id,
+                        PlatformPose {
+                            name: name.clone(),
+                            origin: state.position,
+                            matrix,
+                        },
+                    );
+                }
+                instances.push(instance);
             }
             for draw in &mut batch.actor.scene.draws {
                 draw.instance_start = 0;
@@ -141,7 +197,7 @@ impl DoorRenderer {
             }
             self.rendered_instances += instances.len();
         }
-        if states != self.collision_states {
+        if states != self.collision_states || platforms_changed {
             let mut collision = CollisionWorld::default();
             for state in states {
                 if matches!(state.open_type, 50 | 53 | 54) {
@@ -150,8 +206,14 @@ impl DoorRenderer {
                 let Some(batch) = self.batches.get(&state.name.to_ascii_lowercase()) else {
                     continue;
                 };
-                let instance = transform(state, f32::from(state.state != 0), batch.extent, 0.);
-                let matrix = glam::Mat4::from_cols_array_2d(&instance.columns);
+                let matrix = platform_poses.get(&state.id).map_or_else(
+                    || {
+                        let instance =
+                            transform(state, f32::from(state.state != 0), batch.extent, 0.);
+                        Mat4::from_cols_array_2d(&instance.columns)
+                    },
+                    |pose| pose.matrix,
+                );
                 for mesh in &batch.collision {
                     collision.add_geometry(mesh, matrix);
                 }
@@ -159,11 +221,31 @@ impl DoorRenderer {
             self.collision = collision;
             self.collision_states = states.to_vec();
         }
+        self.platform_poses = platform_poses;
     }
-    /// Closed/open final-pose collision, rebuilt only when server door state
-    /// changes. Interpolated visuals do not rebuild the static zone or grid.
+    /// Lifts collide at their animated pose; other doors retain final-pose
+    /// collision. Updating a lift never rebuilds the static zone collision.
     pub fn collision_world(&self) -> &CollisionWorld {
         &self.collision
+    }
+
+    /// Consumes the latest lift displacement exactly once. Only feet resting
+    /// on the original mesh at its previous pose are carried. Call even when
+    /// jumping/flying, with `allow_carry = false`, to discard stale movement.
+    pub fn take_platform_displacement(&mut self, feet: [f32; 3], allow_carry: bool) -> [f32; 3] {
+        let steps = std::mem::take(&mut self.platform_steps);
+        if !allow_carry || !feet.iter().all(|value| value.is_finite()) {
+            return [0.; 3];
+        }
+        for step in steps {
+            let Some(batch) = self.batches.get(&step.name) else {
+                continue;
+            };
+            if supports_feet(&batch.local_collision, step.previous, feet) {
+                return step.displacement.to_array();
+            }
+        }
+        [0.; 3]
     }
 
     pub fn draws(&self) -> Vec<&GpuActor> {
@@ -180,6 +262,34 @@ impl DoorRenderer {
             .map(|batch| &batch.actor)
             .collect()
     }
+}
+fn supports_feet(collision: &CollisionWorld, matrix: Mat4, feet: [f32; 3]) -> bool {
+    let inverse = matrix.inverse();
+    if !inverse.is_finite() {
+        return false;
+    }
+    // Match the movement cylinder's one-unit footprint, including edge support.
+    let tolerance = 0.08 * inverse.z_axis.truncate().length();
+    const D: f32 = std::f32::consts::FRAC_1_SQRT_2;
+    [
+        [0., 0.],
+        [1., 0.],
+        [-1., 0.],
+        [0., 1.],
+        [0., -1.],
+        [D, D],
+        [D, -D],
+        [-D, D],
+        [-D, -D],
+    ]
+    .into_iter()
+    .any(|offset| {
+        let local =
+            inverse.transform_point3(Vec3::new(feet[0] + offset[0], feet[1] + offset[1], feet[2]));
+        collision
+            .ground_height(local.x, local.y, local.z, tolerance, tolerance)
+            .is_some()
+    })
 }
 fn duration(state: &DoorState) -> f32 {
     match state.open_type {
@@ -217,7 +327,11 @@ fn transform(state: &DoorState, progress: f32, extent: Vec3, time: f32) -> Insta
         }
         _ => {}
     }
-    let base = Quat::from_rotation_z(-state.heading * std::f32::consts::TAU / 512.);
+    // Incoming headings are scene headings (128 - server heading), while the
+    // original object mesh already has its server-local X/Y axes exchanged.
+    let base = Quat::from_rotation_z(
+        std::f32::consts::FRAC_PI_2 - state.heading * std::f32::consts::TAU / 512.,
+    );
     // Incline is signed despite its unsigned wire representation.
     let rotation = base
         * Quat::from_rotation_z(turn)
@@ -229,6 +343,19 @@ fn transform(state: &DoorState, progress: f32, extent: Vec3, time: f32) -> Insta
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn scene_heading_preserves_original_asymmetric_door_basis() {
+        for (scene_heading, expected) in
+            [(128., Vec3::new(2., -7., 0.)), (0., Vec3::new(7., 2., 0.))]
+        {
+            let state = DoorState {
+                heading: scene_heading,
+                ..Default::default()
+            };
+            let matrix = Mat4::from_cols_array_2d(&transform(&state, 0., Vec3::ONE, 0.).columns);
+            assert!((matrix.transform_point3(Vec3::new(2., -7., 0.)) - expected).length() < 1e-5);
+        }
+    }
     #[test]
     fn door_hinges_lifts_and_reversal_preserve_the_authored_origin() {
         let state = DoorState {
@@ -324,6 +451,7 @@ mod gpu_tests {
         let mut states = vec![DoorState {
             id: 1,
             name: "POKDOOR500".into(),
+            heading: 128.,
             size: 100,
             open_type: 5,
             ..Default::default()
@@ -391,6 +519,141 @@ mod gpu_tests {
             .unwrap();
         doors.update(&renderer, &[], 5.);
         assert!(doors.draws().is_empty());
+        assert_eq!(doors.collision_world().triangle_count(), 0);
+    }
+
+    #[test]
+    #[ignore = "requires original Greater Faydark lift/button assets and GPU"]
+    fn kelethin_lift_collision_and_rider_follow_actual_platform_mesh() {
+        let base = loader::default_client_dir().expect("original client assets");
+        let renderer = Renderer::new_headless(128, 128).unwrap();
+        let mut doors = DoorRenderer::load(&base, "gfaydark").unwrap();
+        let model = doors.library.object_model("FAYLEVATOR").unwrap();
+        let mut best = (0., Vec3::ZERO);
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        for mesh in &model.meshes {
+            for vertex in mesh.vertices.chunks_exact(8) {
+                let point = Vec3::from_slice(&vertex[..3]);
+                min = min.min(point);
+                max = max.max(point);
+            }
+            if !mesh.collidable {
+                continue;
+            }
+            for indices in mesh.indices.chunks_exact(3) {
+                let vertices = indices
+                    .iter()
+                    .map(|index| Vec3::from_slice(&mesh.vertices[*index as usize * 8..][..3]))
+                    .collect::<Vec<_>>();
+                let normal = (vertices[1] - vertices[0]).cross(vertices[2] - vertices[0]);
+                if normal.z > normal.length() * 0.9 && normal.length_squared() > best.0 {
+                    best = (
+                        normal.length_squared(),
+                        (vertices[0] + vertices[1] + vertices[2]) / 3.,
+                    );
+                }
+            }
+        }
+        assert!(best.0 > 0., "original lift must have a walkable platform");
+        eprintln!(
+            "FAYLEVATOR local bounds {min:?}..{max:?}; support sample {:?}",
+            best.1
+        );
+        let mut states = vec![
+            DoorState {
+                id: 69,
+                name: "FAYLEVATOR".into(),
+                position: [137.463, 350.014, 2.1582],
+                heading: 256.,
+                open_type: 59,
+                inverted: true,
+                parameter: 68,
+                size: 100,
+                ..Default::default()
+            },
+            DoorState {
+                id: 73,
+                name: "FELE2".into(),
+                position: [128.170, 238.669, 8.9092],
+                heading: 384.,
+                open_type: 59,
+                parameter: 1,
+                size: 100,
+                ..Default::default()
+            },
+        ];
+        doors.update(&renderer, &states, 0.);
+        assert_eq!(
+            doors.rendered_instances, 2,
+            "the original lift and button must both load"
+        );
+        let feet = doors.platform_poses[&69]
+            .matrix
+            .transform_point3(best.1)
+            .to_array();
+        eprintln!("Kelethin door69 supported scene feet {feet:?}");
+        let ground = |doors: &DoorRenderer, expected: f32| {
+            let z = doors
+                .collision_world()
+                .ground_height(feet[0], feet[1], expected, 0.05, 0.05)
+                .expect("animated platform floor");
+            assert!((z - expected).abs() < 0.01, "{z} != {expected}");
+        };
+        ground(&doors, feet[2]);
+        assert_eq!(doors.take_platform_displacement(feet, true), [0.; 3]);
+        states[0].state = 1;
+        doors.update(&renderer, &states, 1.);
+        ground(&doors, feet[2]);
+        let duration = duration(&states[0]);
+        doors.update(&renderer, &states, 1. + duration * 0.5);
+        ground(&doors, feet[2] + 34.);
+        assert!(
+            doors
+                .collision_world()
+                .ground_height(feet[0], feet[1], feet[2], 0.05, 0.05)
+                .is_none(),
+            "old platform pose must not remain collidable"
+        );
+        assert_eq!(
+            doors.take_platform_displacement([feet[0] + 1000., feet[1], feet[2]], true),
+            [0.; 3],
+            "players away from the mesh must not be carried"
+        );
+        // Repeat the same animation interval to test a supported rider.
+        states[0].state = 0;
+        doors.update(&renderer, &states, 10.);
+        doors.update(&renderer, &states, 10. + duration);
+        states[0].state = 1;
+        doors.update(&renderer, &states, 20.);
+        doors.update(&renderer, &states, 20. + duration * 0.5);
+        let carried = doors.take_platform_displacement(feet, true);
+        assert!((carried[2] - 34.).abs() < 0.001);
+        assert_eq!([carried[0], carried[1]], [0.; 2]);
+        assert_eq!(
+            doors.take_platform_displacement(feet, true),
+            [0.; 3],
+            "a render displacement must never be applied twice"
+        );
+        doors.update(&renderer, &states, 20. + duration);
+        assert_eq!(
+            doors.take_platform_displacement([feet[0], feet[1], feet[2] + 34.], false),
+            [0.; 3],
+            "jumping/flying discards platform carry"
+        );
+        assert_eq!(
+            doors.take_platform_displacement([feet[0], feet[1], feet[2] + 34.], true),
+            [0.; 3]
+        );
+        ground(&doors, feet[2] + 68.);
+        states[0].state = 0;
+        doors.update(&renderer, &states, 30.);
+        doors.update(&renderer, &states, 30. + duration * 0.5);
+        let descending = doors.take_platform_displacement([feet[0], feet[1], feet[2] + 68.], true);
+        assert!((descending[2] + 34.).abs() < 0.001);
+        ground(&doors, feet[2] + 34.);
+        doors.update(&renderer, &[], 40.);
+        assert_eq!(doors.take_platform_displacement(feet, true), [0.; 3]);
         assert_eq!(doors.collision_world().triangle_count(), 0);
     }
 }

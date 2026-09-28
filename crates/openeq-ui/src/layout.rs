@@ -106,6 +106,14 @@ pub enum DrawCommand {
 pub struct TextLine {
     pub text: String,
     pub color: Color,
+    pub links: Vec<TextLink>,
+}
+
+/// Link metadata names a visible UTF-8 range; the application owns its payload.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextLink {
+    pub range: std::ops::Range<usize>,
+    pub id: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -397,7 +405,7 @@ impl UiWindow<'_> {
                     );
                 }
             }
-            "Editbox" | "Label" | "StaticText" | "STMLbox" | "Screen" | "Page"
+            "Editbox" | "Listbox" | "Label" | "StaticText" | "STMLbox" | "Screen" | "Page"
             | "TemplateContainer" => {}
             _ => output.warnings.push(format!(
                 "unsupported widget {} ({})",

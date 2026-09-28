@@ -648,6 +648,11 @@ impl Renderer {
         );
     }
 
+    /// Prepared chat-link hit regions, in the frame's logical coordinates.
+    pub fn ui_link_hits(&self) -> &[openeq_ui::HitTarget] {
+        self.ui.as_ref().map_or(&[], |ui| ui.link_hits())
+    }
+
     pub fn format(&self) -> wgpu::TextureFormat {
         self.config.format
     }

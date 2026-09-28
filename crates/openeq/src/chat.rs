@@ -161,6 +161,14 @@ pub enum Action {
     Assist(Option<String>),
     Target(String),
     Inventory,
+    UseTarget,
+    Merchant,
+    Bank,
+    Invite(Option<String>),
+    AcceptInvite,
+    DeclineInvite,
+    LeaveGroup,
+    MakeLeader(String),
     Spellbook,
     Cast(u8),
     StopCast,
@@ -169,7 +177,7 @@ pub enum Action {
     Quit,
 }
 
-pub const HELP: &str = "Enter: chat • /say /tell NAME /reply /group /guild /ooc /shout /auction /emote\n/attack [on|off] /sit /stand /hail /con /assist [NAME] /target NAME /loot /inventory /cast 1–12 /book /stopcast /loc /quit\nI inventory • Q attack • H hail • X sit/stand • L loot • C consider • V assist • Tab target • B spellbook • Alt+1–0 spell gems • M map • F9 camera • E door";
+pub const HELP: &str = "Enter: chat • /say /tell NAME /reply /group /guild /ooc /shout /auction /emote\n/attack [on|off] /sit /stand /hail /con /assist [NAME] /target NAME /loot /inventory /cast 1–12 /book /stopcast /loc /quit\n/use /merchant /bank /invite [NAME] /accept /decline /leavegroup /makeleader NAME\nI inventory • Q attack • H hail • X sit/stand • L loot • C consider • V assist • Tab target • B spellbook • Alt+1–0 spell gems • M map • F9 camera • E door • R NPC service";
 
 pub fn parse(line: &str) -> Result<Action, String> {
     let line = line.trim();
@@ -237,6 +245,19 @@ pub fn parse(line: &str) -> Result<Action, String> {
             Action::Target(rest.into())
         }
         "inventory" | "inv" => Action::Inventory,
+        "use" => Action::UseTarget,
+        "merchant" => Action::Merchant,
+        "bank" => Action::Bank,
+        "invite" => Action::Invite((!rest.is_empty()).then(|| rest.to_owned())),
+        "accept" | "acceptinvite" => Action::AcceptInvite,
+        "decline" | "declineinvite" => Action::DeclineInvite,
+        "leavegroup" | "disband" => Action::LeaveGroup,
+        "makeleader" => {
+            if rest.is_empty() {
+                return Err("Usage: /makeleader NAME".into());
+            }
+            Action::MakeLeader(rest.into())
+        }
         "book" | "spellbook" => Action::Spellbook,
         "stopcast" => Action::StopCast,
         "cast" => Action::Cast(

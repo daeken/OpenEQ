@@ -29,7 +29,7 @@ Supported presentation features:
 - Composite includes, case-insensitive filenames, UTF-8/BOM and Windows-1252.
 - Named definitions, texture atlases, timed animations, grid cells, and explicit frame index.
 - Screens and nested pieces, labels, buttons with state art, edit boxes, gauges,
-  static images/frames, inventory backgrounds, and basic tab page selection.
+  static images/frames, inventory backgrounds, listbox frames, and basic tab page selection.
 - Relative/absolute placement, stretch anchors (with SIDL defaults), min/max
   bounds, clipping, text alignment, frame/title art, and gauge fill clipping.
 - Dynamic text, visibility, enabled/pressed/hovered/checked state, gauge fractions,
@@ -112,3 +112,40 @@ Map records convert `(-x,-y,z)` into the engine's EQ world coordinates, with nor
 ```
 OPENEQ_UI_CAPTURE_DIR=/tmp cargo test -p openeq --lib map::tests -- --include-ignored --nocapture
 ```
+
+Merchant and bank overlays use the original `MerchantWnd`, `BankWnd`, stock list,
+button, coin, and bank-slot artwork. `UiMerchantStock.slot` is the server's stock
+row address, not the item's ID. Buy prices are integer copper per unit; the
+application supplies availability and action enablement. `sell_price_copper` is
+an estimated **total for the selected quantity**, labeled as estimated until the
+server confirms the sale. Neither prices nor item transfers are applied by the
+presentation layer. Stock supports explicit row selection, quantity controls,
+scroll arrows, and a wheel hit region. Pending actions disable buy/sell controls.
+Bank slots retain canonical addresses 2000–2023 and shared slots 2500–2501;
+coin controls use wire order copper, silver, gold, platinum. Optional balances
+and shared-bank capability remain application-owned.
+
+`UiGroup` renders the original group window and gauges, membership, leader,
+invitations, and invite/accept/decline/leave actions. Level, HP, and mana are
+optional values from live entities; unknown values are omitted. Members outside
+the current zone remain visible with disabled targeting.
+
+Each `TextLine` can include `TextLink { range, id }`, where `range` addresses
+visible UTF-8 bytes and `id` is an application-owned payload key. The renderer
+underlines and colors links, splits their hit regions at wrapped rows, clips
+them to the visible log, and returns logical coordinates from `ui_link_hits()`.
+Invalid ranges and scrolled-out rows produce no clickable regions. The caller
+must only dispatch those regions when the frame's topmost hit is `game:chat_log`,
+so overlaid windows block clicks. Visible link labels are never interpreted as
+commands; the application parses and sends the server's typed link metadata.
+
+Verify merchant/bank/group layout, disabled states, stock scrolling, sale-total
+semantics, and chat links at both 1× and 2× pixel density with:
+
+```
+OPENEQ_UI_CAPTURE_DIR=/tmp cargo test -p openeq --lib commerce_ui::tests -- --include-ignored --nocapture
+cargo test -p openeq-render ui::tests
+```
+
+The first command writes `openeq-commerce-ui.png` and
+`openeq-commerce-ui-retina.png` when the capture directory is set.

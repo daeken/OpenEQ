@@ -10,6 +10,17 @@ meshes from EQG archives, including supplemental files in `<zone>_assets.txt`.
 are cached by model name and multiple copies are instanced. Opening modifies
 only instance transforms around each model's authored origin; the zone mesh is
 never rebuilt. A state change can reverse a partly completed opening smoothly.
+Positions and headings use the scene coordinate convention. Incoming server
+headings become `128 - heading`; original door meshes already have their local
+X/Y axes exchanged, so their base rotation is `pi/2 - scene_heading * TAU/512`.
+For example, a server heading of zero leaves the authored model unrotated.
+
+`DoorState.state` is the logical server open state. EQEmu's spawn record encodes
+`state_at_spawn = inverted ? !IsDoorOpen() : IsDoorOpen()` (`zone/entity.cpp`),
+whereas `OP_MoveDoor` uses action 2/3 with the same inversion (`zone/doors.cpp`).
+The live adapter normalizes the initial spawn state once. Rendering must not
+apply inversion again: an inverted Kelethin lift otherwise starts at state 1 and
+never changes on its first button press.
 
 Implemented motion classes follow the documented [EQEmu door open types](https://github.com/EQEmu/eqemu-docs-v2/blob/main/docs/server/zones/door-open-types.md):
 
@@ -26,12 +37,44 @@ class; hinge animation takes 0.75 seconds. Types 30/35/36/40 use the hinge
 transform and depend on subsequent server state for closure. Continuous spins
 use approximate rates. These approximations are isolated in `doors.rs`.
 
-The dynamic collision world is rebuilt only when server door state/placement
-changes. It uses the final closed/open pose, while the visible transform eases
-between them. This avoids rebuilding the zone or a collision grid every frame.
-It does not carry a passenger along with an interpolating lift, nor update
-continuous spinning/trap collisions each frame. The movement layer must combine
-this world with static zone collision.
+Lift collision uses the same animated pose as its visible model. The small
+dynamic collision world is rebuilt while a lift moves; the static zone is never
+rebuilt. Other doors still use their final closed/open collision pose, and
+continuous spinning/trap collisions are not animated.
+
+After an update, `take_platform_displacement(feet, allow_carry)` consumes the
+latest lift displacement once. It checks support against the original collision
+mesh at its previous pose, including the player's footprint; it does not use an
+approximate platform bounding box. The movement layer applies that displacement
+before ordinary static/dynamic collision. Pass `false` while jumping or flying
+to discard carry motion. A second call without another update returns zero.
+Exact lift timing is still approximate (25 units/second with eased endpoints);
+the travel distance comes from the server's signed `door_param`.
+
+EQEmu resets ordinary lifts and their buttons silently when its close timer
+expires. `LiveWorld` predicts a five-second return for types 59/60, including
+their buttons; a fresh open restarts the deadline, and an explicit close or
+replacement door list clears it. This matches every installed Kelethin lift and
+button record. RoF2 omits the timer and disable-timer flag, so five seconds is a
+compatibility default and may differ on customized servers. Returning locally
+sends no artificial button or door packet.
+
+The installed PEQ Greater Faydark records provide three Kelethin lifts, all type
+59 with inversion enabled. Read-only database inspection verified these links:
+
+| Lift door | Lower / upper button | Travel |
+| --- | --- | --- |
+| 69 | 73 / 74 | 68 units |
+| 77 | 79 / 78 | 98 units |
+| 80 | 81 / 82 | 69 units |
+
+`FAYLEVATOR` is the platform model; the buttons use `FELE2` with one unit of
+vertical button travel. EQEmu's `Doors::HandleClick` follows `triggerdoor` and
+sends both state changes, so the client sends only the clicked button ID.
+No production door records need modification. The original platform's walkable
+surface lies about 100 units from its authored origin. For lift 69, a verified
+supported point is scene feet `(132.44852, 249.78363, 5.15713)`, near lower button
+73; checking only distance to the lift origin would miss a standing passenger.
 
 Verification with installed original assets:
 
@@ -44,3 +87,6 @@ The GPU test writes `/tmp/openeq-doors.png`, showing an original PoK door closed
 and opened. It also checks one GPU model is shared, closed-door collision blocks
 passage, opened-door collision clears passage, and removed objects stop drawing
 and colliding.
+The Greater Faydark test loads both original lift and button models and verifies
+the moving floor, ascent/descent carry, off-platform rejection, jump opt-out,
+single consumption, and removal cleanup.

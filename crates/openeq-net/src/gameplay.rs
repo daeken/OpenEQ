@@ -17,8 +17,52 @@ pub enum ChatChannel {
     Raid = 15,
 }
 
+/// Coin move locations deliberately exclude cursor/trade/destruction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum CoinLocation {
+    Carried = 1,
+    Bank = 2,
+    SharedBank = 4,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum CoinType {
+    Copper = 0,
+    Silver = 1,
+    Gold = 2,
+    Platinum = 3,
+}
+
 #[derive(Debug, Clone)]
 pub enum Command {
+    Social(crate::social::SocialCommand),
+    MerchantOpen {
+        merchant_id: u32,
+        player_id: u32,
+    },
+    MerchantBuy {
+        merchant_id: u32,
+        player_id: u32,
+        slot: u32,
+        quantity: u32,
+        price: u32,
+    },
+    MerchantSell {
+        merchant_id: u32,
+        slot: InventorySlot,
+        quantity: u32,
+    },
+    MerchantClose,
+    /// Requires a nearby banker. Shared bank supports platinum only and must be enabled by server policy.
+    MoveCoin {
+        from: CoinLocation,
+        to: CoinLocation,
+        coin: CoinType,
+        amount: u32,
+    },
+    /// Consolidates carried/bank denominations and returns authoritative balances; not a bank-open handshake.
+    BankerChange,
     MemorizeSpell {
         slot: u32,
         spell_id: u32,
@@ -120,6 +164,9 @@ pub struct PlayerProfile {
     pub endurance: u32,
     pub stats: [u32; 7],
     pub currency: Currency,
+    pub bank_currency: Currency,
+    pub cursor_currency: Currency,
+    pub shared_platinum: u32,
     pub skills: Vec<u32>,
     pub spell_book: Vec<u32>,
     pub memorized_spells: Vec<u32>,
@@ -206,6 +253,37 @@ pub struct ZoneDestination {
 
 #[derive(Debug, Clone)]
 pub enum GameplayEvent {
+    Social(crate::social::SocialEvent),
+    MerchantOpened {
+        merchant_id: u32,
+        command: u32,
+        rate: f32,
+        tabs: u32,
+    },
+    MerchantBought {
+        merchant_id: u32,
+        player_id: u32,
+        slot: u32,
+        quantity: u32,
+        price: u32,
+    },
+    MerchantSold {
+        merchant_id: u32,
+        slot: InventorySlot,
+        quantity: u32,
+        price: u32,
+        rejected: bool,
+    },
+    MerchantItemRemoved {
+        merchant_id: u32,
+        player_id: u32,
+        slot: u32,
+    },
+    MerchantClosed,
+    BankerBalances {
+        carried: Currency,
+        bank: Currency,
+    },
     SpellMemorized {
         slot: u32,
         spell_id: u32,
@@ -266,7 +344,8 @@ pub enum GameplayEvent {
         instance_id: u16,
     },
     Inventory(Vec<InventoryItem>),
-    /// Packet type is retained: 0x66=loot,0x67=trade,0x69=inventory,0x6a=summon.
+    /// Packet type is retained: 0=inspection, 0x64=merchant, 0x66=loot,
+    /// 0x67=inventory delivery, 0x69=inventory, 0x6a=limbo/cursor delivery.
     Item {
         packet_type: u32,
         item: InventoryItem,
@@ -367,6 +446,86 @@ fn text(out: &mut Vec<u8>, value: &str) {
 pub fn encode_command(command: Command) -> Result<AppPacket, ZoneError> {
     let mut out = Vec::new();
     let opcode = match command {
+        Command::Social(command) => return crate::social::encode_command(command),
+        Command::MerchantOpen {
+            merchant_id,
+            player_id,
+        } => {
+            if merchant_id == 0 || player_id == 0 {
+                return Err(ZoneError::Malformed("merchant id"));
+            }
+            for value in [merchant_id, player_id, 1, 1f32.to_bits(), 1, u32::MAX] {
+                out.extend(value.to_le_bytes());
+            }
+            0x4fed
+        }
+        Command::MerchantBuy {
+            merchant_id,
+            player_id,
+            slot,
+            quantity,
+            price,
+        } => {
+            if merchant_id == 0
+                || player_id == 0
+                || slot == 0
+                || slot > u16::MAX as u32
+                || quantity == 0
+                || quantity > i16::MAX as u32
+            {
+                return Err(ZoneError::Malformed("merchant purchase"));
+            }
+            for value in [merchant_id, player_id, slot, 0, quantity, 0, price, 0] {
+                out.extend(value.to_le_bytes());
+            }
+            0x0ddd
+        }
+        Command::MerchantSell {
+            merchant_id,
+            slot,
+            quantity,
+        } => {
+            if merchant_id == 0
+                || slot.kind != 0
+                || slot.augment.is_some()
+                || slot.server_slot().is_none()
+                || quantity == 0
+                || quantity > i16::MAX as u32
+            {
+                return Err(ZoneError::Malformed("merchant sale"));
+            }
+            out.extend(merchant_id.to_le_bytes());
+            for value in [slot.slot, slot.bag.unwrap_or(u16::MAX), u16::MAX, 0] {
+                out.extend(value.to_le_bytes());
+            }
+            out.extend(quantity.to_le_bytes());
+            out.extend(0u32.to_le_bytes());
+            0x791b
+        }
+        Command::MerchantClose => 0x30a8,
+        Command::BankerChange => {
+            out.extend(0u32.to_le_bytes());
+            0x791e
+        }
+        Command::MoveCoin {
+            from,
+            to,
+            coin,
+            amount,
+        } => {
+            if from == to
+                || amount == 0
+                || amount > i32::MAX as u32
+                || ((from == CoinLocation::SharedBank || to == CoinLocation::SharedBank)
+                    && coin != CoinType::Platinum)
+            {
+                return Err(ZoneError::Malformed("coin move"));
+            }
+            for value in [from as u32, to as u32, coin as u32, coin as u32, amount] {
+                out.extend(value.to_le_bytes());
+            }
+            0x0bcf
+        }
         Command::MemorizeSpell { slot, spell_id } | Command::UnmemorizeSpell { slot, spell_id } => {
             if slot >= 12 || spell_id == 0 || spell_id > 45000 {
                 return Err(ZoneError::Malformed("spell gem"));
@@ -540,9 +699,18 @@ pub fn encode_command(command: Command) -> Result<AppPacket, ZoneError> {
 /// None means an opcode belongs to another subsystem; a recognized truncated
 /// gameplay packet is an error, never a fabricated empty inventory or message.
 pub fn parse_packet(opcode: u16, data: &[u8]) -> Option<Result<GameplayEvent, ZoneError>> {
+    if let Some(event) = crate::social::parse_packet(opcode, data) {
+        return Some(event.map(GameplayEvent::Social));
+    }
     if !matches!(
         opcode,
-        0x217c
+        0x4fed
+            | 0x0ddd
+            | 0x791b
+            | 0x724f
+            | 0x3196
+            | 0x791e
+            | 0x217c
             | 0x318f
             | 0x048c
             | 0x744c
@@ -588,6 +756,95 @@ pub fn parse_packet(opcode: u16, data: &[u8]) -> Option<Result<GameplayEvent, Zo
 fn parse_known(opcode: u16, data: &[u8]) -> Option<GameplayEvent> {
     let mut r = Reader(data);
     Some(match opcode {
+        0x4fed => {
+            let merchant_id = r.u32()?;
+            r.skip(4)?;
+            let command = r.u32()?;
+            let rate = r.float()?;
+            let tabs = r.u32()?;
+            r.skip(4)?;
+            if !r.done() {
+                return None;
+            }
+            GameplayEvent::MerchantOpened {
+                merchant_id,
+                command,
+                rate,
+                tabs,
+            }
+        }
+        0x0ddd => {
+            let merchant_id = r.u32()?;
+            let player_id = r.u32()?;
+            let slot = r.u32()?;
+            r.skip(4)?;
+            let quantity = r.u32()?;
+            r.skip(4)?;
+            let price = r.u32()?;
+            r.skip(4)?;
+            if !r.done() {
+                return None;
+            }
+            GameplayEvent::MerchantBought {
+                merchant_id,
+                player_id,
+                slot,
+                quantity,
+                price,
+            }
+        }
+        0x791b => {
+            let merchant_id = r.u32()?;
+            let main = r.u16()?;
+            let bag = r.u16()?;
+            let augment = r.u16()?;
+            r.skip(2)?;
+            let quantity = r.u32()?;
+            let price = r.u32()?;
+            if !r.done() {
+                return None;
+            }
+            let slot = InventorySlot {
+                kind: 0,
+                slot: main,
+                bag: (bag != u16::MAX).then_some(bag),
+                augment: (augment != u16::MAX).then_some(augment),
+            };
+            GameplayEvent::MerchantSold {
+                merchant_id,
+                slot,
+                quantity,
+                price,
+                rejected: main == u16::MAX || quantity == 0,
+            }
+        }
+        0x724f => {
+            let merchant_id = r.u32()?;
+            let player_id = r.u32()?;
+            let slot = r.u32()?;
+            if !r.done() {
+                return None;
+            }
+            GameplayEvent::MerchantItemRemoved {
+                merchant_id,
+                player_id,
+                slot,
+            }
+        }
+        0x3196 => {
+            if !r.done() {
+                return None;
+            }
+            GameplayEvent::MerchantClosed
+        }
+        0x791e => {
+            let carried = currency(&mut r)?;
+            let bank = currency(&mut r)?;
+            if !r.done() {
+                return None;
+            }
+            GameplayEvent::BankerBalances { carried, bank }
+        }
         0x217c => {
             let slot = r.u32()?;
             let spell_id = r.u32()?;
@@ -1174,8 +1431,9 @@ fn parse_profile(data: &[u8]) -> Option<PlayerProfile> {
             });
         }
     }
-    let currency = currency(&mut r)?;
-    r.skip(16 + 12 + 8 + 4)?;
+    let carried = currency(&mut r)?;
+    let cursor_currency = currency(&mut r)?;
+    r.skip(12 + 8 + 4)?;
     r.array(4, 32)?;
     r.skip(4 + 2)?;
     let bandoliers = r.u32()?;
@@ -1203,6 +1461,11 @@ fn parse_profile(data: &[u8]) -> Option<PlayerProfile> {
     r.skip(8)?;
     let name = Reader(r.array(1, 64)?).string(63)?;
     let last_name = Reader(r.array(1, 64)?).string(63)?;
+    r.skip(24)?;
+    r.array(1, 64)?; // languages
+    r.skip(4 + 16 + 8 + 10 + 8 + 1)?; // zone, position, flags, guild, experience, eye height
+    let bank_currency = currency(&mut r)?;
+    let shared_platinum = r.u32()?;
     Some(PlayerProfile {
         name,
         last_name,
@@ -1213,7 +1476,10 @@ fn parse_profile(data: &[u8]) -> Option<PlayerProfile> {
         mana,
         endurance,
         stats,
-        currency,
+        currency: carried,
+        bank_currency,
+        cursor_currency,
+        shared_platinum,
         skills,
         spell_book,
         memorized_spells,
@@ -1225,6 +1491,163 @@ fn parse_profile(data: &[u8]) -> Option<PlayerProfile> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn commerce_packets_preserve_actual_slots_prices_and_rejections() {
+        let open = encode_command(Command::MerchantOpen {
+            merchant_id: 45,
+            player_id: 7,
+        })
+        .unwrap();
+        assert_eq!(open.data.len(), 24);
+        assert!(matches!(
+            parse_packet(open.opcode, &open.data).unwrap().unwrap(),
+            GameplayEvent::MerchantOpened {
+                merchant_id: 45,
+                command: 1,
+                rate: 1.,
+                tabs: 1
+            }
+        ));
+        let buy = encode_command(Command::MerchantBuy {
+            merchant_id: 45,
+            player_id: 7,
+            slot: 5,
+            quantity: 2,
+            price: 302,
+        })
+        .unwrap();
+        assert_eq!(buy.data.len(), 32);
+        assert!(matches!(
+            parse_packet(buy.opcode, &buy.data).unwrap().unwrap(),
+            GameplayEvent::MerchantBought {
+                merchant_id: 45,
+                player_id: 7,
+                slot: 5,
+                quantity: 2,
+                price: 302
+            }
+        ));
+        let slot = InventorySlot::possessions(25).in_bag(4);
+        let mut sell = encode_command(Command::MerchantSell {
+            merchant_id: 45,
+            slot,
+            quantity: 2,
+        })
+        .unwrap();
+        sell.data[16..20].copy_from_slice(&294u32.to_le_bytes());
+        let GameplayEvent::MerchantSold {
+            slot: actual,
+            quantity,
+            price,
+            rejected,
+            ..
+        } = parse_packet(sell.opcode, &sell.data).unwrap().unwrap()
+        else {
+            panic!("sale")
+        };
+        assert_eq!(actual, slot);
+        assert_eq!((quantity, price, rejected), (2, 294, false));
+        sell.data[4..6].copy_from_slice(&u16::MAX.to_le_bytes());
+        sell.data[12..20].fill(0);
+        assert!(matches!(
+            parse_packet(sell.opcode, &sell.data).unwrap().unwrap(),
+            GameplayEvent::MerchantSold { rejected: true, .. }
+        ));
+        for p in [open, buy, sell] {
+            for n in 0..p.data.len() {
+                assert!(parse_packet(p.opcode, &p.data[..n]).unwrap().is_err());
+            }
+        }
+        let mut invalid_rate = vec![0; 24];
+        invalid_rate[12..16].copy_from_slice(&f32::NAN.to_le_bytes());
+        assert!(parse_packet(0x4fed, &invalid_rate).unwrap().is_err());
+        assert!(
+            encode_command(Command::MerchantSell {
+                merchant_id: 1,
+                slot: InventorySlot::bank(0),
+                quantity: 1
+            })
+            .is_err()
+        );
+        assert!(
+            encode_command(Command::MerchantBuy {
+                merchant_id: 1,
+                player_id: 7,
+                slot: 1,
+                quantity: 0,
+                price: 0
+            })
+            .is_err()
+        );
+        assert_eq!(
+            encode_command(Command::MerchantClose).unwrap().opcode,
+            0x30a8
+        );
+        assert!(matches!(
+            parse_packet(0x3196, &[]).unwrap().unwrap(),
+            GameplayEvent::MerchantClosed
+        ));
+        assert!(parse_packet(0x3196, &[0]).unwrap().is_err());
+    }
+    #[test]
+    fn bank_coins_only_encode_supported_locations_and_denominations() {
+        let p = encode_command(Command::MoveCoin {
+            from: CoinLocation::Carried,
+            to: CoinLocation::Bank,
+            coin: CoinType::Gold,
+            amount: 12,
+        })
+        .unwrap();
+        assert_eq!(p.opcode, 0x0bcf);
+        assert_eq!(
+            p.data,
+            [1u32, 2, 2, 2, 12]
+                .into_iter()
+                .flat_map(u32::to_le_bytes)
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            encode_command(Command::MoveCoin {
+                from: CoinLocation::Carried,
+                to: CoinLocation::SharedBank,
+                coin: CoinType::Copper,
+                amount: 1
+            })
+            .is_err()
+        );
+        assert!(
+            encode_command(Command::MoveCoin {
+                from: CoinLocation::Carried,
+                to: CoinLocation::Bank,
+                coin: CoinType::Gold,
+                amount: u32::MAX
+            })
+            .is_err()
+        );
+        let p = encode_command(Command::BankerChange).unwrap();
+        assert_eq!(p.data.len(), 4);
+        assert_eq!(p.opcode, 0x791e);
+        let values = [9u32, 8, 7, 6, 5, 4, 3, 2];
+        let bytes = values
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect::<Vec<_>>();
+        let GameplayEvent::BankerBalances { carried, bank } =
+            parse_packet(0x791e, &bytes).unwrap().unwrap()
+        else {
+            panic!("bank")
+        };
+        assert_eq!(
+            (carried.platinum, carried.copper, bank.platinum, bank.copper),
+            (9, 6, 5, 2)
+        );
+        for n in 0..bytes.len() {
+            assert!(parse_packet(0x791e, &bytes[..n]).unwrap().is_err());
+        }
+        for n in 0..12 {
+            assert!(parse_packet(0x724f, &[0; 12][..n]).unwrap().is_err());
+        }
+    }
     #[test]
     fn consumption_opcodes_preserve_unit_charge_and_whole_item_meanings() {
         let from = InventorySlot::possessions(23);

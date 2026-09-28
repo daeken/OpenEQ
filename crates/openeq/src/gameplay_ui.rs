@@ -1,7 +1,10 @@
 //! Renderer-neutral live gameplay presentation. All item slots are supplied by
 //! the protocol adapter; XML widget numbers are never treated as server slots.
 
+pub use crate::commerce_ui::{CommerceAction, UiBank, UiMerchant, UiMerchantStock, UiMoney};
 use crate::hud::{Hud, HudState};
+pub use crate::social_ui::{SocialAction, UiGroup, UiGroupMember};
+pub use openeq_ui::TextLink as UiChatLink;
 use openeq_ui::{Color, DrawCommand, HitTarget, Rect, TextAlign, TextLine, UiBindings, UiFrame};
 use std::collections::BTreeMap;
 
@@ -9,6 +12,7 @@ use std::collections::BTreeMap;
 pub struct ChatLine {
     pub text: String,
     pub color: Color,
+    pub links: Vec<UiChatLink>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -94,6 +98,10 @@ pub const SPELLBOOK_PAGE_SIZE: usize = 12;
 
 #[derive(Clone, Debug, Default)]
 pub struct GameHudState {
+    pub group: Option<UiGroup>,
+    pub money: Option<UiMoney>,
+    pub merchant: Option<UiMerchant>,
+    pub bank: Option<UiBank>,
     pub buffs: Vec<UiBuff>,
     pub known_spells: Vec<UiSpell>,
     pub memorized: Vec<UiSpellGem>,
@@ -130,6 +138,9 @@ pub struct GameHudState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UiAction {
+    ChatLink(u64),
+    Social(SocialAction),
+    Commerce(CommerceAction),
     /// Only dispatch a removal for a right-click; left-click is inspection.
     RemoveBuff(u32),
     CastGem(u8),
@@ -155,7 +166,16 @@ pub enum UiAction {
 
 impl UiAction {
     pub fn from_hit(hit: &HitTarget) -> Option<Self> {
+        if let Some(action) = CommerceAction::from_hit(hit) {
+            return Some(Self::Commerce(action));
+        }
+        if let Some(action) = SocialAction::from_hit(hit) {
+            return Some(Self::Social(action));
+        }
         let item = hit.item.as_str();
+        if let Some(id) = item.strip_prefix("chat:link:") {
+            return id.parse().ok().map(Self::ChatLink);
+        }
         if let Some(slot) = item.strip_prefix("game:buff:") {
             return slot.parse().ok().map(Self::RemoveBuff);
         }
@@ -203,9 +223,9 @@ impl UiAction {
     }
 }
 
-const WHITE: Color = [230, 226, 213, 255];
-const GOLD: Color = [224, 194, 121, 255];
-const MUTED: Color = [155, 164, 170, 255];
+pub(crate) const WHITE: Color = [230, 226, 213, 255];
+pub(crate) const GOLD: Color = [224, 194, 121, 255];
+pub(crate) const MUTED: Color = [155, 164, 170, 255];
 
 impl Hud {
     /// Composes the original XML skin with live gameplay state. The application
@@ -249,6 +269,9 @@ impl Hud {
         if state.memorized.iter().any(|gem| gem.spell.is_some()) || !state.known_spells.is_empty() {
             draw.spellbar(state);
         }
+        if let Some(group) = &state.group {
+            draw.group(state, group);
+        }
         let chat = position(
             state,
             "chat",
@@ -279,6 +302,7 @@ impl Hud {
                 vec![TextLine {
                     text: resources.status.clone(),
                     color: MUTED,
+                    links: Vec::new(),
                 }]
             } else {
                 state
@@ -287,6 +311,7 @@ impl Hud {
                     .map(|line| TextLine {
                         text: line.text.clone(),
                         color: line.color,
+                        links: line.links.clone(),
                     })
                     .collect()
             },
@@ -509,6 +534,7 @@ impl Hud {
         if state.spellbook_open {
             draw.spellbook(state);
         }
+        draw.commerce(state);
         if let Some(casting) = &state.casting {
             draw.casting(state, casting);
         }
@@ -521,8 +547,21 @@ impl Hud {
                     .iter()
                     .chain(&state.inventory)
                     .chain(state.bags.iter().flat_map(|bag| &bag.slots))
+                    .chain(
+                        state
+                            .bank
+                            .iter()
+                            .flat_map(|bank| bank.slots.iter().chain(&bank.shared_slots)),
+                    )
                     .find(|slot| slot.slot == id)
                     .and_then(|slot| slot.item.as_ref()),
+                Some(UiAction::Commerce(CommerceAction::SelectStock(id))) => state
+                    .merchant
+                    .as_ref()?
+                    .stock
+                    .iter()
+                    .find(|stock| stock.slot == id)
+                    .map(|stock| &stock.item),
                 Some(UiAction::LootItem(id)) => state
                     .loot
                     .as_ref()?
@@ -605,7 +644,7 @@ fn chat_edit_text(input: &str, cursor: Option<usize>, visible: usize) -> String 
     result
 }
 
-fn position(state: &GameHudState, key: &str, fallback: Rect, screen: Rect) -> Rect {
+pub(crate) fn position(state: &GameHudState, key: &str, fallback: Rect, screen: Rect) -> Rect {
     let [x, y] = state
         .window_positions
         .get(key)
@@ -673,15 +712,15 @@ fn inset(rect: Rect, amount: f32) -> Rect {
     )
 }
 
-struct Painter<'a> {
-    hud: &'a Hud,
-    screen: Rect,
-    pointer: Option<[f32; 2]>,
-    frame: UiFrame,
+pub(crate) struct Painter<'a> {
+    pub(crate) hud: &'a Hud,
+    pub(crate) screen: Rect,
+    pub(crate) pointer: Option<[f32; 2]>,
+    pub(crate) frame: UiFrame,
 }
 
 impl Painter<'_> {
-    fn widget(&mut self, name: &str, bindings: &UiBindings) {
+    pub(crate) fn widget(&mut self, name: &str, bindings: &UiBindings) {
         match self.hud.ui.window(name) {
             Ok(window) => {
                 let mut frame = window.layout(self.screen, bindings);
@@ -693,7 +732,14 @@ impl Painter<'_> {
         }
     }
 
-    fn shell(&mut self, template: &str, key: &str, rect: Rect, title: &str, close: bool) {
+    pub(crate) fn shell(
+        &mut self,
+        template: &str,
+        key: &str,
+        rect: Rect,
+        title: &str,
+        close: bool,
+    ) {
         let mut bindings = UiBindings::default();
         if let Some(root) = self.hud.ui.definition(template) {
             for child in root.values("Pieces").chain(root.values("Pages")) {
@@ -744,7 +790,14 @@ impl Painter<'_> {
         }
     }
 
-    fn button(&mut self, template: &str, id: &str, rect: Rect, text: &str, active: bool) {
+    pub(crate) fn button(
+        &mut self,
+        template: &str,
+        id: &str,
+        rect: Rect,
+        text: &str,
+        active: bool,
+    ) {
         let mut bindings = UiBindings::default();
         let state = bindings.widget_mut(template);
         state.rect = Some(rect);
@@ -758,7 +811,54 @@ impl Painter<'_> {
         self.hit(id, "Button", rect, None);
     }
 
-    fn slot(&mut self, template: &str, rect: Rect, slot: &UiSlot, selected: bool) {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn button_enabled(
+        &mut self,
+        template: &str,
+        id: &str,
+        rect: Rect,
+        text: &str,
+        active: bool,
+        enabled: bool,
+    ) {
+        let mut bindings = UiBindings::default();
+        let state = bindings.widget_mut(template);
+        state.rect = Some(rect);
+        state.text = Some(text.to_owned());
+        state.checked = active;
+        state.enabled = Some(enabled);
+        state.hovered = enabled && self.pointer.is_some_and(|point| rect.contains(point));
+        self.widget(template, &bindings);
+        if active {
+            self.outline(inset(rect, 1.), GOLD);
+        }
+        self.hit_enabled(id, "Button", rect, None, enabled);
+    }
+
+    pub(crate) fn hit_enabled(
+        &mut self,
+        id: impl Into<String>,
+        kind: &str,
+        rect: Rect,
+        tooltip: Option<String>,
+        enabled: bool,
+    ) {
+        let rect = rect.intersect(self.screen);
+        if rect.is_empty() {
+            return;
+        }
+        let id = id.into();
+        self.frame.hit_targets.push(HitTarget {
+            screen_id: id.clone(),
+            item: id,
+            kind: kind.into(),
+            rect,
+            enabled,
+            tooltip,
+        });
+    }
+
+    pub(crate) fn slot(&mut self, template: &str, rect: Rect, slot: &UiSlot, selected: bool) {
         self.item_slot(template, rect, slot.item.as_ref(), selected);
         self.hit(
             format!("game:slot:{}", slot.slot),
@@ -785,7 +885,7 @@ impl Painter<'_> {
         }
     }
 
-    fn icon(&mut self, item: &UiItem, rect: Rect) {
+    pub(crate) fn icon(&mut self, item: &UiItem, rect: Rect) {
         if let Some(index) = item.icon.checked_sub(500) {
             self.animation("A_DragItem", Some(index as usize), rect);
         }
@@ -805,7 +905,7 @@ impl Painter<'_> {
         }
     }
 
-    fn animation(&mut self, name: &str, index: Option<usize>, rect: Rect) {
+    pub(crate) fn animation(&mut self, name: &str, index: Option<usize>, rect: Rect) {
         if let Some(frame) = self
             .hud
             .ui
@@ -1169,7 +1269,13 @@ impl Painter<'_> {
         rect
     }
 
-    fn hit(&mut self, id: impl Into<String>, kind: &str, rect: Rect, tooltip: Option<String>) {
+    pub(crate) fn hit(
+        &mut self,
+        id: impl Into<String>,
+        kind: &str,
+        rect: Rect,
+        tooltip: Option<String>,
+    ) {
         let rect = rect.intersect(self.screen);
         if !rect.is_empty() {
             let id = id.into();
@@ -1183,14 +1289,14 @@ impl Painter<'_> {
             });
         }
     }
-    fn fill(&mut self, rect: Rect, color: Color) {
+    pub(crate) fn fill(&mut self, rect: Rect, color: Color) {
         self.frame.commands.push(DrawCommand::Fill {
             rect,
             clip: rect.intersect(self.screen),
             color,
         });
     }
-    fn outline(&mut self, rect: Rect, color: Color) {
+    pub(crate) fn outline(&mut self, rect: Rect, color: Color) {
         for edge in [
             Rect::new(rect.x, rect.y, rect.width, 1.),
             Rect::new(rect.x, rect.bottom() - 1., rect.width, 1.),
@@ -1200,7 +1306,7 @@ impl Painter<'_> {
             self.fill(edge, color);
         }
     }
-    fn text(&mut self, rect: Rect, text: impl Into<String>, color: Color, wrap: bool) {
+    pub(crate) fn text(&mut self, rect: Rect, text: impl Into<String>, color: Color, wrap: bool) {
         self.frame.commands.push(DrawCommand::Text {
             rect,
             clip: self.screen.intersect(rect),
@@ -1304,7 +1410,7 @@ mod tests {
             bag_slots: 8,
         };
         let mut state = GameHudState {
-            chat: vec![ChatLine { text: "Welcome to Norrath!".into(), color: GOLD }, ChatLine { text: "You say, 'Hail, Guard Alayle'".into(), color: WHITE }, ChatLine { text: "Guard Alayle says, 'Greetings, adventurer. The road ahead is dangerous; keep your weapon ready and your friends close.'".into(), color: [120, 220, 180, 255] }, ChatLine { text: "You hit a decaying skeleton for 7 points of damage.".into(), color: [240, 145, 145, 255] }],
+            chat: vec![ChatLine { text: "Welcome to Norrath!".into(), color: GOLD, links: vec![] }, ChatLine { text: "You say, 'Hail, Guard Alayle'".into(), color: WHITE, links: vec![] }, ChatLine { text: "Guard Alayle says, 'Greetings, adventurer. The road ahead is dangerous; keep your weapon ready and your friends close.'".into(), color: [120, 220, 180, 255], links: vec![] }, ChatLine { text: "You hit a decaying skeleton for 7 points of damage.".into(), color: [240, 145, 145, 255], links: vec![] }],
             chat_input: "/say Ready for adventure".into(), chat_active: true,
             inventory_open: true, attack: true,
             equipment: (0..23).map(|slot| UiSlot { slot, label: format!("Equipment {slot}"), item: (slot == 13).then(|| sword.clone()) }).collect(),

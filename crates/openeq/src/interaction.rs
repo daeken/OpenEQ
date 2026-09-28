@@ -29,6 +29,12 @@ pub struct Interaction {
     pub spellbook_open: bool,
     pub spellbook_page: usize,
     pub selected_gem: Option<u8>,
+    pub merchant_stock: Option<u32>,
+    pub merchant_sell: Option<InventorySlot>,
+    pub merchant_quantity: u32,
+    pub merchant_scroll: usize,
+    pub bank_coin: u8,
+    pub bank_quantity: u32,
 }
 
 impl Interaction {
@@ -168,7 +174,7 @@ impl Interaction {
                     })
                     .collect(),
             });
-        GameHudState {
+        let mut view = GameHudState {
             chat: live.game.chat.iter().cloned().collect(),
             chat_input,
             chat_active: self.editor.active,
@@ -185,7 +191,10 @@ impl Interaction {
             attack: live.game.attack,
             sitting: live.game.sitting,
             window_positions: self.window_positions.clone(),
-            inspected_item: self.inspected_item.clone(),
+            inspected_item: self
+                .inspected_item
+                .clone()
+                .or_else(|| live.game.linked_item.as_ref().map(game::item_view)),
             known_spells,
             memorized,
             casting,
@@ -202,7 +211,11 @@ impl Interaction {
                     remaining_seconds: live.game.buff_seconds(buff.slot),
                 })
                 .collect(),
-        }
+            ..Default::default()
+        };
+        self.commerce_view(live, &mut view);
+        self.social_view(live, &mut view);
+        view
     }
 
     /// Returns true only for an explicit quit command.
@@ -360,6 +373,38 @@ impl Interaction {
                     live.game.error(format!("No nearby target matches {name}."));
                 }
             }
+            Action::UseTarget => self.open_service(live, None),
+            Action::Merchant => self.open_service(live, Some(crate::commerce::MERCHANT_CLASS)),
+            Action::Bank => self.open_service(live, Some(crate::commerce::BANKER_CLASS)),
+            Action::Invite(name) => self.invite(live, name),
+            Action::AcceptInvite => self.answer_invite(live, true),
+            Action::DeclineInvite => self.answer_invite(live, false),
+            Action::LeaveGroup => {
+                live.set_target(live.own_id);
+                live.command(Command::Social(openeq_net::social::SocialCommand::Leave {
+                    character: live.character.clone(),
+                }));
+            }
+            Action::MakeLeader(leader) => {
+                if live.game.group.leader.eq_ignore_ascii_case(&live.character)
+                    && live
+                        .game
+                        .group
+                        .members
+                        .iter()
+                        .any(|member| member.name.eq_ignore_ascii_case(&leader))
+                {
+                    live.command(Command::Social(
+                        openeq_net::social::SocialCommand::MakeLeader {
+                            character: live.character.clone(),
+                            leader,
+                        },
+                    ));
+                } else {
+                    live.game
+                        .error("Only the group leader can transfer leadership to a group member.");
+                }
+            }
             Action::Inventory => self.inventory_open = !self.inventory_open,
             Action::Spellbook => self.spellbook_open = !self.spellbook_open,
             Action::Cast(gem) => self.cast(gem, live),
@@ -368,8 +413,8 @@ impl Interaction {
             }
             Action::Location => live.game.notice(format!(
                 "Location: {:.1}, {:.1}, {:.1} (Y, X, Z)",
-                position[1],
                 position[0],
+                position[1],
                 position[2] - 3.
             )),
             Action::Help => live.game.notice(chat::HELP),
@@ -398,6 +443,17 @@ impl Interaction {
             return;
         }
         match action {
+            UiAction::Commerce(action) => self.commerce_action(action, live),
+            UiAction::Social(action) => self.social_action(action, live),
+            UiAction::ChatLink(id) => {
+                if let Some(link) = live.game.chat_links.get(&id).cloned() {
+                    self.inspected_item = None;
+                    live.game.linked_item = None;
+                    live.command(Command::Social(
+                        openeq_net::social::SocialCommand::ActivateLink(link),
+                    ));
+                }
+            }
             UiAction::RemoveBuff(slot) => {
                 if right && let Some(player_id) = live.own_id {
                     live.command(Command::RemoveBuff { slot, player_id });
@@ -482,6 +538,23 @@ impl Interaction {
                     }
                 } else if live
                     .game
+                    .commerce
+                    .merchant
+                    .as_ref()
+                    .is_some_and(|merchant| merchant.opened)
+                    && !live
+                        .game
+                        .inventory
+                        .items
+                        .contains_key(&InventorySlot::CURSOR)
+                {
+                    if slot.kind == 0 && live.game.inventory.items.contains_key(&slot) {
+                        self.merchant_sell = Some(slot);
+                        self.merchant_stock = None;
+                        self.merchant_quantity = 1;
+                    }
+                } else if live
+                    .game
                     .inventory
                     .items
                     .contains_key(&InventorySlot::CURSOR)
@@ -538,7 +611,17 @@ impl Interaction {
     }
 
     pub fn close_window(&mut self, window: &str, live: &mut LiveWorld) {
-        if window == "spellbook" {
+        if window == "merchant" {
+            live.command(Command::MerchantClose);
+            live.game.commerce.merchant = None;
+            self.merchant_stock = None;
+            self.merchant_sell = None;
+        } else if window == "bank" {
+            live.game.commerce.bank = None;
+            self.open_bags.retain(|id| {
+                InventorySlot::from_server_slot(*id as u32).is_some_and(|slot| slot.kind == 0)
+            });
+        } else if window == "spellbook" {
             self.spellbook_open = false;
         } else if window == "inventory" {
             self.inventory_open = false;
@@ -548,6 +631,7 @@ impl Interaction {
             }
         } else if window == "inspect" {
             self.inspected_item = None;
+            live.game.linked_item = None;
         } else if let Some(id) = window
             .strip_prefix("bag:")
             .and_then(|id| id.parse::<i32>().ok())
@@ -557,6 +641,28 @@ impl Interaction {
     }
 
     pub fn tick(&mut self, live: &mut LiveWorld) {
+        if live
+            .game
+            .commerce
+            .bank
+            .as_ref()
+            .is_some_and(|bank| !live.service_available(bank.id, crate::commerce::BANKER_CLASS))
+        {
+            self.close_window("bank", live);
+            live.game.notice("Bank closed: the banker is out of reach.");
+        }
+        if live
+            .game
+            .commerce
+            .merchant
+            .as_ref()
+            .is_some_and(|merchant| {
+                !live.service_available(merchant.id, crate::commerce::MERCHANT_CLASS)
+            })
+        {
+            self.close_window("merchant", live);
+            live.game.notice("Merchant closed: out of reach.");
+        }
         let slot = live
             .game
             .loot

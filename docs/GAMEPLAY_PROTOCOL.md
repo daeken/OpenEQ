@@ -12,6 +12,15 @@ returns existing spawn/environment events plus `ZoneEvent::Gameplay(GameplayEven
 Send structured `gameplay::Command` values through `ZoneClient::command()`.
 A successful send is transport submission, not server acceptance.
 
+Network positions retain EQEmu server X/Y/Z and heading conventions. Raw zone
+assets use the opposite X/Y order: EQEmu's `zone/map.cpp` explicitly swaps model
+vertices when constructing its collision map. The client `coordinates` module
+converts points, headings, velocity and turn direction at the `LiveWorld`
+boundary. Direct `ZoneClient` users and GM command text such as `#goto X Y Z`
+continue to use server coordinates. A server actor's Z is its center, not the
+floor; its offset depends on race and size. Do not position a human by copying
+a smaller NPC's center height.
+
 Implemented messages cover:
 
 - Initial recursive inventory, item updates, moves/deletes/charge consumption;
@@ -28,6 +37,9 @@ Implemented messages cover:
   authenticated world/zone handoffs, including same-zone teleport information.
 - Spell memorization/forgetting, gem casting, interruption, cast start/finish and
   cooldown feedback, initial/replacement/partial buff lists, and buff dismissal.
+- Merchant catalog, purchases/sales and personal/shared banking; see
+  [COMMERCE_PROTOCOL.md](COMMERCE_PROTOCOL.md) for transaction reconciliation.
+- Quest/item links and group membership; see [SOCIAL_PROTOCOL.md](SOCIAL_PROTOCOL.md).
 
 ## Inventory details
 
@@ -223,7 +235,7 @@ therefore requires real damage or a death attributed to spell 54, not merely a
 successful command submission or spellbar unlock. All 35 net unit tests and
 `cargo clippy -p openeq-net --all-targets -- -D warnings` pass.
 
-Limitations: merchant/trade/augmentation workflows, guild/group membership
+Limitations: player trading/augmentation workflows, guild/raid membership
 management, UCS custom channels, item/AA casting, spell scroll scribing and authored
 zone-line triggers are separate work. Rendering spell particles and richer spell
 UI behavior are client concerns separate from these server-authoritative messages.

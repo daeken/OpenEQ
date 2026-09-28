@@ -1,7 +1,7 @@
 //! Client map-file decoding and a renderer-neutral, north-up minimap.
 //!
-//! EQ map text stores (-world_x, -world_y, world_z). Public positions in this
-//! module use the same EQ coordinates as the camera and network adapter.
+//! EQ map text stores (-server_x, -server_y, server_z). Public positions use
+//! scene/asset coordinates: (server_y, server_x, server_z). North is +scene_x.
 
 use anyhow::{Context, bail};
 use openeq_ui::{Color, DrawCommand, HitTarget, Rect, TextAlign, UiFrame};
@@ -56,7 +56,7 @@ impl Default for MapMarker {
 pub struct MapState {
     pub rect: Rect,
     pub player_position: [f32; 3],
-    /// Camera yaw in radians: zero points north (+world_y).
+    /// Camera yaw in radians: zero points +scene_y; north (+scene_x) is pi/2.
     pub heading: f32,
     pub units_per_pixel: f32,
     /// None follows the player; Some fixes the map center in world coordinates.
@@ -138,12 +138,12 @@ impl MapState {
         let canvas = self.canvas();
         let center = self.center();
         [
-            canvas.x + canvas.width * 0.5 + (position[0] - center[0]) / self.scale(),
-            canvas.y + canvas.height * 0.5 - (position[1] - center[1]) / self.scale(),
+            canvas.x + canvas.width * 0.5 + (position[1] - center[1]) / self.scale(),
+            canvas.y + canvas.height * 0.5 - (position[0] - center[0]) / self.scale(),
         ]
     }
 
-    /// Converts a canvas click into an EQ world waypoint at the player's height.
+    /// Converts a canvas click into a scene waypoint at the player's height.
     pub fn world_at(&self, point: [f32; 2]) -> Option<[f32; 3]> {
         let canvas = self.canvas();
         if !canvas.contains(point) {
@@ -151,8 +151,8 @@ impl MapState {
         }
         let center = self.center();
         Some([
-            center[0] + (point[0] - canvas.x - canvas.width * 0.5) * self.scale(),
-            center[1] - (point[1] - canvas.y - canvas.height * 0.5) * self.scale(),
+            center[0] - (point[1] - canvas.y - canvas.height * 0.5) * self.scale(),
+            center[1] + (point[0] - canvas.x - canvas.width * 0.5) * self.scale(),
             self.player_position[2],
         ])
     }
@@ -490,8 +490,8 @@ impl ZoneMap {
         let player = state.screen_at(state.player_position);
         if clip.contains(player) {
             let (sin, cos) = state.heading.sin_cos();
-            let forward = [sin, -cos];
-            let right = [cos, sin];
+            let forward = [cos, -sin];
+            let right = [sin, cos];
             let tip = [player[0] + forward[0] * 9., player[1] + forward[1] * 9.];
             let left = [
                 player[0] - forward[0] * 5. - right[0] * 5.,
@@ -526,7 +526,7 @@ impl ZoneMap {
         } else {
             format!(
                 "X {:.0}  Y {:.0}  Z {:.0}",
-                state.player_position[0], state.player_position[1], state.player_position[2]
+                state.player_position[1], state.player_position[0], state.player_position[2]
             )
         };
         text(
@@ -558,7 +558,9 @@ fn point(fields: &[&str]) -> Option<[f32; 3]> {
     point
         .iter()
         .all(|n| n.is_finite())
-        .then_some([-point[0], -point[1], point[2]])
+        .then_some(crate::coordinates::server_point_to_scene([
+            -point[0], -point[1], point[2],
+        ]))
 }
 fn color(fields: &[&str]) -> Option<Color> {
     Some([
@@ -719,15 +721,15 @@ mod tests {
             "\u{feff}# comment\r\nL 10,20,-3,30,40,5,0,128,255\r\nP 25,-50,7,255,0,0,3,Inn,_north_door\nL NaN,0,0,1,1,1,0,0,0\nP 0,0,0,256,0,0,1,Invalid\n",
         );
         assert_eq!(map.lines.len(), 1);
-        assert_eq!(map.lines[0].from, [-10., -20., -3.]);
-        assert_eq!(map.lines[0].to, [-30., -40., 5.]);
+        assert_eq!(map.lines[0].from, [-20., -10., -3.]);
+        assert_eq!(map.lines[0].to, [-40., -30., 5.]);
         assert_eq!(map.lines[0].color, [0, 128, 255, 255]);
-        assert_eq!(map.labels[0].position, [-25., 50., 7.]);
+        assert_eq!(map.labels[0].position, [50., -25., 7.]);
         assert_eq!(map.labels[0].text, "Inn, north door");
         assert_eq!(map.malformed_records, 2);
         map.add_layer("P 0,0,0,0,0,0,1,Layer_two", 2);
         assert_eq!(map.labels[1].layer, 2);
-        assert_eq!(map.bounds().unwrap(), ([-30., -40., -3.], [-0., 50., 7.]));
+        assert_eq!(map.bounds().unwrap(), ([-40., -30., -3.], [50., -0., 7.]));
     }
 
     #[test]
@@ -741,8 +743,12 @@ mod tests {
         let center = state.screen_at(state.player_position);
         assert_eq!(state.world_at(center), Some(state.player_position));
         assert_eq!(
-            state.screen_at([120., 220., 30.]),
-            [center[0] + 10., center[1] - 10.]
+            state.screen_at([120., 200., 30.]),
+            [center[0], center[1] - 10.]
+        );
+        assert_eq!(
+            state.screen_at([100., 240., 30.]),
+            [center[0] + 20., center[1]]
         );
         let point = [center[0] - 23., center[1] + 16.];
         assert_eq!(state.screen_at(state.world_at(point).unwrap()), point);
@@ -754,6 +760,37 @@ mod tests {
         assert_eq!(state.world_at(center), Some([0., 0., 30.]));
         state.units_per_pixel = f32::NAN;
         assert!(state.screen_at([1., 2., 3.]).iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn player_arrow_uses_scene_yaw_on_a_north_up_map() {
+        let map = ZoneMap::default();
+        for (heading, direction) in [
+            (std::f32::consts::FRAC_PI_2, [0., -1.]),
+            (0., [1., 0.]),
+            (std::f32::consts::PI, [-1., 0.]),
+        ] {
+            let state = MapState {
+                player_position: [-315., 944., -93.625],
+                heading,
+                ..Default::default()
+            };
+            let player = state.screen_at(state.player_position);
+            let frame = map.frame([640, 480], &state);
+            let tip = frame
+                .commands
+                .iter()
+                .find_map(|command| match command {
+                    DrawCommand::Line { from, color, .. } if *color == [100, 226, 255, 255] => {
+                        Some(*from)
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            for axis in 0..2 {
+                assert!((tip[axis] - player[axis] - direction[axis] * 9.).abs() < 1e-4);
+            }
+        }
     }
 
     #[test]
@@ -831,19 +868,19 @@ mod tests {
             .iter()
             .find(|label| label.text == "Crescent Reach")
             .unwrap();
-        assert_eq!(crescent.position, [-157.5488, 59.1857, -156.8613]);
+        assert_eq!(crescent.position, [59.1857, -157.5488, -156.8613]);
         let bank = map
             .labels
             .iter()
             .find(|label| label.text == "Dogle (Bank)")
             .unwrap();
-        assert_eq!(bank.position, [944., -305., -91.624]);
+        assert_eq!(bank.position, [-305., 944., -91.624]);
         let state = MapState {
             rect: Rect::new(20., 20., 600., 650.),
             player_position: [-100., -100., -156.],
             heading: 0.45,
             units_per_pixel: 3.6,
-            center: Some([576., 0.]),
+            center: Some([0., 576.]),
             waypoints: vec![MapMarker {
                 position: crescent.position,
                 label: "Crescent Reach".into(),

@@ -40,15 +40,26 @@ Controls:
 | M; wheel over map | Map; zoom; click a landmark to mark a waypoint |
 | F9 | Toggle first/third person |
 | E | Use nearest door or portal within reach |
+| R | Open the selected merchant or banker within reach |
+| Click underlined chat link | Activate a quest response or inspect a linked item |
 | F; Space/Ctrl in flight | Development free flight; rise/sink |
 
 Chat supports `/say`, `/tell NAME`, `/reply`, `/group`, `/guild`, `/ooc`,
 `/shout`, `/auction`, `/emote`, `/attack [on|off]`, `/sit`, `/stand`, `/hail`,
 `/con`, `/assist [NAME]`, `/target NAME`, `/loot`, `/inventory`, `/loc`, `/help`
 and `/quit`. Use `/cast 1` through `/cast 12`, `/book` and `/stopcast` for spells.
+Use `/merchant`, `/bank` or `/use` for NPC services. Select merchant stock to buy;
+select an inventory item to sell, then choose a quantity. Bank slots use the same
+pickup/place controls as inventory. Choose a coin type and amount to deposit or
+withdraw; shared coin controls move platinum on the configured Storage2 server.
+Groups support `/invite [NAME]`, `/accept`, `/decline`, `/leavegroup` (or
+`/disband`) and `/makeleader NAME`, with invitation/member controls in the group
+window. `/group` sends to the current group.
 With the spellbook open, select a gem then a learned spell to memorize it.
 Window title bars can be dragged. Escape interrupts casting before closing panels;
 with no active panel or captured mouse, it exits.
+In Kelethin, stand on a lift near its button and press E. The platform carries
+you up and automatically returns, following the default five-second cycle.
 
 ## Working now
 
@@ -56,12 +67,18 @@ with no active panel or captured mouse, it exits.
 - Inventory, bags, equipment, stack moves, item inspection and cursor items,
   using original icons and real server item records.
 - Editable, scrollable channel chat and formatted system/combat messages.
+- Merchant catalogs with server prices/stock, purchases, sales and quantities.
+- Personal/shared bank items, containers and coins, with service range checks
+  and persistence verified across reconnects.
+- Clickable quest and item links; group invitations, acceptance/decline, member
+  health/targeting, group chat, leaving and leadership transfer.
 - Target/assist/consider, autoattack, damage, deaths, corpse loot and Loot All.
 - Spellbook/gems, memorization, casting, interruption, cooldown feedback, mana
   consumption, buffs and dismissal. Effects remain authoritative on EQEmu.
 - Classic armor/skins/tints and held equipment; independent attack/hit/sit/death
   animation. Weighted modern EQG characters include gargoyles and Drakkin.
 - Dynamic doors/portals, door collision, maps with waypoints, third-person camera.
+- Kelethin lift buttons, moving platform collision and passenger carrying.
 - Original XML artwork and layout definitions for gameplay windows, with sharp
   high-density text and correctly scaled mouse hit testing.
 - Deferred sun and authored zone lights, stable shadows, server-dependent fog,
@@ -69,16 +86,20 @@ with no active panel or captured mouse, it exits.
 - Classic WLD zones, binary EQGZ v1/v2 zones and EQTZP heightmap terrain.
 
 This is a playable development milestone, with substantial parity work remaining:
-merchants/trade/banking, group/raid management, richer quest interactions,
-clickable saylinks, interactive account/character creation, authored border zone
+player trading/augmentation, raid and guild management, quest journals,
+interactive account/character creation, authored border zone
 triggers, spell particles/audio, advanced XML widgets and full swimming/movement
 rules. Modern Drakkin modular armor/hair/equipment, Luclin replacements, weather,
 terrain ecosystem effects and water refraction remain incomplete. Door motion
-classes include approximations; dynamic collision switches to the final pose.
+classes include approximations; ordinary door collision switches to the final
+pose, while lifts collide throughout their motion. Lift timing is approximate.
 Some skins/layouts need more work at small window sizes. No original assets are
 redistributed.
 
 See the [completed milestone and remaining parity list](docs/PLAYABLE_CLIENT_TASKS.md).
+The [commerce and social checklist](docs/COMMERCE_SOCIAL_TASKS.md) records the
+next verified milestone. Unknown purchase outcomes deliberately block additional
+trades until reconnecting; the client never retries an uncertain purchase.
 
 ## Offline tools and verification
 
@@ -103,6 +124,19 @@ cargo run -p openeq --bin live_smoke -- \
 # Integrated gameplay state and presentation probe (dedicated caster fixture).
 cargo run -p openeq --bin gameplay_smoke -- \
   "$HOME/.config/openeq/storage2-spell-credentials.json"
+
+# Integrated merchant/bank roundtrip, restoring the dedicated Broker fixture.
+cargo run -p openeq --bin commerce_smoke -- \
+  "$HOME/.config/openeq/storage2-commerce-credentials.json"
+
+# Two-character group and real NPC quest-link protocol proof.
+cargo run -p openeq --bin social_smoke -- \
+  "$HOME/.config/openeq/storage2-social1-credentials.json" \
+  "$HOME/.config/openeq/storage2-social2-credentials.json"
+
+# Actual Kelethin buttons, animated lift collision and rider physics.
+cargo run -p openeq --bin lift_smoke -- \
+  "$HOME/.config/openeq/storage2-commerce-credentials.json"
 
 cargo test --workspace
 cargo test --workspace -- --ignored
@@ -129,5 +163,8 @@ state their requirements. No original client assets are distributed here.
 - [XML UI coverage](crates/openeq-ui/README.md)
 
 - [Gameplay protocol, live probes and test characters](docs/GAMEPLAY_PROTOCOL.md)
+- [Merchant/bank protocol and persistence proof](docs/COMMERCE_PROTOCOL.md)
+- [Groups, quest links and two-client proof](docs/SOCIAL_PROTOCOL.md)
 - [Character rendering and equipment coverage](docs/CHARACTER_RENDERING.md)
 - [Dynamic doors and collision](docs/DYNAMIC_OBJECTS.md)
+- [Kelethin buttons and lift verification](docs/LIFT_PROTOCOL.md)

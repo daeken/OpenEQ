@@ -1,12 +1,22 @@
 //! Shared client state and presentation used by the windowed app and live probes.
 pub mod chat;
+pub mod chat_links;
+pub mod commerce;
+mod commerce_interaction;
+pub mod coordinates;
 pub mod game;
+pub mod group;
 pub mod hud;
 pub mod interaction;
 pub mod live;
 pub mod movement;
+mod social_interaction;
 pub mod spells;
 
 pub mod gameplay_ui;
 
 pub mod map;
+
+pub mod commerce_ui;
+
+pub mod social_ui;

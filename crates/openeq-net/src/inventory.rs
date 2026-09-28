@@ -22,6 +22,18 @@ impl InventorySlot {
             augment: None,
         }
     }
+    pub const fn bank(slot: u16) -> Self {
+        Self {
+            kind: 1,
+            ..Self::possessions(slot)
+        }
+    }
+    pub const fn shared_bank(slot: u16) -> Self {
+        Self {
+            kind: 2,
+            ..Self::possessions(slot)
+        }
+    }
     pub fn in_bag(self, index: u16) -> Self {
         Self {
             bag: Some(index),
@@ -77,6 +89,13 @@ pub struct InventoryItem {
     pub lore: String,
     pub id_file: String,
     pub icon: u32,
+    /// Server merchant quote per unit in copper; zero outside merchant listings.
+    pub price: u32,
+    /// Merchant stock; -1 means unlimited. Meaningful for packet type 0x64.
+    pub merchant_count: i32,
+    pub base_price: u32,
+    pub no_drop: bool,
+    pub attuned: bool,
     pub count: u32,
     pub charges: i32,
     pub stack_size: u32,
@@ -226,6 +245,11 @@ fn read_item(r: &mut Reader<'_>, depth: usize, budget: &mut usize) -> Option<Inv
         lore,
         id_file,
         icon: u32_at(b, 20)?,
+        price: u32_at(h, 32)?,
+        merchant_count: u32_at(h, 36)? as i32,
+        base_price: u32_at(b, 16)?,
+        no_drop: b[9] == 0,
+        attuned: u32_at(h, 60)? != 0,
         count: u32_at(h, 17)?,
         charges: u32_at(h, 56)? as i32,
         stack_size: u32_at(tertiary, 50)?,
@@ -291,6 +315,37 @@ mod tests {
             out.extend(child);
         }
         out
+    }
+    #[test]
+    fn merchant_metadata_and_bank_addresses_survive_binary_items() {
+        let mut raw = item(13005, 5, &[]);
+        raw[25] = 9;
+        put(&mut raw, 32, 151);
+        put(&mut raw, 36, u32::MAX);
+        put(&mut raw, 60, 1);
+        let body = 77 + 2 + 26 + b"Test Item\0Lore\0IT123\0\0".len();
+        put(&mut raw, body + 16, 150);
+        raw[body + 9] = 255;
+        let mut packet = 0x64u32.to_le_bytes().to_vec();
+        packet.extend(raw);
+        let (kind, item) = parse_item_packet(&packet).unwrap();
+        assert_eq!(kind, 0x64);
+        assert_eq!(
+            (
+                item.slot.kind,
+                item.slot.slot,
+                item.price,
+                item.merchant_count,
+                item.base_price
+            ),
+            (9, 5, 151, -1, 150)
+        );
+        assert!(!item.no_drop);
+        assert!(item.attuned);
+        assert_eq!(InventorySlot::bank(23).server_slot(), Some(2023));
+        assert_eq!(InventorySlot::shared_bank(1).server_slot(), Some(2501));
+        assert!(InventorySlot::bank(24).server_slot().is_none());
+        assert!(InventorySlot::shared_bank(2).server_slot().is_none());
     }
     #[test]
     fn binary_inventory_uses_explicit_bag_child_indices() {

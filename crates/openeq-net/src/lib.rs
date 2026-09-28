@@ -32,6 +32,7 @@ pub use packet::{AppPacket, crc16};
 pub use stream::{EqStream, StreamError};
 
 pub mod session;
+pub mod social;
 pub mod zone;
 
 pub mod gameplay;

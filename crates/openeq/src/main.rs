@@ -55,6 +55,7 @@ struct Runtime {
     started: std::time::Instant,
     hud: Option<hud::Hud>,
     ui_frame: openeq_ui::UiFrame,
+    chat_link_hits: Vec<openeq_ui::HitTarget>,
     atmosphere_zone: Option<(String, u8)>,
     moving: bool,
     collision: Option<openeq_assets::collision::CollisionWorld>,
@@ -82,6 +83,7 @@ impl Runtime {
             started: std::time::Instant::now(),
             hud: None,
             ui_frame: openeq_ui::UiFrame::default(),
+            chat_link_hits: Vec::new(),
             atmosphere_zone: None,
             moving: false,
             collision: None,
@@ -285,21 +287,35 @@ fn update_camera(
     let mut position = camera.position;
     position[0] += velocity_xy[0] * dt;
     position[1] += velocity_xy[1] * dt;
+    let feet = [
+        camera.position[0],
+        camera.position[1],
+        camera.position[2] - 6.,
+    ];
+    let jump = controls && keys.just_pressed(KeyCode::Space);
+    let allow_carry = !runtime.fly && runtime.ground_motion.velocity_z <= 0. && !jump;
+    let platform_displacement = runtime.doors.as_mut().map_or([0.; 3], |doors| {
+        doors.take_platform_displacement(feet, allow_carry)
+    });
     if runtime.fly || runtime.collision.is_none() {
         position[2] += lift * speed * dt;
     } else {
-        let feet = [
-            camera.position[0],
-            camera.position[1],
-            camera.position[2] - 6.,
-        ];
+        // Carry only supported riders, and resolve against static ceilings
+        // before ordinary gravity/walking uses the lift's new collision pose.
+        let feet = runtime.collision.as_ref().unwrap().move_player(
+            feet,
+            platform_displacement,
+            1.,
+            6.,
+            0.,
+        );
         let mut motion = std::mem::take(&mut runtime.ground_motion);
         let moved = motion.step_with_dynamic(
             runtime.collision.as_ref().unwrap(),
             runtime.doors.as_ref().map(|doors| doors.collision_world()),
             feet,
             velocity_xy,
-            controls && keys.just_pressed(KeyCode::Space),
+            jump,
             dt,
         );
         runtime.ground_motion = motion;
@@ -389,6 +405,7 @@ fn handle_gameplay_input(
         live: Some(live),
         interaction,
         ui_frame,
+        chat_link_hits,
         zone_map,
         map_state,
         map_open,
@@ -559,6 +576,7 @@ fn handle_gameplay_input(
         }
         for (key, action) in [
             (KeyCode::KeyI, chat::Action::Inventory),
+            (KeyCode::KeyR, chat::Action::UseTarget),
             (KeyCode::KeyQ, chat::Action::Attack(None)),
             (KeyCode::KeyH, chat::Action::Hail),
             (KeyCode::KeyX, chat::Action::Sit(!live.game.sitting)),
@@ -592,7 +610,14 @@ fn handle_gameplay_input(
             {
                 live.command(openeq_net::gameplay::Command::InterruptSpell);
                 interaction.escape_handled = true;
-            } else if interaction.inspected_item.take().is_some() {
+            } else if interaction.inspected_item.is_some() || live.game.linked_item.is_some() {
+                interaction.close_window("inspect", live);
+                interaction.escape_handled = true;
+            } else if live.game.commerce.merchant.is_some() {
+                interaction.close_window("merchant", live);
+                interaction.escape_handled = true;
+            } else if live.game.commerce.bank.is_some() {
+                interaction.close_window("bank", live);
                 interaction.escape_handled = true;
             } else if interaction.spellbook_open {
                 interaction.spellbook_open = false;
@@ -635,6 +660,29 @@ fn handle_gameplay_input(
             interaction.drag = None;
         }
         if let Some(hit) = ui_frame.hit_test(point) {
+            if hit.item == "game:chat_log"
+                && mouse.just_pressed(MouseButton::Left)
+                && let Some(link) = chat_link_hits
+                    .iter()
+                    .rev()
+                    .find(|hit| hit.rect.contains(point))
+                && let Some(action) = hud::UiAction::from_hit(link)
+            {
+                interaction.ui_action(action, false, false, live, camera_position);
+            }
+            if hit.item == "commerce:stock_list" || hit.item.starts_with("commerce:stock:") {
+                for event in wheel.read() {
+                    interaction.ui_action(
+                        hud::UiAction::Commerce(openeq::commerce_ui::CommerceAction::Scroll(
+                            (-event.y * 3.).round() as i32,
+                        )),
+                        false,
+                        false,
+                        live,
+                        camera_position,
+                    );
+                }
+            }
             if let Some(action) = openeq::map::MapAction::from_hit(hit) {
                 use openeq::map::{MapAction, MapMarker};
                 if mouse.just_pressed(MouseButton::Left) {
@@ -919,6 +967,7 @@ fn render_frame(
                 runtime.map_state = map_state;
             }
             renderer.set_ui_scaled(&frame, window.scale_factor());
+            runtime.chat_link_hits = renderer.ui_link_hits().to_vec();
             runtime.ui_frame = frame;
         }
         if let Some(scene) = runtime.scene.as_ref() {
@@ -1081,7 +1130,7 @@ fn add_nameplates(
     let mut labels = Vec::new();
     for entity in live.entities.values() {
         let spawn = &entity.spawn;
-        if !spawn.npc || spawn.race == 127 || spawn.body_type >= 66 {
+        if Some(spawn.id) == live.own_id || spawn.race == 127 || spawn.body_type >= 66 {
             continue;
         }
         let p = entity.position(std::time::Instant::now());
@@ -1150,7 +1199,9 @@ fn handle_targeting(
         let mut nearby: Vec<_> = live
             .entities
             .values()
-            .filter(|e| e.spawn.npc && e.spawn.race != 127 && e.spawn.body_type < 66)
+            .filter(|e| {
+                Some(e.spawn.id) != live.own_id && e.spawn.race != 127 && e.spawn.body_type < 66
+            })
             .map(|e| {
                 let p = e.position(std::time::Instant::now());
                 (
@@ -1182,7 +1233,9 @@ fn handle_targeting(
         let target = live
             .entities
             .values()
-            .filter(|e| e.spawn.npc && e.spawn.race != 127 && e.spawn.body_type < 66)
+            .filter(|e| {
+                Some(e.spawn.id) != live.own_id && e.spawn.race != 127 && e.spawn.body_type < 66
+            })
             .filter_map(|e| {
                 let p = e.position(std::time::Instant::now());
                 let clip = matrix * Camera::to_world(p).extend(1.);

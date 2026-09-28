@@ -53,7 +53,7 @@ impl StringTable {
     }
     pub fn format(&self, message: &ServerMessage) -> String {
         if let Some(text) = &message.text {
-            return clean_text(text);
+            return text.clone();
         }
         let Some(id) = message.string_id else {
             return String::new();
@@ -86,7 +86,7 @@ impl StringTable {
             }
             out.push(ch);
         }
-        clean_text(&out)
+        out
     }
 }
 
@@ -144,8 +144,8 @@ impl Inventory {
         if from == to {
             return Err("Choose a different inventory slot.".into());
         }
-        if from.kind != 0
-            || to.kind != 0
+        if from.kind > 2
+            || to.kind > 2
             || from.augment.is_some()
             || to.augment.is_some()
             || from.server_slot().is_none()
@@ -175,6 +175,17 @@ impl Inventory {
     }
 
     fn validate_destination(&self, item: &InventoryItem, to: InventorySlot) -> Result<(), String> {
+        if to.kind == 2
+            && self.items.values().any(|entry| {
+                (entry.slot == item.slot
+                    || (item.slot.bag.is_none()
+                        && entry.slot.kind == item.slot.kind
+                        && entry.slot.slot == item.slot.slot))
+                    && (entry.no_drop || entry.attuned)
+            })
+        {
+            return Err("No-trade or attuned items cannot enter the shared bank.".into());
+        }
         if let Some(index) = to.bag {
             let parent = InventorySlot { bag: None, ..to };
             if item.slot == parent {
@@ -193,7 +204,7 @@ impl Inventory {
             if item.size > bag.bag_size {
                 return Err("That item is too large for this bag.".into());
             }
-        } else if to.slot < 23 && item.equip_slots & (1u32 << to.slot) == 0 {
+        } else if to.kind == 0 && to.slot < 23 && item.equip_slots & (1u32 << to.slot) == 0 {
             return Err("That item cannot be equipped in this slot.".into());
         }
         Ok(())
@@ -299,7 +310,12 @@ pub struct ActiveCast {
 #[derive(Default)]
 pub struct GameplayState {
     pub inventory: Inventory,
+    pub commerce: crate::commerce::CommerceState,
+    pub group: crate::group::GroupState,
     pub chat: VecDeque<ChatLine>,
+    pub chat_links: BTreeMap<u64, openeq_net::social::LinkPayload>,
+    next_chat_link: u64,
+    pub linked_item: Option<InventoryItem>,
     pub strings: StringTable,
     pub profile: Option<PlayerProfile>,
     pub hp: ResourceValue,
@@ -337,13 +353,34 @@ impl GameplayState {
     }
 
     pub fn line(&mut self, text: impl Into<String>, color: [u8; 4]) {
-        let text = clean_text(&text.into());
-        if text.is_empty() {
+        let parsed = crate::chat_links::parse_chat(&text.into());
+        if parsed.text.is_empty() {
             return;
         }
-        self.chat.push_back(ChatLine { text, color });
+        let links = parsed
+            .links
+            .into_iter()
+            .map(|link| {
+                self.next_chat_link = self.next_chat_link.wrapping_add(1).max(1);
+                let id = self.next_chat_link;
+                self.chat_links.insert(id, link.payload);
+                crate::gameplay_ui::UiChatLink {
+                    id,
+                    range: link.range,
+                }
+            })
+            .collect();
+        self.chat.push_back(ChatLine {
+            text: parsed.text,
+            color,
+            links,
+        });
         while self.chat.len() > CHAT_LIMIT {
-            self.chat.pop_front();
+            if let Some(line) = self.chat.pop_front() {
+                for link in line.links {
+                    self.chat_links.remove(&link.id);
+                }
+            }
         }
     }
     pub fn notice(&mut self, text: impl Into<String>) {
@@ -361,6 +398,100 @@ impl GameplayState {
         name: impl Fn(u32) -> String,
     ) {
         match event {
+            GameplayEvent::Social(event) => {
+                self.group.apply(event, &own.map(&name).unwrap_or_default());
+            }
+            GameplayEvent::MerchantOpened {
+                merchant_id,
+                command,
+                rate,
+                ..
+            } => {
+                if let Some(merchant) = &mut self.commerce.merchant
+                    && merchant.id == merchant_id
+                {
+                    merchant.opened = command == 1;
+                    merchant.rate = rate;
+                    merchant.status = if command == 1 {
+                        "Select an item to buy, or select a carried item to sell."
+                    } else {
+                        "This merchant is unavailable."
+                    }
+                    .into();
+                }
+            }
+            GameplayEvent::MerchantBought {
+                merchant_id,
+                player_id,
+                slot,
+                quantity,
+                price,
+            } => {
+                let matches = self.commerce.pending.as_ref().is_some_and(|pending| {
+                    pending.merchant_id == merchant_id && Some(player_id) == own && matches!(pending.kind, crate::commerce::TransactionKind::Buy {slot: expected, quantity: requested} if expected == slot && quantity <= requested)
+                });
+                if matches {
+                    self.commerce.pending = None;
+                    if !crate::commerce::debit(&mut self.currency, price) {
+                        self.commerce.currency_ready = false;
+                        self.error("Merchant purchase confirmed, but money needs synchronization. Reconnect to refresh balances.");
+                    }
+                    if let Some(merchant) = &mut self.commerce.merchant {
+                        merchant.status = format!(
+                            "Bought {quantity} for {}.",
+                            crate::commerce_ui::money_text(u64::from(price))
+                        );
+                    }
+                }
+            }
+            GameplayEvent::MerchantSold {
+                merchant_id,
+                slot,
+                quantity,
+                price,
+                rejected,
+            } => {
+                let matches = self.commerce.pending.as_ref().is_some_and(|pending| pending.merchant_id == merchant_id && matches!(pending.kind, crate::commerce::TransactionKind::Sell {slot: expected, quantity: requested} if rejected || (expected == slot && quantity <= requested)));
+                if matches {
+                    self.commerce.pending = None;
+                    if !rejected && quantity > 0 {
+                        self.inventory.delete(slot, quantity);
+                        self.commerce.currency_ready = false;
+                    }
+                    if let Some(merchant) = &mut self.commerce.merchant {
+                        merchant.status = if rejected {
+                            "The merchant declined that sale.".into()
+                        } else {
+                            format!(
+                                "Sold {quantity} for {}.",
+                                crate::commerce_ui::money_text(u64::from(price))
+                            )
+                        };
+                    }
+                }
+            }
+            GameplayEvent::MerchantItemRemoved {
+                merchant_id, slot, ..
+            } => {
+                if let Some(merchant) = &mut self.commerce.merchant
+                    && merchant.id == merchant_id
+                {
+                    merchant.items.remove(&slot);
+                }
+            }
+            GameplayEvent::MerchantClosed => {
+                self.commerce.merchant_closing = false;
+                // An unsolicited close can precede our explicit close reply.
+                // Ordered delivery guarantees both precede a new open reply.
+                if self.commerce.merchant.as_ref().is_some_and(|m| m.opened) {
+                    self.commerce.merchant = None;
+                }
+            }
+            GameplayEvent::BankerBalances { carried, bank } => {
+                self.currency = carried;
+                self.commerce.currency_ready = true;
+                self.commerce.bank_money = bank;
+            }
             GameplayEvent::SpellMemorized {
                 slot,
                 spell_id,
@@ -467,7 +598,15 @@ impl GameplayState {
             }
             GameplayEvent::Inventory(items) => self.inventory.replace(items),
             GameplayEvent::Item { packet_type, item } => {
-                if packet_type == 0x66 {
+                if packet_type == 0 {
+                    self.linked_item = Some(item);
+                } else if packet_type == 0x64 {
+                    if let Some(merchant) = &mut self.commerce.merchant
+                        && merchant.opened
+                    {
+                        merchant.items.insert(u32::from(item.slot.slot), item);
+                    }
+                } else if packet_type == 0x66 {
                     if let Some(loot) = &mut self.loot {
                         loot.items.insert(item.slot.slot, item);
                     }
@@ -530,6 +669,10 @@ impl GameplayState {
                 // RoF2 profile resource fields can be placeholders in EQEmu.
                 // Only the live resource packets are used for gauge values.
                 self.currency = profile.currency;
+                self.commerce.currency_ready = true;
+                self.commerce.bank_money = profile.bank_currency;
+                self.commerce.shared_platinum = profile.shared_platinum;
+                self.commerce.cursor_money = profile.cursor_currency;
                 self.buffs = profile
                     .buffs
                     .iter()
@@ -578,7 +721,10 @@ impl GameplayState {
                 self.mana.current = Some(mana);
                 self.endurance.current = Some(endurance);
             }
-            GameplayEvent::Currency(currency) => self.currency = currency,
+            GameplayEvent::Currency(currency) => {
+                self.currency = currency;
+                self.commerce.currency_ready = true;
+            }
             GameplayEvent::Consider(consider) => {
                 let difficulty = match consider.level {
                     6 => "gray",
@@ -717,6 +863,12 @@ pub fn display_name(name: &str) -> String {
 }
 pub fn item_view(item: &InventoryItem) -> UiItem {
     let mut details = Vec::new();
+    if item.no_drop {
+        details.push("No trade".into());
+    }
+    if item.attuned {
+        details.push("Attuned".into());
+    }
     if item.damage > 0 {
         details.push(format!("Damage {}  Delay {}", item.damage, item.delay));
     }
@@ -752,30 +904,9 @@ pub fn item_view(item: &InventoryItem) -> UiItem {
     }
 }
 pub fn clean_text(text: &str) -> String {
-    let mut output = String::new();
-    let mut segments = text.split('\u{12}');
-    if let Some(prefix) = segments.next() {
-        output.push_str(prefix);
-    }
-    while let Some(link) = segments.next() {
-        // RoF2 links are a 56-byte hexadecimal item/action descriptor followed
-        // by their readable label. Preserve that label even without a link UI.
-        if link.len() > 56 && link.as_bytes()[..56].iter().all(u8::is_ascii_hexdigit) {
-            output.push('[');
-            output.push_str(&link[56..]);
-            output.push(']');
-        } else {
-            output.push_str(link);
-        }
-        if let Some(following) = segments.next() {
-            output.push_str(following);
-        }
-    }
-    output
-        .chars()
-        .filter(|ch| *ch == '\n' || (!ch.is_control() && *ch != '\u{7f}'))
-        .collect()
+    crate::chat_links::parse_chat(text).text
 }
+
 fn chat_color(channel: u32) -> [u8; 4] {
     match channel {
         0 => [145, 245, 145, 255],
@@ -806,6 +937,11 @@ mod tests {
             lore: String::new(),
             id_file: String::new(),
             icon: 500,
+            price: 0,
+            merchant_count: -1,
+            base_price: 0,
+            no_drop: false,
+            attuned: false,
             count,
             charges: 0,
             stack_size: 20,
@@ -985,6 +1121,227 @@ mod tests {
                 .contains_key(&InventorySlot::possessions(23).in_bag(2))
         );
     }
+    #[test]
+    fn merchant_catalog_and_link_views_never_enter_inventory_and_acks_apply_once() {
+        use crate::commerce::{MerchantSession, PendingTransaction, TransactionKind};
+        let mut state = GameplayState::default();
+        state.currency.platinum = 1;
+        state.commerce.merchant = Some(MerchantSession::new(10, "Merchant".into()));
+        let apply = |state: &mut GameplayState, event| {
+            state.apply(event, Some(1), Some(10), |id| id.to_string())
+        };
+        apply(
+            &mut state,
+            GameplayEvent::MerchantOpened {
+                merchant_id: 10,
+                command: 1,
+                rate: 1.03,
+                tabs: 1,
+            },
+        );
+        let mut stock = item(5, 13005, 1);
+        stock.price = 151;
+        stock.merchant_count = -1;
+        apply(
+            &mut state,
+            GameplayEvent::Item {
+                packet_type: 0x64,
+                item: stock.clone(),
+            },
+        );
+        apply(
+            &mut state,
+            GameplayEvent::Item {
+                packet_type: 0,
+                item: stock,
+            },
+        );
+        assert!(state.inventory.items.is_empty());
+        assert_eq!(state.commerce.merchant.as_ref().unwrap().items.len(), 1);
+        assert_eq!(state.linked_item.as_ref().unwrap().id, 13005);
+        state.commerce.pending = Some(PendingTransaction {
+            merchant_id: 10,
+            kind: TransactionKind::Buy {
+                slot: 5,
+                quantity: 2,
+            },
+            started: Instant::now(),
+        });
+        let ack = |merchant_id| GameplayEvent::MerchantBought {
+            merchant_id,
+            player_id: 1,
+            slot: 5,
+            quantity: 2,
+            price: 302,
+        };
+        apply(&mut state, ack(11));
+        assert_eq!(crate::commerce::total_copper(state.currency), 1000);
+        apply(&mut state, ack(10));
+        apply(&mut state, ack(10));
+        assert_eq!(crate::commerce::total_copper(state.currency), 698);
+        assert!(!state.commerce.currency_ready);
+        assert!(state.inventory.items.is_empty());
+        apply(
+            &mut state,
+            GameplayEvent::Item {
+                packet_type: 0x67,
+                item: item(26, 13005, 2),
+            },
+        );
+        assert_eq!(
+            state.inventory.items[&InventorySlot::possessions(26)].count,
+            2
+        );
+        state.commerce.pending = Some(PendingTransaction {
+            merchant_id: 10,
+            kind: TransactionKind::Sell {
+                slot: InventorySlot::possessions(26),
+                quantity: 1,
+            },
+            started: Instant::now(),
+        });
+        let sold = GameplayEvent::MerchantSold {
+            merchant_id: 10,
+            slot: InventorySlot::possessions(26),
+            quantity: 1,
+            price: 147,
+            rejected: false,
+        };
+        apply(&mut state, sold.clone());
+        apply(&mut state, sold);
+        assert_eq!(
+            state.inventory.items[&InventorySlot::possessions(26)].count,
+            1
+        );
+        assert_eq!(crate::commerce::total_copper(state.currency), 698);
+        apply(
+            &mut state,
+            GameplayEvent::Currency(Currency {
+                copper: 845,
+                ..Default::default()
+            }),
+        );
+        assert_eq!(crate::commerce::total_copper(state.currency), 845);
+        assert!(state.commerce.currency_ready);
+    }
+
+    #[test]
+    fn delayed_merchant_close_and_catalog_do_not_replace_a_new_session() {
+        use crate::commerce::MerchantSession;
+        let mut state = GameplayState::default();
+        state.commerce.merchant_closing = true;
+        let apply = |state: &mut GameplayState, event| {
+            state.apply(event, Some(1), Some(11), |id| id.to_string())
+        };
+        // An unsolicited server close may release the barrier before the
+        // explicit close's response arrives. The next session is provisional.
+        apply(&mut state, GameplayEvent::MerchantClosed);
+        assert!(!state.commerce.merchant_closing);
+        state.commerce.merchant = Some(MerchantSession::new(11, "Next merchant".into()));
+        apply(
+            &mut state,
+            GameplayEvent::Item {
+                packet_type: 0x64,
+                item: item(5, 13005, 1),
+            },
+        );
+        apply(&mut state, GameplayEvent::MerchantClosed);
+        let merchant = state.commerce.merchant.as_ref().unwrap();
+        assert_eq!(merchant.id, 11);
+        assert!(merchant.items.is_empty());
+        apply(
+            &mut state,
+            GameplayEvent::MerchantOpened {
+                merchant_id: 11,
+                command: 1,
+                rate: 1.03,
+                tabs: 1,
+            },
+        );
+        apply(
+            &mut state,
+            GameplayEvent::Item {
+                packet_type: 0x64,
+                item: item(6, 13006, 1),
+            },
+        );
+        assert_eq!(
+            state.commerce.merchant.as_ref().unwrap().items[&6].id,
+            13006
+        );
+        // A close after the new open acknowledgment belongs to this session.
+        apply(&mut state, GameplayEvent::MerchantClosed);
+        assert!(state.commerce.merchant.is_none());
+    }
+
+    #[test]
+    fn shared_bank_rejects_bound_items_inside_containers() {
+        let mut bag = item(23, 10, 1);
+        bag.stack_size = 1;
+        bag.bag_slots = 8;
+        let mut child = item(23, 20, 1);
+        child.slot = bag.slot.in_bag(0);
+        child.no_drop = true;
+        bag.children.push(child);
+        let mut inventory = Inventory::default();
+        inventory.replace(vec![bag]);
+        let from = InventorySlot::possessions(23);
+        assert!(
+            inventory
+                .validate_move(from, InventorySlot::shared_bank(0), 0)
+                .is_err()
+        );
+        assert!(
+            inventory
+                .validate_move(from, InventorySlot::bank(0), 0)
+                .is_ok()
+        );
+        assert_eq!(inventory.items.len(), 2);
+    }
+
+    #[test]
+    fn chat_link_actions_expire_with_their_visible_lines() {
+        let body = format!("0{:05X}{}", 500, "0".repeat(50));
+        let mut state = GameplayState::default();
+        for _ in 0..550 {
+            state.notice(format!("Hello \u{12}{body}世界\u{12}"));
+        }
+        assert_eq!(state.chat.len(), 500);
+        assert_eq!(state.chat_links.len(), 500);
+        let line = state.chat.front().unwrap();
+        let link = &line.links[0];
+        assert_eq!(&line.text[link.range.clone()], "世界");
+        assert!(state.chat_links.contains_key(&link.id));
+        assert!(!state.chat_links.contains_key(&1));
+    }
+
+    #[test]
+    fn banking_moves_preserve_container_children_and_do_not_use_equipment_masks() {
+        let mut bag = item(23, 10, 1);
+        bag.equip_slots = 0;
+        bag.bag_slots = 8;
+        bag.stack_size = 1;
+        let mut child = item(23, 20, 5);
+        child.slot = bag.slot.in_bag(2);
+        bag.children.push(child);
+        let carried = bag.slot;
+        let bank = InventorySlot::from_server_slot(2000).unwrap();
+        let shared = InventorySlot::from_server_slot(2500).unwrap();
+        let mut inventory = Inventory::default();
+        inventory.replace(vec![bag]);
+        for (from, to) in [(carried, bank), (bank, shared), (shared, carried)] {
+            inventory.move_item(from, to, 0).unwrap();
+            assert_eq!(inventory.items[&to].id, 10);
+            assert_eq!(inventory.items[&to.in_bag(2)].count, 5);
+            assert!(!inventory.items.contains_key(&from.in_bag(2)));
+        }
+        assert!(
+            inventory
+                .validate_move(carried, InventorySlot::from_server_slot(3000).unwrap(), 0)
+                .is_err()
+        );
+    }
+
     #[test]
     fn invalid_moves_do_not_drop_or_duplicate_items() {
         let mut inventory = Inventory::default();

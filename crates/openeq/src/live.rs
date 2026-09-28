@@ -1,4 +1,5 @@
 //! Background networking and bounded prediction of server-authoritative spawns.
+use crate::coordinates;
 use crate::game::{GameplayState, display_name};
 use openeq_net::{
     gameplay::{Command, Door, GameplayEvent, ZoneDestination},
@@ -137,6 +138,7 @@ pub struct LiveWorld {
     pub target: Option<u32>,
     pub game: GameplayState,
     pub doors: BTreeMap<u8, Door>,
+    door_return_deadlines: BTreeMap<u8, Instant>,
     pending_destination: Option<ZoneDestination>,
     rx: Mutex<mpsc::Receiver<Message>>,
     movement: tokio::sync::watch::Sender<Option<Position>>,
@@ -149,6 +151,8 @@ impl LiveWorld {
         let (movement, mut updates) = tokio::sync::watch::channel(None);
         let (commands, mut requests) = tokio::sync::mpsc::unbounded_channel();
         let character = config.character.clone();
+        let mut game = GameplayState::default();
+        game.commerce.shared_coin_enabled = config.host.eq_ignore_ascii_case("storage2.daeken.dev");
         std::thread::Builder::new().name("eq-network".into()).spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("network runtime");
             let result = rt.block_on(async {
@@ -162,7 +166,11 @@ impl LiveWorld {
                             match request {
                                 NetworkCommand::Target(id) => { if !zone.is_zoning() { zone.target(id).await?; } },
                                 NetworkCommand::Gameplay(command) => {
-                                    match zone.command(command.clone()).await {
+                                    let mut wire_command = command.clone();
+                                    if let Command::ZoneChange { position, .. } = &mut wire_command {
+                                        *position = coordinates::scene_point_to_server(*position);
+                                    }
+                                    match zone.command(wire_command).await {
                                         Ok(()) => { let _ = tx.send(Message::CommandSent(command)); }
                                         Err(openeq_net::zone::ZoneError::Malformed(what)) => {
                                             let _ = tx.send(Message::Notice(format!("Invalid {what}; action was not sent.")));
@@ -181,7 +189,7 @@ impl LiveWorld {
                         },
                         _ = heartbeat.tick() => {
                             let position = *updates.borrow();
-                            if movement_ready && let (Some(id), Some(position)) = (own, position) { zone.send_position(id, position).await?; }
+                            if movement_ready && let (Some(id), Some(position)) = (own, position) { zone.send_position(id, coordinates::scene_to_server(position)).await?; }
                         }
                         event = zone.next_event() => {
                             let event = event?;
@@ -210,8 +218,9 @@ impl LiveWorld {
             hour: 12,
             minute: 0,
             target: None,
-            game: GameplayState::default(),
+            game,
             doors: BTreeMap::new(),
+            door_return_deadlines: BTreeMap::new(),
             pending_destination: None,
             rx: Mutex::new(rx),
             movement,
@@ -229,6 +238,7 @@ impl LiveWorld {
                     self.error = Some(error);
                     self.ready = false;
                     self.game.attack = false;
+                    self.game.commerce.close_services();
                     self.game.inventory_command_pending = false;
                     self.game.error(format!(
                         "Connection lost: {}",
@@ -242,7 +252,8 @@ impl LiveWorld {
                 Message::CommandSent(command) => self.command_sent(command),
                 Message::Event(event) => {
                     match *event {
-                        ZoneEvent::Spawn(spawn) => {
+                        ZoneEvent::Spawn(mut spawn) => {
+                            spawn.position = coordinates::server_to_scene(spawn.position);
                             if spawn.name.eq_ignore_ascii_case(&self.character) {
                                 self.own_id = Some(spawn.id);
                                 self.initial_position = Some(spawn.position);
@@ -250,6 +261,7 @@ impl LiveWorld {
                             self.entities.insert(spawn.id, Entity::new(spawn, now));
                         }
                         ZoneEvent::Movement { id, position } => {
+                            let position = coordinates::server_to_scene(position);
                             if let Some(entity) = self.entities.get_mut(&id)
                                 && entity.update(position, now)
                                 && entity.spawn.npc
@@ -263,7 +275,9 @@ impl LiveWorld {
                                 self.target = None;
                             }
                         }
-                        ZoneEvent::Environment(environment) => {
+                        ZoneEvent::Environment(mut environment) => {
+                            environment.safe_position =
+                                coordinates::server_point_to_scene(environment.safe_position);
                             tracing::info!(zone = %environment.short_name, "zone environment received");
                             self.environment = Some(environment);
                         }
@@ -287,11 +301,63 @@ impl LiveWorld {
                 }
             }
         }
+        self.advance_door_cycles(now);
+    }
+
+    fn advance_door_cycles(&mut self, now: Instant) {
+        self.door_return_deadlines.retain(|id, deadline| {
+            if now < *deadline {
+                return true;
+            }
+            if let Some(door) = self.doors.get_mut(id) {
+                door.state = 0;
+            }
+            false
+        });
+    }
+
+    fn schedule_door_return(&mut self, id: u8) {
+        self.door_return_deadlines.remove(&id);
+        if self
+            .doors
+            .get(&id)
+            .is_some_and(|door| matches!(door.open_type, 59 | 60) && door.state != 0)
+        {
+            // EQEmu silently resets ordinary lifts/buttons; RoF2 omits the
+            // configured timer. Five seconds matches the default and PEQ's
+            // Kelethin records. A fresh open restarts the local cycle.
+            self.door_return_deadlines
+                .insert(id, Instant::now() + std::time::Duration::from_secs(5));
+        }
     }
 
     pub fn set_target(&mut self, id: Option<u32>) {
         self.target = id;
         let _ = self.commands.send(NetworkCommand::Target(id.unwrap_or(0)));
+    }
+
+    pub fn player_position(&self) -> Option<[f32; 3]> {
+        self.initial_position
+            .or(*self.movement.borrow())
+            .or_else(|| {
+                self.own_id
+                    .and_then(|id| self.entities.get(&id))
+                    .map(|e| e.spawn.position)
+            })
+            .map(|p| [p.x, p.y, p.z])
+    }
+
+    pub fn service_available(&self, id: u32, class: u8) -> bool {
+        self.ready
+            && self.error.is_none()
+            && self.entities.get(&id).is_some_and(|entity| {
+                entity.spawn.npc
+                    && !entity.spawn.is_corpse
+                    && entity.spawn.class == class
+                    && self.player_position().is_some_and(|position| {
+                        crate::commerce::in_range(position, entity.position(Instant::now()))
+                    })
+            })
     }
 
     pub fn command(&mut self, command: Command) -> bool {
@@ -300,7 +366,16 @@ impl LiveWorld {
             return false;
         }
         if let Command::MoveItem { from, to, count } = &command {
-            if self.game.inventory_command_pending {
+            if (from.kind == 1 || from.kind == 2 || to.kind == 1 || to.kind == 2)
+                && !self.game.commerce.bank.as_ref().is_some_and(|bank| {
+                    self.service_available(bank.id, crate::commerce::BANKER_CLASS)
+                })
+            {
+                self.game
+                    .error("Open a nearby banker before moving bank items.");
+                return false;
+            }
+            if self.game.inventory_command_pending || self.game.commerce.pending.is_some() {
                 return false;
             }
             if let Err(error) = self.game.inventory.validate_move(*from, *to, *count) {
@@ -308,6 +383,148 @@ impl LiveWorld {
                 return false;
             }
         }
+        let mut pending = None;
+        match &command {
+            Command::MerchantOpen { merchant_id, .. } => {
+                if self.game.commerce.merchant_closing {
+                    self.game
+                        .notice("Waiting for the previous merchant to close.");
+                    return false;
+                }
+                if !self.service_available(*merchant_id, crate::commerce::MERCHANT_CLASS) {
+                    self.game.error("The merchant is out of reach.");
+                    return false;
+                }
+            }
+            Command::MerchantClose if self.game.commerce.merchant_closing => return false,
+            Command::MerchantBuy {
+                merchant_id,
+                slot,
+                quantity,
+                price,
+                ..
+            } => {
+                let valid = self
+                    .game
+                    .commerce
+                    .merchant
+                    .as_ref()
+                    .filter(|merchant| merchant.id == *merchant_id && merchant.opened)
+                    .and_then(|merchant| merchant.items.get(slot))
+                    .is_some_and(|item| {
+                        *quantity > 0
+                            && *quantity <= item.stack_size.max(1)
+                            && (item.merchant_count < 0 || *quantity <= item.merchant_count as u32)
+                            && item.price.checked_mul(*quantity) == Some(*price)
+                    });
+                if !valid
+                    || !self.service_available(*merchant_id, crate::commerce::MERCHANT_CLASS)
+                    || self.game.commerce.pending.is_some()
+                    || self.game.commerce.coin_pending
+                    || !self.game.commerce.currency_ready
+                    || self.game.inventory_command_pending
+                    || self
+                        .game
+                        .inventory
+                        .items
+                        .contains_key(&openeq_net::inventory::InventorySlot::CURSOR)
+                    || crate::commerce::total_copper(self.game.currency) < u64::from(*price)
+                {
+                    self.game.error(
+                        "Purchase unavailable: check quantity, money, cursor and merchant status.",
+                    );
+                    return false;
+                }
+                pending = Some(crate::commerce::PendingTransaction {
+                    merchant_id: *merchant_id,
+                    kind: crate::commerce::TransactionKind::Buy {
+                        slot: *slot,
+                        quantity: *quantity,
+                    },
+                    started: Instant::now(),
+                });
+            }
+            Command::MerchantSell {
+                merchant_id,
+                slot,
+                quantity,
+            } => {
+                let valid = slot.kind == 0
+                    && self.game.inventory.items.get(slot).is_some_and(|item| {
+                        !item.no_drop
+                            && !item.attuned
+                            && *quantity > 0
+                            && *quantity <= item.count
+                            && (item.bag_slots == 0
+                                || !self.game.inventory.items.keys().any(|child| {
+                                    child.kind == slot.kind
+                                        && child.slot == slot.slot
+                                        && child.bag.is_some()
+                                }))
+                    });
+                if !valid
+                    || !self.service_available(*merchant_id, crate::commerce::MERCHANT_CLASS)
+                    || !self
+                        .game
+                        .commerce
+                        .merchant
+                        .as_ref()
+                        .is_some_and(|merchant| merchant.id == *merchant_id && merchant.opened)
+                    || self.game.commerce.pending.is_some()
+                    || self.game.commerce.coin_pending
+                    || !self.game.commerce.currency_ready
+                    || self.game.inventory_command_pending
+                {
+                    self.game
+                        .error("That item cannot be sold now. Empty bags before selling them.");
+                    return false;
+                }
+                pending = Some(crate::commerce::PendingTransaction {
+                    merchant_id: *merchant_id,
+                    kind: crate::commerce::TransactionKind::Sell {
+                        slot: *slot,
+                        quantity: *quantity,
+                    },
+                    started: Instant::now(),
+                });
+            }
+            Command::MoveCoin {
+                from,
+                to,
+                coin,
+                amount,
+            } => {
+                if !self.game.commerce.bank.as_ref().is_some_and(|bank| {
+                    self.service_available(bank.id, crate::commerce::BANKER_CLASS)
+                }) || self.game.commerce.coin_pending
+                    || !self.game.commerce.currency_ready
+                    || self.game.commerce.pending.is_some()
+                {
+                    self.game
+                        .error("Open a nearby banker and finish the current transaction first.");
+                    return false;
+                }
+                if let Err(error) =
+                    self.game
+                        .commerce
+                        .validate_coin(self.game.currency, *from, *to, *coin, *amount)
+                {
+                    self.game.error(error);
+                    return false;
+                }
+            }
+            Command::BankerChange
+                if !self.game.commerce.bank.as_ref().is_some_and(|bank| {
+                    self.service_available(bank.id, crate::commerce::BANKER_CLASS)
+                }) =>
+            {
+                self.game.error("Open a nearby banker first.");
+                return false;
+            }
+            _ => {}
+        }
+        let coin_command = matches!(command, Command::MoveCoin { .. });
+        let merchant_close = matches!(command, Command::MerchantClose);
         let inventory_command = matches!(command, Command::MoveItem { .. });
         if self
             .commands
@@ -320,11 +537,35 @@ impl LiveWorld {
         if inventory_command {
             self.game.inventory_command_pending = true;
         }
+        if coin_command {
+            self.game.commerce.coin_pending = true;
+        }
+        if merchant_close {
+            self.game.commerce.merchant_closing = true;
+        }
+        if let Some(pending) = pending {
+            self.game.commerce.pending = Some(pending);
+        }
         true
     }
 
     fn command_sent(&mut self, command: Command) {
         match command {
+            Command::MoveCoin {
+                from,
+                to,
+                coin,
+                amount,
+            } => {
+                self.game.commerce.coin_pending = false;
+                if let Err(error) =
+                    self.game
+                        .commerce
+                        .move_coins(&mut self.game.currency, from, to, coin, amount)
+                {
+                    self.game.error(error);
+                }
+            }
             Command::MoveItem { from, to, count } => {
                 self.game.inventory_command_pending = false;
                 if let Err(error) = self.game.inventory.move_item(from, to, count) {
@@ -344,15 +585,42 @@ impl LiveWorld {
         }
     }
 
-    fn gameplay_event(&mut self, event: GameplayEvent) {
+    fn gameplay_event(&mut self, mut event: GameplayEvent) {
+        // Network structs stay in EQEmu's coordinates. Everything retained by
+        // LiveWorld uses the original assets' coordinate basis.
+        match &mut event {
+            GameplayEvent::ZoneChangeRequested(destination) => {
+                destination.position = coordinates::server_point_to_scene(destination.position);
+                destination.heading = coordinates::server_heading_to_scene(destination.heading);
+            }
+            GameplayEvent::ZoneChangeResult { position, .. } => {
+                *position = coordinates::server_point_to_scene(*position);
+            }
+            GameplayEvent::Doors(doors) => {
+                for door in doors {
+                    door.position = coordinates::server_point_to_scene(door.position);
+                    door.heading = coordinates::server_heading_to_scene(door.heading);
+                    // Spawn state is inverted on the wire for inverted doors;
+                    // movement actions below already produce logical open state.
+                    door.state = u8::from((door.state != 0) ^ door.inverted);
+                }
+            }
+            _ => {}
+        }
         match &event {
             GameplayEvent::ZoneTransition { zone_id, .. } => {
                 self.ready = false;
                 self.entities.clear();
                 self.doors.clear();
+                self.door_return_deadlines.clear();
                 self.own_id = None;
                 self.target = None;
                 self.initial_position = None;
+                self.movement.send_replace(None);
+                self.game.commerce = crate::commerce::CommerceState {
+                    shared_coin_enabled: self.game.commerce.shared_coin_enabled,
+                    ..Default::default()
+                };
                 self.game.inventory = Default::default();
                 self.game.loot = None;
                 self.game.attack = false;
@@ -410,7 +678,11 @@ impl LiveWorld {
                 }
             }
             GameplayEvent::Doors(doors) => {
-                self.doors = doors.iter().map(|door| (door.id, door.clone())).collect()
+                self.doors = doors.iter().map(|door| (door.id, door.clone())).collect();
+                self.door_return_deadlines.clear();
+                for id in doors.iter().map(|door| door.id) {
+                    self.schedule_door_return(id);
+                }
             }
             GameplayEvent::DoorMoved { id, action } => {
                 if let Some(door) = self.doors.get_mut(id) {
@@ -419,6 +691,9 @@ impl LiveWorld {
                         3 => door.state = u8::from(door.inverted),
                         _ => {}
                     }
+                }
+                if matches!(action, 2 | 3) {
+                    self.schedule_door_return(*id);
                 }
             }
             GameplayEvent::Assist(id) => self.set_target(Some(*id)),
@@ -589,7 +864,410 @@ fn posture_action(posture: u32) -> ActorAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commerce::{BankSession, MerchantSession, PendingTransaction, TransactionKind};
+    use openeq_net::{
+        gameplay::{CoinLocation, CoinType, Currency},
+        inventory::{InventoryItem, InventorySlot},
+    };
     use std::time::Duration;
+
+    fn command_world(
+        class: u8,
+        distance: f32,
+    ) -> (
+        LiveWorld,
+        tokio::sync::mpsc::UnboundedReceiver<NetworkCommand>,
+    ) {
+        let (_, events) = mpsc::channel();
+        let (movement, _) = tokio::sync::watch::channel(None);
+        let (commands, received) = tokio::sync::mpsc::unbounded_channel();
+        let mut service = npc(
+            Position {
+                x: distance,
+                ..Default::default()
+            },
+            Instant::now(),
+        );
+        service.spawn.id = 2;
+        service.spawn.class = class;
+        let mut live = LiveWorld {
+            entities: BTreeMap::from([(2, service)]),
+            environment: None,
+            own_id: Some(1),
+            initial_position: Some(Position::default()),
+            character: "Player".into(),
+            ready: true,
+            error: None,
+            moves: 0,
+            hour: 12,
+            minute: 0,
+            target: None,
+            game: GameplayState::default(),
+            doors: BTreeMap::new(),
+            door_return_deadlines: BTreeMap::new(),
+            pending_destination: None,
+            rx: Mutex::new(events),
+            movement,
+            commands,
+        };
+        live.game.currency = Currency {
+            platinum: 10,
+            ..Default::default()
+        };
+        live.game.commerce.currency_ready = true;
+        live.game.commerce.bank_money = live.game.currency;
+        live.game.commerce.shared_platinum = 10;
+        live.game.commerce.shared_coin_enabled = true;
+        (live, received)
+    }
+
+    fn carried_item(slot: InventorySlot) -> InventoryItem {
+        InventoryItem {
+            slot,
+            id: 13005,
+            instance_id: 99,
+            name: "Iron Ration".into(),
+            lore: String::new(),
+            id_file: String::new(),
+            icon: 570,
+            price: 20,
+            merchant_count: -1,
+            base_price: 20,
+            no_drop: false,
+            attuned: false,
+            count: 5,
+            charges: 0,
+            stack_size: 20,
+            item_class: 0,
+            item_type: 0,
+            equip_slots: 0,
+            classes: u32::MAX,
+            races: u32::MAX,
+            material: 0,
+            color: 0,
+            damage: 0,
+            delay: 0,
+            ac: 0,
+            hp: 0,
+            mana: 0,
+            endurance: 0,
+            required_level: 0,
+            bag_slots: 0,
+            bag_size: 0,
+            weight: 10,
+            size: 1,
+            children: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn live_events_use_asset_coordinates_for_entities_doors_and_zone_corrections() {
+        let (mut live, _) = command_world(crate::commerce::BANKER_CLASS, 10.);
+        let (events, rx) = mpsc::channel();
+        live.rx = Mutex::new(rx);
+        let server = Position {
+            x: 944.,
+            y: -305.,
+            z: -93.625,
+            heading: 32.,
+            delta_heading: 2.,
+            velocity: [1., 3., 0.],
+            ..Default::default()
+        };
+        let mut spawn = npc(server, Instant::now()).spawn;
+        spawn.name = "Player".into();
+        events
+            .send(Message::Event(Box::new(ZoneEvent::Spawn(spawn))))
+            .unwrap();
+        events
+            .send(Message::Event(Box::new(ZoneEvent::Environment(
+                Environment {
+                    short_name: "poknowledge".into(),
+                    long_name: "Plane of Knowledge".into(),
+                    zone_id: 202,
+                    fog_color: [[0.; 3]; 4],
+                    fog_start: [0.; 4],
+                    fog_end: [1000.; 4],
+                    fog_density: 0.,
+                    min_clip: 1.,
+                    max_clip: 1000.,
+                    sky: 1,
+                    zone_type: 0,
+                    safe_position: [944., -305., -90.],
+                },
+            ))))
+            .unwrap();
+        live.poll();
+        assert_eq!(live.player_position().unwrap(), [-305., 944., -93.625]);
+        assert_eq!(
+            live.environment.as_ref().unwrap().safe_position,
+            [-305., 944., -90.]
+        );
+        let pose = live.entities[&1].spawn.position;
+        assert_eq!(pose.heading, 96.);
+        assert_eq!(pose.delta_heading, -2.);
+        assert_eq!(pose.velocity, [3., 1., 0.]);
+        events
+            .send(Message::Event(Box::new(ZoneEvent::Movement {
+                id: 1,
+                position: Position {
+                    x: 940.,
+                    y: -310.,
+                    ..server
+                },
+            })))
+            .unwrap();
+        live.poll();
+        assert_eq!(live.entities[&1].spawn.position.x, -310.);
+        assert_eq!(live.entities[&1].spawn.position.y, 940.);
+        live.gameplay_event(GameplayEvent::Doors(vec![Door {
+            id: 9,
+            name: "POKDOOR500".into(),
+            position: [950., -320., -96.],
+            heading: 64.,
+            incline: 0,
+            size: 100,
+            open_type: 0,
+            state: 0,
+            inverted: false,
+            parameter: 0,
+        }]));
+        assert_eq!(live.doors[&9].position, [-320., 950., -96.]);
+        assert_eq!(live.doors[&9].heading, 64.);
+        live.gameplay_event(GameplayEvent::ZoneChangeRequested(ZoneDestination {
+            zone_id: 202,
+            instance_id: 0,
+            position: [930., -300., -90.],
+            heading: 256.,
+        }));
+        assert_eq!(live.player_position().unwrap(), [-300., 930., -90.]);
+        assert_eq!(live.initial_position.unwrap().heading, 384.);
+        live.gameplay_event(GameplayEvent::ZoneChangeResult {
+            zone_id: 202,
+            instance_id: 0,
+            position: [935., -301., -91.],
+            success: 1,
+        });
+        assert_eq!(live.player_position().unwrap(), [-301., 935., -91.]);
+        assert_eq!(live.initial_position.unwrap().heading, 384.);
+    }
+
+    #[test]
+    fn inverted_kelethin_lift_starts_down_then_opens_and_closes() {
+        let (mut live, mut sent) = command_world(crate::commerce::BANKER_CLASS, 10.);
+        live.gameplay_event(GameplayEvent::Doors(vec![Door {
+            id: 69,
+            name: "FAYLEVATOR".into(),
+            position: [350.014, 137.463, 2.1582],
+            heading: 384.,
+            incline: 0,
+            size: 100,
+            open_type: 59,
+            state: 1,
+            inverted: true,
+            parameter: 68,
+        }]));
+        assert_eq!(live.doors[&69].state, 0);
+        live.gameplay_event(GameplayEvent::DoorMoved { id: 69, action: 3 });
+        assert_eq!(live.doors[&69].state, 1);
+        let deadline = live.door_return_deadlines[&69];
+        live.advance_door_cycles(deadline - Duration::from_millis(1));
+        assert_eq!(live.doors[&69].state, 1);
+        live.advance_door_cycles(deadline);
+        assert_eq!(
+            live.doors[&69].state, 0,
+            "silent server reset must return the lift"
+        );
+        assert!(
+            sent.try_recv().is_err(),
+            "local return must not send a door click"
+        );
+        live.gameplay_event(GameplayEvent::DoorMoved { id: 69, action: 3 });
+        assert_eq!(live.doors[&69].state, 1);
+        // Another OPEN is a fresh cycle even if its state value is unchanged.
+        live.door_return_deadlines
+            .insert(69, Instant::now() - Duration::from_secs(1));
+        live.gameplay_event(GameplayEvent::DoorMoved { id: 69, action: 3 });
+        assert!(live.door_return_deadlines[&69] > Instant::now());
+        live.gameplay_event(GameplayEvent::DoorMoved { id: 69, action: 2 });
+        assert_eq!(live.doors[&69].state, 0);
+        assert!(live.door_return_deadlines.is_empty());
+        live.gameplay_event(GameplayEvent::DoorMoved { id: 69, action: 3 });
+        live.gameplay_event(GameplayEvent::Doors(vec![]));
+        assert!(live.door_return_deadlines.is_empty());
+    }
+
+    #[test]
+    fn bank_commands_require_an_open_banker_still_within_reach() {
+        for (opened, distance, allowed) in
+            [(false, 10., false), (true, 201., false), (true, 10., true)]
+        {
+            for destination in [CoinLocation::Bank, CoinLocation::SharedBank] {
+                for (from, to) in [
+                    (CoinLocation::Carried, destination),
+                    (destination, CoinLocation::Carried),
+                ] {
+                    let (mut live, mut received) =
+                        command_world(crate::commerce::BANKER_CLASS, distance);
+                    live.game.commerce.bank = opened.then(|| BankSession {
+                        id: 2,
+                        name: "Banker".into(),
+                    });
+                    assert_eq!(
+                        live.command(Command::MoveCoin {
+                            from,
+                            to,
+                            coin: CoinType::Platinum,
+                            amount: 2
+                        }),
+                        allowed
+                    );
+                    assert_eq!(live.game.commerce.coin_pending, allowed);
+                    assert_eq!(
+                        live.game.currency.platinum, 10,
+                        "queueing must not change the carried balance"
+                    );
+                    assert_eq!(live.game.commerce.bank_money.platinum, 10);
+                    if allowed {
+                        assert!(
+                            matches!(received.try_recv().unwrap(), NetworkCommand::Gameplay(Command::MoveCoin { from: queued_from, to: queued_to, coin: CoinType::Platinum, amount: 2 }) if queued_from == from && queued_to == to)
+                        );
+                    }
+                    assert!(
+                        received.try_recv().is_err(),
+                        "rejected or duplicate command reached the worker"
+                    );
+                }
+            }
+            for bank_slot in [InventorySlot::bank(0), InventorySlot::shared_bank(0)] {
+                let carried = InventorySlot::possessions(23);
+                for (from, to) in [(carried, bank_slot), (bank_slot, carried)] {
+                    let (mut live, mut received) =
+                        command_world(crate::commerce::BANKER_CLASS, distance);
+                    live.game.commerce.bank = opened.then(|| BankSession {
+                        id: 2,
+                        name: "Banker".into(),
+                    });
+                    live.game.inventory.items.insert(from, carried_item(from));
+                    assert_eq!(
+                        live.command(Command::MoveItem { from, to, count: 2 }),
+                        allowed
+                    );
+                    assert_eq!(live.game.inventory_command_pending, allowed);
+                    assert_eq!(
+                        live.game.inventory.items[&from].count, 5,
+                        "queueing must not move items"
+                    );
+                    assert!(!live.game.inventory.items.contains_key(&to));
+                    if allowed {
+                        assert!(
+                            matches!(received.try_recv().unwrap(), NetworkCommand::Gameplay(Command::MoveItem { from: queued_from, to: queued_to, count: 2 }) if queued_from == from && queued_to == to)
+                        );
+                    }
+                    assert!(
+                        received.try_recv().is_err(),
+                        "rejected or duplicate item move reached the worker"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pending_merchant_transaction_blocks_even_valid_inventory_moves() {
+        let from = InventorySlot::possessions(23);
+        for kind in [
+            TransactionKind::Buy {
+                slot: 7,
+                quantity: 1,
+            },
+            TransactionKind::Sell {
+                slot: from,
+                quantity: 1,
+            },
+        ] {
+            let (mut live, mut received) = command_world(crate::commerce::MERCHANT_CLASS, 10.);
+            live.game.inventory.items.insert(from, carried_item(from));
+            live.game.commerce.pending = Some(PendingTransaction {
+                merchant_id: 2,
+                kind,
+                started: Instant::now(),
+            });
+            let command = Command::MoveItem {
+                from,
+                to: InventorySlot::CURSOR,
+                count: 2,
+            };
+            assert!(!live.command(command.clone()));
+            assert!(received.try_recv().is_err());
+            assert!(!live.game.inventory_command_pending);
+            assert_eq!(live.game.inventory.items[&from].count, 5);
+            live.game.commerce.pending = None;
+            assert!(live.command(command));
+            assert!(
+                matches!(received.try_recv().unwrap(), NetworkCommand::Gameplay(Command::MoveItem { from: queued_from, to: InventorySlot::CURSOR, count: 2 }) if queued_from == from)
+            );
+            assert!(received.try_recv().is_err());
+        }
+    }
+
+    #[test]
+    fn merchant_close_blocks_reopen_and_duplicate_close_until_server_acknowledges() {
+        let (mut live, mut received) = command_world(crate::commerce::MERCHANT_CLASS, 10.);
+        let mut merchant = MerchantSession::new(2, "Merchant".into());
+        merchant.opened = true;
+        live.game.commerce.merchant = Some(merchant);
+        let reopen = Command::MerchantOpen {
+            merchant_id: 2,
+            player_id: 1,
+        };
+        assert!(live.command(Command::MerchantClose));
+        assert!(live.game.commerce.merchant_closing);
+        live.game.commerce.merchant = None; // The window closes immediately.
+        assert!(!live.command(Command::MerchantClose));
+        assert!(!live.command(reopen.clone()));
+        assert!(matches!(
+            received.try_recv().unwrap(),
+            NetworkCommand::Gameplay(Command::MerchantClose)
+        ));
+        assert!(received.try_recv().is_err());
+        live.command_sent(Command::MerchantClose);
+        assert!(
+            live.game.commerce.merchant_closing,
+            "sending the close is not its server acknowledgment"
+        );
+        assert!(!live.command(reopen.clone()));
+        assert!(received.try_recv().is_err());
+        live.gameplay_event(GameplayEvent::MerchantClosed);
+        assert!(!live.game.commerce.merchant_closing);
+        assert!(live.command(reopen));
+        assert!(matches!(
+            received.try_recv().unwrap(),
+            NetworkCommand::Gameplay(Command::MerchantOpen {
+                merchant_id: 2,
+                player_id: 1
+            })
+        ));
+        live.game.commerce.merchant = Some(MerchantSession::new(2, "Merchant".into()));
+        live.gameplay_event(GameplayEvent::MerchantClosed);
+        assert!(
+            live.game
+                .commerce
+                .merchant
+                .as_ref()
+                .is_some_and(|merchant| merchant.id == 2 && !merchant.opened),
+            "a trailing close reply must preserve the provisional new session"
+        );
+        assert!(received.try_recv().is_err());
+    }
+
+    #[test]
+    fn failed_merchant_close_enqueue_does_not_start_close_barrier() {
+        let (mut live, received) = command_world(crate::commerce::MERCHANT_CLASS, 10.);
+        drop(received);
+        assert!(!live.command(Command::MerchantClose));
+        assert!(!live.game.commerce.merchant_closing);
+    }
 
     fn npc(position: Position, now: Instant) -> Entity {
         Entity::new(
@@ -638,6 +1316,7 @@ mod tests {
             target: Some(2),
             game: GameplayState::default(),
             doors: BTreeMap::new(),
+            door_return_deadlines: BTreeMap::new(),
             pending_destination: None,
             rx: Mutex::new(events),
             movement,

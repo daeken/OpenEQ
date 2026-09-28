@@ -124,12 +124,16 @@ Original assets remain local. See the README for reproducible commands.
 
 These are intentionally separate parity milestones:
 
-- [ ] Merchant buying/selling, trading, banking and augmentation workflows.
-- [ ] Clickable quest saylinks and complete rich-text/STML rendering.
-- [ ] Group/raid membership, invitations, leadership and related windows.
+- [x] Merchant buying/selling and personal/shared banking ([milestone](COMMERCE_SOCIAL_TASKS.md)).
+- [x] Clickable quest saylinks and linked item inspection.
+- [x] Group membership, invitations, leadership and related window.
+- [ ] Player trading and augmentation workflows.
+- [ ] Complete rich-text/STML rendering and quest journals.
+- [ ] Raid membership and management.
 - [ ] UCS custom chat channels and guild management.
 - [ ] Interactive login, character creation and selection screens.
 - [ ] Authored border zone-line detection and complete special door/lift behavior.
+- [x] Kelethin button/lift cycles, animated collision and passenger carrying.
 - [ ] Spell particles/audio, item and AA casting, spell scroll scribing.
 - [ ] Luclin replacements and modern modular armor/hair/equipment assemblies.
 - [ ] Full swimming, water rules and invisible collision-volume behavior.

@@ -132,7 +132,16 @@ size normalizes the bind-pose height. See [character details](CHARACTER_RENDERIN
 
 ### Coordinate system
 
-EverQuest is Z-up with north along +Y. The renderer converts in the vertex shader
+Original assets are Z-up. EQEmu's map loader transposes their X/Y coordinates;
+the client's `coordinates.rs` converts server poses into the asset basis before
+storing them in `LiveWorld`, and converts movement back before transmission.
+Heading becomes `(128 - heading) mod 512`, velocity components swap and turning
+rate changes sign. Door locations, zone corrections and safe positions use the
+same boundary. Protocol structures remain in server coordinates. Real PoK bank
+landmarks and collision floors test this asymmetrically: server `(944,-305)` is
+asset `(-305,944)`, with floor Z=-96; the unconverted position has no floor.
+
+The renderer converts the asset basis in the vertex shader
 with a fixed matrix mapping `(x, y, z)` to `(x, z, -y)`, which preserves
 handedness, puts up along +Y and north along -Z, matching `wgpu`'s conventions.
 Doing the conversion on the GPU keeps the asset data faithful to the original.
@@ -263,8 +272,11 @@ grounded stepping and sliding along walls. A spatial grid indexes collidable
 triangles from the drawable zone and placed objects; floor selection handles
 stacked decks and slopes, and ceiling checks limit upward motion. Invisible
 collision-only geometry and swimming remain unsupported. A second collision
-world contains server-owned doors in their current final poses, rebuilt on state
-changes. Visual door transforms interpolate independently. The third-person
+world contains server-owned doors. Ordinary door collision uses the final pose;
+lift collision follows the animated platform. Standing passengers receive the
+platform displacement once per update, checked against the original mesh and
+resolved against static ceilings before walking/gravity. Jumping and flight
+discard carry motion. The third-person
 camera clips its sight segment against static and door triangles on either side,
 rather than using the walking cylinder solver, so it cannot slide under slopes.
 Networking always uses the player position.
@@ -285,7 +297,7 @@ The directional sun remains fixed while point lights use authored zone data.
 atlases and widgets into renderer-independent draw commands and hit targets.
 The GPU overlay clips and blends images and text. Game bindings supply all
 state: XML files cannot execute scripts or network commands. The live HUD binds player/target resources, colored chat, inventory/equipment,
-bags, loot, spells, buffs and casting. Logical-pixel layout/hits are independent
+bags, loot, spells, buffs, casting, merchants, banking and groups. Logical-pixel layout/hits are independent
 of framebuffer scale; images, clips and glyph rasterization use the actual
 physical density. Windows can be dragged; advanced XML widgets and STML remain
 incomplete.
@@ -293,7 +305,9 @@ incomplete.
 `chat.rs` owns Unicode-safe text editing and slash-command parsing.
 `interaction.rs` translates UI intentions into typed network commands and builds
 presentation models. `game.rs` reduces server gameplay events into inventory,
-resources, chat, loot and spell state. `live.rs` coordinates the network worker,
+resources, chat, loot and spell state. Commerce and social interaction modules
+build the corresponding window models; `group.rs` applies actual membership and
+leadership events. `live.rs` coordinates the network worker,
 entity actions, target state, door state and zone transitions. The UI does not
 send packets or infer inventory addresses from XML control IDs.
 
@@ -303,6 +317,27 @@ persistence after reconnect. Loot delivery supplies its actual destination slot.
 Cooldowns begin on successful action-3 spell notifications, not spellbar unlocks,
 which also arrive for failed casts. See [protocol details](GAMEPLAY_PROTOCOL.md).
 
+Merchant listings never enter player inventory. A successful purchase supplies
+items and a purchase acknowledgment but no currency update; the matching
+acknowledgment debits money once, preserving the server's denomination buckets.
+A sale supplies its acknowledgment and currency update but no item deletion;
+the reducer removes units once and waits for the real balance. Pending commerce
+blocks overlapping inventory actions and survives window closure. Untagged
+merchant-close replies are serialized against reopening. Coin moves are
+predicted only after network submission; dedicated probes verify reconnect
+persistence. Bank operations validate the selected NPC and range at the command
+boundary. Shared platinum is enabled only for the verified Storage2 deployment.
+See [commerce protocol](COMMERCE_PROTOCOL.md) for failure semantics.
+
+Chat retains the original numeric link payload separately from displayed text.
+Stable link IDs survive wrapping; GPU glyph hit regions are converted back to
+logical coordinates and accepted only when the chat panel is the topmost hit.
+Evicted chat lines remove their payloads. Clicking sends the protocol descriptor,
+never the displayed label as chat. Group state survives a zone handoff until the
+new roster arrives. Displayed member health and levels come from live spawns;
+the RoF2 group encoder's placeholder levels are ignored. See
+[social protocol](SOCIAL_PROTOCOL.md) for the two-client and NPC quest proof.
+
 During a zone handoff the worker retains authentication and suppresses movement;
 old actors, inventory and targets are cleared. Fresh server environment data
 selects the new geometry, character/door library, collision, map and atmosphere.
@@ -310,7 +345,8 @@ Movement resumes only with a fresh player position. Server portals and requested
 travel work; authored border zone-line detection remains unfinished.
 
 Original client map files are parsed independently of the XML UI. Lines and
-landmarks use the original `(-X,-Y,Z)` map convention and are projected around the
+landmarks use `(-serverX,-serverY,Z)` and are transposed into asset coordinates.
+North-up maps put scene X upward and scene Y rightward. They are projected around the
 player with clipped drawing, zoom, target marker and waypoints.
 
 ## Testing
@@ -323,7 +359,7 @@ PNG that can be inspected directly.
 
 ## Remaining work
 
-- Merchants, banking, trading, richer quest links, group/raid management and UCS.
+- Player trading, augmentation, quest journals, raid/guild management and UCS.
 - Interactive login/character creation and complete XML/STML widgets.
 - Authored zone-line triggers and exact special door/platform motion.
 - Luclin replacements, modular modern appearance, item/AA casting, particles/audio.

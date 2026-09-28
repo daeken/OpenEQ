@@ -4,7 +4,7 @@
 
 use bytemuck::{Pod, Zeroable};
 use font8x8::UnicodeFonts;
-use openeq_ui::{Color, DrawCommand, Rect, TextAlign, UiFrame};
+use openeq_ui::{Color, DrawCommand, HitTarget, Rect, TextAlign, UiFrame};
 use std::{
     collections::HashMap,
     ops::Range,
@@ -54,6 +54,7 @@ pub struct UiRenderer {
     vertices: wgpu::Buffer,
     batches: Vec<Batch>,
     scale: f32,
+    link_hits: Vec<HitTarget>,
 }
 
 impl UiRenderer {
@@ -143,6 +144,7 @@ impl UiRenderer {
             vertices,
             batches: Vec::new(),
             scale: 1.,
+            link_hits: Vec::new(),
         }
     }
 
@@ -173,6 +175,7 @@ impl UiRenderer {
             1.
         };
         self.batches.clear();
+        self.link_hits.clear();
         if size[0] == 0 || size[1] == 0 {
             return;
         }
@@ -242,9 +245,9 @@ impl UiRenderer {
                         / self.scale;
                     let visible = (rect.height / line_height).floor().max(0.) as usize;
                     let mut rows = Vec::new();
-                    for line in lines {
-                        for text in self.text_lines(&line.text, px, Some(rect.width)) {
-                            rows.push((text, line.color));
+                    for (index, line) in lines.iter().enumerate() {
+                        for range in self.text_row_ranges(&line.text, px, rect.width) {
+                            rows.push((index, range));
                         }
                     }
                     let end = rows
@@ -252,11 +255,38 @@ impl UiRenderer {
                         .saturating_sub((*scroll_rows).min(rows.len().saturating_sub(visible)));
                     let start = end.saturating_sub(visible);
                     let top = rect.bottom() - (end - start) as f32 * line_height;
-                    for (row, (text, color)) in rows[start..end].iter().enumerate() {
+                    for (row, (index, range)) in rows[start..end].iter().enumerate() {
+                        let line = &lines[*index];
+                        let text = &line.text[range.clone()];
+                        let row_y = top + row as f32 * line_height;
+                        let baseline = row_y + ascent;
                         let mut x = rect.x;
-                        let baseline = top + row as f32 * line_height + ascent;
-                        for ch in text.chars() {
+                        let mut runs = Vec::<(u64, Rect)>::new();
+                        for (offset, ch) in text.char_indices() {
+                            let byte = range.start + offset;
+                            let link = line.links.iter().find(|link| {
+                                link.range.start < link.range.end
+                                    && link.range.end <= line.text.len()
+                                    && line.text.is_char_boundary(link.range.start)
+                                    && line.text.is_char_boundary(link.range.end)
+                                    && link.range.contains(&byte)
+                            });
+                            let color = if link.is_some() {
+                                [130, 205, 255, 255]
+                            } else {
+                                line.color
+                            };
                             let glyph = self.glyph(queue, ch, px);
+                            let advance = glyph.advance / self.scale;
+                            if let Some(link) = link {
+                                if let Some((_, bounds)) = runs.last_mut().filter(|(id, bounds)| {
+                                    *id == link.id && (bounds.right() - x).abs() < 0.01
+                                }) {
+                                    bounds.width += advance;
+                                } else {
+                                    runs.push((link.id, Rect::new(x, row_y, advance, line_height)));
+                                }
+                            }
                             if !glyph.source.is_empty() {
                                 let bounds = Rect::new(
                                     (x * self.scale + glyph.offset[0]).round() / self.scale,
@@ -275,15 +305,40 @@ impl UiRenderer {
                                         glyph.source.right() / atlas,
                                         glyph.source.bottom() / atlas,
                                     ],
-                                    *color,
+                                    color,
                                     1,
                                     size,
                                 );
                             }
-                            x += glyph.advance / self.scale;
+                            x += advance;
+                        }
+                        for (id, bounds) in runs {
+                            let clipped = bounds.intersect(*clip).intersect(*rect);
+                            if clipped.is_empty() {
+                                continue;
+                            }
+                            self.quad(
+                                &mut vertices,
+                                Rect::new(bounds.x, baseline + 1., bounds.width, 1. / self.scale),
+                                *clip,
+                                [0., 0., 1., 1.],
+                                [130, 205, 255, 255],
+                                0,
+                                size,
+                            );
+                            let item = format!("chat:link:{id}");
+                            self.link_hits.push(HitTarget {
+                                screen_id: item.clone(),
+                                item,
+                                kind: "ChatLink".into(),
+                                rect: clipped,
+                                enabled: true,
+                                tooltip: None,
+                            });
                         }
                     }
                 }
+
                 DrawCommand::Fill { rect, clip, color } => self.quad(
                     &mut vertices,
                     *rect,
@@ -396,6 +451,12 @@ impl UiRenderer {
         }
     }
 
+    /// Link rectangles from the last prepare, in logical pixels. The application
+    /// must gate these by the topmost chat-log window hit before dispatching.
+    pub fn link_hits(&self) -> &[HitTarget] {
+        &self.link_hits
+    }
+
     pub fn render(&self, pass: &mut wgpu::RenderPass<'_>) {
         if self.batches.is_empty() {
             return;
@@ -473,6 +534,40 @@ impl UiRenderer {
             })
             / self.scale
     }
+    fn text_row_ranges(&self, text: &str, px: u32, limit: f32) -> Vec<Range<usize>> {
+        let mut rows = Vec::new();
+        let mut paragraph_start = 0;
+        for paragraph in text.split('\n') {
+            let mut start = paragraph_start;
+            let mut end = start;
+            let mut width = 0.;
+            let mut word_start = paragraph_start;
+            for word in paragraph.split_inclusive(' ') {
+                if end > start && width + self.text_width(word.trim_end(), px) > limit {
+                    rows.push(start..start + text[start..end].trim_end().len());
+                    start = word_start;
+                    end = start;
+                    width = 0.;
+                }
+                for (offset, ch) in word.char_indices() {
+                    let byte = word_start + offset;
+                    let advance = self.advance(ch, px);
+                    if end > start && width + advance > limit {
+                        rows.push(start..end);
+                        start = byte;
+                        width = 0.;
+                    }
+                    end = byte + ch.len_utf8();
+                    width += advance;
+                }
+                word_start += word.len();
+            }
+            rows.push(start..start + text[start..end].trim_end().len());
+            paragraph_start += paragraph.len() + 1;
+        }
+        rows
+    }
+
     fn text_lines(&self, text: &str, px: u32, max_width: Option<f32>) -> Vec<String> {
         let mut lines = Vec::new();
         for paragraph in text.split('\n') {
@@ -919,6 +1014,97 @@ mod tests {
     }
 
     #[test]
+    fn chat_links_follow_utf8_wrap_scroll_and_retina_coordinates() {
+        let Ok(renderer) = crate::Renderer::new_headless(256, 256) else {
+            return;
+        };
+        let mut ui = UiRenderer::new(&renderer.device, &renderer.queue, renderer.config.format);
+        ui.font = None; // deterministic 9-logical-pixel bitmap advances
+        let message = "Start café narrow passage end";
+        let begin = message.find("café").unwrap();
+        let end = message.find(" end").unwrap();
+        let make_frame = |scroll_rows| UiFrame {
+            commands: vec![DrawCommand::TextLog {
+                rect: Rect::new(8., 8., 63., 90.),
+                clip: Rect::new(8., 8., 63., 90.),
+                font: 2,
+                scroll_rows,
+                lines: vec![
+                    openeq_ui::TextLine {
+                        text: "Older message ".repeat(20),
+                        color: [255; 4],
+                        links: vec![],
+                    },
+                    openeq_ui::TextLine {
+                        text: message.into(),
+                        color: [255; 4],
+                        links: vec![
+                            openeq_ui::TextLink {
+                                range: begin..end,
+                                id: 42,
+                            },
+                            openeq_ui::TextLink {
+                                range: begin + 4..message.len() + 50,
+                                id: 99,
+                            },
+                        ],
+                    },
+                ],
+            }],
+            ..Default::default()
+        };
+        for scale in [1., 2.] {
+            ui.prepare_scaled(
+                &renderer.device,
+                &renderer.queue,
+                &make_frame(0),
+                [256, 256],
+                scale,
+            );
+            assert!(
+                ui.link_hits().len() >= 3,
+                "long link must produce multiple wrapped regions"
+            );
+            for hit in ui.link_hits() {
+                assert_eq!(hit.item, "chat:link:42");
+                assert!(
+                    hit.rect.x >= 8.
+                        && hit.rect.right() <= 71.
+                        && hit.rect.y >= 8.
+                        && hit.rect.bottom() <= 98.
+                );
+            }
+            let first = ui.link_hits()[0].rect;
+            assert_eq!(
+                first.width, 36.,
+                "café has four glyphs, despite its five UTF8 bytes"
+            );
+        }
+        ui.prepare_scaled(
+            &renderer.device,
+            &renderer.queue,
+            &make_frame(usize::MAX),
+            [256, 256],
+            2.,
+        );
+        assert!(
+            ui.link_hits().is_empty(),
+            "scrolled-out links cannot be clicked"
+        );
+        ui.prepare_scaled(
+            &renderer.device,
+            &renderer.queue,
+            &make_frame(0),
+            [0, 0],
+            2.,
+        );
+        assert!(
+            ui.link_hits().is_empty(),
+            "zero-size preparation clears stale regions"
+        );
+    }
+
+    #[test]
     fn retina_scales_geometry_scissors_and_font_rasterization() {
         let Ok(mut renderer) = crate::Renderer::new_headless(128, 64) else {
             return;
@@ -1010,8 +1196,8 @@ mod tests {
                 rect: Rect::new(8., 8., 90., 34.),
                 clip: Rect::new(8., 8., 90., 34.),
                 lines: vec![
-                    openeq_ui::TextLine { text: "An old red message that wraps across several displayed rows in the chat window".into(), color: [255, 0, 0, 255] },
-                    openeq_ui::TextLine { text: "Newest".into(), color: [0, 255, 0, 255] },
+                    openeq_ui::TextLine { text: "An old red message that wraps across several displayed rows in the chat window".into(), color: [255, 0, 0, 255], links: vec![] },
+                    openeq_ui::TextLine { text: "Newest".into(), color: [0, 255, 0, 255], links: vec![] },
                 ],
                 font: 2,
                 scroll_rows,
