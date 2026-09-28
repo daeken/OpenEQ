@@ -1,0 +1,19 @@
+[package]
+name = "openeq-assets"
+description = "Readers for EverQuest legacy asset formats (S3D/PFS, WLD, ZON, TER/MOD, textures)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+flate2.workspace = true
+image.workspace = true
+tracing.workspace = true
+
+[[bin]]
+name = "zonescan"
+path = "src/bin/zonescan.rs"

@@ -1,0 +1,426 @@
+//! Uploading an asset-level scene into GPU buffers.
+//!
+//! Textures all live in one array texture. EverQuest textures are mostly 256x256
+//! but not uniformly, so each is resized to fit for this first pass.
+//!
+//! Material parameters are stored per vertex rather than in a material buffer.
+//! The asset pipeline already splits geometry per material, so this costs no
+//! extra vertices and removes a binding and a dynamic-offset dance.
+
+use std::collections::HashMap;
+
+use bytemuck::{Pod, Zeroable};
+use glam::{Mat4, Quat, Vec3};
+use openeq_assets::Scene;
+
+/// Side length of every layer in the texture array.
+pub const ATLAS_SIZE: u32 = 256;
+
+pub const FLAG_ALPHA_MASK: u32 = 1;
+pub const FLAG_TRANSPARENT: u32 = 2;
+pub const FLAG_EMISSIVE: u32 = 4;
+
+/// A vertex as the renderer wants it: geometry plus material parameters.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct Vertex {
+    pub position: [f32; 3],
+    pub normal: [f32; 3],
+    pub uv: [f32; 2],
+    /// First layer of this material's texture animation.
+    pub layer: u32,
+    pub frame_offset: u32,
+    pub frame_count: u32,
+    pub flags: u32,
+    /// Milliseconds per animation frame.
+    pub frame_ms: u32,
+}
+
+/// Per-instance model matrix in EverQuest space.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct Instance {
+    pub columns: [[f32; 4]; 4],
+}
+
+impl Instance {
+    pub const IDENTITY: Self = Self {
+        columns: [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+    };
+
+    pub fn from_parts(position: [f32; 3], rotation: [f32; 4], scale: [f32; 3]) -> Self {
+        let matrix = Mat4::from_scale_rotation_translation(
+            Vec3::from(scale),
+            Quat::from_xyzw(rotation[0], rotation[1], rotation[2], rotation[3]),
+            Vec3::from(position),
+        );
+        Self {
+            columns: matrix.to_cols_array_2d(),
+        }
+    }
+}
+
+/// A single indexed, instanced draw.
+#[derive(Debug, Clone, Copy)]
+pub struct DrawCall {
+    pub index_start: u32,
+    pub index_count: u32,
+    pub base_vertex: i32,
+    pub instance_start: u32,
+    pub instance_count: u32,
+}
+
+/// GPU-resident scene: geometry, instances, draws, textures and lights.
+pub struct GpuScene {
+    pub name: String,
+    pub vertices: wgpu::Buffer,
+    pub indices: wgpu::Buffer,
+    pub instances: wgpu::Buffer,
+    pub draws: Vec<DrawCall>,
+    pub atlas: wgpu::Texture,
+    pub atlas_view: wgpu::TextureView,
+    pub lights: wgpu::Buffer,
+    pub light_count: u32,
+    pub bounds_min: Vec3,
+    pub bounds_max: Vec3,
+}
+
+impl GpuScene {
+    pub fn build(device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene) -> Self {
+        let (atlas, atlas_view, atlas_layers) = build_atlas(device, queue, scene);
+
+        let mut vertices: Vec<Vertex> = Vec::new();
+        let mut indices: Vec<u32> = Vec::new();
+        let mut draws: Vec<DrawCall> = Vec::new();
+        let mut instances: Vec<Instance> = Vec::new();
+        let mut bounds_min = Vec3::splat(f32::MAX);
+        let mut bounds_max = Vec3::splat(f32::MIN);
+
+        // Which geometry indices belong to placeable objects rather than to the
+        // zone itself; those get instanced, the rest are drawn once.
+        let mut object_of_mesh: HashMap<usize, usize> = HashMap::new();
+        for (object_index, object) in scene.objects.iter().enumerate() {
+            for mesh in &object.meshes {
+                object_of_mesh.insert(*mesh, object_index);
+            }
+        }
+        let mut object_instances: Vec<Vec<Instance>> = vec![Vec::new(); scene.objects.len()];
+        for instance in &scene.instances {
+            let Some(index) = scene
+                .objects
+                .iter()
+                .position(|object| object.name == instance.object)
+            else {
+                continue;
+            };
+            object_instances[index].push(Instance::from_parts(
+                instance.position,
+                instance.rotation,
+                instance.scale,
+            ));
+        }
+
+        for (mesh_index, geometry) in scene.meshes.iter().enumerate() {
+            let material = &scene.materials[geometry.material];
+            let (layer, frame_offset, frame_count) = atlas_layers[&material_layer_key(material)];
+            let mut flags = 0u32;
+            if material.alpha_mask {
+                flags |= FLAG_ALPHA_MASK;
+            }
+            if material.transparent {
+                flags |= FLAG_TRANSPARENT;
+            }
+            if material.emissive {
+                flags |= FLAG_EMISSIVE;
+            }
+
+            let base_vertex = vertices.len() as i32;
+            for vertex in geometry
+                .vertices
+                .chunks_exact(openeq_assets::mesh::VERTEX_STRIDE)
+            {
+                bounds_min = bounds_min.min(Vec3::new(vertex[0], vertex[1], vertex[2]));
+                bounds_max = bounds_max.max(Vec3::new(vertex[0], vertex[1], vertex[2]));
+                vertices.push(Vertex {
+                    position: [vertex[0], vertex[1], vertex[2]],
+                    normal: [vertex[3], vertex[4], vertex[5]],
+                    uv: [vertex[6], vertex[7]],
+                    layer,
+                    frame_offset,
+                    frame_count,
+                    flags,
+                    frame_ms: material.anim_speed.max(1),
+                });
+            }
+            let index_start = indices.len() as u32;
+            indices.extend_from_slice(&geometry.indices);
+            let index_count = geometry.indices.len() as u32;
+
+            let (instance_start, instance_count) = match object_of_mesh.get(&mesh_index) {
+                Some(object_index) => {
+                    let list = &object_instances[*object_index];
+                    if list.is_empty() {
+                        continue;
+                    }
+                    let start = instances.len() as u32;
+                    instances.extend_from_slice(list);
+                    (start, list.len() as u32)
+                }
+                None => {
+                    let start = instances.len() as u32;
+                    instances.push(Instance::IDENTITY);
+                    (start, 1)
+                }
+            };
+
+            draws.push(DrawCall {
+                index_start,
+                index_count,
+                base_vertex,
+                instance_start,
+                instance_count,
+            });
+        }
+
+        let lights: Vec<[f32; 8]> = scene
+            .lights
+            .iter()
+            .map(|light| {
+                [
+                    light.position[0],
+                    light.position[1],
+                    light.position[2],
+                    light.radius.max(24.0),
+                    light.color[0],
+                    light.color[1],
+                    light.color[2],
+                    light.attenuation,
+                ]
+            })
+            .collect();
+        let light_count = lights.len() as u32;
+
+        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("scene vertices"),
+            size: (vertices.len() * std::mem::size_of::<Vertex>()).max(4) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&vertices));
+
+        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("scene indices"),
+            size: (indices.len() * std::mem::size_of::<u32>()).max(4) as u64,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&index_buffer, 0, bytemuck::cast_slice(&indices));
+
+        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("scene instances"),
+            size: (instances.len() * std::mem::size_of::<Instance>()).max(4) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&instance_buffer, 0, bytemuck::cast_slice(&instances));
+
+        let light_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("scene lights"),
+            size: (lights.len() * 32).max(32) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&light_buffer, 0, bytemuck::cast_slice(&lights));
+
+        Self {
+            name: scene.name.clone(),
+            vertices: vertex_buffer,
+            indices: index_buffer,
+            instances: instance_buffer,
+            draws,
+            atlas,
+            atlas_view,
+            lights: light_buffer,
+            light_count,
+            bounds_min: if bounds_min.x == f32::MAX {
+                Vec3::ZERO
+            } else {
+                bounds_min
+            },
+            bounds_max: if bounds_max.x == f32::MIN {
+                Vec3::ZERO
+            } else {
+                bounds_max
+            },
+        }
+    }
+}
+
+/// Identifies a material's texture set, used to look up its atlas layers.
+pub type MaterialKey = (String, u32);
+
+pub fn material_layer_key(material: &openeq_assets::mesh::Material) -> MaterialKey {
+    (material.textures.join(","), material.anim_speed)
+}
+
+fn build_atlas(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    scene: &Scene,
+) -> (
+    wgpu::Texture,
+    wgpu::TextureView,
+    HashMap<MaterialKey, (u32, u32, u32)>,
+) {
+    let mut layers: Vec<image::RgbaImage> = Vec::new();
+    let mut mapping: HashMap<MaterialKey, (u32, u32, u32)> = HashMap::new();
+    let mut layer_of_name: HashMap<String, u32> = HashMap::new();
+
+    for material in &scene.materials {
+        let key = material_layer_key(material);
+        if mapping.contains_key(&key) {
+            continue;
+        }
+        let first = layers.len() as u32;
+        for name in &material.textures {
+            if let Some(existing) = layer_of_name.get(&name.to_ascii_lowercase()) {
+                // Reuse the decoded image but keep frames contiguous per
+                // material so the animation offset stays linear.
+                layers.push(layers[*existing as usize].clone());
+            } else {
+                let image = scene
+                    .texture(name)
+                    .map(|texture| {
+                        image::RgbaImage::from_raw(texture.width, texture.height, texture.rgba)
+                            .unwrap_or_else(|| {
+                                image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 0, 255, 255]))
+                            })
+                    })
+                    .unwrap_or_else(|| {
+                        image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 0, 255, 255]))
+                    });
+                layer_of_name.insert(name.to_ascii_lowercase(), layers.len() as u32);
+                layers.push(image);
+            }
+        }
+        if layers.len() as u32 == first {
+            layers.push(image::RgbaImage::from_pixel(
+                1,
+                1,
+                image::Rgba([255, 0, 255, 255]),
+            ));
+        }
+        let count = (layers.len() as u32 - first).max(1);
+        mapping.insert(key, (first, first, count));
+    }
+
+    if layers.is_empty() {
+        layers.push(image::RgbaImage::from_pixel(
+            1,
+            1,
+            image::Rgba([255, 0, 255, 255]),
+        ));
+    }
+
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("texture atlas"),
+        size: wgpu::Extent3d {
+            width: ATLAS_SIZE,
+            height: ATLAS_SIZE,
+            depth_or_array_layers: layers.len() as u32,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+
+    for (index, image) in layers.iter().enumerate() {
+        let resized = image::imageops::resize(
+            image,
+            ATLAS_SIZE,
+            ATLAS_SIZE,
+            image::imageops::FilterType::Triangle,
+        );
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: 0,
+                    y: 0,
+                    z: index as u32,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            &resized,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(ATLAS_SIZE * 4),
+                rows_per_image: Some(ATLAS_SIZE),
+            },
+            wgpu::Extent3d {
+                width: ATLAS_SIZE,
+                height: ATLAS_SIZE,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
+    let view = texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("atlas view"),
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    });
+    (texture, view, mapping)
+}
+
+/// A free-fly camera. Position and angles are in EverQuest coordinates.
+#[derive(Debug, Clone, Copy)]
+pub struct Camera {
+    pub position: [f32; 3],
+    /// Radians, 0 faces +Y (north).
+    pub yaw: f32,
+    /// Radians, positive looks up.
+    pub pitch: f32,
+    pub fov_y: f32,
+}
+
+impl Default for Camera {
+    fn default() -> Self {
+        Self {
+            position: [0.0, 0.0, 0.0],
+            yaw: 0.0,
+            pitch: -0.15,
+            fov_y: 70f32.to_radians(),
+        }
+    }
+}
+
+impl Camera {
+    /// Converts an EverQuest position to renderer space (`(x, y, z)` -> `(x, z, -y)`).
+    pub fn to_world(position: [f32; 3]) -> Vec3 {
+        Vec3::new(position[0], position[2], -position[1])
+    }
+
+    pub fn forward(&self) -> Vec3 {
+        let (sin_yaw, cos_yaw) = self.yaw.sin_cos();
+        let (sin_pitch, cos_pitch) = self.pitch.sin_cos();
+        let eq = Vec3::new(sin_yaw * cos_pitch, cos_yaw * cos_pitch, sin_pitch);
+        Vec3::new(eq.x, eq.z, -eq.y)
+    }
+
+    pub fn view_projection(&self, aspect: f32, near: f32, far: f32) -> Mat4 {
+        let eye = Self::to_world(self.position);
+        let view = Mat4::look_at_rh(eye, eye + self.forward(), Vec3::Y);
+        let projection = Mat4::perspective_rh(self.fov_y, aspect, near, far);
+        projection * view
+    }
+}

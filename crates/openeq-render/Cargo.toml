@@ -1,0 +1,22 @@
+[package]
+name = "openeq-render"
+description = "Custom wgpu renderer (deferred G-buffer, shadow maps)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+openeq-assets = { path = "../openeq-assets" }
+anyhow.workspace = true
+tracing.workspace = true
+wgpu.workspace = true
+bytemuck.workspace = true
+glam.workspace = true
+pollster.workspace = true
+image.workspace = true
+
+[[bin]]
+name = "renderzone"
+path = "src/bin/renderzone.rs"

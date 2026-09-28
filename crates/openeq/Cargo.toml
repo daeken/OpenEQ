@@ -1,0 +1,31 @@
+[package]
+name = "openeq"
+description = "EverQuest client built on Bevy ECS with a custom wgpu renderer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+openeq-assets = { path = "../openeq-assets" }
+openeq-net = { path = "../openeq-net" }
+openeq-render = { path = "../openeq-render" }
+anyhow.workspace = true
+tracing.workspace = true
+glam.workspace = true
+wgpu.workspace = true
+raw-window-handle.workspace = true
+pollster.workspace = true
+bevy = { workspace = true, features = [
+    "std",
+    "bevy_winit",
+    "bevy_window",
+    "bevy_asset",
+    "bevy_log",
+    "multi_threaded",
+] }
+
+[dependencies.tracing-subscriber]
+version = "0.3"
+features = ["env-filter"]

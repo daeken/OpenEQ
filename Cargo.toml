@@ -1,0 +1,48 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/openeq-assets",
+    "crates/openeq-net",
+    "crates/openeq-render",
+    "crates/openeq",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/daeken/OpenEQ"
+rust-version = "1.90"
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+flate2 = "1"
+tracing = "0.1"
+image = { version = "0.25", default-features = false, features = ["dds", "bmp", "png"] }
+glam = "0.30"
+
+# Networking
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros", "io-util"] }
+des = "0.9"
+cbc = "0.2"
+
+# Rendering
+wgpu = "29"
+winit = "0.30"
+raw-window-handle = "0.6"
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+
+# Engine
+bevy = { version = "0.19", default-features = false }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

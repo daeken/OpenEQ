@@ -1,0 +1,21 @@
+[package]
+name = "openeq-net"
+description = "EQEmu wire protocol: session layer, login, world and zone streams"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+flate2.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+des.workspace = true
+cbc.workspace = true
+
+[[bin]]
+name = "eqlogin"
+path = "src/bin/eqlogin.rs"
