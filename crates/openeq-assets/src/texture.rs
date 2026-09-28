@@ -106,6 +106,22 @@ impl Texture {
         })
     }
 
+    /// WLD character BMPs are authored against bottom-origin texture rows.
+    /// DDS replacements already match the UVs, including DDS files named BMP.
+    /// Keep this separate from ordinary image decoding used by zones and UI.
+    pub(crate) fn decode_wld_character(name: &str, data: &[u8]) -> Result<Self> {
+        let mut texture = Self::decode(name, data)?;
+        if data.starts_with(b"BM") {
+            let stride = texture.width as usize * 4;
+            for y in 0..texture.height as usize / 2 {
+                let opposite = (texture.height as usize - 1 - y) * stride;
+                let (first, last) = texture.rgba.split_at_mut(opposite);
+                first[y * stride..(y + 1) * stride].swap_with_slice(&mut last[..stride]);
+            }
+        }
+        Ok(texture)
+    }
+
     fn decode_rgb_dds(name: &str, data: &[u8]) -> Result<Self> {
         let word = |offset| u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
         let (width, height, bits) = (word(16), word(12), word(88));
@@ -223,6 +239,46 @@ mod tests {
             data[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
         }
         data
+    }
+
+    #[test]
+    fn wld_character_bmp_rows_match_uv_origin_without_changing_dds_or_shared_decode() {
+        // Standard BMP decoding yields red, green, blue from top to bottom.
+        // Its on-disk rows are bottom first, padded to four-byte boundaries.
+        let mut bmp = vec![0; 54];
+        bmp[..2].copy_from_slice(b"BM");
+        for (offset, value) in [(2, 66u32), (10, 54), (14, 40), (18, 1), (22, 3)] {
+            bmp[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        bmp[26..28].copy_from_slice(&1u16.to_le_bytes());
+        bmp[28..30].copy_from_slice(&24u16.to_le_bytes());
+        bmp.extend([255, 0, 0, 0, 0, 255, 0, 0, 0, 0, 255, 0]);
+        let top_first = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255];
+        assert_eq!(Texture::decode("image.bmp", &bmp).unwrap().rgba, top_first);
+        assert_eq!(
+            Texture::decode_wld_character("face.bmp", &bmp)
+                .unwrap()
+                .rgba,
+            [0, 0, 255, 255, 0, 255, 0, 255, 255, 0, 0, 255]
+        );
+
+        // Actual DDS magic must win over the misleading classic .bmp suffix.
+        let mut dds = header(4, 8);
+        dds[80..84].copy_from_slice(&4u32.to_le_bytes());
+        dds[84..88].copy_from_slice(b"DXT1");
+        for color in [0xF800u16, 0x001F] {
+            dds.extend(color.to_le_bytes());
+            dds.extend([0; 6]);
+        }
+        let image = Texture::decode("replacement.bmp", &dds).unwrap();
+        assert_eq!(&image.rgba[..4], &[255, 0, 0, 255]);
+        assert_eq!(&image.rgba[4 * 4 * 4..4 * 4 * 4 + 4], &[0, 0, 255, 255]);
+        assert_eq!(
+            Texture::decode_wld_character("replacement.bmp", &dds)
+                .unwrap()
+                .rgba,
+            image.rgba
+        );
     }
 
     #[test]

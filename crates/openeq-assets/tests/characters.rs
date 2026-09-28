@@ -4,6 +4,67 @@
 use openeq_assets::character::CharacterLibrary;
 
 #[test]
+fn classic_character_faces_use_bitmap_orientation_before_caching_and_tinting() {
+    use openeq_assets::{character::CharacterAppearance, pfs::Archive, texture::Texture};
+    let Some(base) = openeq_assets::loader::default_client_dir() else {
+        return;
+    };
+    if !base.join("global_chr.s3d").is_file() {
+        return;
+    }
+    let archive = Archive::open(base.join("global_chr.s3d")).unwrap();
+    let library = CharacterLibrary::load(&base, "poknowledge").unwrap();
+    for (race, code) in [(1, "hum"), (12, "gnm")] {
+        for face in [0, 3] {
+            let model = library
+                .load_race_with_appearance(
+                    race,
+                    0,
+                    &CharacterAppearance {
+                        face,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            let name = format!("{code}he00{face}1.bmp");
+            assert!(model.materials.iter().any(|m| m.textures.contains(&name)));
+            let bytes = archive.read(&name).unwrap();
+            assert!(bytes.starts_with(b"BM"), "original face must exercise BMP");
+            let raw = Texture::decode(&name, &bytes).unwrap();
+            let texture = library.texture(&name).unwrap();
+            let stride = raw.width as usize * 4;
+            assert_ne!(
+                texture.rgba, raw.rgba,
+                "asymmetric face must change orientation"
+            );
+            for (expected, actual) in raw
+                .rgba
+                .chunks_exact(stride)
+                .rev()
+                .zip(texture.rgba.chunks_exact(stride))
+            {
+                assert_eq!(actual, expected, "{name} does not match authored WLD UVs");
+            }
+            assert_eq!(library.texture(&name).unwrap().rgba, texture.rgba);
+            let tinted = library.texture(&format!("{name}#tint=ff804020")).unwrap();
+            for (source, tinted) in texture
+                .rgba
+                .chunks_exact(4)
+                .zip(tinted.rgba.chunks_exact(4))
+            {
+                for (channel, factor) in [128u16, 64, 32].into_iter().enumerate() {
+                    assert_eq!(
+                        tinted[channel],
+                        (u16::from(source[channel]) * factor / 255) as u8
+                    );
+                }
+                assert_eq!(tinted[3], source[3]);
+            }
+        }
+    }
+}
+
+#[test]
 fn real_classic_characters_have_textures_and_moving_bones() {
     let Some(base) = openeq_assets::loader::default_client_dir() else {
         return;

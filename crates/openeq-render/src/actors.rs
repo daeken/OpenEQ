@@ -170,15 +170,7 @@ impl ActorRenderer {
                 let start = instances.len() as u32;
                 instances.extend(actors.iter().map(|state| {
                     let height = (batch.model.bounds_max[2] - batch.model.bounds_min[2]).max(0.1);
-                    let scale = if state.size > 0. {
-                        state.size / height
-                    } else {
-                        1.
-                    };
-                    let rotation = Quat::from_rotation_z(
-                        std::f32::consts::FRAC_PI_2 - state.heading * std::f32::consts::TAU / 512.,
-                    );
-                    Instance::from_parts(state.position, rotation.to_array(), [scale; 3])
+                    actor_instance(state, height)
                 }));
                 for draw in &mut batch.actor.scene.draws[slot * meshes..(slot + 1) * meshes] {
                     draw.instance_start = start;
@@ -240,6 +232,20 @@ impl ActorRenderer {
             .map(|batch| &batch.actor)
             .collect()
     }
+}
+
+fn actor_instance(state: &ActorState, height: f32) -> Instance {
+    let scale = if state.size > 0. {
+        state.size / height
+    } else {
+        1.
+    };
+    // Authored characters face +X. Scene heading zero faces +Y; headings
+    // increase clockwise. Server-to-scene conversion happens in LiveWorld.
+    let rotation = Quat::from_rotation_z(
+        std::f32::consts::FRAC_PI_2 - state.heading * std::f32::consts::TAU / 512.,
+    );
+    Instance::from_parts(state.position, rotation.to_array(), [scale; 3])
 }
 
 fn upload_actor(
@@ -350,6 +356,56 @@ mod tests {
         assert_eq!(animation_code(38), Some("P07"));
         assert_eq!(animation_code(43), Some("T05"));
         assert_eq!(animation_code(255), None);
+    }
+
+    #[test]
+    #[ignore = "requires original humanoid character assets"]
+    fn authored_toes_face_the_rendered_heading() {
+        use glam::{Mat4, Vec3};
+        let base = openeq_assets::loader::default_client_dir().expect("original assets");
+        let library = CharacterLibrary::load(base, "poknowledge").unwrap();
+        for code in ["HUM", "HUF", "GNM", "GNF", "BAM"] {
+            let model = library.load_model(code).unwrap();
+            let bones = model.bone_transforms("", 0., false).unwrap();
+            // Toe minus boot origins gives a semantic forward vector from the
+            // authored skeleton, independently of our heading formula.
+            let point = |suffix: &str| {
+                let name = format!("{code}{suffix}_TRACK");
+                let index = model.bone_names.iter().position(|n| n == &name).unwrap();
+                bones[index].transform_point3(Vec3::ZERO)
+            };
+            let mut forward = (point("TO_L") - point("BO_L") + point("TO_R") - point("BO_R")) / 2.;
+            forward.z = 0.;
+            forward = forward.normalize();
+            eprintln!("{code} authored boot-to-toe forward: {forward:?}");
+            assert!(
+                forward.x > 0.99,
+                "{code} authored forward changed: {forward:?}"
+            );
+            for (heading, expected) in [
+                (0., Vec3::Y),
+                (128., Vec3::X),
+                (256., -Vec3::Y),
+                (384., -Vec3::X),
+            ] {
+                let instance = actor_instance(
+                    &ActorState {
+                        heading,
+                        size: 6.,
+                        position: [13., -25., 7.],
+                        ..Default::default()
+                    },
+                    model.bounds_max[2] - model.bounds_min[2],
+                );
+                let actual = Mat4::from_cols_array_2d(&instance.columns)
+                    .transform_vector3(forward)
+                    .normalize();
+                assert!(
+                    actual.dot(expected) > 0.99,
+                    "{code} heading {heading}: facing {actual:?}, expected {expected:?}"
+                );
+            }
+        }
     }
 
     /// Runs the actual Metal/Vulkan renderer and checks appearance caching,

@@ -242,18 +242,25 @@ impl CharacterLibrary {
             texture.name = name.to_owned();
             return Some(texture);
         }
-        let bytes = if let Some((archive, filename)) = self.textures.get(&name_lower) {
-            self.archives[*archive].read(filename).ok()?
+        let (bytes, classic) = if let Some((archive, filename)) = self.textures.get(&name_lower) {
+            (self.archives[*archive].read(filename).ok()?, true)
         } else if let Some(path) = self.loose_textures.get(&name_lower) {
-            std::fs::read(path).ok()?
+            (std::fs::read(path).ok()?, true)
         } else {
-            self.modern_archives
-                .lock()
-                .ok()?
-                .values()
-                .find_map(|archive| archive.read(&name_lower).ok())?
+            (
+                self.modern_archives
+                    .lock()
+                    .ok()?
+                    .values()
+                    .find_map(|archive| archive.read(&name_lower).ok())?,
+                false,
+            )
         };
-        let mut texture = Texture::decode(name, &bytes).ok()?;
+        let mut texture = if classic {
+            Texture::decode_wld_character(name, &bytes).ok()?
+        } else {
+            Texture::decode(name, &bytes).ok()?
+        };
         if masked {
             texture.mask_palette_index_zero(&bytes);
         }
