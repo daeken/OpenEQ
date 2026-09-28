@@ -137,7 +137,7 @@ impl Renderer {
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("openeq"),
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
+                required_limits: device_limits(&adapter),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: Default::default(),
                 trace: wgpu::Trace::Off,
@@ -195,7 +195,7 @@ impl Renderer {
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("openeq"),
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
+                required_limits: device_limits(&adapter),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: Default::default(),
                 trace: wgpu::Trace::Off,
@@ -940,6 +940,18 @@ impl Renderer {
         buffer.unmap();
         Some((width, height, pixels))
     }
+}
+
+/// Device limits tuned for this client's data.
+///
+/// Zones reference hundreds of distinct textures and the atlas holds one layer
+/// per texture, so the default cap of 256 array layers is not enough: Plane of
+/// Knowledge needs around 480. Everything else stays at the conservative
+/// defaults.
+fn device_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
+    let mut limits = wgpu::Limits::default();
+    limits.max_texture_array_layers = adapter.limits().max_texture_array_layers;
+    limits
 }
 
 fn draw_scene(pass: &mut wgpu::RenderPass<'_>, scene: &GpuScene) {

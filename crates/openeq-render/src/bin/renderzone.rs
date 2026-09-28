@@ -100,7 +100,7 @@ fn main() -> anyhow::Result<()> {
     );
 
     let mut renderer = Renderer::new_headless(width, height)?;
-    let gpu_scene = GpuScene::build(renderer.device(), renderer.queue(), &scene);
+    let gpu_scene = GpuScene::build(renderer.device(), renderer.queue(), &scene)?;
     println!(
         "  uploaded {} draw calls, {} lights, bounds {:?}..{:?}",
         gpu_scene.draws.len(),

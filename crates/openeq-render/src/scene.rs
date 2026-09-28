@@ -91,8 +91,12 @@ pub struct GpuScene {
 }
 
 impl GpuScene {
-    pub fn build(device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene) -> Self {
-        let (atlas, atlas_view, atlas_layers) = build_atlas(device, queue, scene);
+    pub fn build(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scene: &Scene,
+    ) -> anyhow::Result<Self> {
+        let (atlas, atlas_view, atlas_layers) = build_atlas(device, queue, scene)?;
 
         let mut vertices: Vec<Vertex> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
@@ -237,7 +241,7 @@ impl GpuScene {
         });
         queue.write_buffer(&light_buffer, 0, bytemuck::cast_slice(&lights));
 
-        Self {
+        Ok(Self {
             name: scene.name.clone(),
             vertices: vertex_buffer,
             indices: index_buffer,
@@ -257,7 +261,7 @@ impl GpuScene {
             } else {
                 bounds_max
             },
-        }
+        })
     }
 }
 
@@ -272,11 +276,11 @@ fn build_atlas(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     scene: &Scene,
-) -> (
+) -> anyhow::Result<(
     wgpu::Texture,
     wgpu::TextureView,
     HashMap<MaterialKey, (u32, u32, u32)>,
-) {
+)> {
     let mut layers: Vec<image::RgbaImage> = Vec::new();
     let mut mapping: HashMap<MaterialKey, (u32, u32, u32)> = HashMap::new();
     let mut layer_of_name: HashMap<String, u32> = HashMap::new();
@@ -286,46 +290,51 @@ fn build_atlas(
         if mapping.contains_key(&key) {
             continue;
         }
-        let first = layers.len() as u32;
-        for name in &material.textures {
-            if let Some(existing) = layer_of_name.get(&name.to_ascii_lowercase()) {
-                // Reuse the decoded image but keep frames contiguous per
-                // material so the animation offset stays linear.
-                layers.push(layers[*existing as usize].clone());
-            } else {
-                let image = scene
-                    .texture(name)
-                    .map(|texture| {
-                        image::RgbaImage::from_raw(texture.width, texture.height, texture.rgba)
-                            .unwrap_or_else(|| {
-                                image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 0, 255, 255]))
-                            })
-                    })
-                    .unwrap_or_else(|| {
-                        image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 0, 255, 255]))
-                    });
-                layer_of_name.insert(name.to_ascii_lowercase(), layers.len() as u32);
-                layers.push(image);
+        let names: Vec<String> = material
+            .textures
+            .iter()
+            .map(|name| name.to_ascii_lowercase())
+            .collect();
+
+        // The shader picks an animation frame as `base + frame`, so a material's
+        // frames must sit in consecutive layers. Reuse an existing run when it
+        // already does, and otherwise add fresh copies side by side.
+        let existing: Option<Vec<u32>> = names
+            .iter()
+            .map(|name| layer_of_name.get(name).copied())
+            .collect();
+        let base = match existing {
+            Some(found) if !found.is_empty() && is_consecutive(&found) => found[0],
+            _ => {
+                let first = layers.len() as u32;
+                for name in &material.textures {
+                    let image = decode_texture(scene, name);
+                    layer_of_name.insert(name.to_ascii_lowercase(), layers.len() as u32);
+                    layers.push(image);
+                }
+                if layers.len() as u32 == first {
+                    // A material with no textures still needs a layer to draw.
+                    layers.push(placeholder_texture());
+                }
+                first
             }
-        }
-        if layers.len() as u32 == first {
-            layers.push(image::RgbaImage::from_pixel(
-                1,
-                1,
-                image::Rgba([255, 0, 255, 255]),
-            ));
-        }
-        let count = (layers.len() as u32 - first).max(1);
-        mapping.insert(key, (first, first, count));
+        };
+        mapping.insert(key, (base, base, material.textures.len().max(1) as u32));
     }
 
     if layers.is_empty() {
-        layers.push(image::RgbaImage::from_pixel(
-            1,
-            1,
-            image::Rgba([255, 0, 255, 255]),
-        ));
+        layers.push(placeholder_texture());
     }
+
+    // Zones reference hundreds of distinct textures; Plane of Knowledge alone
+    // wants around 480 layers, well past the default cap of 256.
+    let limit = device.limits().max_texture_array_layers;
+    anyhow::ensure!(
+        layers.len() as u32 <= limit,
+        "{} needs {} texture array layers but this device allows {limit}",
+        scene.name,
+        layers.len()
+    );
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("texture atlas"),
@@ -379,7 +388,23 @@ fn build_atlas(
         dimension: Some(wgpu::TextureViewDimension::D2Array),
         ..Default::default()
     });
-    (texture, view, mapping)
+    Ok((texture, view, mapping))
+}
+
+/// Whether layer indices run `n, n + 1, n + 2, ...`.
+fn is_consecutive(layers: &[u32]) -> bool {
+    layers.windows(2).all(|pair| pair[1] == pair[0] + 1)
+}
+
+fn placeholder_texture() -> image::RgbaImage {
+    image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 0, 255, 255]))
+}
+
+fn decode_texture(scene: &Scene, name: &str) -> image::RgbaImage {
+    scene
+        .texture(name)
+        .and_then(|texture| image::RgbaImage::from_raw(texture.width, texture.height, texture.rgba))
+        .unwrap_or_else(placeholder_texture)
 }
 
 /// A free-fly camera. Position and angles are in EverQuest coordinates.

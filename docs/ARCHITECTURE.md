@@ -122,6 +122,14 @@ squared; animated flipbooks occupy consecutive layers and the shader picks a
 frame from elapsed time, so multi-frame textures animate without touching
 buffers.
 
+The array needs one layer per texture, and zones are texture-hungry: Plane of
+Knowledge references around 480 distinct textures, past the default cap of 256
+array layers. The renderer asks for the adapter's real layer limit and fails
+with a named error if a zone still exceeds it, rather than aborting inside the
+driver. A material's frames have to stay in consecutive layers because the
+shader addresses them as `base + frame`, so layers are reused only when an
+existing run is already consecutive.
+
 Zone light falloff is `pow(1 - distance / radius, 3)` scaled by `N dot L`, the
 same curve the original engine's deferred pathway used.
 

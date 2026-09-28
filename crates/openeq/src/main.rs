@@ -350,7 +350,7 @@ fn initialise(
         "zone loaded"
     );
 
-    let gpu_scene = GpuScene::build(renderer.device(), renderer.queue(), &scene);
+    let gpu_scene = GpuScene::build(renderer.device(), renderer.queue(), &scene)?;
     renderer.set_scene(&gpu_scene);
 
     // Drop the camera into the middle of the zone unless the user said otherwise.
