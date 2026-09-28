@@ -19,6 +19,18 @@ use crate::wld::{Fragment, Mesh, Ref, Wld};
 /// Number of `f32` components per vertex in a baked buffer.
 pub const VERTEX_STRIDE: usize = 8;
 
+/// Parameters of an EQG `Opaque_MaxWater.fx` surface.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WaterMaterial {
+    pub color1: [f32; 4],
+    pub color2: [f32; 4],
+    pub reflection_color: [f32; 4],
+    pub fresnel_bias: f32,
+    pub fresnel_power: f32,
+    pub reflection_amount: f32,
+    pub environment_map: Option<String>,
+}
+
 /// A drawable surface's material description.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Material {
@@ -26,6 +38,7 @@ pub struct Material {
     pub textures: Vec<String>,
     /// Optional normal map (only seen in `.eqg` zones).
     pub normal_map: Option<String>,
+    pub water: Option<WaterMaterial>,
     /// Raw texture flags from the source data.
     pub flags: u32,
     /// Milliseconds per animation frame, when animated.
@@ -184,7 +197,10 @@ fn texture_entry(wld: &Wld, material_ref: Ref) -> TextureEntry {
     entry.anim_speed = animation.frame_time;
     for texture_ref in &animation.textures {
         if let Some(Fragment::TextureList(list)) = wld.resolve(*texture_ref).map(|c| &c.fragment) {
-            entry.filenames.extend(list.filenames.iter().cloned());
+            // Each 0x04 reference is one animation frame. Extra names within
+            // its 0x03 bitmap are texture layers (e.g. *_DETAIL_4.000000), not
+            // additional frames. We currently render only the diffuse layer.
+            entry.filenames.extend(list.filenames.first().cloned());
         }
     }
     entry
@@ -284,7 +300,11 @@ where
     for key in keys {
         let (texture, collidable) = key;
         let entry = &unique[texture];
-        if entry.flags == 0 && entry.filenames.is_empty() {
+        // A zero WLD render method is invisible, even when it has a texture
+        // such as COLLIDE.DDS. Keep its slot while resolving polygon runs, but
+        // exclude it from drawable geometry. This is independent of whether
+        // a polygon is collidable; visible floors and walls are collidable too.
+        if entry.flags == 0 {
             continue;
         }
 
@@ -304,6 +324,7 @@ where
         let material = Material {
             textures: entry.filenames.clone(),
             normal_map: None,
+            water: None,
             flags: entry.flags,
             anim_speed: entry.anim_speed,
             alpha_mask,

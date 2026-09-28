@@ -15,7 +15,10 @@ wgpu.workspace = true
 bytemuck.workspace = true
 glam.workspace = true
 pollster.workspace = true
-image.workspace = true
+image = { workspace = true, features = ["tga"] }
+openeq-ui = { path = "../openeq-ui" }
+fontdue = "0.9"
+font8x8 = "0.3"
 
 [[bin]]
 name = "renderzone"

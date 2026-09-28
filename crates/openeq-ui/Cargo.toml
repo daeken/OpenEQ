@@ -1,0 +1,13 @@
+[package]
+name = "openeq-ui"
+description = "EverQuest SIDL XML UI loading and renderer-neutral layout"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+roxmltree = "0.20"
+thiserror.workspace = true
+encoding_rs = "0.8"

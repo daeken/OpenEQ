@@ -45,15 +45,18 @@ impl Ref {
     }
 }
 
-/// A single animation frame: a rotation and a translation.
+/// A single animation frame: local rotation, translation and uniform scale.
 #[derive(Debug, Clone, Copy)]
 pub struct Frame {
     pub rotation: [f32; 4],
     pub translation: [f32; 3],
+    pub scale: f32,
 }
 
 #[derive(Debug, Clone)]
 pub struct TextureList {
+    /// Texture layers for a single frame: diffuse first, then optional detail
+    /// maps. Animation frames are the references in [`AnimationRef::textures`].
     pub filenames: Vec<String>,
 }
 
@@ -324,9 +327,9 @@ impl Wld {
     }
 
     /// Iterates over every fragment of a particular kind.
-    pub fn iter<T: 'static>(&self) -> impl Iterator<Item = (&Chunk, &T)> + '_
+    pub fn iter<T>(&self) -> impl Iterator<Item = (&Chunk, &T)> + '_
     where
-        T: FragmentKind,
+        T: FragmentKind + 'static,
     {
         self.chunks
             .iter()
@@ -446,24 +449,41 @@ fn read_fragment(
             let frame_count = reader.bounded_count()?;
             let mut frames = Vec::with_capacity(frame_count);
             for _ in 0..frame_count {
-                let rot_w = reader.i16()? as f32;
-                let rot_x = reader.i16()? as f32;
-                let rot_y = reader.i16()? as f32;
-                let rot_z = reader.i16()? as f32;
-                let shift_x = reader.i16()? as f32;
-                let shift_y = reader.i16()? as f32;
-                let shift_z = reader.i16()? as f32;
-                let shift_denom = reader.i16()? as f32;
-                let denom = if shift_denom == 0.0 { 1.0 } else { shift_denom };
-                frames.push(Frame {
-                    rotation: [
-                        rot_x / 16384.0,
-                        rot_y / 16384.0,
-                        rot_z / 16384.0,
-                        rot_w / 16384.0,
-                    ],
-                    translation: [shift_x / denom, shift_y / denom, shift_z / denom],
-                });
+                let frame = if flags & 8 != 0 {
+                    let rot_w = reader.i16()? as f32;
+                    let rot_x = reader.i16()? as f32;
+                    let rot_y = reader.i16()? as f32;
+                    let rot_z = reader.i16()? as f32;
+                    let shift_x = reader.i16()? as f32;
+                    let shift_y = reader.i16()? as f32;
+                    let shift_z = reader.i16()? as f32;
+                    let scale = reader.i16()? as f32 / 256.0;
+                    // The last word is a scale, not a translation divisor.
+                    // Rotation is normalized by the animation sampler.
+                    Frame {
+                        rotation: [
+                            rot_x / 16384.0,
+                            rot_y / 16384.0,
+                            rot_z / 16384.0,
+                            rot_w / 16384.0,
+                        ],
+                        translation: [shift_x / 256.0, shift_y / 256.0, shift_z / 256.0],
+                        scale,
+                    }
+                } else {
+                    let scale = reader.f32()?;
+                    let translation = reader.vec3()?;
+                    let rot_w = reader.f32()?;
+                    let rot_x = reader.f32()?;
+                    let rot_y = reader.f32()?;
+                    let rot_z = reader.f32()?;
+                    Frame {
+                        rotation: [rot_x, rot_y, rot_z, rot_w],
+                        translation,
+                        scale,
+                    }
+                };
+                frames.push(frame);
             }
             Fragment::PieceTrack(PieceTrack { flags, frames })
         }

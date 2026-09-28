@@ -1,5 +1,6 @@
 [package]
 name = "openeq"
+default-run = "openeq"
 description = "EverQuest client built on Bevy ECS with a custom wgpu renderer"
 version.workspace = true
 edition.workspace = true
@@ -11,6 +12,9 @@ rust-version.workspace = true
 openeq-assets = { path = "../openeq-assets" }
 openeq-net = { path = "../openeq-net" }
 openeq-render = { path = "../openeq-render" }
+openeq-ui = { path = "../openeq-ui" }
+tokio.workspace = true
+image.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 glam.workspace = true

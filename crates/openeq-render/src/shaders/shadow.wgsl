@@ -14,6 +14,14 @@ const EQ_TO_WORLD: mat4x4<f32> = mat4x4<f32>(
 // Must match the flags the CPU packs into each vertex.
 const FLAG_ALPHA_MASK: u32 = 1u;
 
+struct Environment {
+    fog_color: vec4<f32>, // linear RGB, w = enabled
+    fog_params: vec4<f32>, // start, end, authored density, reserved
+    sky_horizon: vec4<f32>, // fallback linear RGB, w = authored textures
+    sky_zenith: vec4<f32>, // fallback linear RGB, w = cloud opacity
+    sky_params: vec4<f32>, // cloud velocity, cloud scale, sky enabled, reserved
+};
+
 struct Globals {
     view_proj: mat4x4<f32>,
     light_view_proj: mat4x4<f32>,
@@ -25,6 +33,7 @@ struct Globals {
     // x = elapsed milliseconds, y = point light count, z = shadow texel size in
     // UV space, w = shadow texel size in world units.
     params: vec4<f32>,
+    environment: Environment,
 };
 
 struct PointLight {
@@ -44,7 +53,7 @@ struct Vertex {
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) layer: u32,
-    @location(4) frame_offset: u32,
+    @location(4) material: u32,
     @location(5) frame_count: u32,
     @location(6) flags: u32,
     @location(7) frame_ms: u32,

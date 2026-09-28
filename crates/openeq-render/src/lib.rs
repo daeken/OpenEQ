@@ -8,10 +8,17 @@
 //! The same core renders to a window surface or to an offscreen texture, so the
 //! whole pipeline can be exercised headlessly by tests and tools.
 
+pub mod actors;
+pub mod environment;
 pub mod scene;
+mod shadow;
+#[cfg(test)]
+mod tests;
+pub mod ui;
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3, Vec4};
+use environment::{EnvironmentSettings, EnvironmentUniform, SkyResources};
+use glam::{Vec3, Vec4};
 
 pub use scene::{Camera, GpuScene};
 
@@ -33,6 +40,7 @@ struct Globals {
     sun_color: [f32; 4],
     /// `x` = elapsed milliseconds, `y` = point light count.
     params: [f32; 4],
+    environment: EnvironmentUniform,
 }
 
 struct Targets {
@@ -97,6 +105,12 @@ struct Pipelines {
     lighting: wgpu::RenderPipeline,
 }
 
+/// A separately textured actor batch drawn with the zone's lights and shadows.
+pub struct GpuActor {
+    pub scene: GpuScene,
+    atlas: wgpu::BindGroup,
+}
+
 /// The renderer: device, targets and bind groups.
 pub struct Renderer {
     device: wgpu::Device,
@@ -122,6 +136,9 @@ pub struct Renderer {
     start: std::time::Instant,
     width: u32,
     height: u32,
+    ui: Option<ui::UiRenderer>,
+    environment: EnvironmentSettings,
+    sky: SkyResources,
 }
 
 impl Renderer {
@@ -317,6 +334,26 @@ impl Renderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -372,12 +409,14 @@ impl Renderer {
             ],
             immediate_size: 0,
         });
+        let sky = SkyResources::new(&device, &queue, None);
         let pipeline_lighting = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("lighting pipeline layout"),
             bind_group_layouts: &[
                 Some(&globals_layout),
                 Some(&scene_layout),
                 Some(&gbuffer_layout),
+                Some(&sky.layout),
             ],
             immediate_size: 0,
         });
@@ -568,10 +607,32 @@ impl Renderer {
                 geometry: geometry_pipeline,
                 lighting: lighting_pipeline,
             },
+            ui: None,
+            environment: EnvironmentSettings::default(),
+            sky,
             start: std::time::Instant::now(),
             width,
             height,
         }
+    }
+
+    pub fn set_environment(
+        &mut self,
+        settings: EnvironmentSettings,
+        sky: Option<&openeq_assets::environment::SkyAssets>,
+    ) {
+        self.environment = settings;
+        if let Some(assets) = sky {
+            self.environment.apply_sky(assets);
+            self.sky = SkyResources::new(&self.device, &self.queue, Some(assets));
+        }
+    }
+
+    pub fn set_ui(&mut self, frame: &openeq_ui::UiFrame) {
+        let ui = self.ui.get_or_insert_with(|| {
+            ui::UiRenderer::new(&self.device, &self.queue, self.config.format)
+        });
+        ui.prepare(&self.device, &self.queue, frame, [self.width, self.height]);
     }
 
     pub fn format(&self) -> wgpu::TextureFormat {
@@ -616,29 +677,7 @@ impl Renderer {
             &self.placeholder_depth,
         ));
 
-        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("atlas sampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-        self.atlas_bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("atlas bind group"),
-            layout: &self.atlas_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&scene.atlas_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        }));
+        self.atlas_bind_group = Some(self.make_atlas_group(scene));
 
         let gbuffer_sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("gbuffer sampler"),
@@ -671,6 +710,46 @@ impl Renderer {
                     },
                 ],
             }));
+    }
+
+    fn make_atlas_group(&self, scene: &GpuScene) -> wgpu::BindGroup {
+        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("atlas sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("atlas bind group"),
+            layout: &self.atlas_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&scene.atlas_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: scene.water_materials.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&scene.atlas_linear_view),
+                },
+            ],
+        })
+    }
+
+    pub fn prepare_actor(&self, scene: GpuScene) -> GpuActor {
+        let atlas = self.make_atlas_group(&scene);
+        GpuActor { scene, atlas }
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -709,6 +788,10 @@ impl Renderer {
 
     /// Renders one frame of `scene` from `camera`.
     pub fn render(&mut self, scene: &GpuScene, camera: &Camera) {
+        self.render_with_actors(scene, camera, &[]);
+    }
+
+    pub fn render_with_actors(&mut self, scene: &GpuScene, camera: &Camera, actors: &[&GpuActor]) {
         if self.scene_bind_group.is_none() || self.lighting_bind_group.is_none() {
             self.set_scene(scene);
         }
@@ -735,21 +818,21 @@ impl Renderer {
         };
 
         let aspect = self.width as f32 / self.height.max(1) as f32;
-        let view_projection = camera.view_projection(aspect, 1.0, 20000.0);
+        let far = if self.environment.fog_enabled && self.environment.fog_end.is_finite() {
+            self.environment.fog_end.clamp(500., 20000.) + 100.
+        } else {
+            20000.
+        };
+        let view_projection = camera.view_projection(aspect, 0.2, far);
 
         // A camera-anchored shadow frustum keeps the map sharp where it matters.
         let sun = Vec3::new(-0.45, 0.82, 0.35).normalize();
         let focus = Camera::to_world(camera.position) + camera.forward() * 150.0;
-        let radius = 300.0;
-        let distance = 1600.0;
-        let light_view = Mat4::look_at_rh(focus - sun * distance, focus, Vec3::Y);
-        let light_projection =
-            Mat4::orthographic_rh(-radius, radius, -radius, radius, 1.0, distance * 2.0);
-        let light_view_projection = light_projection * light_view;
+        let light_view_projection = shadow::view_projection(focus, sun, SHADOW_SIZE);
 
         let elapsed = self.start.elapsed().as_secs_f32() * 1000.0;
         // Shadow-map texel size, used for the receiver offset and the PCF taps.
-        let shadow_texel_world = (2.0 * radius) / SHADOW_SIZE as f32;
+        let shadow_texel_world = (2.0 * shadow::RADIUS) / SHADOW_SIZE as f32;
         let shadow_texel_uv = 1.0 / SHADOW_SIZE as f32;
         let globals = Globals {
             view_projection: view_projection.to_cols_array_2d(),
@@ -759,6 +842,7 @@ impl Renderer {
             ambient: Vec4::new(0.22, 0.24, 0.30, 1.0).into(),
             sun_direction: Vec4::new(sun.x, sun.y, sun.z, 1.0).into(),
             sun_color: Vec4::new(1.0, 0.96, 0.86, 1.0).into(),
+            environment: self.environment.uniform(),
             params: [
                 elapsed,
                 scene.light_count as f32,
@@ -800,10 +884,13 @@ impl Renderer {
             pass.set_pipeline(&self.pipelines.shadow);
             pass.set_bind_group(0, &self.globals_bind_group, &[]);
             pass.set_bind_group(1, plain_bind_group, &[]);
-            // The shadow pipeline shares the geometry layout, so slot 2 must be
-            // bound even though the shader does not read it.
+            // The shadow shader samples the same atlas for alpha cutouts.
             pass.set_bind_group(2, atlas_bind_group, &[]);
             draw_scene(&mut pass, scene);
+            for actor in actors {
+                pass.set_bind_group(2, &actor.atlas, &[]);
+                draw_scene(&mut pass, &actor.scene);
+            }
         }
 
         // 2. G-buffer.
@@ -847,6 +934,10 @@ impl Renderer {
             pass.set_bind_group(1, plain_bind_group, &[]);
             pass.set_bind_group(2, atlas_bind_group, &[]);
             draw_scene(&mut pass, scene);
+            for actor in actors {
+                pass.set_bind_group(2, &actor.atlas, &[]);
+                draw_scene(&mut pass, &actor.scene);
+            }
         }
 
         // 3. Lighting, straight to the target.
@@ -871,7 +962,11 @@ impl Renderer {
             pass.set_bind_group(0, &self.globals_bind_group, &[]);
             pass.set_bind_group(1, scene_bind_group, &[]);
             pass.set_bind_group(2, lighting_bind_group, &[]);
+            pass.set_bind_group(3, &self.sky.group, &[]);
             pass.draw(0..3, 0..1);
+            if let Some(ui) = &self.ui {
+                ui.render(&mut pass);
+            }
         }
 
         self.queue.submit(Some(encoder.finish()));
@@ -974,7 +1069,7 @@ fn vertex_layouts() -> [wgpu::VertexBufferLayout<'static>; 2] {
         1 => Float32x3, // normal
         2 => Float32x2, // uv
         3 => Uint32,    // atlas layer
-        4 => Uint32,    // frame offset
+        4 => Uint32,    // material ID
         5 => Uint32,    // frame count
         6 => Uint32,    // flags
         7 => Uint32,    // milliseconds per frame

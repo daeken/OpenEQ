@@ -9,12 +9,13 @@
 //! forward distance is less than 32768.
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::net::UdpSocket;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, Notify, mpsc};
 
 use crate::opcodes::SessionOp;
 use crate::packet::{AppPacket, crc16};
@@ -27,6 +28,8 @@ const RESEND_AFTER: Duration = Duration::from_secs(2);
 const TICK: Duration = Duration::from_millis(100);
 /// How long to wait for the session handshake reply.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Bound both silent connections and reliable packets that never get acknowledged.
+const SESSION_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
 pub enum StreamError {
@@ -34,6 +37,8 @@ pub enum StreamError {
     Io(#[from] std::io::Error),
     #[error("session setup timed out")]
     Timeout,
+    #[error("unsupported session encoding")]
+    Encoding,
     #[error("stream is not connected")]
     Closed,
 }
@@ -47,6 +52,7 @@ enum Pending {
 struct Sent {
     bytes: Vec<u8>,
     sent_at: Instant,
+    first_sent_at: Instant,
 }
 
 struct Inner {
@@ -64,6 +70,8 @@ struct Inner {
     resend_ack: bool,
     connected: bool,
     closing: bool,
+    last_received: Instant,
+    assembly: Option<(usize, Vec<u8>)>,
 }
 
 impl Inner {
@@ -81,7 +89,17 @@ impl Inner {
             resend_ack: false,
             connected: true,
             closing: false,
+            last_received: Instant::now(),
+            assembly: None,
         }
+    }
+
+    fn close(&mut self) {
+        self.connected = false;
+        self.closing = true;
+        self.sent.clear();
+        self.future.clear();
+        self.assembly = None;
     }
 }
 
@@ -90,7 +108,9 @@ pub struct EqStream {
     socket: Arc<UdpSocket>,
     inner: Arc<Mutex<Inner>>,
     peer: SocketAddr,
+    closed: Arc<Notify>,
     incoming: mpsc::UnboundedReceiver<AppPacket>,
+    tasks: Vec<tokio::task::JoinHandle<()>>,
 }
 
 impl EqStream {
@@ -116,14 +136,17 @@ impl EqStream {
         let (inner, from) = read_session_response(&socket, connect_code).await?;
 
         let (tx, rx) = mpsc::unbounded_channel();
-        let stream = Self {
+        socket.connect(from).await?;
+        let mut stream = Self {
             socket,
             inner: Arc::new(Mutex::new(inner)),
             peer: from,
+            closed: Arc::new(Notify::new()),
             incoming: rx,
+            tasks: Vec::new(),
         };
-        stream.spawn_reader(tx);
-        stream.spawn_ticker();
+        stream.tasks.push(stream.spawn_reader(tx));
+        stream.tasks.push(stream.spawn_ticker());
         Ok(stream)
     }
 
@@ -151,6 +174,7 @@ impl EqStream {
                     Sent {
                         bytes: bytes.clone(),
                         sent_at: Instant::now(),
+                        first_sent_at: Instant::now(),
                     },
                 );
                 inner.out_sequence = inner.out_sequence.wrapping_add(1);
@@ -158,7 +182,7 @@ impl EqStream {
             }
         }
         for bytes in outgoing {
-            self.socket.send_to(&bytes, self.peer).await?;
+            self.socket.send(&bytes).await?;
         }
         Ok(())
     }
@@ -172,14 +196,21 @@ impl EqStream {
         self.peer
     }
 
-    fn spawn_reader(&self, dispatcher: mpsc::UnboundedSender<AppPacket>) {
+    fn spawn_reader(
+        &self,
+        dispatcher: mpsc::UnboundedSender<AppPacket>,
+    ) -> tokio::task::JoinHandle<()> {
         let socket = self.socket.clone();
         let inner = self.inner.clone();
-        let peer = self.peer;
+        let closed = self.closed.clone();
         tokio::spawn(async move {
             let mut buffer = vec![0u8; 65536];
             loop {
-                let len = match socket.recv(&mut buffer).await {
+                let received = tokio::select! {
+                    _ = closed.notified() => break,
+                    result = socket.recv(&mut buffer) => result,
+                };
+                let len = match received {
                     Ok(len) => len,
                     Err(error) => {
                         tracing::warn!(%error, "session receive failed");
@@ -193,19 +224,22 @@ impl EqStream {
                     guard.closing
                 };
                 for bytes in outgoing {
-                    let _ = socket.send_to(&bytes, peer).await;
+                    let _ = socket.send(&bytes).await;
                 }
                 if closing {
                     break;
                 }
             }
-        });
+            // Dropping this task's dispatcher closes recv(), including when the
+            // ticker wakes us after an inactivity/retransmission timeout.
+            inner.lock().await.close();
+        })
     }
 
-    fn spawn_ticker(&self) {
+    fn spawn_ticker(&self) -> tokio::task::JoinHandle<()> {
         let socket = self.socket.clone();
         let inner = self.inner.clone();
-        let peer = self.peer;
+        let closed = self.closed.clone();
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(TICK).await;
@@ -216,13 +250,22 @@ impl EqStream {
                     guard.closing
                 };
                 for bytes in outgoing {
-                    let _ = socket.send_to(&bytes, peer).await;
+                    let _ = socket.send(&bytes).await;
                 }
                 if closing {
+                    closed.notify_one();
                     break;
                 }
             }
-        });
+        })
+    }
+}
+
+impl Drop for EqStream {
+    fn drop(&mut self) {
+        for task in &self.tasks {
+            task.abort();
+        }
     }
 }
 
@@ -257,6 +300,12 @@ async fn read_session_response(
         let pass_b = reply[12];
         let max_packet = u32::from_be_bytes([reply[13], reply[14], reply[15], reply[16]]);
 
+        if code != connect_code && code != connect_code.swap_bytes() {
+            continue;
+        }
+        if !matches!(crc_bytes, 0 | 2) || pass_a > 1 || pass_b > 1 {
+            return Err(StreamError::Encoding);
+        }
         // EQEmu reports compression through its encode passes.
         let inner = Inner::new(key, crc_bytes, pass_a == 1 || pass_b == 1);
         tracing::debug!(
@@ -277,40 +326,83 @@ fn process_incoming(
     dispatcher: &mpsc::UnboundedSender<AppPacket>,
     outgoing: &mut Vec<Vec<u8>>,
 ) {
-    if data.len() < 2 {
+    if !inner.connected || data.len() < 2 {
         return;
     }
-    let Some(opcode) = SessionOp::from_u16(u16::from_be_bytes([data[0], data[1]])) else {
-        return;
-    };
-
-    let crc_len = inner.crc_bytes as usize;
-    let is_protected = matches!(
+    let opcode = SessionOp::from_u16(u16::from_be_bytes([data[0], data[1]]));
+    let prefix = if data[0] == 0 { 2 } else { 1 };
+    let is_protected = !matches!(
         opcode,
-        SessionOp::Single | SessionOp::Fragment | SessionOp::Combined | SessionOp::Ack
+        Some(SessionOp::Request | SessionOp::Response | SessionOp::OutOfSession)
     );
-    if crc_len > 0 && is_protected {
-        if data.len() < 2 + crc_len {
-            return;
-        }
-        let body_len = data.len() - crc_len;
-        let expected = crc16(&data[..body_len], inner.crc_key);
+    let crc_len = if is_protected {
+        inner.crc_bytes as usize
+    } else {
+        0
+    };
+    if data.len() < 2 + crc_len {
+        return;
+    }
+    let body_len = data.len() - crc_len;
+    if crc_len == 2 {
         let actual = u16::from_be_bytes([data[body_len], data[body_len + 1]]);
-        if expected != actual {
+        if crc16(&data[..body_len], inner.crc_key) != actual {
             tracing::debug!("dropping packet with bad crc");
             return;
         }
     }
-    let body = &data[..data.len() - crc_len.min(data.len())];
+    let mut decoded = Vec::new();
+    let body = if inner.compressing && is_protected {
+        decoded.extend_from_slice(&data[..prefix]);
+        match data.get(prefix).copied() {
+            Some(0xa5) if body_len > prefix => {
+                decoded.extend_from_slice(&data[prefix + 1..body_len])
+            }
+            Some(0x5a) if body_len > prefix + 1 => {
+                let reader = flate2::read::ZlibDecoder::new(&data[prefix + 1..body_len]);
+                if reader.take(65537).read_to_end(&mut decoded).is_err() || decoded.len() > 65536 {
+                    return;
+                }
+            }
+            _ => return,
+        }
+        decoded.as_slice()
+    } else {
+        &data[..body_len]
+    };
 
+    if process_decoded(inner, body, dispatcher, outgoing) {
+        inner.last_received = Instant::now();
+    }
+}
+
+fn process_decoded(
+    inner: &mut Inner,
+    body: &[u8],
+    dispatcher: &mpsc::UnboundedSender<AppPacket>,
+    outgoing: &mut Vec<Vec<u8>>,
+) -> bool {
+    if body.len() < 2 {
+        return false;
+    }
+    let Some(opcode) = SessionOp::from_u16(u16::from_be_bytes([body[0], body[1]])) else {
+        dispatch_application(body, dispatcher);
+        return true;
+    };
     match opcode {
         SessionOp::Ack => {
-            if body.len() >= 4 {
+            if body.len() < 4 {
+                return false;
+            }
+            {
                 acknowledge(inner, u16::from_be_bytes([body[2], body[3]]));
             }
         }
         SessionOp::OutOfOrder => {
-            if body.len() >= 4 {
+            if body.len() < 4 {
+                return false;
+            }
+            {
                 let sequence = u16::from_be_bytes([body[2], body[3]]);
                 if let Some(sent) = inner.sent.get_mut(&sequence) {
                     sent.sent_at = Instant::now() - RESEND_AFTER;
@@ -319,7 +411,7 @@ fn process_incoming(
         }
         SessionOp::Single | SessionOp::Fragment => {
             if body.len() < 4 {
-                return;
+                return false;
             }
             let sequence = u16::from_be_bytes([body[2], body[3]]);
             enqueue(
@@ -337,56 +429,25 @@ fn process_incoming(
                 let length = body[cursor] as usize;
                 cursor += 1;
                 if cursor + length > body.len() {
+                    return false;
+                }
+                if !process_decoded(inner, &body[cursor..cursor + length], dispatcher, outgoing) {
+                    return false;
+                }
+                if inner.closing {
                     break;
                 }
-                process_combined(inner, &body[cursor..cursor + length], dispatcher, outgoing);
                 cursor += length;
             }
         }
-        SessionOp::Disconnect => inner.closing = true,
+        SessionOp::Disconnect | SessionOp::OutOfSession => inner.close(),
         SessionOp::Request
         | SessionOp::Response
         | SessionOp::KeepAlive
         | SessionOp::StatRequest
         | SessionOp::StatResponse => {}
     }
-}
-
-/// Subpackets inside a `Combined` packet carry a header but no CRC.
-fn process_combined(
-    inner: &mut Inner,
-    data: &[u8],
-    dispatcher: &mpsc::UnboundedSender<AppPacket>,
-    outgoing: &mut Vec<Vec<u8>>,
-) {
-    if data.len() < 2 {
-        return;
-    }
-    let Some(opcode) = SessionOp::from_u16(u16::from_be_bytes([data[0], data[1]])) else {
-        return;
-    };
-    match opcode {
-        SessionOp::Single | SessionOp::Fragment => {
-            if data.len() < 4 {
-                return;
-            }
-            let sequence = u16::from_be_bytes([data[2], data[3]]);
-            enqueue(
-                inner,
-                opcode,
-                sequence,
-                data[4..].to_vec(),
-                dispatcher,
-                outgoing,
-            );
-        }
-        SessionOp::Ack => {
-            if data.len() >= 4 {
-                acknowledge(inner, u16::from_be_bytes([data[2], data[3]]));
-            }
-        }
-        _ => {}
-    }
+    true
 }
 
 fn enqueue(
@@ -416,62 +477,78 @@ fn drain(
     dispatcher: &mpsc::UnboundedSender<AppPacket>,
     _outgoing: &mut Vec<Vec<u8>>,
 ) {
-    loop {
-        let Some(pending) = inner.future.get(&inner.in_sequence) else {
-            break;
-        };
-        match pending {
+    while let Some(pending) = inner.future.remove(&inner.in_sequence) {
+        inner.in_sequence = inner.in_sequence.wrapping_add(1);
+        inner.resend_ack = true;
+        let payload = match pending {
             Pending::Single(payload) => {
-                let payload = payload.clone();
-                inner.future.remove(&inner.in_sequence);
-                if let Some(packet) = AppPacket::decode(&payload) {
-                    let _ = dispatcher.send(packet);
+                if inner.assembly.is_some() {
+                    inner.closing = true;
+                    return;
                 }
-                inner.in_sequence = inner.in_sequence.wrapping_add(1);
+                Some(payload)
             }
             Pending::Fragment(payload) => {
-                let payload = payload.clone();
-                let Some((packet, next)) = reassemble(inner, &payload) else {
-                    break;
-                };
-                let mut sequence = inner.in_sequence;
-                while sequence != next {
-                    inner.future.remove(&sequence);
-                    sequence = sequence.wrapping_add(1);
+                if let Some((total, collected)) = &mut inner.assembly {
+                    if collected.len() + payload.len() > *total {
+                        inner.closing = true;
+                        return;
+                    }
+                    collected.extend_from_slice(&payload);
+                } else {
+                    if payload.len() < 4 {
+                        inner.closing = true;
+                        return;
+                    }
+                    let total = u32::from_be_bytes(payload[..4].try_into().unwrap()) as usize;
+                    if !(2..=4 * 1024 * 1024).contains(&total) || payload.len() - 4 > total {
+                        inner.closing = true;
+                        return;
+                    }
+                    inner.assembly = Some((total, payload[4..].to_vec()));
                 }
-                if let Some(packet) = AppPacket::decode(&packet) {
-                    let _ = dispatcher.send(packet);
+                if inner
+                    .assembly
+                    .as_ref()
+                    .is_some_and(|(n, bytes)| *n == bytes.len())
+                {
+                    inner.assembly.take().map(|(_, bytes)| bytes)
+                } else {
+                    None
                 }
-                inner.in_sequence = next;
             }
+        };
+        if let Some(payload) = payload {
+            dispatch_application(&payload, dispatcher);
         }
-        inner.resend_ack = true;
     }
 }
 
-/// Reassembles a fragment run starting at [`Inner::in_sequence`].
-///
-/// The first fragment's payload is prefixed with the total length.
-fn reassemble(inner: &Inner, first: &[u8]) -> Option<(Vec<u8>, u16)> {
-    if first.len() < 4 {
-        return None;
-    }
-    let total = u32::from_be_bytes([first[0], first[1], first[2], first[3]]) as usize;
-    let mut collected = Vec::with_capacity(total);
-    collected.extend_from_slice(&first[4..]);
-    let mut cursor = inner.in_sequence;
-    while collected.len() < total {
-        let next = cursor.wrapping_add(1);
-        match inner.future.get(&next) {
-            Some(Pending::Fragment(payload)) => {
-                collected.extend_from_slice(payload);
-                cursor = next;
+fn dispatch_application(data: &[u8], dispatcher: &mpsc::UnboundedSender<AppPacket>) {
+    // EQ's application-combined framing can appear inside a reliable packet.
+    if data.starts_with(&[0, 0x19]) {
+        let mut cursor = 2;
+        while cursor < data.len() {
+            let mut size = data[cursor] as usize;
+            cursor += 1;
+            if size == 0xff {
+                if cursor + 2 > data.len() {
+                    return;
+                }
+                size = u16::from_be_bytes([data[cursor], data[cursor + 1]]) as usize;
+                cursor += 2;
             }
-            _ => return None,
+            if size == 0 || cursor + size > data.len() {
+                return;
+            }
+            if let Some(packet) = AppPacket::decode(&data[cursor..cursor + size]) {
+                let _ = dispatcher.send(packet);
+            }
+            cursor += size;
         }
+    } else if let Some(packet) = AppPacket::decode(data) {
+        let _ = dispatcher.send(packet);
     }
-    collected.truncate(total);
-    Some((collected, cursor.wrapping_add(1)))
 }
 
 fn acknowledge(inner: &mut Inner, sequence: u16) {
@@ -490,7 +567,20 @@ fn acknowledge(inner: &mut Inner, sequence: u16) {
 }
 
 fn tick(inner: &mut Inner, outgoing: &mut Vec<Vec<u8>>) {
-    let now = Instant::now();
+    tick_at(inner, outgoing, Instant::now());
+}
+
+fn tick_at(inner: &mut Inner, outgoing: &mut Vec<Vec<u8>>, now: Instant) {
+    if inner.closing
+        || now.saturating_duration_since(inner.last_received) >= SESSION_TIMEOUT
+        || inner
+            .sent
+            .values()
+            .any(|sent| now.saturating_duration_since(sent.first_sent_at) >= SESSION_TIMEOUT)
+    {
+        inner.close();
+        return;
+    }
     let stale: Vec<u16> = inner
         .sent
         .iter()
@@ -517,7 +607,7 @@ fn tick(inner: &mut Inner, outgoing: &mut Vec<Vec<u8>>) {
 }
 
 fn build_fragments(inner: &mut Inner, payload: &[u8], outgoing: &mut Vec<Vec<u8>>) {
-    let overhead = 2 + 2 + 4 + inner.crc_bytes as usize;
+    let overhead = 2 + 2 + 4 + inner.crc_bytes as usize + usize::from(inner.compressing);
     let chunk_size = MAX_PACKET_SIZE.saturating_sub(overhead).max(64);
     let mut offset = 0usize;
     let mut first = true;
@@ -537,6 +627,7 @@ fn build_fragments(inner: &mut Inner, payload: &[u8], outgoing: &mut Vec<Vec<u8>
             Sent {
                 bytes: bytes.clone(),
                 sent_at: Instant::now(),
+                first_sent_at: Instant::now(),
             },
         );
         inner.out_sequence = inner.out_sequence.wrapping_add(1);
@@ -580,6 +671,157 @@ fn random_u32() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restarted_server_out_of_session_is_unprotected_and_closes() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut inner = Inner::new(123, 2, true);
+        process_incoming(&mut inner, &[0, 0x1d], &tx, &mut Vec::new());
+        assert!(inner.closing);
+        assert!(!inner.connected);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn only_valid_keepalive_resets_inactivity_deadline() {
+        let (tx, _) = mpsc::unbounded_channel();
+        let mut inner = Inner::new(123, 2, true);
+        let old = Instant::now() - SESSION_TIMEOUT;
+        inner.last_received = old;
+        let mut wire = vec![0, 6, 0xa5];
+        wire.extend(crc16(&wire, 123).to_be_bytes());
+        let mut corrupt = wire.clone();
+        corrupt[3] ^= 1;
+        process_incoming(&mut inner, &corrupt, &tx, &mut Vec::new());
+        assert_eq!(inner.last_received, old);
+        process_incoming(&mut inner, &[0, 6], &tx, &mut Vec::new());
+        assert_eq!(inner.last_received, old);
+        process_incoming(&mut inner, &wire, &tx, &mut Vec::new());
+        assert!(inner.last_received > old);
+        let mut outgoing = Vec::new();
+        let deadline = inner.last_received + SESSION_TIMEOUT;
+        tick_at(&mut inner, &mut outgoing, deadline - TICK);
+        assert!(inner.connected);
+        tick_at(&mut inner, &mut outgoing, deadline);
+        assert!(!inner.connected);
+        assert!(inner.closing);
+    }
+
+    #[test]
+    fn retransmissions_expire_even_when_peer_sends_keepalives() {
+        let mut inner = Inner::new(123, 2, true);
+        let start = Instant::now();
+        inner.sent.insert(
+            0,
+            Sent {
+                bytes: vec![1, 2],
+                sent_at: start,
+                first_sent_at: start,
+            },
+        );
+        let mut outgoing = Vec::new();
+        for seconds in [3, 6, 9, 29] {
+            let now = start + Duration::from_secs(seconds);
+            inner.last_received = now;
+            tick_at(&mut inner, &mut outgoing, now);
+            assert!(inner.connected);
+            assert_eq!(inner.sent[&0].first_sent_at, start);
+        }
+        assert!(!outgoing.is_empty());
+        outgoing.clear();
+        inner.last_received = start + SESSION_TIMEOUT;
+        tick_at(&mut inner, &mut outgoing, start + SESSION_TIMEOUT);
+        assert!(!inner.connected);
+        assert!(inner.sent.is_empty());
+        assert!(outgoing.is_empty());
+    }
+
+    #[tokio::test]
+    async fn timeout_wakes_reader_and_closes_application_channel() {
+        let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let address = peer.local_addr().unwrap();
+        socket.connect(address).await.unwrap();
+        let (tx, rx) = mpsc::unbounded_channel();
+        let mut inner = Inner::new(123, 2, true);
+        inner.last_received = Instant::now() - SESSION_TIMEOUT;
+        let mut stream = EqStream {
+            socket,
+            inner: Arc::new(Mutex::new(inner)),
+            peer: address,
+            closed: Arc::new(Notify::new()),
+            incoming: rx,
+            tasks: Vec::new(),
+        };
+        stream.tasks.push(stream.spawn_reader(tx));
+        stream.tasks.push(stream.spawn_ticker());
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), stream.recv())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(matches!(
+            stream.send(&AppPacket::empty(0x7dfc)).await,
+            Err(StreamError::Closed)
+        ));
+    }
+
+    #[test]
+    fn compressed_combined_carries_reliable_and_unreliable_updates() {
+        use std::io::Write;
+        let profile = AppPacket::new(0x6506, vec![7; 80]);
+        let movement = AppPacket::new(0x7dfc, vec![9; 24]);
+        let sender = Inner::new(0, 0, false);
+        let reliable = encode_reliable(&sender, SessionOp::Single, 0, &profile.encode());
+        let mut body = vec![reliable.len() as u8];
+        body.extend(reliable);
+        body.push(movement.encode().len() as u8);
+        body.extend(movement.encode());
+        let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        z.write_all(&body).unwrap();
+        let mut wire = vec![0, 3, 0x5a];
+        wire.extend(z.finish().unwrap());
+        wire.extend(crc16(&wire, 123).to_be_bytes());
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut receiver = Inner::new(123, 2, true);
+        process_incoming(&mut receiver, &wire, &tx, &mut Vec::new());
+        assert_eq!(rx.try_recv().unwrap(), profile);
+        assert_eq!(rx.try_recv().unwrap(), movement);
+        wire[4] ^= 1;
+        process_incoming(&mut receiver, &wire, &tx, &mut Vec::new());
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn standalone_unreliable_packet_uses_one_byte_compression_prefix() {
+        let packet = AppPacket::new(0x7dfc, vec![42; 24]);
+        let mut wire = packet.encode();
+        wire.insert(1, 0xa5);
+        wire.extend(crc16(&wire, 55).to_be_bytes());
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        process_incoming(&mut Inner::new(55, 2, true), &wire, &tx, &mut Vec::new());
+        assert_eq!(rx.try_recv().unwrap(), packet);
+    }
+
+    #[test]
+    fn large_profile_acks_each_fragment_before_completion() {
+        let mut sender = Inner::new(123, 2, true);
+        let packet = AppPacket::new(0x6506, vec![8; 40000]);
+        let mut wire = Vec::new();
+        build_fragments(&mut sender, &packet.encode(), &mut wire);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut receiver = Inner::new(123, 2, true);
+        for (i, bytes) in wire.iter().enumerate() {
+            assert!(bytes.len() <= MAX_PACKET_SIZE);
+            process_incoming(&mut receiver, bytes, &tx, &mut Vec::new());
+            assert_eq!(receiver.in_sequence, (i + 1) as u16);
+            if i + 1 < wire.len() {
+                assert!(rx.try_recv().is_err());
+            }
+        }
+        assert_eq!(rx.try_recv().unwrap(), packet);
+    }
 
     #[test]
     fn sequence_comparison_wraps() {

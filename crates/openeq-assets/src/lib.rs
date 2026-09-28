@@ -13,14 +13,18 @@
 //! Everything here is pure CPU-side decoding with no engine dependencies, so it
 //! can be exercised from tests and command line tools as well as the game.
 
+pub mod collision;
+pub mod environment;
 pub mod error;
 pub mod loader;
 pub mod mesh;
 pub mod pfs;
 pub mod read;
+pub mod terrain;
 pub mod texture;
 pub mod wld;
 pub mod zone;
 
 pub use error::{Error, Result};
 pub use loader::{Instance, Light, Scene, SceneObject, load_zone};
+pub mod character;

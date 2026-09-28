@@ -11,6 +11,14 @@ const EQ_TO_WORLD: mat4x4<f32> = mat4x4<f32>(
     vec4<f32>(0.0, 0.0, 0.0, 1.0),
 );
 
+struct Environment {
+    fog_color: vec4<f32>, // linear RGB, w = enabled
+    fog_params: vec4<f32>, // start, end, authored density, reserved
+    sky_horizon: vec4<f32>, // fallback linear RGB, w = authored textures
+    sky_zenith: vec4<f32>, // fallback linear RGB, w = cloud opacity
+    sky_params: vec4<f32>, // cloud velocity, cloud scale, sky enabled, reserved
+};
+
 struct Globals {
     view_proj: mat4x4<f32>,
     light_view_proj: mat4x4<f32>,
@@ -20,6 +28,7 @@ struct Globals {
     sun_direction: vec4<f32>,
     sun_color: vec4<f32>,
     params: vec4<f32>,
+    environment: Environment,
 };
 
 struct PointLight {
@@ -37,6 +46,46 @@ struct PointLight {
 @group(2) @binding(1) var gbuffer_sampler: sampler;
 @group(2) @binding(2) var normal_tex: texture_2d<f32>;
 @group(2) @binding(3) var depth_tex: texture_depth_2d;
+
+@group(3) @binding(0) var sky_color_map: texture_2d<f32>;
+@group(3) @binding(1) var sky_cloud: texture_2d<f32>;
+@group(3) @binding(2) var sky_cloud_color: texture_2d<f32>;
+@group(3) @binding(3) var sky_sampler: sampler;
+
+fn apply_fog(color: vec3<f32>, distance: f32) -> vec3<f32> {
+    let env = globals.environment;
+    let amount = clamp((distance - env.fog_params.x) / max(env.fog_params.y - env.fog_params.x, 0.001), 0.0, 1.0) * env.fog_color.w;
+    return mix(color, env.fog_color.rgb, amount);
+}
+
+fn sky_color(ray: vec3<f32>) -> vec3<f32> {
+    let env = globals.environment;
+    if (env.sky_params.z < 0.5) {
+        return env.fog_color.rgb;
+    }
+    let elevation = clamp(asin(clamp(ray.y, -1.0, 1.0)) / 1.5707963, 0.0, 1.0);
+    var color = mix(env.sky_horizon.rgb, env.sky_zenith.rgb, elevation);
+    if (env.sky_horizon.w > 0.5) {
+        let horizontal = ray.xz / max(length(ray.xz), 0.001);
+        let sun_horizontal = globals.sun_direction.xz / max(length(globals.sun_direction.xz), 0.001);
+        let facing_sun = clamp(dot(horizontal, sun_horizontal) * 0.5 + 0.5, 0.0, 1.0);
+        let lookup = vec2<f32>(facing_sun, elevation);
+        color = textureSampleLevel(sky_color_map, sky_sampler, lookup, 0.0).rgb;
+        if (env.sky_zenith.w > 0.0 && ray.y > 0.0) {
+            // A dome follows orientation but never camera translation. Cloud
+            // drift uses the authored velocity, expressed in UV units/ms.
+            let drift = globals.params.x * 0.001 * env.sky_params.x;
+            let cloud_uv = fract(ray.xz / max(ray.y, 0.08) * env.sky_params.y + vec2<f32>(drift, drift * 0.37));
+            let cloud = textureSampleLevel(sky_cloud, sky_sampler, cloud_uv, 0.0);
+            let tint = textureSampleLevel(sky_cloud_color, sky_sampler, lookup, 0.0).rgb;
+            let opacity = cloud.a * env.sky_zenith.w * smoothstep(0.03, 0.2, ray.y);
+            color = mix(color, cloud.rgb * tint, opacity);
+        }
+    }
+    // Atmospheric haze meets the same horizon as distant zone geometry.
+    let haze = (1.0 - smoothstep(0.0, 0.16, max(ray.y, 0.0))) * env.fog_color.w;
+    return mix(color, env.fog_color.rgb, haze);
+}
 
 struct Fragment {
     @builtin(position) clip: vec4<f32>,
@@ -64,12 +113,13 @@ fn fs_main(in: Fragment) -> @location(0) vec4<f32> {
     // is one-to-one with the G-buffer anyway.
     let depth = textureLoad(depth_tex, vec2<i32>(in.clip.xy), 0);
 
-    // Nothing was drawn here, so draw a simple sky gradient instead.
-    if (depth >= 0.9999) {
-        let t = clamp(in.ndc.y * 0.5 + 0.5, 0.0, 1.0);
-        let horizon = vec3<f32>(0.42, 0.50, 0.62);
-        let zenith = vec3<f32>(0.09, 0.16, 0.32);
-        return vec4<f32>(mix(horizon, zenith, t), 1.0);
+    // Clear depth is exactly 1.0; near-one depth still belongs to distant
+    // geometry. Reconstructing a world-space ray prevents the sky from being
+    // attached to screen pixels when the camera pitches or turns.
+    if (depth >= 1.0) {
+        let far_h = globals.inv_view_proj * vec4<f32>(in.ndc, 0.99999, 1.0);
+        let ray = normalize(far_h.xyz / far_h.w - globals.camera_pos.xyz);
+        return vec4<f32>(sky_color(ray), 1.0);
     }
 
     let albedo = textureSampleLevel(albedo_tex, gbuffer_sampler, uv, 0.0);
@@ -82,7 +132,7 @@ fn fs_main(in: Fragment) -> @location(0) vec4<f32> {
 
     if (albedo.a > 0.5) {
         // Emissive geometry is unaffected by lighting.
-        return vec4<f32>(albedo.rgb, 1.0);
+        return vec4<f32>(apply_fog(albedo.rgb, distance(world, globals.camera_pos.xyz)), 1.0);
     }
 
     var accum = globals.ambient.rgb;
@@ -148,5 +198,5 @@ fn fs_main(in: Fragment) -> @location(0) vec4<f32> {
         accum += light.color.rgb * falloff * intensity;
     }
 
-    return vec4<f32>(albedo.rgb * accum, 1.0);
+    return vec4<f32>(apply_fog(albedo.rgb * accum, distance(world, globals.camera_pos.xyz)), 1.0);
 }

@@ -1,6 +1,6 @@
 //! Loads a complete zone into engine-agnostic geometry.
 //!
-//! EverQuest zones come in two flavours and both are handled here:
+//! EverQuest zones use three supported geometry layouts:
 //!
 //! * **Classic zones** ship as `{name}.s3d` plus `{name}_obj.s3d`/`{name}_2_obj.s3d`
 //!   archives of `WLD` fragments. Terrain lives in `{name}.wld`; placeable
@@ -8,6 +8,8 @@
 //!   `0x15` actor instances.
 //! * **Newer zones** ship as a single `{name}.eqg` archive containing a `.zon`
 //!   description plus `.ter`/`.mod` meshes.
+//! * **Heightmap zones** use `EQTZP` text descriptions, tiled `.dat` elevation
+//!   grids, ecosystem `.eco` texture layers and `.tog` object groups.
 //!
 //! The result is a [`Scene`]: flat triangle geometry grouped by material, a set
 //! of placeable objects, their instances, and static lights. Textures are
@@ -16,11 +18,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::mesh::{self, Geometry, Material};
+use crate::mesh::{self, Geometry, Material, WaterMaterial};
 use crate::pfs::Archive;
+use crate::terrain;
 use crate::texture::Texture;
 use crate::wld::{self, Fragment, Wld};
-use crate::zone::ZoneFile;
+use crate::zone::{Property, TerMaterial, TerMod, ZoneFile};
 use crate::{Error, Result};
 
 /// A placed copy of a named object.
@@ -59,15 +62,63 @@ pub struct Scene {
     pub instances: Vec<Instance>,
     pub lights: Vec<Light>,
     archives: Vec<Archive>,
-    textures: HashMap<String, (usize, String)>,
+    textures: HashMap<String, TextureSource>,
+    loose_textures: HashMap<String, PathBuf>,
+}
+
+enum TextureSource {
+    Archive(usize, String),
+    File(PathBuf),
+    Decoded(Texture),
 }
 
 impl Scene {
+    /// Builds a scene from decoded geometry, e.g. animated character assets.
+    pub fn from_geometry(
+        name: String,
+        materials: Vec<Material>,
+        meshes: Vec<Geometry>,
+        textures: Vec<Texture>,
+    ) -> Self {
+        Self {
+            name,
+            materials,
+            meshes,
+            objects: Vec::new(),
+            instances: Vec::new(),
+            lights: Vec::new(),
+            archives: Vec::new(),
+            loose_textures: HashMap::new(),
+            textures: textures
+                .into_iter()
+                .map(|t| (t.name.to_ascii_lowercase(), TextureSource::Decoded(t)))
+                .collect(),
+        }
+    }
+
     /// Decodes a texture by name, if the zone references one.
     pub fn texture(&self, name: &str) -> Option<Texture> {
-        let (archive, entry) = self.textures.get(&name.to_ascii_lowercase())?;
-        let data = self.archives.get(*archive)?.read(entry).ok()?;
-        Some(Texture::decode_or_placeholder(name, &data))
+        if let Some(TextureSource::Decoded(texture)) = self.textures.get(&name.to_ascii_lowercase())
+        {
+            return Some(texture.clone());
+        }
+        Some(Texture::decode_or_placeholder(
+            name,
+            &self.texture_bytes(name)?,
+        ))
+    }
+
+    /// Decodes all six faces of a referenced DDS environment map.
+    pub fn texture_cube(&self, name: &str) -> Option<Vec<Texture>> {
+        Texture::decode_cube(name, &self.texture_bytes(name)?).ok()
+    }
+
+    fn texture_bytes(&self, name: &str) -> Option<Vec<u8>> {
+        match self.textures.get(&name.to_ascii_lowercase())? {
+            TextureSource::Archive(archive, entry) => self.archives.get(*archive)?.read(entry).ok(),
+            TextureSource::File(path) => std::fs::read(path).ok(),
+            TextureSource::Decoded(_) => None,
+        }
     }
 
     /// All texture names referenced by the scene's materials.
@@ -129,6 +180,7 @@ fn load_wld(base: &Path, name: &str) -> Result<Scene> {
         lights: Vec::new(),
         archives: Vec::new(),
         textures: HashMap::new(),
+        loose_textures: loose_textures(base),
     };
 
     // Keep the archive index for every WLD so texture lookups can prefer the
@@ -244,12 +296,16 @@ fn load_eqg(base: &Path, name: &str, path: &Path) -> Result<Scene> {
     let zon_data = if archive.contains(&zon_name) {
         archive.read(&zon_name)?
     } else {
-        let fallback = base.join(&zon_name);
+        let fallback = case_insensitive_file(base, &zon_name);
         std::fs::read(&fallback).map_err(|source| Error::Io {
             path: fallback,
             source,
         })?
     };
+
+    if zon_data.starts_with(b"EQTZP") {
+        return load_heightmap(base, name, archive, &zon_data);
+    }
 
     let zone = ZoneFile::parse(&zon_data, |file_name| {
         if let Ok(data) = archive.read(file_name) {
@@ -271,71 +327,11 @@ fn load_eqg(base: &Path, name: &str, path: &Path) -> Result<Scene> {
         lights: Vec::new(),
         archives: vec![archive],
         textures: HashMap::new(),
+        loose_textures: loose_textures(base),
     };
-    let archive_index = 0;
-
-    // The terrain object contributes its geometry to the zone itself; the
-    // remaining objects become reusable, placeable definitions.
+    // Terrain contributes directly; objects retain reusable definitions.
     for (id, object) in zone.objects.iter().enumerate() {
-        let groups = object.mesh_groups();
-        let mut keys: Vec<&u32> = groups.keys().collect();
-        keys.sort();
-
-        let mut object_meshes = Vec::new();
-        for material_id in keys {
-            let Some(material) = object.materials.get(material_id) else {
-                continue;
-            };
-            let diffuse = material
-                .properties
-                .get("e_TextureDiffuse0")
-                .and_then(|value| value.as_text())
-                .unwrap_or("missing.dds")
-                .to_owned();
-            let normal_map = material
-                .properties
-                .get("e_TextureNormal0")
-                .and_then(|value| value.as_text())
-                .filter(|value| !value.eq_ignore_ascii_case("none"))
-                .map(|value| value.to_owned());
-
-            let indices = &groups[material_id];
-            let (vertices, indices) = mesh::pack(
-                &object.positions,
-                &object.normals,
-                &object.tex_coords,
-                indices,
-            );
-
-            let id = scene.materials.len();
-            scene.materials.push(Material {
-                textures: vec![diffuse.clone()],
-                normal_map: normal_map.clone(),
-                flags: 0,
-                anim_speed: 0,
-                alpha_mask: false,
-                transparent: false,
-                emissive: false,
-            });
-            scene.meshes.push(Geometry {
-                vertices,
-                indices,
-                material: id,
-                collidable: true,
-            });
-            register_texture(&mut scene, archive_index, &diffuse);
-            if let Some(normal_map) = &normal_map {
-                register_texture(&mut scene, archive_index, normal_map);
-            }
-            object_meshes.push(scene.meshes.len() - 1);
-        }
-
-        if !object.is_terrain {
-            scene.objects.push(SceneObject {
-                name: format!("object_{id}"),
-                meshes: object_meshes,
-            });
-        }
+        append_eqg_object(&mut scene, object, &format!("object_{id}"), 0);
     }
 
     for placeable in &zone.placeables {
@@ -360,6 +356,90 @@ fn load_eqg(base: &Path, name: &str, path: &Path) -> Result<Scene> {
     }
 
     Ok(scene)
+}
+
+fn append_eqg_object(scene: &mut Scene, object: &TerMod, object_name: &str, archive_index: usize) {
+    let groups = object.mesh_groups();
+    let mut keys: Vec<&u32> = groups.keys().collect();
+    keys.sort();
+
+    let mut object_meshes = Vec::new();
+    for material_id in keys {
+        let Some(material) = object.materials.get(material_id) else {
+            continue;
+        };
+        let mut diffuse = material
+            .properties
+            .get("e_TextureDiffuse0")
+            .and_then(|value| value.as_text())
+            .unwrap_or("missing.dds")
+            .to_owned();
+        let water = water_material(material);
+        register_texture(scene, archive_index, &diffuse);
+        // MaxWater materials can name an obsolete editor test texture.
+        // Use the client's shared water diffuse only for that shader and
+        // only when the authored diffuse is missing. Other missing assets
+        // must continue to show up as errors/placeholders.
+        if water.is_some() && !scene.textures.contains_key(&diffuse.to_ascii_lowercase()) {
+            register_texture(scene, archive_index, "water_c.bmp");
+            if scene.textures.contains_key("water_c.bmp") {
+                diffuse = "water_c.bmp".to_owned();
+            }
+        }
+        let normal_map = material
+            .properties
+            .get("e_TextureNormal0")
+            .and_then(|value| value.as_text())
+            .filter(|value| !value.eq_ignore_ascii_case("none"))
+            .map(|value| value.to_owned());
+
+        let indices = &groups[material_id];
+        let (vertices, indices) = mesh::pack(
+            &object.positions,
+            &object.normals,
+            &object.tex_coords,
+            indices,
+        );
+
+        let id = scene.materials.len();
+        if let Some(environment) = water
+            .as_ref()
+            .and_then(|water| water.environment_map.as_ref())
+        {
+            register_texture(scene, archive_index, environment);
+        }
+        scene.materials.push(Material {
+            textures: vec![diffuse.clone()],
+            normal_map: normal_map.clone(),
+            water,
+            flags: 0,
+            anim_speed: 0,
+            alpha_mask: {
+                let shader = material.shader.to_ascii_lowercase();
+                shader.starts_with("alpha") || shader.starts_with("chroma")
+            },
+            transparent: false,
+            emissive: false,
+        });
+        scene.meshes.push(Geometry {
+            vertices,
+            indices,
+            material: id,
+            collidable: true,
+        });
+        register_texture(scene, archive_index, &diffuse);
+        if let Some(normal_map) = &normal_map {
+            register_texture(scene, archive_index, normal_map);
+        }
+        object_meshes.push(scene.meshes.len() - 1);
+    }
+
+    if !object.is_terrain {
+        scene.objects.push(SceneObject {
+            name: object_name.to_owned(),
+            meshes: object_meshes,
+        });
+    }
 }
 
 fn append_baked(
@@ -408,10 +488,76 @@ fn register_texture(scene: &mut Scene, archive_index: usize, name: &str) {
             entry.eq_ignore_ascii_case(name)
                 || strip_extension(entry).eq_ignore_ascii_case(strip_extension(name))
         }) {
-            scene.textures.insert(key, (index, entry.clone()));
+            scene
+                .textures
+                .insert(key, TextureSource::Archive(index, entry.clone()));
             return;
         }
     }
+    if let Some(path) = scene.loose_textures.get(&key) {
+        scene
+            .textures
+            .insert(key, TextureSource::File(path.clone()));
+    }
+}
+
+/// Shared client textures are loose files, including the water maps omitted
+/// from zone archives. Index a few known directories once, case-insensitively.
+fn loose_textures(base: &Path) -> HashMap<String, PathBuf> {
+    let mut textures = HashMap::new();
+    for dir in [
+        base.to_path_buf(),
+        base.join("Resources"),
+        base.join("Resources/waterswap"),
+    ] {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        let mut paths: Vec<_> = entries.flatten().map(|entry| entry.path()).collect();
+        paths.sort();
+        for path in paths {
+            let name = path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_ascii_lowercase();
+            if path.is_file() && (name.ends_with(".dds") || name.ends_with(".bmp")) {
+                textures.entry(name).or_insert(path);
+            }
+        }
+    }
+    textures
+}
+
+fn water_material(material: &TerMaterial) -> Option<WaterMaterial> {
+    if !material.shader.eq_ignore_ascii_case("Opaque_MaxWater.fx") {
+        return None;
+    }
+    let float = |name: &str, default| match material.properties.get(name) {
+        Some(Property::Float(value)) if value.is_finite() => *value,
+        _ => default,
+    };
+    let color = |name: &str, default| {
+        let argb = match material.properties.get(name) {
+            Some(Property::Uint(value)) => *value,
+            _ => default,
+        };
+        [16, 8, 0, 24].map(|shift| ((argb >> shift) & 255) as f32 / 255.0)
+    };
+    Some(WaterMaterial {
+        color1: color("e_fWaterColor1", 0xFF000A1C),
+        color2: color("e_fWaterColor2", 0xFF003B2B),
+        reflection_color: color("e_fReflectionColor", 0xFFFFFFFF),
+        fresnel_bias: float("e_fFresnelBias", 0.25).clamp(0.0, 1.0),
+        fresnel_power: float("e_fFresnelPower", 8.0).max(0.01),
+        reflection_amount: float("e_fReflectionAmount", 0.7).clamp(0.0, 1.0),
+        environment_map: material
+            .properties
+            .get("e_TextureEnvironment0")
+            .and_then(Property::as_text)
+            .filter(|name| !name.eq_ignore_ascii_case("none"))
+            .map(str::to_owned),
+    })
 }
 
 fn light_source(wld: &Wld, reference: wld::Ref) -> Option<([f32; 3], f32)> {
@@ -480,6 +626,203 @@ pub fn default_client_dir() -> Option<PathBuf> {
         Some(PathBuf::from("/Users/daeken/EverQuest")),
     ];
     candidates.into_iter().flatten().find(|path| path.is_dir())
+}
+
+fn case_insensitive_file(base: &Path, name: &str) -> PathBuf {
+    let direct = base.join(name);
+    if direct.is_file() {
+        return direct;
+    }
+    std::fs::read_dir(base)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(std::result::Result::ok)
+        .find(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(name)
+        })
+        .map(|entry| entry.path())
+        .unwrap_or(direct)
+}
+
+fn load_heightmap(base: &Path, name: &str, archive: Archive, zon: &[u8]) -> Result<Scene> {
+    let mut options = terrain::TerrainOptions::parse(zon)?;
+    if !archive.contains(&format!("{}.dat", options.name)) {
+        // oldcommons ships a renamed ZON alongside commonlands.zon/DAT.
+        // Resolve an actual terrain declaration, rather than guessing a DAT.
+        for filename in archive.names().iter().filter(|name| name.ends_with(".zon")) {
+            if let Ok(candidate) = archive
+                .read(filename)
+                .and_then(|bytes| terrain::TerrainOptions::parse(&bytes))
+                && archive.contains(&format!("{}.dat", candidate.name))
+            {
+                options = candidate;
+                break;
+            }
+        }
+    }
+    let map = terrain::Heightmap::parse(
+        options.clone(),
+        &archive.read(&format!("{}.dat", options.name))?,
+    )?;
+    let mut ecosystems = terrain::Ecosystems::new();
+    for tile in &map.tiles {
+        for layer in &tile.layers {
+            let key = layer.ecosystem.to_ascii_lowercase();
+            if ecosystems.contains_key(&key) {
+                continue;
+            }
+            let data = archive.read(&format!("{key}.eco"))?;
+            ecosystems.insert(key, terrain::parse_ecosystem(&data)?);
+        }
+    }
+    let loose = loose_textures(base);
+    let baked = terrain::bake(&map, &ecosystems, |texture_name| {
+        let bytes = archive.read(texture_name).ok().or_else(|| {
+            loose
+                .get(&texture_name.to_ascii_lowercase())
+                .and_then(|path| std::fs::read(path).ok())
+        })?;
+        Texture::decode(texture_name, &bytes).ok()
+    })?;
+    let mut scene = Scene::from_geometry(
+        name.to_owned(),
+        baked.materials,
+        baked.meshes,
+        baked.textures,
+    );
+    scene.archives.push(archive);
+    scene.loose_textures = loose;
+    let mut placements = map.placements.clone();
+    for group in &map.groups {
+        let group_file = format!("{}.tog", group.model);
+        let data = scene.archives[0].read(&group_file).or_else(|_| {
+            let path = case_insensitive_file(base, &group_file);
+            std::fs::read(&path).map_err(|source| Error::Io { path, source })
+        });
+        let Ok(data) = data else {
+            tracing::warn!(zone=name, group=%group.model, "terrain object group is missing from client assets");
+            continue;
+        };
+        for mut placement in terrain::parse_object_group(&data)? {
+            placement.transform = group.transform * placement.transform;
+            placements.push(placement);
+        }
+    }
+    let mut models = std::collections::BTreeSet::new();
+    for placement in &placements {
+        models.insert(placement.model.clone());
+    }
+    let mut loaded = std::collections::HashSet::new();
+    for model in models {
+        let filename = if model.ends_with(".mod") {
+            model.clone()
+        } else {
+            format!("{model}.mod")
+        };
+        let Ok(data) = scene.archives[0].read(&filename) else {
+            tracing::warn!(
+                zone = name,
+                model,
+                "terrain object model is missing from client archive"
+            );
+            continue;
+        };
+        let object = TerMod::parse(&data, false)?;
+        append_eqg_object(&mut scene, &object, &model, 0);
+        loaded.insert(model);
+    }
+    for placement in placements {
+        if !loaded.contains(&placement.model) {
+            continue;
+        }
+        let (scale, rotation, position) = placement.transform.to_scale_rotation_translation();
+        if !scale.is_finite() || !rotation.is_finite() || !position.is_finite() {
+            tracing::warn!(zone=name,model=%placement.model,"ignoring invalid terrain object transform");
+            continue;
+        }
+        scene.instances.push(Instance {
+            object: placement.model,
+            position: position.to_array(),
+            scale: scale.to_array(),
+            rotation: rotation.to_array(),
+        });
+    }
+    for light in &map.lights {
+        let color = scene.archives[0]
+            .read(&format!("{}.def", light.definition))
+            .ok()
+            .and_then(|data| terrain::parse_light_color(&data))
+            .unwrap_or([1.0; 3]);
+        scene.lights.push(Light {
+            position: light.position,
+            color,
+            radius: light.radius,
+            attenuation: 200.0,
+        });
+    }
+    if let Ok(data) = scene.archives[0].read("water.dat") {
+        for water in terrain::parse_water(&data)? {
+            if water.max[0] <= water.min[0] || water.max[1] <= water.min[1] {
+                continue;
+            }
+            let positions = [
+                [water.min[0], water.min[1], water.height],
+                [water.max[0], water.min[1], water.height],
+                [water.max[0], water.max[1], water.height],
+                [water.min[0], water.max[1], water.height],
+            ];
+            let uv: Vec<_> = positions
+                .iter()
+                .map(|p| {
+                    [
+                        p[0] / water.uv_scale.max(0.01),
+                        p[1] / water.uv_scale.max(0.01),
+                    ]
+                })
+                .collect();
+            let (vertices, indices) =
+                mesh::pack(&positions, &[[0.0, 0.0, 1.0]; 4], &uv, &[0, 1, 2, 0, 2, 3]);
+            let material = scene.materials.len();
+            for texture in [
+                Some("water_c.bmp"),
+                Some(water.normal_map.as_str()),
+                water.material.environment_map.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                register_texture(&mut scene, 0, texture);
+            }
+            scene.materials.push(Material {
+                textures: vec!["water_c.bmp".into()],
+                normal_map: Some(water.normal_map),
+                water: Some(water.material),
+                flags: 0,
+                anim_speed: 0,
+                alpha_mask: false,
+                transparent: false,
+                emissive: false,
+            });
+            scene.meshes.push(Geometry {
+                vertices,
+                indices,
+                material,
+                collidable: false,
+            });
+        }
+    }
+    tracing::info!(
+        zone = name,
+        tiles = map.tiles.len(),
+        instances = scene.instances.len(),
+        lights = scene.lights.len(),
+        "loaded heightmap terrain"
+    );
+    Ok(scene)
 }
 
 #[cfg(test)]

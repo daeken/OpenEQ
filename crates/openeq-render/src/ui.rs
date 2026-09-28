@@ -1,0 +1,794 @@
+//! Screen-space overlay for the original client's XML UI draw list.
+//! Render after zone lighting with no depth attachment, at physical-pixel size.
+
+use bytemuck::{Pod, Zeroable};
+use font8x8::UnicodeFonts;
+use openeq_ui::{Color, DrawCommand, Rect, TextAlign, UiFrame};
+use std::{
+    collections::HashMap,
+    ops::Range,
+    path::{Path, PathBuf},
+};
+use wgpu::util::DeviceExt;
+
+const GLYPH_ATLAS_SIZE: u32 = 1024;
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct Vertex {
+    position: [f32; 2],
+    uv: [f32; 2],
+    color: [f32; 4],
+}
+
+struct Texture {
+    bind_group: wgpu::BindGroup,
+    size: [u32; 2],
+    _texture: wgpu::Texture,
+}
+struct Batch {
+    texture: usize,
+    clip: [u32; 4],
+    vertices: Range<u32>,
+}
+#[derive(Clone, Copy)]
+struct Glyph {
+    source: Rect,
+    offset: [f32; 2],
+    advance: f32,
+}
+
+/// Texture/glyph caches survive successive frames. Preparation uploads newly
+/// encountered assets and replaces the vertex buffer; render only issues draws.
+pub struct UiRenderer {
+    pipeline: wgpu::RenderPipeline,
+    layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+    textures: Vec<Texture>,
+    texture_ids: HashMap<PathBuf, usize>,
+    font: Option<fontdue::Font>,
+    glyphs: HashMap<(char, u32), Glyph>,
+    glyph_cursor: [u32; 2],
+    glyph_row_height: u32,
+    vertices: wgpu::Buffer,
+    batches: Vec<Batch>,
+}
+
+impl UiRenderer {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("UI image layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("UI sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("UI pipeline layout"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("UI shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/ui.wgsl").into()),
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("UI pipeline"), layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_main"), buffers: &[wgpu::VertexBufferLayout { array_stride: std::mem::size_of::<Vertex>() as u64, step_mode: wgpu::VertexStepMode::Vertex, attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4] }], compilation_options: Default::default() },
+            fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some("fs_main"), targets: &[Some(wgpu::ColorTargetState { format, blend: Some(wgpu::BlendState::ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })], compilation_options: Default::default() }),
+            primitive: Default::default(), depth_stencil: None, multisample: Default::default(), multiview_mask: None, cache: None,
+        });
+        let white = texture(
+            device,
+            queue,
+            &layout,
+            &sampler,
+            "UI white",
+            [1, 1],
+            &[255; 4],
+        );
+        let glyph_atlas = texture(
+            device,
+            queue,
+            &layout,
+            &sampler,
+            "UI font atlas",
+            [GLYPH_ATLAS_SIZE; 2],
+            &vec![0; (GLYPH_ATLAS_SIZE * GLYPH_ATLAS_SIZE * 4) as usize],
+        );
+        let font = load_font();
+        if font.is_none() {
+            tracing::warn!(
+                "No UI font found; using built-in bitmap font. Set OPENEQ_UI_FONT to a TTF file for smoother text."
+            );
+        }
+        let vertices = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("UI vertices"),
+            size: 4,
+            usage: wgpu::BufferUsages::VERTEX,
+            mapped_at_creation: false,
+        });
+        Self {
+            pipeline,
+            layout,
+            sampler,
+            textures: vec![white, glyph_atlas],
+            texture_ids: HashMap::new(),
+            font,
+            glyphs: HashMap::new(),
+            glyph_cursor: [1, 1],
+            glyph_row_height: 0,
+            vertices,
+            batches: Vec::new(),
+        }
+    }
+
+    /// `size` and the UiFrame coordinates must use the same physical-pixel scale.
+    pub fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &UiFrame,
+        size: [u32; 2],
+    ) {
+        self.batches.clear();
+        if size[0] == 0 || size[1] == 0 {
+            return;
+        }
+        let mut vertices = Vec::new();
+        for command in &frame.commands {
+            match command {
+                DrawCommand::Fill { rect, clip, color } => self.quad(
+                    &mut vertices,
+                    *rect,
+                    *clip,
+                    [0., 0., 1., 1.],
+                    *color,
+                    0,
+                    size,
+                ),
+                DrawCommand::Image {
+                    rect,
+                    clip,
+                    texture,
+                    source,
+                    tint,
+                    ..
+                } => {
+                    let id = self.load_texture(device, queue, texture);
+                    let [width, height] = self.textures[id].size.map(|n| n as f32);
+                    let source = if source.width == 0. || source.height == 0. {
+                        Rect::new(0., 0., width, height)
+                    } else {
+                        *source
+                    };
+                    let uv = [
+                        source.x / width,
+                        source.y / height,
+                        source.right() / width,
+                        source.bottom() / height,
+                    ];
+                    self.quad(&mut vertices, *rect, *clip, uv, *tint, id, size);
+                }
+                DrawCommand::Text {
+                    rect,
+                    clip,
+                    text,
+                    font,
+                    color,
+                    align,
+                    vertical_center,
+                    wrap,
+                } => {
+                    let px = font_size(*font);
+                    let lines =
+                        self.text_lines(text, px, if *wrap { Some(rect.width) } else { None });
+                    let line_height = self
+                        .font
+                        .as_ref()
+                        .and_then(|font| font.horizontal_line_metrics(px as f32))
+                        .map_or(px as f32 * 1.2, |metrics| metrics.new_line_size);
+                    let ascent = self
+                        .font
+                        .as_ref()
+                        .and_then(|font| font.horizontal_line_metrics(px as f32))
+                        .map_or(px as f32, |metrics| metrics.ascent);
+                    let top = rect.y
+                        + if *vertical_center {
+                            ((rect.height - line_height * lines.len() as f32) / 2.).max(0.)
+                        } else {
+                            0.
+                        };
+                    for (line_number, line) in lines.iter().enumerate() {
+                        let width = self.text_width(line, px);
+                        let mut x = rect.x
+                            + match align {
+                                TextAlign::Left => 0.,
+                                TextAlign::Center => (rect.width - width) * 0.5,
+                                TextAlign::Right => rect.width - width,
+                            };
+                        let baseline = top + line_number as f32 * line_height + ascent;
+                        for ch in line.chars() {
+                            let glyph = self.glyph(queue, ch, px);
+                            if !glyph.source.is_empty() {
+                                let bounds = Rect::new(
+                                    (x + glyph.offset[0]).round(),
+                                    (baseline + glyph.offset[1]).round(),
+                                    glyph.source.width,
+                                    glyph.source.height,
+                                );
+                                let atlas = GLYPH_ATLAS_SIZE as f32;
+                                self.quad(
+                                    &mut vertices,
+                                    bounds,
+                                    *clip,
+                                    [
+                                        glyph.source.x / atlas,
+                                        glyph.source.y / atlas,
+                                        glyph.source.right() / atlas,
+                                        glyph.source.bottom() / atlas,
+                                    ],
+                                    *color,
+                                    1,
+                                    size,
+                                );
+                            }
+                            x += glyph.advance;
+                        }
+                    }
+                }
+            }
+        }
+        if !vertices.is_empty() {
+            self.vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("UI vertices"),
+                contents: bytemuck::cast_slice(&vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        }
+    }
+
+    pub fn render(&self, pass: &mut wgpu::RenderPass<'_>) {
+        if self.batches.is_empty() {
+            return;
+        }
+        pass.set_pipeline(&self.pipeline);
+        pass.set_vertex_buffer(0, self.vertices.slice(..));
+        for batch in &self.batches {
+            let [x, y, width, height] = batch.clip;
+            pass.set_scissor_rect(x, y, width, height);
+            pass.set_bind_group(0, &self.textures[batch.texture].bind_group, &[]);
+            pass.draw(batch.vertices.clone(), 0..1);
+        }
+    }
+
+    fn load_texture(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, path: &Path) -> usize {
+        if let Some(id) = self.texture_ids.get(path) {
+            return *id;
+        }
+        let loaded = std::fs::read(path)
+            .map_err(|error| error.to_string())
+            .and_then(|bytes| {
+                // Some files named .tga contain DDS. Sniff known formats first;
+                // true TGA has no magic number, so use the extension as fallback.
+                openeq_assets::texture::Texture::decode(&path.to_string_lossy(), &bytes)
+                    .map(|texture| (texture.width, texture.height, texture.rgba))
+                    .or_else(|_| {
+                        image::load_from_memory_with_format(&bytes, image::ImageFormat::Tga)
+                            .map(|image| {
+                                let image = image.to_rgba8();
+                                (image.width(), image.height(), image.into_raw())
+                            })
+                            .map_err(|error| error.to_string())
+                    })
+            });
+        let id = match loaded {
+            Ok((width, height, rgba))
+                if width > 0
+                    && height > 0
+                    && width <= device.limits().max_texture_dimension_2d
+                    && height <= device.limits().max_texture_dimension_2d =>
+            {
+                let id = self.textures.len();
+                self.textures.push(texture(
+                    device,
+                    queue,
+                    &self.layout,
+                    &self.sampler,
+                    &path.to_string_lossy(),
+                    [width, height],
+                    &rgba,
+                ));
+                id
+            }
+            Ok(_) => {
+                tracing::warn!(path = %path.display(), "invalid UI texture dimensions");
+                0
+            }
+            Err(error) => {
+                tracing::warn!(path = %path.display(), %error, "could not load UI texture");
+                0
+            }
+        };
+        self.texture_ids.insert(path.to_owned(), id);
+        id
+    }
+
+    fn text_width(&self, text: &str, px: u32) -> f32 {
+        text.chars().map(|ch| self.advance(ch, px)).sum()
+    }
+    fn advance(&self, ch: char, px: u32) -> f32 {
+        self.font.as_ref().map_or(px as f32 * 0.75, |font| {
+            font.metrics(ch, px as f32).advance_width
+        })
+    }
+    fn text_lines(&self, text: &str, px: u32, max_width: Option<f32>) -> Vec<String> {
+        let mut lines = Vec::new();
+        for paragraph in text.split('\n') {
+            let Some(limit) = max_width else {
+                lines.push(paragraph.to_owned());
+                continue;
+            };
+            let mut line = String::new();
+            for word in paragraph.split_inclusive(' ') {
+                if !line.is_empty()
+                    && self.text_width(&line, px) + self.text_width(word.trim_end(), px) > limit
+                {
+                    lines.push(line.trim_end().to_owned());
+                    line.clear();
+                }
+                // Very long tokens are broken at characters to honor the clip.
+                for ch in word.chars() {
+                    if !line.is_empty() && self.text_width(&line, px) + self.advance(ch, px) > limit
+                    {
+                        lines.push(std::mem::take(&mut line));
+                    }
+                    line.push(ch);
+                }
+            }
+            lines.push(line.trim_end().to_owned());
+        }
+        lines
+    }
+
+    fn glyph(&mut self, queue: &wgpu::Queue, ch: char, px: u32) -> Glyph {
+        if let Some(glyph) = self.glyphs.get(&(ch, px)) {
+            return *glyph;
+        }
+        let (width, height, offset, advance, coverage) = if let Some(font) = &self.font {
+            let (metrics, coverage) = font.rasterize(ch, px as f32);
+            (
+                metrics.width as u32,
+                metrics.height as u32,
+                [
+                    metrics.xmin as f32,
+                    -(metrics.height as f32 + metrics.ymin as f32),
+                ],
+                metrics.advance_width,
+                coverage,
+            )
+        } else {
+            let bitmap = font8x8::BASIC_FONTS
+                .get(ch)
+                .or_else(|| font8x8::BASIC_FONTS.get('?'))
+                .unwrap_or([0; 8]);
+            let width = (px * 3 / 4).max(8);
+            let height = px.max(8);
+            let mut coverage = Vec::with_capacity((width * height) as usize);
+            for y in 0..height {
+                for x in 0..width {
+                    coverage.push(
+                        if bitmap[(y * 8 / height) as usize] & (1 << (x * 8 / width)) != 0 {
+                            255
+                        } else {
+                            0
+                        },
+                    );
+                }
+            }
+            (
+                width,
+                height,
+                [0., -(height as f32)],
+                width as f32,
+                coverage,
+            )
+        };
+        if width == 0 || height == 0 {
+            let glyph = Glyph {
+                source: Rect::default(),
+                offset,
+                advance,
+            };
+            self.glyphs.insert((ch, px), glyph);
+            return glyph;
+        }
+        if self.glyph_cursor[0] + width + 1 > GLYPH_ATLAS_SIZE {
+            self.glyph_cursor[0] = 1;
+            self.glyph_cursor[1] += self.glyph_row_height + 2;
+            self.glyph_row_height = 0;
+        }
+        if self.glyph_cursor[1] + height + 1 > GLYPH_ATLAS_SIZE {
+            // Keep prior frame UVs valid. This atlas holds thousands of typical
+            // UI glyphs; avoid overwriting it if a very large alphabet fills it.
+            return Glyph {
+                source: Rect::default(),
+                offset,
+                advance,
+            };
+        }
+        let [x, y] = self.glyph_cursor;
+        let mut rgba = Vec::with_capacity(coverage.len() * 4);
+        for alpha in coverage {
+            rgba.extend_from_slice(&[255, 255, 255, alpha]);
+        }
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.textures[1]._texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x, y, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.glyph_cursor[0] += width + 2;
+        self.glyph_row_height = self.glyph_row_height.max(height);
+        let glyph = Glyph {
+            source: Rect::new(x as f32, y as f32, width as f32, height as f32),
+            offset,
+            advance,
+        };
+        self.glyphs.insert((ch, px), glyph);
+        glyph
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn quad(
+        &mut self,
+        vertices: &mut Vec<Vertex>,
+        rect: Rect,
+        clip: Rect,
+        uv: [f32; 4],
+        color: Color,
+        texture: usize,
+        size: [u32; 2],
+    ) {
+        let Some(scissor) = scissor(clip, size) else {
+            return;
+        };
+        if rect.is_empty() || color[3] == 0 {
+            return;
+        }
+        let x0 = rect.x / size[0] as f32 * 2. - 1.;
+        let x1 = rect.right() / size[0] as f32 * 2. - 1.;
+        let y0 = 1. - rect.y / size[1] as f32 * 2.;
+        let y1 = 1. - rect.bottom() / size[1] as f32 * 2.;
+        // Image textures are sRGB; vertex colors must enter the shader in linear
+        // space as well or UI tints become washed out on an sRGB surface.
+        let color = [
+            linear(color[0]),
+            linear(color[1]),
+            linear(color[2]),
+            color[3] as f32 / 255.,
+        ];
+        let [u0, v0, u1, v1] = uv;
+        let begin = vertices.len() as u32;
+        for (position, uv) in [
+            ([x0, y0], [u0, v0]),
+            ([x0, y1], [u0, v1]),
+            ([x1, y0], [u1, v0]),
+            ([x1, y0], [u1, v0]),
+            ([x0, y1], [u0, v1]),
+            ([x1, y1], [u1, v1]),
+        ] {
+            vertices.push(Vertex {
+                position,
+                uv,
+                color,
+            });
+        }
+        let end = vertices.len() as u32;
+        if let Some(batch) = self
+            .batches
+            .last_mut()
+            .filter(|batch| batch.texture == texture && batch.clip == scissor)
+        {
+            batch.vertices.end = end;
+        } else {
+            self.batches.push(Batch {
+                texture,
+                clip: scissor,
+                vertices: begin..end,
+            });
+        }
+    }
+}
+
+fn texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    label: &str,
+    size: [u32; 2],
+    rgba: &[u8],
+) -> Texture {
+    let [width, height] = size;
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        rgba,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(width * 4),
+            rows_per_image: Some(height),
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    let view = texture.create_view(&Default::default());
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some(label),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    });
+    Texture {
+        bind_group,
+        size,
+        _texture: texture,
+    }
+}
+
+fn font_size(eq_font: u32) -> u32 {
+    [10, 11, 12, 14, 16, 20, 24, 28][eq_font.min(7) as usize]
+}
+fn linear(value: u8) -> f32 {
+    let value = value as f32 / 255.;
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
+}
+fn scissor(rect: Rect, size: [u32; 2]) -> Option<[u32; 4]> {
+    if ![rect.x, rect.y, rect.width, rect.height]
+        .iter()
+        .all(|v| v.is_finite())
+    {
+        return None;
+    }
+    let x = rect.x.floor().clamp(0., size[0] as f32) as u32;
+    let y = rect.y.floor().clamp(0., size[1] as f32) as u32;
+    let right = rect.right().ceil().clamp(0., size[0] as f32) as u32;
+    let bottom = rect.bottom().ceil().clamp(0., size[1] as f32) as u32;
+    if right <= x || bottom <= y {
+        None
+    } else {
+        Some([x, y, right - x, bottom - y])
+    }
+}
+fn load_font() -> Option<fontdue::Font> {
+    let mut paths = Vec::new();
+    if let Some(path) = std::env::var_os("OPENEQ_UI_FONT") {
+        paths.push(PathBuf::from(path));
+    }
+    paths.extend(
+        [
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+            "C:\\Windows\\Fonts\\arial.ttf",
+        ]
+        .map(PathBuf::from),
+    );
+    paths.into_iter().find_map(|path| {
+        std::fs::read(&path).ok().and_then(|bytes| {
+            fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()).ok()
+        })
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn draw(renderer: &mut crate::Renderer, frame: &UiFrame) -> Vec<u8> {
+        let mut ui = UiRenderer::new(&renderer.device, &renderer.queue, renderer.config.format);
+        ui.prepare(
+            &renderer.device,
+            &renderer.queue,
+            frame,
+            [renderer.width, renderer.height],
+        );
+        let mut encoder = renderer.device.create_command_encoder(&Default::default());
+        let crate::Target::Offscreen { view, .. } = &renderer.target else {
+            panic!("headless target required")
+        };
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("UI test"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            ui.render(&mut pass);
+        }
+        renderer.queue.submit(Some(encoder.finish()));
+        renderer.read_rgba().unwrap().2
+    }
+
+    #[test]
+    fn clips_alpha_blended_quads_and_renders_text_on_gpu() {
+        let Ok(mut renderer) = crate::Renderer::new_headless(128, 64) else {
+            return;
+        };
+        let frame = UiFrame {
+            commands: vec![
+                DrawCommand::Fill {
+                    rect: Rect::new(0., 0., 64., 64.),
+                    clip: Rect::new(4., 8., 20., 16.),
+                    color: [255, 0, 0, 255],
+                },
+                DrawCommand::Fill {
+                    rect: Rect::new(8., 8., 8., 8.),
+                    clip: Rect::new(0., 0., 64., 64.),
+                    color: [0, 255, 0, 128],
+                },
+                DrawCommand::Text {
+                    rect: Rect::new(68., 0., 60., 40.),
+                    clip: Rect::new(68., 0., 60., 40.),
+                    text: "OpenEQ".into(),
+                    font: 3,
+                    color: [255; 4],
+                    align: TextAlign::Left,
+                    vertical_center: false,
+                    wrap: false,
+                },
+            ],
+            ..Default::default()
+        };
+        let pixels = draw(&mut renderer, &frame);
+        let pixel = |x: usize, y: usize| &pixels[(y * 128 + x) * 4..(y * 128 + x) * 4 + 3];
+        assert_eq!(pixel(3, 10), &[0, 0, 0]);
+        assert_eq!(pixel(4, 10), &[255, 0, 0]);
+        assert_eq!(pixel(24, 10), &[0, 0, 0]);
+        let blended = pixel(10, 10);
+        assert!(
+            (180..=195).contains(&blended[0])
+                && (180..=195).contains(&blended[1])
+                && blended[2] == 0,
+            "linear alpha blending on sRGB target: {blended:?}"
+        );
+        assert!(
+            pixels
+                .chunks_exact(4)
+                .enumerate()
+                .filter(|(i, p)| i % 128 >= 68 && p[0] > 20)
+                .count()
+                > 50,
+            "text should produce visible glyphs"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires original client UI assets and GPU; optionally set OPENEQ_UI_CAPTURE_DIR"]
+    fn renders_actual_login_and_player_xml() {
+        let directory = std::env::var_os("EQ_UI_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                PathBuf::from(std::env::var_os("HOME").unwrap()).join("EverQuest/uifiles/default")
+            });
+        for (entry, window, size, filename) in [
+            ("EQLSUI.xml", "connect", [640, 480], "openeq-xml-login.png"),
+            (
+                "EQUI.xml",
+                "PlayerWindow",
+                [320, 160],
+                "openeq-xml-player.png",
+            ),
+        ] {
+            let document = openeq_ui::UiDocument::load(&directory, entry).unwrap();
+            let mut bindings = openeq_ui::UiBindings::default();
+            bindings.widget_mut("UsernameEdit").text = Some("OpenEQ".into());
+            bindings.widget_mut("Player_HP").text = Some("Adventurer".into());
+            bindings
+                .eq_gauges
+                .extend([("1".into(), 0.73), ("2".into(), 0.85), ("3".into(), 1.)]);
+            bindings.eq_text.extend([
+                ("19".into(), "73".into()),
+                ("20".into(), "85".into()),
+                ("21".into(), "100".into()),
+            ]);
+            let frame = document
+                .window(window)
+                .unwrap()
+                .layout(Rect::new(0., 0., size[0] as f32, size[1] as f32), &bindings);
+            let mut renderer = crate::Renderer::new_headless(size[0], size[1]).unwrap();
+            let pixels = draw(&mut renderer, &frame);
+            assert!(
+                pixels
+                    .chunks_exact(4)
+                    .filter(|p| p[0] > 10 || p[1] > 10 || p[2] > 10)
+                    .count()
+                    > 2000
+            );
+            if let Some(destination) = std::env::var_os("OPENEQ_UI_CAPTURE_DIR") {
+                let path = PathBuf::from(destination).join(filename);
+                image::save_buffer(&path, &pixels, size[0], size[1], image::ColorType::Rgba8)
+                    .unwrap();
+                eprintln!("wrote {}", path.display());
+            }
+        }
+    }
+}

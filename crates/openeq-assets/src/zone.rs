@@ -112,7 +112,7 @@ impl ZoneFile {
             });
         }
         let version = reader.u32()?;
-        if version != 1 {
+        if !(1..=2).contains(&version) {
             return Err(Error::Format(format!("unsupported .zon version {version}")));
         }
         let string_size = reader.bounded_count()?;
@@ -146,6 +146,16 @@ impl ZoneFile {
             let raw_rotation = reader.vec3()?;
             let rotation = [raw_rotation[2], raw_rotation[1], raw_rotation[0]];
             let scale = reader.f32()?;
+            if version >= 2 {
+                // Per-instance lighting data. Preserve stream alignment even
+                // though the renderer currently uses dynamic zone lighting.
+                let lighting_count = reader.bounded_count()?;
+                reader.skip(
+                    lighting_count
+                        .checked_mul(4)
+                        .ok_or_else(|| Error::Format(".zon lighting length overflow".into()))?,
+                )?;
+            }
             placeables.push(Placeable {
                 object_id,
                 name,
@@ -250,9 +260,12 @@ impl TerMod {
             positions.push(reader.vec3()?);
             normals.push(reader.vec3()?);
             if has_extra {
-                reader.skip(12)?;
+                reader.u32()?; // Packed vertex color.
             }
             tex_coords.push(reader.vec2()?);
+            if has_extra {
+                reader.skip(8)?; // Secondary coverage/detail UV set.
+            }
         }
 
         let mut polygons = Vec::with_capacity(polygon_count);

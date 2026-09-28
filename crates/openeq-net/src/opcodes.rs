@@ -16,6 +16,7 @@ pub enum SessionOp {
     Fragment = 0x000D,
     OutOfOrder = 0x0011,
     Ack = 0x0015,
+    OutOfSession = 0x001D,
 }
 
 impl SessionOp {
@@ -32,6 +33,7 @@ impl SessionOp {
             0x000D => SessionOp::Fragment,
             0x0011 => SessionOp::OutOfOrder,
             0x0015 => SessionOp::Ack,
+            0x001D => SessionOp::OutOfSession,
             _ => return None,
         })
     }

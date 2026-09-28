@@ -5,6 +5,7 @@ members = [
     "crates/openeq-net",
     "crates/openeq-render",
     "crates/openeq",
+    "crates/openeq-ui",
 ]
 
 [workspace.package]

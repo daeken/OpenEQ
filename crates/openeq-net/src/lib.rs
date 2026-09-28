@@ -30,3 +30,6 @@ pub use crypto::{decrypt, encrypt};
 pub use opcodes::{LoginOp, SessionOp, WorldOp, ZoneOp};
 pub use packet::{AppPacket, crc16};
 pub use stream::{EqStream, StreamError};
+
+pub mod session;
+pub mod zone;

@@ -9,6 +9,11 @@
 //! openeq akanon --dir /path/to/EverQuest --pos 100,-200,20
 //! ```
 
+mod hud;
+mod live;
+mod movement;
+use openeq_net::session::ConnectionConfig;
+use openeq_render::actors::ActorRenderer;
 use std::path::PathBuf;
 
 use bevy::ecs::system::NonSendMarker;
@@ -32,6 +37,7 @@ struct Options {
     zone: String,
     dir: PathBuf,
     position: Option<[f32; 3]>,
+    connection: Option<ConnectionConfig>,
 }
 
 /// Everything that must exist before the first frame can be drawn.
@@ -42,8 +48,16 @@ struct Runtime {
     scene: Option<GpuScene>,
     camera: Camera,
     size: (u32, u32),
-    /// Frames spent waiting for the window to exist.
-    attempts: u32,
+    live: Option<live::LiveWorld>,
+    actors: Option<ActorRenderer>,
+    started: std::time::Instant,
+    hud: Option<hud::Hud>,
+    ui_frame: openeq_ui::UiFrame,
+    atmosphere_zone: Option<(String, u8)>,
+    moving: bool,
+    collision: Option<openeq_assets::collision::CollisionWorld>,
+    fly: bool,
+    ground_motion: movement::GroundMotion,
 }
 
 impl Runtime {
@@ -54,7 +68,16 @@ impl Runtime {
             scene: None,
             camera,
             size: (0, 0),
-            attempts: 0,
+            live: None,
+            actors: None,
+            started: std::time::Instant::now(),
+            hud: None,
+            ui_frame: openeq_ui::UiFrame::default(),
+            atmosphere_zone: None,
+            moving: false,
+            collision: None,
+            fly: true,
+            ground_motion: movement::GroundMotion::default(),
         }
     }
 }
@@ -73,6 +96,12 @@ fn main() -> AppExit {
         ..Default::default()
     };
 
+    let mut runtime = Runtime::new(camera);
+    if let Some(config) = options.connection.clone() {
+        runtime.live = Some(live::LiveWorld::start(config));
+        runtime.fly = false;
+    }
+
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
@@ -82,10 +111,13 @@ fn main() -> AppExit {
             ..default()
         }))
         .insert_resource(WinitSettings::game())
-        .insert_resource(Runtime::new(camera))
+        .insert_resource(runtime)
         .insert_resource(options)
         // Capture runs first so the camera sees this frame's grab state.
-        .add_systems(Update, (handle_cursor_capture, update_camera).chain())
+        .add_systems(
+            Update,
+            (handle_targeting, handle_cursor_capture, update_camera).chain(),
+        )
         .add_systems(Last, render_frame)
         .run()
 }
@@ -95,9 +127,16 @@ fn parse_args() -> anyhow::Result<Options> {
     let mut zone = None;
     let mut dir = None;
     let mut position = None;
+    let mut connection = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--connect" => {
+                let path = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--connect needs a config file"))?;
+                connection = Some(ConnectionConfig::load(std::path::Path::new(&path))?);
+            }
             "--dir" => dir = args.next().map(PathBuf::from),
             "--pos" => {
                 position = args.next().and_then(|value| {
@@ -109,7 +148,7 @@ fn parse_args() -> anyhow::Result<Options> {
                 })
             }
             "-h" | "--help" => {
-                println!("usage: openeq <zone> [--dir DIR] [--pos X,Y,Z]");
+                println!("usage: openeq [zone] [--dir DIR] [--pos X,Y,Z] [--connect CONFIG]");
                 std::process::exit(0);
             }
             other if zone.is_none() => zone = Some(other.to_string()),
@@ -117,10 +156,12 @@ fn parse_args() -> anyhow::Result<Options> {
         }
     }
 
-    let zone = zone.unwrap_or_else(|| {
-        eprintln!("usage: openeq <zone> [--dir DIR] [--pos X,Y,Z]");
-        std::process::exit(2);
-    });
+    let zone = zone
+        .or_else(|| connection.as_ref().map(|_| "poknowledge".to_string()))
+        .unwrap_or_else(|| {
+            eprintln!("usage: openeq [zone] [--dir DIR] [--pos X,Y,Z] [--connect CONFIG]");
+            std::process::exit(2);
+        });
     let dir = match dir.or_else(loader::default_client_dir) {
         Some(dir) => dir,
         None => anyhow::bail!("no client directory; pass --dir"),
@@ -129,6 +170,7 @@ fn parse_args() -> anyhow::Result<Options> {
         zone,
         dir,
         position,
+        connection,
     })
 }
 
@@ -143,7 +185,13 @@ fn update_camera(
     cursors: Query<&CursorOptions, With<PrimaryWindow>>,
     mut runtime: ResMut<Runtime>,
 ) {
-    let camera = &mut runtime.camera;
+    runtime.moving = false;
+    let online = runtime.live.is_some();
+    if online && keys.just_pressed(KeyCode::KeyF) {
+        runtime.fly = !runtime.fly;
+        runtime.ground_motion = movement::GroundMotion::default();
+    }
+    let mut camera = runtime.camera;
 
     let captured = cursors.single().map(is_captured).unwrap_or(false);
     let delta = if captured { motion.delta } else { Vec2::ZERO };
@@ -178,27 +226,51 @@ fn update_camera(
     if keys.pressed(KeyCode::ControlLeft) {
         lift -= 1.0;
     }
-    if forward == 0.0 && strafe == 0.0 && lift == 0.0 {
-        return;
-    }
+    let horizontal_length = (forward * forward + strafe * strafe).sqrt().max(1.);
+    forward /= horizontal_length;
+    strafe /= horizontal_length;
+    let dt = time.delta_secs().min(0.25);
 
     // Movement is applied in EverQuest space so the camera maths stays simple.
     let (sin_yaw, cos_yaw) = camera.yaw.sin_cos();
     let heading = [sin_yaw, cos_yaw];
     let right = [cos_yaw, -sin_yaw];
-    let speed = MOVE_SPEED
+    let speed = if online { 40.0 } else { MOVE_SPEED }
         * if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
-            RUN_MULTIPLIER
+            if online { 1.5 } else { RUN_MULTIPLIER }
         } else {
             1.0
-        }
-        * time.delta_secs();
+        };
 
+    let velocity_xy = [
+        (heading[0] * forward + right[0] * strafe) * speed,
+        (heading[1] * forward + right[1] * strafe) * speed,
+    ];
     let mut position = camera.position;
-    position[0] += (heading[0] * forward + right[0] * strafe) * speed;
-    position[1] += (heading[1] * forward + right[1] * strafe) * speed;
-    position[2] += lift * speed;
+    position[0] += velocity_xy[0] * dt;
+    position[1] += velocity_xy[1] * dt;
+    if runtime.fly || runtime.collision.is_none() {
+        position[2] += lift * speed * dt;
+    } else {
+        let feet = [
+            camera.position[0],
+            camera.position[1],
+            camera.position[2] - 6.,
+        ];
+        let mut motion = std::mem::take(&mut runtime.ground_motion);
+        let moved = motion.step(
+            runtime.collision.as_ref().unwrap(),
+            feet,
+            velocity_xy,
+            keys.just_pressed(KeyCode::Space),
+            dt,
+        );
+        runtime.ground_motion = motion;
+        position = [moved[0], moved[1], moved[2] + 6.];
+    }
+    runtime.moving = forward != 0. || strafe != 0.;
     camera.position = position;
+    runtime.camera = camera;
 }
 
 /// Click to capture the cursor, `Escape` to release, `Escape` again to quit.
@@ -211,6 +283,7 @@ fn handle_cursor_capture(
     keys: Res<ButtonInput<KeyCode>>,
     mut focus: MessageReader<WindowFocused>,
     mut exit: MessageWriter<AppExit>,
+    runtime: Res<Runtime>,
 ) {
     let Ok((entity, mut cursor)) = cursors.single_mut() else {
         return;
@@ -224,7 +297,10 @@ fn handle_cursor_capture(
         }
     }
 
-    if mouse.just_pressed(MouseButton::Left) && !captured {
+    if (mouse.just_pressed(MouseButton::Right)
+        || (runtime.live.is_none() && mouse.just_pressed(MouseButton::Left)))
+        && !captured
+    {
         cursor.visible = false;
         cursor.grab_mode = CursorGrabMode::Locked;
         tracing::debug!("cursor captured; escape releases it");
@@ -263,20 +339,25 @@ fn render_frame(
         return;
     };
 
+    if let Some(live) = runtime.live.as_mut() {
+        live.poll();
+    }
+    if runtime.renderer.is_none() && runtime.live.as_ref().is_some_and(|live| !live.ready) {
+        if let Some(error) = runtime.live.as_ref().and_then(|live| live.error.as_ref()) {
+            eprintln!("Unable to enter world: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if runtime.renderer.is_none() {
-        // The winit window is created during the first event-loop resume, which
-        // can land after the first update; retry until it exists.
-        match initialise(&mut runtime, window_entity, &options) {
-            Ok(()) => {}
-            Err(error) => {
-                runtime.attempts += 1;
-                if runtime.attempts > 600 {
-                    tracing::error!(%error, "renderer initialisation failed");
-                    std::process::exit(1);
-                }
-                tracing::debug!(%error, attempt = runtime.attempts, "waiting for the window");
-                return;
-            }
+        let window_ready =
+            WINIT_WINDOWS.with(|cell| cell.borrow().get_window(window_entity).is_some());
+        if !window_ready {
+            return;
+        }
+        if let Err(error) = initialise(&mut runtime, window_entity, &options) {
+            tracing::error!(%error, "renderer or asset initialization failed");
+            std::process::exit(1);
         }
     }
 
@@ -284,20 +365,102 @@ fn render_frame(
         return;
     };
     let size = (window.physical_width(), window.physical_height());
-    if size.0 > 0 && size.1 > 0 && size != runtime.size {
-        if let Some(renderer) = runtime.renderer.as_mut() {
-            renderer.resize(size.0, size.1);
-            runtime.size = size;
-            tracing::debug!(width = size.0, height = size.1, "resized");
-        }
+    if size.0 > 0
+        && size.1 > 0
+        && size != runtime.size
+        && let Some(renderer) = runtime.renderer.as_mut()
+    {
+        renderer.resize(size.0, size.1);
+        runtime.size = size;
+        tracing::debug!(width = size.0, height = size.1, "resized");
     }
 
+    if let Some(live) = runtime.live.as_mut() {
+        live.poll();
+        if let Some(position) = live.initial_position.take() {
+            runtime.camera.position = [position.x, position.y, position.z + 3.];
+            runtime.camera.yaw = position.heading * std::f32::consts::TAU / 512.;
+            runtime.ground_motion = movement::GroundMotion::default();
+        }
+    }
     // `Camera` is `Copy`, and the renderer is taken out and put back so the
     // borrow checker can see the two accesses as disjoint.
     let camera = runtime.camera;
     if let Some(mut renderer) = runtime.renderer.take() {
+        if let Some(live) = runtime.live.as_ref() {
+            live.camera_position(&camera, runtime.moving);
+        }
+        if let Some(live) = &runtime.live
+            && let Some(env) = &live.environment
+        {
+            let desired = (env.short_name.clone(), live.hour);
+            if runtime.atmosphere_zone.as_ref() != Some(&desired) {
+                let settings = openeq_render::environment::EnvironmentSettings {
+                    fog_color: env.fog_color[0],
+                    fog_start: env.fog_start[0],
+                    fog_end: env.fog_end[0],
+                    fog_density: env.fog_density,
+                    fog_enabled: env.fog_end[0] > env.fog_start[0],
+                    sky_enabled: !matches!(env.zone_type, 0 | 3 | 4) && env.sky != 0,
+                    ..Default::default()
+                };
+                let sky = openeq_assets::environment::load_sky(
+                    &options.dir,
+                    &env.short_name,
+                    (live.hour as f32 + live.minute as f32 / 60.) / 24.,
+                )
+                .ok();
+                renderer.set_environment(settings, sky.as_ref());
+                runtime.atmosphere_zone = Some(desired);
+            }
+        }
+        let states = runtime
+            .live
+            .as_ref()
+            .map(|live| live.actors(camera.position));
+        let elapsed = runtime.started.elapsed().as_secs_f32();
+        if let (Some(actors), Some(states)) = (runtime.actors.as_mut(), states) {
+            actors.update(&renderer, &states, elapsed);
+        }
+        if let (Some(hud), Some(live)) = (&runtime.hud, &runtime.live) {
+            let player = live.own_id.and_then(|id| live.entities.get(&id));
+            let target =
+                live.target
+                    .and_then(|id| live.entities.get(&id))
+                    .map(|e| hud::HudTarget {
+                        name: display_name(&e.spawn.name),
+                        hp: e.spawn.hp_percent as f32 / 100.,
+                        level: e.spawn.level,
+                    });
+            let state = hud::HudState {
+                character: live.character.clone(),
+                player_level: player.map_or(0, |e| e.spawn.level),
+                hp: player.map_or(0., |e| e.spawn.hp_percent as f32 / 100.),
+                mana: None,
+                endurance: None,
+                target,
+                status: live.error.clone().unwrap_or_else(|| {
+                    if live.ready {
+                        "Connected • Tab selects an NPC • Right-click to look".into()
+                    } else {
+                        "Connecting to world…".into()
+                    }
+                }),
+                entities: live.entities.len(),
+                movement_updates: live.moves,
+            };
+            let mut frame = hud.frame([size.0, size.1], &state);
+            add_nameplates(&mut frame, live, &camera, [size.0, size.1]);
+            renderer.set_ui(&frame);
+            runtime.ui_frame = frame;
+        }
         if let Some(scene) = runtime.scene.as_ref() {
-            renderer.render(scene, &camera);
+            let actors = runtime
+                .actors
+                .as_ref()
+                .map(|a| a.draws())
+                .unwrap_or_default();
+            renderer.render_with_actors(scene, &camera, &actors);
         }
         runtime.renderer = Some(renderer);
     }
@@ -338,9 +501,15 @@ fn initialise(
     let mut renderer =
         pollster::block_on(Renderer::new_surface(&instance, surface, width, height))?;
 
-    tracing::info!(zone = %options.zone, dir = %options.dir.display(), "loading zone");
+    let zone = runtime
+        .live
+        .as_ref()
+        .and_then(|live| live.environment.as_ref())
+        .map_or(options.zone.as_str(), |env| env.short_name.as_str())
+        .to_owned();
+    tracing::info!(zone = %zone, dir = %options.dir.display(), "loading zone");
     let started = std::time::Instant::now();
-    let scene = loader::load_zone(&options.dir, &options.zone)?;
+    let scene = loader::load_zone(&options.dir, &zone)?;
     tracing::info!(
         materials = scene.materials.len(),
         triangles = scene.triangle_count(),
@@ -350,8 +519,23 @@ fn initialise(
         "zone loaded"
     );
 
+    if runtime.live.is_some() {
+        runtime.collision = Some(openeq_assets::collision::CollisionWorld::build(&scene));
+    }
     let gpu_scene = GpuScene::build(renderer.device(), renderer.queue(), &scene)?;
     renderer.set_scene(&gpu_scene);
+    if let Ok(sky) = openeq_assets::environment::load_sky(&options.dir, &zone, 0.5) {
+        renderer.set_environment(
+            openeq_render::environment::EnvironmentSettings::for_zone(&zone),
+            Some(&sky),
+        );
+    }
+    if runtime.live.is_some() {
+        match hud::Hud::load(&options.dir) {
+            Ok(hud) => runtime.hud = Some(hud),
+            Err(error) => tracing::warn!(%error, "XML HUD unavailable"),
+        }
+    }
 
     // Drop the camera into the middle of the zone unless the user said otherwise.
     if options.position.is_none() {
@@ -361,6 +545,149 @@ fn initialise(
     runtime.size = (width, height);
     runtime.instance = Some(instance);
     runtime.scene = Some(gpu_scene);
+    if runtime.live.is_some() {
+        runtime.actors = Some(ActorRenderer::load(&options.dir, &zone)?);
+    }
     runtime.renderer = Some(renderer);
     Ok(())
+}
+
+fn display_name(name: &str) -> String {
+    name.trim_end_matches(|c: char| c.is_ascii_digit())
+        .replace('_', " ")
+        .trim_start_matches('#')
+        .to_owned()
+}
+
+fn add_nameplates(
+    frame: &mut openeq_ui::UiFrame,
+    live: &live::LiveWorld,
+    camera: &Camera,
+    size: [u32; 2],
+) {
+    let matrix = camera.view_projection(size[0] as f32 / size[1].max(1) as f32, 0.2, 20000.);
+    let viewport = openeq_ui::Rect::new(0., 0., size[0] as f32, size[1] as f32);
+    let mut labels = Vec::new();
+    for entity in live.entities.values() {
+        let spawn = &entity.spawn;
+        if !spawn.npc || spawn.race == 127 || spawn.body_type >= 66 {
+            continue;
+        }
+        let p = entity.position(std::time::Instant::now());
+        let distance: f32 = p
+            .iter()
+            .zip(camera.position)
+            .map(|(a, b)| (a - b).powi(2))
+            .sum();
+        if distance > 180. * 180. {
+            continue;
+        }
+        let world = Camera::to_world([p[0], p[1], p[2] + spawn.size * 0.65]);
+        let clip = matrix * world.extend(1.);
+        if clip.w <= 0. {
+            continue;
+        }
+        let ndc = clip.truncate() / clip.w;
+        if ndc.x.abs() > 1. || ndc.y.abs() > 1. || ndc.z < 0. {
+            continue;
+        }
+        let rect = openeq_ui::Rect::new(
+            (ndc.x * 0.5 + 0.5) * size[0] as f32 - 110.,
+            (0.5 - ndc.y * 0.5) * size[1] as f32 - 16.,
+            220.,
+            20.,
+        );
+        let color = if live.target == Some(spawn.id) {
+            [255, 230, 100, 255]
+        } else {
+            [190, 235, 245, 255]
+        };
+        labels.push(openeq_ui::DrawCommand::Text {
+            rect,
+            clip: viewport,
+            text: display_name(&spawn.name),
+            font: 2,
+            color,
+            align: openeq_ui::TextAlign::Center,
+            vertical_center: true,
+            wrap: false,
+        });
+    }
+    labels.append(&mut frame.commands);
+    frame.commands = labels;
+}
+
+fn handle_targeting(
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    windows: Query<(&Window, &CursorOptions), With<PrimaryWindow>>,
+    mut runtime: ResMut<Runtime>,
+) {
+    let Ok((window, cursor)) = windows.single() else {
+        return;
+    };
+    let camera = runtime.camera;
+    let point = window
+        .cursor_position()
+        .map(|p| [p.x * window.scale_factor(), p.y * window.scale_factor()]);
+    let ui_hit = point.is_some_and(|p| runtime.ui_frame.hit_test(p).is_some());
+    let Some(live) = runtime.live.as_mut() else {
+        return;
+    };
+    if keys.just_pressed(KeyCode::Tab) {
+        let mut nearby: Vec<_> = live
+            .entities
+            .values()
+            .filter(|e| e.spawn.npc && e.spawn.race != 127 && e.spawn.body_type < 66)
+            .map(|e| {
+                let p = e.position(std::time::Instant::now());
+                (
+                    e.spawn.id,
+                    p.iter()
+                        .zip(camera.position)
+                        .map(|(a, b)| (a - b).powi(2))
+                        .sum::<f32>(),
+                )
+            })
+            .filter(|(_, d)| *d < 250. * 250.)
+            .collect();
+        nearby.sort_by(|a, b| a.1.total_cmp(&b.1));
+        let next = live
+            .target
+            .and_then(|id| nearby.iter().position(|e| e.0 == id))
+            .map_or(0, |i| i + 1);
+        if !nearby.is_empty() {
+            live.set_target(Some(nearby[next % nearby.len()].0));
+        }
+    }
+    if mouse.just_pressed(MouseButton::Left)
+        && !is_captured(cursor)
+        && !ui_hit
+        && let Some(point) = point
+    {
+        let size = [
+            window.physical_width() as f32,
+            window.physical_height() as f32,
+        ];
+        let matrix = camera.view_projection(size[0] / size[1].max(1.), 0.2, 20000.);
+        let target = live
+            .entities
+            .values()
+            .filter(|e| e.spawn.npc && e.spawn.race != 127 && e.spawn.body_type < 66)
+            .filter_map(|e| {
+                let p = e.position(std::time::Instant::now());
+                let clip = matrix * Camera::to_world(p).extend(1.);
+                if clip.w <= 0. || clip.w > 250. {
+                    return None;
+                }
+                let ndc = clip.truncate() / clip.w;
+                let screen = [(ndc.x * 0.5 + 0.5) * size[0], (0.5 - ndc.y * 0.5) * size[1]];
+                let radius = (e.spawn.size * size[1] / clip.w).clamp(16., 100.);
+                let dist = (screen[0] - point[0]).powi(2) + (screen[1] - point[1]).powi(2);
+                (dist < radius * radius).then_some((e.spawn.id, dist))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|v| v.0);
+        live.set_target(target);
+    }
 }

@@ -100,6 +100,9 @@ fn main() -> anyhow::Result<()> {
     );
 
     let mut renderer = Renderer::new_headless(width, height)?;
+    let settings = openeq_render::environment::EnvironmentSettings::for_zone(&zone);
+    let sky = openeq_assets::environment::load_sky(&dir, &zone, 0.5).ok();
+    renderer.set_environment(settings, sky.as_ref());
     let gpu_scene = GpuScene::build(renderer.device(), renderer.queue(), &scene)?;
     println!(
         "  uploaded {} draw calls, {} lights, bounds {:?}..{:?}",

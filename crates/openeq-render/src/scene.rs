@@ -19,6 +19,20 @@ pub const ATLAS_SIZE: u32 = 256;
 pub const FLAG_ALPHA_MASK: u32 = 1;
 pub const FLAG_TRANSPARENT: u32 = 2;
 pub const FLAG_EMISSIVE: u32 = 4;
+pub const FLAG_WATER: u32 = 8;
+
+/// Additional parameters for EQG water, indexed by the vertex's material ID.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct WaterParams {
+    color1: [f32; 4],
+    color2: [f32; 4],
+    reflection_color: [f32; 4],
+    /// Fresnel bias, Fresnel power, reflection amount, reserved.
+    params: [f32; 4],
+    /// Normal map layer, environment map layer, reserved, reserved.
+    layers: [u32; 4],
+}
 
 /// A vertex as the renderer wants it: geometry plus material parameters.
 #[repr(C)]
@@ -29,7 +43,7 @@ pub struct Vertex {
     pub uv: [f32; 2],
     /// First layer of this material's texture animation.
     pub layer: u32,
-    pub frame_offset: u32,
+    pub material: u32,
     pub frame_count: u32,
     pub flags: u32,
     /// Milliseconds per animation frame.
@@ -84,19 +98,111 @@ pub struct GpuScene {
     pub draws: Vec<DrawCall>,
     pub atlas: wgpu::Texture,
     pub atlas_view: wgpu::TextureView,
+    pub atlas_linear_view: wgpu::TextureView,
+    pub water_materials: wgpu::Buffer,
     pub lights: wgpu::Buffer,
     pub light_count: u32,
     pub bounds_min: Vec3,
     pub bounds_max: Vec3,
+    vertex_data: Vec<Vertex>,
 }
 
 impl GpuScene {
+    /// Updates a fixed-topology pose without re-uploading textures or indices.
+    pub fn update_geometry(
+        &mut self,
+        queue: &wgpu::Queue,
+        meshes: &[openeq_assets::mesh::Geometry],
+    ) {
+        let count: usize = meshes
+            .iter()
+            .map(|m| m.vertices.len() / openeq_assets::mesh::VERTEX_STRIDE)
+            .sum();
+        assert_eq!(
+            count,
+            self.vertex_data.len(),
+            "animated geometry changed topology"
+        );
+        for (out, v) in self.vertex_data.iter_mut().zip(
+            meshes
+                .iter()
+                .flat_map(|m| m.vertices.chunks_exact(openeq_assets::mesh::VERTEX_STRIDE)),
+        ) {
+            out.position.copy_from_slice(&v[..3]);
+            out.normal.copy_from_slice(&v[3..6]);
+        }
+        queue.write_buffer(&self.vertices, 0, bytemuck::cast_slice(&self.vertex_data));
+    }
+
+    pub fn update_instances(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        instances: &[Instance],
+    ) {
+        let bytes = bytemuck::cast_slice(instances);
+        if bytes.len() as u64 > self.instances.size() {
+            self.instances = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("dynamic character instances"),
+                size: (bytes.len() as u64).next_power_of_two(),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+        if !bytes.is_empty() {
+            queue.write_buffer(&self.instances, 0, bytes);
+        }
+    }
+
     pub fn build(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         scene: &Scene,
     ) -> anyhow::Result<Self> {
-        let (atlas, atlas_view, atlas_layers) = build_atlas(device, queue, scene)?;
+        let atlas = build_atlas(device, queue, scene)?;
+        let water: Vec<WaterParams> = scene
+            .materials
+            .iter()
+            .map(|material| {
+                let Some(water) = &material.water else {
+                    return WaterParams::zeroed();
+                };
+                let layer = |name: Option<&String>| {
+                    name.and_then(|name| atlas.layers.get(&name.to_ascii_lowercase()).copied())
+                        .unwrap_or(u32::MAX)
+                };
+                WaterParams {
+                    color1: water.color1,
+                    color2: water.color2,
+                    reflection_color: water.reflection_color,
+                    params: [
+                        water.fresnel_bias,
+                        water.fresnel_power,
+                        water.reflection_amount,
+                        0.0,
+                    ],
+                    layers: [
+                        layer(material.normal_map.as_ref()),
+                        water
+                            .environment_map
+                            .as_ref()
+                            .and_then(|name| {
+                                atlas.environments.get(&name.to_ascii_lowercase()).copied()
+                            })
+                            .unwrap_or(u32::MAX),
+                        0,
+                        0,
+                    ],
+                }
+            })
+            .collect();
+        let water_materials = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("water materials"),
+            size: (water.len().max(1) * std::mem::size_of::<WaterParams>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&water_materials, 0, bytemuck::cast_slice(&water));
 
         let mut vertices: Vec<Vertex> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
@@ -131,7 +237,7 @@ impl GpuScene {
 
         for (mesh_index, geometry) in scene.meshes.iter().enumerate() {
             let material = &scene.materials[geometry.material];
-            let (layer, frame_offset, frame_count) = atlas_layers[&material_layer_key(material)];
+            let (layer, frame_count) = atlas.materials[&material_layer_key(material)];
             let mut flags = 0u32;
             if material.alpha_mask {
                 flags |= FLAG_ALPHA_MASK;
@@ -141,6 +247,9 @@ impl GpuScene {
             }
             if material.emissive {
                 flags |= FLAG_EMISSIVE;
+            }
+            if material.water.is_some() {
+                flags |= FLAG_WATER;
             }
 
             let base_vertex = vertices.len() as i32;
@@ -155,7 +264,7 @@ impl GpuScene {
                     normal: [vertex[3], vertex[4], vertex[5]],
                     uv: [vertex[6], vertex[7]],
                     layer,
-                    frame_offset,
+                    material: geometry.material as u32,
                     frame_count,
                     flags,
                     frame_ms: material.anim_speed.max(1),
@@ -244,11 +353,14 @@ impl GpuScene {
         Ok(Self {
             name: scene.name.clone(),
             vertices: vertex_buffer,
+            vertex_data: vertices,
             indices: index_buffer,
             instances: instance_buffer,
             draws,
-            atlas,
-            atlas_view,
+            atlas: atlas.texture,
+            atlas_view: atlas.view,
+            atlas_linear_view: atlas.linear_view,
+            water_materials,
             lights: light_buffer,
             light_count,
             bounds_min: if bounds_min.x == f32::MAX {
@@ -272,18 +384,20 @@ pub fn material_layer_key(material: &openeq_assets::mesh::Material) -> MaterialK
     (material.textures.join(","), material.anim_speed)
 }
 
-fn build_atlas(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    scene: &Scene,
-) -> anyhow::Result<(
-    wgpu::Texture,
-    wgpu::TextureView,
-    HashMap<MaterialKey, (u32, u32, u32)>,
-)> {
+struct Atlas {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    linear_view: wgpu::TextureView,
+    materials: HashMap<MaterialKey, (u32, u32)>,
+    layers: HashMap<String, u32>,
+    environments: HashMap<String, u32>,
+}
+
+fn build_atlas(device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene) -> anyhow::Result<Atlas> {
     let mut layers: Vec<image::RgbaImage> = Vec::new();
-    let mut mapping: HashMap<MaterialKey, (u32, u32, u32)> = HashMap::new();
+    let mut mapping: HashMap<MaterialKey, (u32, u32)> = HashMap::new();
     let mut layer_of_name: HashMap<String, u32> = HashMap::new();
+    let mut environments = HashMap::new();
 
     for material in &scene.materials {
         let key = material_layer_key(material);
@@ -319,7 +433,49 @@ fn build_atlas(
                 first
             }
         };
-        mapping.insert(key, (base, base, material.textures.len().max(1) as u32));
+        mapping.insert(key, (base, material.textures.len().max(1) as u32));
+    }
+
+    // Water's normal and reflection maps are separate layers, never frames of
+    // its diffuse animation. Missing optional maps use shader defaults.
+    for material in &scene.materials {
+        let Some(water) = &material.water else {
+            continue;
+        };
+        for name in [material.normal_map.as_ref()].into_iter().flatten() {
+            let key = name.to_ascii_lowercase();
+            if layer_of_name.contains_key(&key) {
+                continue;
+            }
+            let Some(texture) = scene.texture(name) else {
+                continue;
+            };
+            if texture.rgba == [255, 0, 255, 255] {
+                continue;
+            }
+            let Some(image) =
+                image::RgbaImage::from_raw(texture.width, texture.height, texture.rgba)
+            else {
+                continue;
+            };
+            layer_of_name.insert(key, layers.len() as u32);
+            layers.push(image);
+        }
+        if let Some(name) = &water.environment_map {
+            let key = name.to_ascii_lowercase();
+            if let std::collections::hash_map::Entry::Vacant(entry) = environments.entry(key)
+                && let Some(faces) = scene.texture_cube(name)
+            {
+                let faces: Option<Vec<_>> = faces
+                    .into_iter()
+                    .map(|face| image::RgbaImage::from_raw(face.width, face.height, face.rgba))
+                    .collect();
+                if let Some(faces) = faces {
+                    entry.insert(layers.len() as u32);
+                    layers.extend(faces);
+                }
+            }
+        }
     }
 
     if layers.is_empty() {
@@ -343,44 +499,55 @@ fn build_atlas(
             height: ATLAS_SIZE,
             depth_or_array_layers: layers.len() as u32,
         },
-        mip_level_count: 1,
+        mip_level_count: ATLAS_SIZE.ilog2() + 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8UnormSrgb,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
+        view_formats: &[wgpu::TextureFormat::Rgba8Unorm],
     });
 
     for (index, image) in layers.iter().enumerate() {
-        let resized = image::imageops::resize(
+        let mut resized = image::imageops::resize(
             image,
             ATLAS_SIZE,
             ATLAS_SIZE,
             image::imageops::FilterType::Triangle,
         );
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: 0,
-                    y: 0,
-                    z: index as u32,
+        for mip in 0..=ATLAS_SIZE.ilog2() {
+            let size = ATLAS_SIZE >> mip;
+            if mip > 0 {
+                resized = image::imageops::resize(
+                    &resized,
+                    size,
+                    size,
+                    image::imageops::FilterType::Triangle,
+                );
+            }
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: mip,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: 0,
+                        z: index as u32,
+                    },
+                    aspect: wgpu::TextureAspect::All,
                 },
-                aspect: wgpu::TextureAspect::All,
-            },
-            &resized,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(ATLAS_SIZE * 4),
-                rows_per_image: Some(ATLAS_SIZE),
-            },
-            wgpu::Extent3d {
-                width: ATLAS_SIZE,
-                height: ATLAS_SIZE,
-                depth_or_array_layers: 1,
-            },
-        );
+                &resized,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(size * 4),
+                    rows_per_image: Some(size),
+                },
+                wgpu::Extent3d {
+                    width: size,
+                    height: size,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
     }
 
     let view = texture.create_view(&wgpu::TextureViewDescriptor {
@@ -388,7 +555,21 @@ fn build_atlas(
         dimension: Some(wgpu::TextureViewDimension::D2Array),
         ..Default::default()
     });
-    Ok((texture, view, mapping))
+    // Normals are data, so sampling them must bypass the diffuse sRGB decode.
+    let linear_view = texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("linear atlas view"),
+        format: Some(wgpu::TextureFormat::Rgba8Unorm),
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    });
+    Ok(Atlas {
+        texture,
+        view,
+        linear_view,
+        materials: mapping,
+        layers: layer_of_name,
+        environments,
+    })
 }
 
 /// Whether layer indices run `n, n + 1, n + 2, ...`.

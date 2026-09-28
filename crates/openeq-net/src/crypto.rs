@@ -35,7 +35,7 @@ pub fn encrypt(plain: &[u8]) -> Vec<u8> {
 /// Decrypts a credential block. Returns `None` if the length is not a whole
 /// number of DES blocks.
 pub fn decrypt(ciphertext: &[u8]) -> Option<Vec<u8>> {
-    if ciphertext.is_empty() || ciphertext.len() % 8 != 0 {
+    if ciphertext.is_empty() || !ciphertext.len().is_multiple_of(8) {
         return None;
     }
     let mut buffer = ciphertext.to_vec();

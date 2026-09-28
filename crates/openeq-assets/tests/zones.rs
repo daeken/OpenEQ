@@ -161,6 +161,132 @@ fn placed_objects_stand_upright() {
     );
 }
 
+/// Invisible WLD materials can still have a texture (e.g. COLLIDE.DDS).
+/// Visibility must not be inferred from the texture or polygon collision flag.
+#[test]
+fn poknowledge_collision_walls_are_not_drawable() {
+    let Some(dir) = client_dir() else {
+        return;
+    };
+    if !dir.join("poknowledge_obj.s3d").is_file() {
+        return;
+    }
+    let scene = openeq_assets::load_zone(&dir, "poknowledge").expect("poknowledge should load");
+
+    assert!(scene.triangle_count() > 100_000);
+    assert!(scene.meshes.iter().any(|mesh| mesh.collidable));
+    for mesh in &scene.meshes {
+        let material = &scene.materials[mesh.material];
+        assert_ne!(
+            material.flags, 0,
+            "invisible material must not be baked for drawing: {:?}",
+            material.textures
+        );
+    }
+    assert!(scene.materials.iter().all(|material| {
+        material
+            .textures
+            .iter()
+            .all(|name| !name.eq_ignore_ascii_case("COLLIDE.DDS"))
+    }));
+}
+
+/// A 0x03 bitmap's extra filenames are texture layers, not animation frames.
+/// The cliff used to alternate between its diffuse map and a missing detail
+/// map, while real water animations must retain their 0x04 frame sequence.
+#[test]
+fn poknowledge_detail_maps_do_not_become_animation_frames() {
+    let Some(dir) = client_dir() else {
+        return;
+    };
+    if !dir.join("poknowledge_obj.s3d").is_file() {
+        return;
+    }
+    let scene = openeq_assets::load_zone(&dir, "poknowledge").expect("poknowledge should load");
+    let cliff = scene
+        .materials
+        .iter()
+        .find(|material| {
+            material
+                .textures
+                .first()
+                .is_some_and(|name| name.eq_ignore_ascii_case("CLIFFCOLR01.DDS"))
+        })
+        .expect("cliff material should be present");
+    assert_eq!(
+        cliff.textures.len(),
+        1,
+        "a static cliff has one diffuse frame"
+    );
+    assert_eq!(cliff.anim_speed, 0);
+    let texture = scene
+        .texture(&cliff.textures[0])
+        .expect("cliff diffuse should resolve");
+    assert!(
+        texture.width > 1 && texture.height > 1,
+        "cliff should not use a placeholder"
+    );
+
+    let water = scene
+        .materials
+        .iter()
+        .find(|material| {
+            material
+                .textures
+                .first()
+                .is_some_and(|name| name.eq_ignore_ascii_case("NEWWAT1.DDS"))
+        })
+        .expect("animated water should be present");
+    assert!(water.textures.len() > 1);
+    assert!(water.anim_speed > 0);
+    for name in &water.textures {
+        let texture = scene
+            .texture(name)
+            .expect("each water frame should resolve");
+        assert!(
+            texture.width > 1 && texture.height > 1,
+            "water frame {name} should not use a placeholder"
+        );
+    }
+}
+
+#[test]
+fn anguish_water_resolves_shared_maps_and_authored_colors() {
+    let Some(dir) = client_dir() else { return };
+    if !dir.join("anguish.eqg").is_file() {
+        return;
+    }
+    let scene = openeq_assets::load_zone(&dir, "anguish").expect("anguish should load");
+    let material = scene
+        .materials
+        .iter()
+        .find(|material| material.water.is_some())
+        .expect("Anguish's outer plane is water");
+    let water = material.water.as_ref().unwrap();
+    assert_eq!(water.color1, [0.0, 0.0, 21.0 / 255.0, 1.0]);
+    assert_eq!(water.color2, [0.0, 30.0 / 255.0, 23.0 / 255.0, 1.0]);
+    assert!((water.reflection_amount - 0.5).abs() < 1e-6);
+    for name in material.textures.iter().chain(material.normal_map.iter()) {
+        let texture = scene
+            .texture(name)
+            .expect("shared water texture should resolve");
+        assert!(
+            texture.width > 1 && texture.height > 1,
+            "{name} must not be a placeholder"
+        );
+    }
+    let faces = scene
+        .texture_cube(water.environment_map.as_ref().unwrap())
+        .expect("all six shared reflection faces should decode");
+    assert_eq!(faces.len(), 6);
+    assert!(
+        faces
+            .iter()
+            .all(|face| face.width == 256 && face.height == 256)
+    );
+    assert!(faces.windows(2).any(|pair| pair[0].rgba != pair[1].rgba));
+}
+
 /// Angle between the instance's up axis and the world up axis. A pure yaw
 /// scores zero.
 fn tilt_degrees(q: [f32; 4]) -> f32 {
