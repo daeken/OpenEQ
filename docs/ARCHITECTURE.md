@@ -67,6 +67,14 @@ One fragment layout differs from both the documentation and the C# reader: in a
 not after. Reading it the other way yields a reference of zero for every classic
 zone material, which shows up as "no textures at all".
 
+Those zero references matter in a second way. A material with no texture is
+still an entry in its fragment's material list, and polygon runs address that
+list *positionally*. Dropping empty materials from the resolved list shifts
+every material after them, so a trunk ends up wearing the canopy's texture while
+the canopy gets whatever came next. The list is therefore built with an entry
+for every material, textured or not, and any run that still points out of range
+is skipped with a warning instead of being guessed at.
+
 ### `ZON` / `TER` / `MOD`
 
 Newer zones are a `.zon` description plus `.ter` (terrain) and `.mod` (object)

@@ -140,6 +140,10 @@ impl Piece {
 
 /// Walks the `mesh -> material list -> material -> animation -> texture list`
 /// chain to recover the texture names and flags for one mesh.
+///
+/// Entries are never dropped, even when a link is missing: polygon runs index
+/// this list positionally, so removing one entry shifts every material after it
+/// and surfaces end up wearing each other's textures.
 fn texture_entries(wld: &Wld, mesh: &Mesh) -> Vec<TextureEntry> {
     let Some(Fragment::MaterialList(list)) = wld.resolve(mesh.materials).map(|c| &c.fragment)
     else {
@@ -148,37 +152,42 @@ fn texture_entries(wld: &Wld, mesh: &Mesh) -> Vec<TextureEntry> {
 
     let mut entries = Vec::with_capacity(list.materials.len());
     for material_ref in &list.materials {
-        let Some(Fragment::Material(material)) = wld.resolve(*material_ref).map(|c| &c.fragment)
-        else {
-            continue;
-        };
-        let Some(Fragment::AnimationRef(animation_ref)) =
-            wld.resolve(material.animation).map(|c| &c.fragment)
-        else {
-            continue;
-        };
-        let Some(Fragment::Animation(animation)) =
-            wld.resolve(animation_ref.animation).map(|c| &c.fragment)
-        else {
-            continue;
-        };
-
-        let mut filenames = Vec::new();
-        for texture_ref in &animation.textures {
-            if let Some(Fragment::TextureList(list)) =
-                wld.resolve(*texture_ref).map(|c| &c.fragment)
-            {
-                filenames.extend(list.filenames.iter().cloned());
-            }
-        }
-
-        entries.push(TextureEntry {
-            flags: material.flags,
-            anim_speed: animation.frame_time,
-            filenames,
-        });
+        entries.push(texture_entry(wld, *material_ref));
     }
     entries
+}
+
+/// Resolves one material, degrading to an empty entry instead of vanishing.
+fn texture_entry(wld: &Wld, material_ref: Ref) -> TextureEntry {
+    let mut entry = TextureEntry {
+        flags: 0,
+        anim_speed: 0,
+        filenames: Vec::new(),
+    };
+
+    let Some(Fragment::Material(material)) = wld.resolve(material_ref).map(|c| &c.fragment) else {
+        return entry;
+    };
+    entry.flags = material.flags;
+
+    // A zero reference means the material deliberately has no texture.
+    let Some(Fragment::AnimationRef(animation_ref)) =
+        wld.resolve(material.animation).map(|c| &c.fragment)
+    else {
+        return entry;
+    };
+    let Some(Fragment::Animation(animation)) =
+        wld.resolve(animation_ref.animation).map(|c| &c.fragment)
+    else {
+        return entry;
+    };
+    entry.anim_speed = animation.frame_time;
+    for texture_ref in &animation.textures {
+        if let Some(Fragment::TextureList(list)) = wld.resolve(*texture_ref).map(|c| &c.fragment) {
+            entry.filenames.extend(list.filenames.iter().cloned());
+        }
+    }
+    entry
 }
 
 /// Bakes a set of `0x36` fragments into drawable geometry and materials.
@@ -209,6 +218,17 @@ where
         let mut polygon_cursor = 0usize;
         for &(count, texture_index) in &piece.polygon_textures {
             let count = count as usize;
+            if texture_index as usize >= piece.textures.len() {
+                // Only that run is unusable; the rest of the mesh still is not.
+                tracing::warn!(
+                    mesh = %wld.filename,
+                    index = texture_index,
+                    materials = piece.textures.len(),
+                    "polygon run references a material outside this mesh"
+                );
+                polygon_cursor += count;
+                continue;
+            }
             for polygon in piece.polygons.iter().skip(polygon_cursor).take(count) {
                 let key = (texture_index as usize + texture_offset, polygon.0);
                 let group = groups.entry(key).or_default();
@@ -236,8 +256,19 @@ where
 
     let mut merged: HashMap<(usize, bool), Vec<u32>> = HashMap::new();
     for ((texture, collidable), indices) in groups {
+        let Some(texture) = remap.get(texture) else {
+            // A polygon run that points past the material list. Nothing sane to
+            // draw, so drop the run rather than guess.
+            tracing::warn!(
+                mesh = %wld.filename,
+                index = texture,
+                materials = textures.len(),
+                "polygon run references a material that does not exist"
+            );
+            continue;
+        };
         merged
-            .entry((remap[texture], collidable))
+            .entry((*texture, collidable))
             .or_default()
             .extend(indices);
     }

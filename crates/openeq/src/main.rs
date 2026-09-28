@@ -142,7 +142,9 @@ fn update_camera(
 
     let delta = motion.delta;
     if delta != Vec2::ZERO {
-        camera.yaw -= delta.x * LOOK_SENSITIVITY;
+        // Yaw increases anticlockwise in EverQuest space, so moving the mouse
+        // right (positive x) turns right by adding.
+        camera.yaw += delta.x * LOOK_SENSITIVITY;
         camera.pitch = (camera.pitch - delta.y * LOOK_SENSITIVITY).clamp(
             -std::f32::consts::FRAC_PI_2 + 0.01,
             std::f32::consts::FRAC_PI_2 - 0.01,

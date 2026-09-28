@@ -31,6 +31,7 @@ fn main() -> anyhow::Result<()> {
     let mut position = None;
     let mut yaw = 0f32;
     let mut pitch = -10f32;
+    let mut only_material = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -49,6 +50,7 @@ fn main() -> anyhow::Result<()> {
             }
             "--yaw" => yaw = args.next().and_then(|v| v.parse().ok()).unwrap_or(yaw),
             "--pitch" => pitch = args.next().and_then(|v| v.parse().ok()).unwrap_or(pitch),
+            "--only-material" => only_material = args.next(),
             other => anyhow::bail!("unrecognised argument {other}"),
         }
     }
@@ -56,7 +58,38 @@ fn main() -> anyhow::Result<()> {
     let dir = dir.context("no client directory (pass --dir)")?;
 
     println!("loading {} from {}", zone, dir.display());
-    let scene = loader::load_zone(&dir, &zone)?;
+    let mut scene = loader::load_zone(&dir, &zone)?;
+
+    // A debugging aid: keep only the surfaces whose material names contain a
+    // substring, which makes a texture mix-up obvious at a glance.
+    if let Some(needle) = only_material {
+        let needle = needle.to_ascii_lowercase();
+        let kept: Vec<_> = scene
+            .meshes
+            .iter()
+            .filter(|geometry| {
+                scene.materials[geometry.material]
+                    .textures
+                    .iter()
+                    .any(|name| name.to_ascii_lowercase().contains(&needle))
+            })
+            .cloned()
+            .collect();
+        let materials = kept
+            .iter()
+            .map(|geometry| scene.materials[geometry.material].clone())
+            .collect();
+        scene.meshes = kept
+            .into_iter()
+            .enumerate()
+            .map(|(index, mut geometry)| {
+                geometry.material = index;
+                geometry
+            })
+            .collect();
+        scene.materials = materials;
+        println!("  filtered to materials containing {needle:?}");
+    }
     println!(
         "  {} materials, {} meshes, {} triangles, {} instances, {} lights",
         scene.materials.len(),

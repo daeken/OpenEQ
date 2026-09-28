@@ -17,7 +17,7 @@ Working today:
 
 * **Assets** - reads `S3D`/`PFS` archives, `WLD` fragment files, `ZON`/`TER`/`MOD`
   `.eqg` zones and `DDS`/`BMP` textures, and bakes them into renderable
-  geometry. 250 classic zones and 34 `EQGZ` v1 `.eqg` zones load end to end.
+  geometry. 246 classic zones and 34 `EQGZ` v1 `.eqg` zones load end to end.
 * **Renderer** - a deferred `wgpu` renderer: G-buffer, shadow-mapped directional
   sun, zone point lights matching the original engine's falloff, animated
   textures in a texture array.
@@ -51,6 +51,9 @@ cargo run -p openeq-assets --bin zonescan -- gfaydark
 
 # Render a zone to a PNG without opening a window.
 cargo run -p openeq-render --bin renderzone -- gfaydark --out /tmp/gfaydark.png
+
+# Isolate one texture to check materials line up with their geometry.
+cargo run -p openeq-render --bin renderzone -- gfaydark --only-material nekpine
 
 # Dump the fragment graph of a WLD file.
 cargo run -p openeq-assets --bin wldscan -- /path/to/EverQuest/gfaydark.s3d
