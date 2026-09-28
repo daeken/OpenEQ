@@ -884,11 +884,17 @@ fn render_frame(
             }
         }
         let states = runtime.live.as_ref().map(|live| {
-            live.actor_states(
+            live.actor_states_with_terrain(
                 camera.position,
                 runtime
                     .third_person
                     .then_some((&player_camera, runtime.moving)),
+                runtime.collision.as_ref().map(|world| {
+                    (
+                        world,
+                        runtime.doors.as_ref().map(|doors| doors.collision_world()),
+                    )
+                }),
             )
         });
         let elapsed = runtime.started.elapsed().as_secs_f32();
@@ -944,7 +950,9 @@ fn render_frame(
             };
             let game = runtime.interaction.view(live);
             let mut frame = hud.gameplay_frame(ui_size, &state, &game);
-            add_nameplates(&mut frame, live, &camera, ui_size);
+            if let Some(actors) = &runtime.actors {
+                add_nameplates(&mut frame, live, actors, &camera, ui_size);
+            }
             if runtime.map_open {
                 let mut map_state = runtime.map_state.clone();
                 map_state.player_position = [
@@ -1125,10 +1133,10 @@ fn view_camera(runtime: &Runtime) -> Camera {
 fn add_nameplates(
     frame: &mut openeq_ui::UiFrame,
     live: &live::LiveWorld,
+    actors: &ActorRenderer,
     camera: &Camera,
     size: [u32; 2],
 ) {
-    let matrix = camera.view_projection(size[0] as f32 / size[1].max(1) as f32, 0.2, 20000.);
     let viewport = openeq_ui::Rect::new(0., 0., size[0] as f32, size[1] as f32);
     let mut labels = Vec::new();
     for entity in live.entities.values() {
@@ -1136,7 +1144,10 @@ fn add_nameplates(
         if Some(spawn.id) == live.own_id || spawn.race == 127 || spawn.body_type >= 66 {
             continue;
         }
-        let p = entity.position(std::time::Instant::now());
+        let Some(bounds) = actors.bounds().get(&spawn.id) else {
+            continue;
+        };
+        let p = bounds.center();
         let distance: f32 = p
             .iter()
             .zip(camera.position)
@@ -1145,21 +1156,15 @@ fn add_nameplates(
         if distance > 180. * 180. {
             continue;
         }
-        let world = Camera::to_world([p[0], p[1], p[2] + spawn.size * 0.65]);
-        let clip = matrix * world.extend(1.);
-        if clip.w <= 0. {
+        let Some([left, top, right, bottom]) =
+            openeq::targeting::screen_bounds(camera, size.map(|v| v as f32), bounds)
+        else {
+            continue;
+        };
+        if right < 0. || left > size[0] as f32 || bottom < 0. || top > size[1] as f32 {
             continue;
         }
-        let ndc = clip.truncate() / clip.w;
-        if ndc.x.abs() > 1. || ndc.y.abs() > 1. || ndc.z < 0. {
-            continue;
-        }
-        let rect = openeq_ui::Rect::new(
-            (ndc.x * 0.5 + 0.5) * size[0] as f32 - 110.,
-            (0.5 - ndc.y * 0.5) * size[1] as f32 - 16.,
-            220.,
-            20.,
-        );
+        let rect = openeq_ui::Rect::new((left + right) * 0.5 - 110., top - 22., 220., 20.);
         let color = if live.target == Some(spawn.id) {
             [255, 230, 100, 255]
         } else {
@@ -1195,6 +1200,22 @@ fn handle_targeting(
     let camera = view_camera(&runtime);
     let point = window.cursor_position().map(|p| [p.x, p.y]);
     let ui_hit = point.is_some_and(|p| runtime.ui_frame.hit_test(p).is_some());
+    let clicked = mouse.just_pressed(MouseButton::Left) && !is_captured(cursor) && !ui_hit;
+    let picked = if clicked {
+        point.and_then(|point| {
+            runtime.actors.as_ref().and_then(|actors| {
+                openeq::targeting::pick_actor(
+                    actors.bounds(),
+                    runtime.live.as_ref().and_then(|live| live.own_id),
+                    &camera,
+                    [window.width(), window.height()],
+                    point,
+                )
+            })
+        })
+    } else {
+        None
+    };
     let Some(live) = runtime.live.as_mut() else {
         return;
     };
@@ -1226,33 +1247,7 @@ fn handle_targeting(
             live.set_target(Some(nearby[next % nearby.len()].0));
         }
     }
-    if mouse.just_pressed(MouseButton::Left)
-        && !is_captured(cursor)
-        && !ui_hit
-        && let Some(point) = point
-    {
-        let size = [window.width(), window.height()];
-        let matrix = camera.view_projection(size[0] / size[1].max(1.), 0.2, 20000.);
-        let target = live
-            .entities
-            .values()
-            .filter(|e| {
-                Some(e.spawn.id) != live.own_id && e.spawn.race != 127 && e.spawn.body_type < 66
-            })
-            .filter_map(|e| {
-                let p = e.position(std::time::Instant::now());
-                let clip = matrix * Camera::to_world(p).extend(1.);
-                if clip.w <= 0. || clip.w > 250. {
-                    return None;
-                }
-                let ndc = clip.truncate() / clip.w;
-                let screen = [(ndc.x * 0.5 + 0.5) * size[0], (0.5 - ndc.y * 0.5) * size[1]];
-                let radius = (e.spawn.size * size[1] / clip.w).clamp(16., 100.);
-                let dist = (screen[0] - point[0]).powi(2) + (screen[1] - point[1]).powi(2);
-                (dist < radius * radius).then_some((e.spawn.id, dist))
-            })
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|v| v.0);
-        live.set_target(target);
+    if clicked && point.is_some() {
+        live.set_target(picked);
     }
 }

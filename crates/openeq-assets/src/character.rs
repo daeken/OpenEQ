@@ -104,6 +104,9 @@ impl CharacterLibrary {
         wanted.extend([
             "globalfroglok_chr.s3d".to_owned(),
             "globalpcfroglok_chr.s3d".to_owned(),
+            // The client's GlobalLoad.txt loads LDON skeletons globally.
+            // PEQ uses race 367 even in classic zones such as Greater Faydark.
+            "skt_chr.s3d".to_owned(),
         ]);
         wanted.extend(
             files
@@ -1122,6 +1125,7 @@ pub fn race_model_code(race: u32, gender: u8) -> Option<&'static str> {
                 "FRM"
             }
         }
+        367 => "SKT",
         464 => "GGY",
         522 => {
             if female {
@@ -1269,6 +1273,7 @@ mod tests {
         assert_eq!(race_model_code(1, 0), Some("HUM"));
         assert_eq!(race_model_code(1, 1), Some("HUF"));
         assert_eq!(race_model_code(60, 2), Some("SKE"));
+        assert_eq!(race_model_code(367, 2), Some("SKT"));
         assert_eq!(race_model_code(99999, 0), None);
     }
 }

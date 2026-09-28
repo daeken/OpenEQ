@@ -128,7 +128,11 @@ The game predicts sparse NPC patrol updates using EQEmu's heading and speed
 convention, smooths small corrections over 150 ms, snaps teleports and stops
 predicting after six seconds without fresh motion data. Classic humanoids face
 +X in source data; heading conversion includes an initial +90° rotation. Spawn
-size normalizes the bind-pose height. See [character details](CHARACTER_RENDERING.md).
+size normalizes the bind-pose height. Ground NPCs follow connected terrain
+between updates because server ground motion omits vertical velocity. Their
+server anchor height above the floor is preserved; flight modes are excluded.
+Animated world bounds drive labels and mouse selection, including hovering
+poses and broad wings. See [character details](CHARACTER_RENDERING.md).
 
 ### Coordinate system
 

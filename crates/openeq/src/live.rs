@@ -1,6 +1,7 @@
 //! Background networking and bounded prediction of server-authoritative spawns.
 use crate::coordinates;
 use crate::game::{GameplayState, display_name};
+use openeq_assets::collision::CollisionWorld;
 use openeq_net::{
     gameplay::{Command, Door, GameplayEvent, ZoneDestination},
     session::ConnectionConfig,
@@ -74,6 +75,60 @@ impl Entity {
         }
         let remaining = 1. - (age / CORRECTION_SECONDS).min(1.);
         std::array::from_fn(|i| target[i] + self.correction[i] * remaining)
+    }
+
+    /// NPC movement packets describe horizontal speed but omit the ramp's
+    /// vertical velocity. Follow nearby connected floors between corrections,
+    /// preserving the server's anchor height above the floor. This changes only
+    /// presentation; authoritative positions and outgoing packets stay intact.
+    pub fn position_on_terrain(
+        &self,
+        now: Instant,
+        world: &CollisionWorld,
+        dynamic: Option<&CollisionWorld>,
+    ) -> [f32; 3] {
+        let mut target = self.position(now);
+        if !self.spawn.npc || self.spawn.is_corpse || !matches!(self.spawn.fly_mode, 0 | 3) {
+            return target;
+        }
+        let p = self.spawn.position;
+        if target == [p.x, p.y, p.z] {
+            return target;
+        }
+        let ground = |x, y, z, rise, drop| {
+            std::iter::once(world)
+                .chain(dynamic)
+                .filter_map(|world| world.ground_height(x, y, z, rise, drop))
+                .min_by(|a, b| (a - z).abs().total_cmp(&(b - z).abs()))
+        };
+        let max_offset = self.spawn.size.max(6.) * 1.5;
+        let Some(mut floor) = ground(p.x, p.y, p.z, 0.5, max_offset) else {
+            return target;
+        };
+        let offset = p.z - floor;
+        let distance = (target[0] - p.x).hypot(target[1] - p.y);
+        if !distance.is_finite() || distance > 256. {
+            return target;
+        }
+        let steps = (distance / 2.).ceil().max(1.) as usize;
+        let reach = distance / steps as f32 + 0.75;
+        // Short contiguous probes preserve stacked floors and do not drag a
+        // guard from a bridge down to distant ground across a prediction gap.
+        for step in 1..=steps {
+            let t = step as f32 / steps as f32;
+            let Some(next) = ground(
+                p.x + (target[0] - p.x) * t,
+                p.y + (target[1] - p.y) * t,
+                floor,
+                reach,
+                reach,
+            ) else {
+                return target;
+            };
+            floor = next;
+        }
+        target[2] = floor + offset;
+        target
     }
 
     pub fn heading(&self, now: Instant) -> f32 {
@@ -785,6 +840,7 @@ impl LiveWorld {
                             entity.action_sequence = entity.action_sequence.wrapping_add(1);
                         }
                         29 => entity.spawn.size = *parameter as f32,
+                        19 => entity.spawn.fly_mode = u8::try_from(*parameter).unwrap_or(u8::MAX),
                         1 => entity.spawn.level = (*parameter).min(255) as u8,
                         _ => {}
                     }
@@ -859,6 +915,15 @@ impl LiveWorld {
         camera: [f32; 3],
         player: Option<(&openeq_render::Camera, bool)>,
     ) -> Vec<ActorState> {
+        self.actor_states_with_terrain(camera, player, None)
+    }
+
+    pub fn actor_states_with_terrain(
+        &self,
+        camera: [f32; 3],
+        player: Option<(&openeq_render::Camera, bool)>,
+        terrain: Option<(&CollisionWorld, Option<&CollisionWorld>)>,
+    ) -> Vec<ActorState> {
         let now = Instant::now();
         self.entities
             .values()
@@ -872,7 +937,12 @@ impl LiveWorld {
                     .then_some(player)
                     .flatten();
                 let p = own.map_or_else(
-                    || e.position(now),
+                    || {
+                        terrain.map_or_else(
+                            || e.position(now),
+                            |(world, dynamic)| e.position_on_terrain(now, world, dynamic),
+                        )
+                    },
                     |(camera, _)| {
                         [
                             camera.position[0],
@@ -1717,12 +1787,208 @@ pub(crate) mod tests {
                 appearance: Default::default(),
                 is_corpse: false,
                 stand_state: 100,
+                fly_mode: 3,
             },
             now,
         )
     }
     fn close(actual: f32, expected: f32) {
         assert!((actual - expected).abs() < 0.001, "{actual} != {expected}");
+    }
+
+    fn terrain(quads: &[[[f32; 3]; 4]]) -> CollisionWorld {
+        use openeq_assets::{Scene, mesh::Geometry};
+        let mut geometry = Geometry {
+            vertices: vec![],
+            indices: vec![],
+            material: 0,
+            collidable: true,
+        };
+        for quad in quads {
+            let offset = geometry.vertices.len() as u32 / 8;
+            for p in quad {
+                geometry
+                    .vertices
+                    .extend([p[0], p[1], p[2], 0., 0., 1., 0., 0.]);
+            }
+            geometry
+                .indices
+                .extend([0, 1, 2, 0, 2, 3].map(|i| i + offset));
+        }
+        CollisionWorld::build(&Scene::from_geometry(
+            "terrain".into(),
+            vec![],
+            vec![geometry],
+            vec![],
+        ))
+    }
+
+    #[test]
+    fn npc_height_follows_ramps_between_zero_velocity_packets() {
+        let world = terrain(&[[
+            [-100., -20., -50.],
+            [100., -20., 50.],
+            [100., 20., 50.],
+            [-100., 20., -50.],
+        ]]);
+        let now = Instant::now();
+        let mut guard = npc(
+            Position {
+                z: 3.75,
+                heading: 128.,
+                animation: 20,
+                ..Default::default()
+            },
+            now,
+        );
+        for tenth in 0..=50 {
+            let time = now + Duration::from_millis(tenth * 100);
+            let p = guard.position_on_terrain(time, &world, None);
+            close(p[2], p[0] * 0.5 + 3.75);
+        }
+        // The protocol position remains authoritative. The next five-second
+        // correction must not cause a vertical jump in the displayed guard.
+        let time = now + Duration::from_secs(5);
+        let before = guard.position_on_terrain(time, &world, None);
+        close(guard.position(time)[2], 3.75);
+        guard.update(
+            Position {
+                x: 58.,
+                z: 32.75,
+                heading: 128.,
+                animation: 20,
+                ..Default::default()
+            },
+            time,
+        );
+        let after = guard.position_on_terrain(time, &world, None);
+        for axis in 0..3 {
+            close(before[axis], after[axis]);
+        }
+        let later = guard.position_on_terrain(time + Duration::from_millis(500), &world, None);
+        close(later[2], later[0] * 0.5 + 3.75);
+        let stop_time = time + Duration::from_millis(500);
+        guard.update(
+            Position {
+                x: later[0],
+                z: later[2],
+                heading: 128.,
+                ..Default::default()
+            },
+            stop_time,
+        );
+        close(
+            guard.position_on_terrain(stop_time, &world, None)[2],
+            later[2],
+        );
+    }
+
+    #[test]
+    fn npc_terrain_projection_preserves_flight_and_stacked_floor_gaps() {
+        let ramp = terrain(&[[
+            [-100., -20., -50.],
+            [100., -20., 50.],
+            [100., 20., 50.],
+            [-100., 20., -50.],
+        ]]);
+        let now = Instant::now();
+        let mut actor = npc(
+            Position {
+                z: 3.75,
+                heading: 128.,
+                animation: 20,
+                ..Default::default()
+            },
+            now,
+        );
+        let time = now + Duration::from_secs(1);
+        for mode in [1, 2, 4, 5, 255] {
+            actor.spawn.fly_mode = mode;
+            assert_eq!(
+                actor.position_on_terrain(time, &ramp, None),
+                actor.position(time)
+            );
+        }
+        actor.spawn.fly_mode = 3;
+        actor.spawn.is_corpse = true;
+        assert_eq!(
+            actor.position_on_terrain(time, &ramp, None),
+            actor.position(time)
+        );
+        actor.spawn.is_corpse = false;
+        let bridge = terrain(&[
+            [
+                [-20., -20., 0.],
+                [5., -20., 0.],
+                [5., 20., 0.],
+                [-20., 20., 0.],
+            ],
+            [
+                [-100., -20., -70.],
+                [100., -20., -70.],
+                [100., 20., -70.],
+                [-100., 20., -70.],
+            ],
+        ]);
+        assert_eq!(
+            actor.position_on_terrain(time, &bridge, None),
+            actor.position(time)
+        );
+    }
+
+    #[test]
+    fn appearance_events_change_npc_gravity_mode() {
+        let (mut live, _) = command_world(1, 10.);
+        for mode in [1, 3, 255, 256] {
+            live.gameplay_event(GameplayEvent::SpawnAppearance {
+                id: 2,
+                kind: 19,
+                parameter: mode,
+            });
+            assert_eq!(live.entities[&2].spawn.fly_mode, mode.min(255) as u8);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires original Greater Faydark assets"]
+    fn actual_kelethin_guard_climbs_the_ramp_without_height_corrections() {
+        let world = CollisionWorld::build(
+            &openeq_assets::loader::load_zone(
+                openeq_assets::loader::default_client_dir().unwrap(),
+                "gfaydark",
+            )
+            .unwrap(),
+        );
+        let start_floor = world.ground_height(137.463, 216., 0., 1., 5.).unwrap();
+        let now = Instant::now();
+        let mut guard = npc(
+            Position {
+                x: 137.463,
+                y: 216.,
+                z: start_floor + 3.125,
+                heading: 0.,
+                animation: 20,
+                ..Default::default()
+            },
+            now,
+        );
+        guard.spawn.race = 112;
+        guard.spawn.size = 5.;
+        let mut last = guard.position(now);
+        for tick in 1..=180 {
+            let time = now + Duration::from_secs_f32(tick as f32 / 120.);
+            let p = guard.position_on_terrain(time, &world, None);
+            let floor = world
+                .ground_height(p[0], p[1], p[2] - 3.125, 0.01, 0.01)
+                .unwrap();
+            close(p[2] - floor, 3.125);
+            assert!(
+                p[2] >= last[2] - 0.001 && p[2] - last[2] < 0.08,
+                "ramp height jumped: {last:?} -> {p:?}"
+            );
+            last = p;
+        }
+        assert!(last[2] - guard.spawn.position.z > 6.);
     }
 
     #[test]

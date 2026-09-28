@@ -12,6 +12,7 @@ pub mod live;
 pub mod movement;
 mod social_interaction;
 pub mod spells;
+pub mod targeting;
 
 pub mod gameplay_ui;
 

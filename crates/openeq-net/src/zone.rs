@@ -55,6 +55,10 @@ pub struct Spawn {
     pub appearance: CharacterAppearance,
     pub is_corpse: bool,
     pub stand_state: u8,
+    /// EQ gravity behavior: 0 ground, 1 flying, 2 levitating, 3 water,
+    /// 4 floating, 5 levitating while running. Mode 3 also walks on land
+    /// and is EQEmu's default for ordinary NPCs.
+    pub fly_mode: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -433,7 +437,8 @@ pub fn parse_spawn(data: &[u8]) -> Option<Spawn> {
     let class = c.u8()?;
     c.skip(1)?;
     let stand_state = c.u8()?;
-    c.skip(2)?;
+    c.skip(1)?; // light
+    let fly_mode = c.u8()?;
     let last_name = c.string()?;
     c.skip(4 + 2 + 4 + 1 + 4 + 20)?;
     let mut appearance = CharacterAppearance {
@@ -479,6 +484,7 @@ pub fn parse_spawn(data: &[u8]) -> Option<Spawn> {
         appearance,
         is_corpse,
         stand_state,
+        fly_mode,
     })
 }
 
@@ -549,6 +555,62 @@ impl<'a> Cursor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Field order from EQEmu common/patches/rof2.cpp's OP_ZoneSpawns encoder.
+    // Nonzero adjacent fields and a position after equipment catch accidental
+    // byte shifts when retaining the gravity mode.
+    fn spawn_packet(fly_mode: u8, race: u32) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(b"Guard_Briarstorm\0");
+        data.extend_from_slice(&123u32.to_le_bytes());
+        data.push(20); // level
+        data.extend_from_slice(&4.3f32.to_le_bytes()); // bounding radius
+        data.push(1); // NPC
+        data.extend_from_slice(&2u32.to_le_bytes()); // gender bitfield
+        data.push(0); // other data
+        data.extend_from_slice(&(-1f32).to_le_bytes()); // emitter radius
+        data.extend_from_slice(&0f32.to_le_bytes()); // emitter ID
+        data.push(1); // character property count
+        data.extend_from_slice(&1u32.to_le_bytes()); // body type
+        data.push(100); // HP
+        data.extend_from_slice(&[0; 6 + 12]); // hair, eyes, Drakkin details
+        data.extend_from_slice(&[3, 0, 0, 4]); // chest, material, variation, helm
+        data.extend_from_slice(&5f32.to_le_bytes()); // size
+        data.push(6); // face
+        data.extend_from_slice(&0.5f32.to_le_bytes()); // walk speed
+        data.extend_from_slice(&1.25f32.to_le_bytes()); // run speed
+        data.extend_from_slice(&race.to_le_bytes());
+        data.push(0); // holding
+        data.extend_from_slice(&[0; 12]); // deity, guild ID, guild rank
+        data.extend_from_slice(&[1, 0, 100, 9, fly_mode]); // class, PvP, stand, light, gravity
+        data.extend_from_slice(b"Sentinel\0");
+        data.extend_from_slice(&[0; 4 + 2 + 4 + 1 + 4 + 20]);
+        let equipment_bytes = if race <= 12 || matches!(race, 128 | 130 | 330 | 522) {
+            216
+        } else {
+            60
+        };
+        data.resize(data.len() + equipment_bytes, 0);
+        let position_words = [0u32, 0, 0, (77 * 8) << 10, 0];
+        data.extend(position_words.into_iter().flat_map(u32::to_le_bytes));
+        data
+    }
+
+    #[test]
+    fn spawn_gravity_mode_follows_light_for_both_equipment_layouts() {
+        for race in [4, 112] {
+            for fly_mode in [0, 1, 2, 3, 4, 5, 255] {
+                let spawn = parse_spawn(&spawn_packet(fly_mode, race)).unwrap();
+                assert_eq!(spawn.fly_mode, fly_mode);
+                assert_eq!(spawn.stand_state, 100);
+                assert_eq!(spawn.last_name, "Sentinel");
+                assert_eq!(spawn.gender, 2);
+                assert_eq!(spawn.race, race);
+                assert_eq!(spawn.position.z, 77.);
+            }
+        }
+    }
+
     #[test]
     fn signed_coordinates_and_heading_match_rof2_bitfields() {
         let words: [u32; 5] = [

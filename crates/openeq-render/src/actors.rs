@@ -2,7 +2,7 @@
 //! Actors that currently share a pose are instanced; reusable pose slots grow
 //! only when a batch needs more simultaneous poses. Zone geometry is untouched.
 use crate::{GpuActor, GpuScene, Renderer, scene::Instance};
-use glam::Quat;
+use glam::{Mat4, Quat, Vec3};
 pub use openeq_assets::character::{CharacterAppearance, EquipmentAppearance};
 use openeq_assets::{
     Scene,
@@ -44,6 +44,68 @@ pub struct ActorState {
     pub action_sequence: u64,
 }
 
+/// Bounds of the pose actually submitted to the renderer, in scene coordinates.
+/// UI and picking must use these rather than guessing a body from spawn size:
+/// some creatures are wide or animate well above their authored origin.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ActorBounds {
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+}
+
+impl ActorBounds {
+    fn from_geometry(meshes: &[Geometry]) -> Option<Self> {
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        for vertex in meshes.iter().flat_map(|mesh| mesh.vertices.chunks_exact(8)) {
+            let p = Vec3::from_slice(&vertex[..3]);
+            if p.is_finite() {
+                min = min.min(p);
+                max = max.max(p);
+            }
+        }
+        (min.is_finite() && max.is_finite()).then_some(Self {
+            min: min.to_array(),
+            max: max.to_array(),
+        })
+    }
+
+    pub fn corners(&self) -> [[f32; 3]; 8] {
+        std::array::from_fn(|i| {
+            std::array::from_fn(|axis| {
+                if i & (1 << axis) == 0 {
+                    self.min[axis]
+                } else {
+                    self.max[axis]
+                }
+            })
+        })
+    }
+
+    fn transformed(self, matrix: Mat4) -> Self {
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        for corner in self.corners() {
+            let p = matrix.transform_point3(Vec3::from(corner));
+            min = min.min(p);
+            max = max.max(p);
+        }
+        Self {
+            min: min.to_array(),
+            max: max.to_array(),
+        }
+    }
+
+    pub fn center(&self) -> [f32; 3] {
+        std::array::from_fn(|axis| (self.min[axis] + self.max[axis]) * 0.5)
+    }
+
+    pub fn nameplate_anchor(&self) -> [f32; 3] {
+        let [x, y, _] = self.center();
+        [x, y, self.max[2] + 0.5]
+    }
+}
+
 type AppearanceKey = (u32, u8, CharacterAppearance);
 
 struct Batch {
@@ -70,6 +132,7 @@ pub struct ActorRenderer {
     batches: BTreeMap<AppearanceKey, Batch>,
     unavailable: BTreeSet<(u32, u8)>,
     timelines: BTreeMap<u32, Timeline>,
+    bounds: BTreeMap<u32, ActorBounds>,
     pub rendered_instances: usize,
 }
 
@@ -80,6 +143,7 @@ impl ActorRenderer {
             batches: BTreeMap::new(),
             unavailable: BTreeSet::new(),
             timelines: BTreeMap::new(),
+            bounds: BTreeMap::new(),
             rendered_instances: 0,
         })
     }
@@ -134,6 +198,7 @@ impl ActorRenderer {
             }
         }
         self.rendered_instances = 0;
+        self.bounds.clear();
         for (key, batch) in &mut self.batches {
             for draw in &mut batch.actor.scene.draws {
                 draw.instance_count = 0;
@@ -168,20 +233,29 @@ impl ActorRenderer {
             let mut instances = Vec::with_capacity(group.len());
             for (slot, (pose, actors)) in poses.iter().enumerate() {
                 let start = instances.len() as u32;
-                instances.extend(actors.iter().map(|state| {
-                    let height = (batch.model.bounds_max[2] - batch.model.bounds_min[2]).max(0.1);
-                    actor_instance(state, height)
-                }));
-                for draw in &mut batch.actor.scene.draws[slot * meshes..(slot + 1) * meshes] {
-                    draw.instance_start = start;
-                    draw.instance_count = actors.len() as u32;
-                }
+                let geometry = &mut batch.poses[slot * meshes..(slot + 1) * meshes];
                 batch.model.sample_into_mode(
                     &pose.clip,
                     pose.tick as f32 / 30.,
                     pose.looping,
-                    &mut batch.poses[slot * meshes..(slot + 1) * meshes],
+                    geometry,
                 );
+                let bounds = ActorBounds::from_geometry(geometry);
+                let height = (batch.model.bounds_max[2] - batch.model.bounds_min[2]).max(0.1);
+                for state in actors {
+                    let instance = actor_instance(state, height);
+                    if let Some(bounds) = bounds {
+                        self.bounds.insert(
+                            state.id,
+                            bounds.transformed(Mat4::from_cols_array_2d(&instance.columns)),
+                        );
+                    }
+                    instances.push(instance);
+                }
+                for draw in &mut batch.actor.scene.draws[slot * meshes..(slot + 1) * meshes] {
+                    draw.instance_start = start;
+                    draw.instance_count = actors.len() as u32;
+                }
             }
             // Newly allocated unused slots also need zero instance counts.
             for draw in &mut batch.actor.scene.draws[poses.len() * meshes..] {
@@ -231,6 +305,10 @@ impl ActorRenderer {
             })
             .map(|batch| &batch.actor)
             .collect()
+    }
+
+    pub fn bounds(&self) -> &BTreeMap<u32, ActorBounds> {
+        &self.bounds
     }
 }
 

@@ -4,6 +4,50 @@
 use openeq_assets::character::CharacterLibrary;
 
 #[test]
+fn greater_faydark_decaying_skeleton_uses_its_global_ldon_model() {
+    let Some(base) = openeq_assets::loader::default_client_dir() else {
+        return;
+    };
+    if !base.join("skt_chr.s3d").is_file() || !base.join("gfaydark_chr.s3d").is_file() {
+        return;
+    }
+    // PEQ's decaying skeleton is race 367; classic race 60 is a different
+    // model. SKT must be available even though gfaydark_chr.txt omits it.
+    let library = CharacterLibrary::load(&base, "gfaydark").unwrap();
+    let model = library.load_race(367, 2).expect("global LDON skeleton");
+    assert_eq!(model.code, "SKT");
+    assert_eq!(library.load_race(60, 2).unwrap().code, "SKE");
+    assert!(model.meshes.iter().map(|m| m.indices.len()).sum::<usize>() > 300);
+    assert!(model.bounds_min[2] < -2.0 && model.bounds_max[2] > 2.0);
+    for material in &model.materials {
+        for name in &material.textures {
+            let texture = library
+                .texture(name)
+                .unwrap_or_else(|| panic!("missing {name}"));
+            assert!(
+                texture.width > 1 && texture.height > 1,
+                "placeholder {name}"
+            );
+            assert!(
+                texture.rgba.chunks_exact(4).any(|p| p[3] >= 128),
+                "invisible {name}"
+            );
+        }
+    }
+    for clip in [model.idle_animation(), model.walk_animation()] {
+        assert!(!clip.is_empty());
+        assert!(model.animations[clip].frame_count > 1);
+        let a = model.sample(clip, 0.0);
+        let b = model.sample(clip, 0.22);
+        assert!(a.iter().zip(&b).any(|(a, b)| a.vertices != b.vertices));
+        for (a, b) in a.iter().zip(&b) {
+            assert_eq!(a.indices, b.indices);
+            assert!(b.vertices.iter().all(|v| v.is_finite()));
+        }
+    }
+}
+
+#[test]
 fn classic_character_faces_use_bitmap_orientation_before_caching_and_tinting() {
     use openeq_assets::{character::CharacterAppearance, pfs::Archive, texture::Texture};
     let Some(base) = openeq_assets::loader::default_client_dir() else {

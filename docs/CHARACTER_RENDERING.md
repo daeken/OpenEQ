@@ -6,6 +6,10 @@ caches base models and decoded textures, and shares animation data between
 appearance variants. Nothing here requires preconverted or redistributed EQ
 assets.
 
+The global `skt_chr.s3d` archive supplies race 367 (`SKT`, the LDON skeleton).
+PEQ uses it for Greater Faydark's decaying skeletons even though the zone import
+list omits the archive. Race 60 retains the distinct classic `SKE` model.
+
 WLD character BMPs use bottom-origin texture rows. The character library flips
 decoded BMP rows once, matching the old C# loader, before masking/tinting and
 caching. DDS data already matches the model UVs and stays unchanged, including
@@ -33,6 +37,25 @@ to the scene bearing `[sin(heading), cos(heading)]`; no extra half-turn is neede
 An original-asset regression derives forward from the boot/toe bones of human,
 gnome and barbarian skeletons and checks all four cardinal instance headings.
 Front/back GPU portraits also verify the Vah Shir convention.
+
+The renderer records world bounds from each sampled pose, including authored
+root motion, scale, heading, and equipment. Nameplates sit above those bounds
+in screen space; mouse targeting covers their projected extent with a small
+logical-pixel margin and chooses the nearer body when targets overlap. This
+matters for Greater Faydark bats: their original flight tracks put their bodies
+and wings well above the bind-pose origin. Bounds disappear with the actor and
+are shared by rendering, labels, and picking.
+
+Ground NPC presentation follows nearby connected floors between movement
+packets, retaining the authoritative anchor-to-floor offset. EQEmu sends zero
+vertical velocity during ground travel and refreshes position about every five
+seconds, so extrapolating only X/Y otherwise makes guards sink into ramps.
+Short terrain probes preserve stacked platforms and leave unsupported gaps
+alone. RoF2 gravity mode is retained from spawns and appearance updates: modes
+0 and 3 permit terrain following; flight, levitation, floating, unknown modes,
+and corpses retain their network positions. Mode 3 also permits swimming;
+complete liquid-volume classification remains part of future movement work.
+This presentation adjustment never alters authoritative state or player packets.
 
 An appearance includes the nine server-visible slots: head, chest, arms, wrists,
 hands, legs, feet, primary and secondary. Supported classic appearance features:
@@ -71,6 +94,8 @@ cargo test -p openeq-assets --test characters
 cargo test -p openeq-render actors::tests::render_equipment -- --ignored --nocapture
 cargo test -p openeq-render modern_gpu_tests -- --ignored --nocapture
 cargo test -p openeq-render authored_toes_face_the_rendered_heading -- --ignored --nocapture
+cargo test -p openeq --lib actual_kelethin_guard -- --ignored --nocapture
+cargo test -p openeq --test npc_presentation -- --ignored --nocapture
 cargo run -p openeq-assets --bin characterscan -- HUM
 cargo run -p openeq-assets --bin characterscan -- IT201
 ```
