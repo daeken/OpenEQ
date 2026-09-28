@@ -1,5 +1,6 @@
 //! Screen-space overlay for the original client's XML UI draw list.
-//! Render after zone lighting with no depth attachment, at physical-pixel size.
+//! Render after zone lighting with no depth attachment. Frame geometry is in
+//! logical pixels; prepare_scaled supplies the display pixel density.
 
 use bytemuck::{Pod, Zeroable};
 use font8x8::UnicodeFonts;
@@ -52,6 +53,7 @@ pub struct UiRenderer {
     glyph_row_height: u32,
     vertices: wgpu::Buffer,
     batches: Vec<Batch>,
+    scale: f32,
 }
 
 impl UiRenderer {
@@ -140,10 +142,11 @@ impl UiRenderer {
             glyph_row_height: 0,
             vertices,
             batches: Vec::new(),
+            scale: 1.,
         }
     }
 
-    /// `size` and the UiFrame coordinates must use the same physical-pixel scale.
+    /// One physical pixel per logical pixel; use prepare_scaled on HiDPI windows.
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -151,6 +154,24 @@ impl UiRenderer {
         frame: &UiFrame,
         size: [u32; 2],
     ) {
+        self.prepare_scaled(device, queue, frame, size, 1.);
+    }
+
+    /// `size` is the physical render target; frame coordinates and hit regions
+    /// stay in logical pixels. Text is rasterized at the physical pixel density.
+    pub fn prepare_scaled(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &UiFrame,
+        size: [u32; 2],
+        scale: f32,
+    ) {
+        self.scale = if scale.is_finite() && scale > 0. {
+            scale.clamp(0.25, 8.)
+        } else {
+            1.
+        };
         self.batches.clear();
         if size[0] == 0 || size[1] == 0 {
             return;
@@ -158,6 +179,111 @@ impl UiRenderer {
         let mut vertices = Vec::new();
         for command in &frame.commands {
             match command {
+                DrawCommand::Line {
+                    from,
+                    to,
+                    width,
+                    clip,
+                    color,
+                } => {
+                    if !from
+                        .iter()
+                        .chain(to)
+                        .chain(std::iter::once(width))
+                        .all(|n| n.is_finite())
+                        || *width <= 0.
+                    {
+                        continue;
+                    }
+                    let dx = to[0] - from[0];
+                    let dy = to[1] - from[1];
+                    let length = dx.hypot(dy);
+                    if length <= f32::EPSILON {
+                        continue;
+                    }
+                    let nx = -dy / length * width * 0.5;
+                    let ny = dx / length * width * 0.5;
+                    self.quad_points(
+                        &mut vertices,
+                        [
+                            [from[0] + nx, from[1] + ny],
+                            [from[0] - nx, from[1] - ny],
+                            [to[0] + nx, to[1] + ny],
+                            [to[0] - nx, to[1] - ny],
+                        ],
+                        *clip,
+                        [0., 0., 1., 1.],
+                        *color,
+                        0,
+                        size,
+                    );
+                }
+
+                DrawCommand::TextLog {
+                    rect,
+                    clip,
+                    lines,
+                    font,
+                    scroll_rows,
+                } => {
+                    let px = (font_size(*font) as f32 * self.scale).round().max(1.) as u32;
+                    let line_height = self
+                        .font
+                        .as_ref()
+                        .and_then(|font| font.horizontal_line_metrics(px as f32))
+                        .map_or(px as f32 * 1.2, |metrics| metrics.new_line_size)
+                        .ceil()
+                        / self.scale;
+                    let ascent = self
+                        .font
+                        .as_ref()
+                        .and_then(|font| font.horizontal_line_metrics(px as f32))
+                        .map_or(px as f32, |metrics| metrics.ascent)
+                        / self.scale;
+                    let visible = (rect.height / line_height).floor().max(0.) as usize;
+                    let mut rows = Vec::new();
+                    for line in lines {
+                        for text in self.text_lines(&line.text, px, Some(rect.width)) {
+                            rows.push((text, line.color));
+                        }
+                    }
+                    let end = rows
+                        .len()
+                        .saturating_sub((*scroll_rows).min(rows.len().saturating_sub(visible)));
+                    let start = end.saturating_sub(visible);
+                    let top = rect.bottom() - (end - start) as f32 * line_height;
+                    for (row, (text, color)) in rows[start..end].iter().enumerate() {
+                        let mut x = rect.x;
+                        let baseline = top + row as f32 * line_height + ascent;
+                        for ch in text.chars() {
+                            let glyph = self.glyph(queue, ch, px);
+                            if !glyph.source.is_empty() {
+                                let bounds = Rect::new(
+                                    (x * self.scale + glyph.offset[0]).round() / self.scale,
+                                    (baseline * self.scale + glyph.offset[1]).round() / self.scale,
+                                    glyph.source.width / self.scale,
+                                    glyph.source.height / self.scale,
+                                );
+                                let atlas = GLYPH_ATLAS_SIZE as f32;
+                                self.quad(
+                                    &mut vertices,
+                                    bounds,
+                                    *clip,
+                                    [
+                                        glyph.source.x / atlas,
+                                        glyph.source.y / atlas,
+                                        glyph.source.right() / atlas,
+                                        glyph.source.bottom() / atlas,
+                                    ],
+                                    *color,
+                                    1,
+                                    size,
+                                );
+                            }
+                            x += glyph.advance / self.scale;
+                        }
+                    }
+                }
                 DrawCommand::Fill { rect, clip, color } => self.quad(
                     &mut vertices,
                     *rect,
@@ -200,19 +326,21 @@ impl UiRenderer {
                     vertical_center,
                     wrap,
                 } => {
-                    let px = font_size(*font);
+                    let px = (font_size(*font) as f32 * self.scale).round().max(1.) as u32;
                     let lines =
                         self.text_lines(text, px, if *wrap { Some(rect.width) } else { None });
                     let line_height = self
                         .font
                         .as_ref()
                         .and_then(|font| font.horizontal_line_metrics(px as f32))
-                        .map_or(px as f32 * 1.2, |metrics| metrics.new_line_size);
+                        .map_or(px as f32 * 1.2, |metrics| metrics.new_line_size)
+                        / self.scale;
                     let ascent = self
                         .font
                         .as_ref()
                         .and_then(|font| font.horizontal_line_metrics(px as f32))
-                        .map_or(px as f32, |metrics| metrics.ascent);
+                        .map_or(px as f32, |metrics| metrics.ascent)
+                        / self.scale;
                     let top = rect.y
                         + if *vertical_center {
                             ((rect.height - line_height * lines.len() as f32) / 2.).max(0.)
@@ -232,10 +360,10 @@ impl UiRenderer {
                             let glyph = self.glyph(queue, ch, px);
                             if !glyph.source.is_empty() {
                                 let bounds = Rect::new(
-                                    (x + glyph.offset[0]).round(),
-                                    (baseline + glyph.offset[1]).round(),
-                                    glyph.source.width,
-                                    glyph.source.height,
+                                    (x * self.scale + glyph.offset[0]).round() / self.scale,
+                                    (baseline * self.scale + glyph.offset[1]).round() / self.scale,
+                                    glyph.source.width / self.scale,
+                                    glyph.source.height / self.scale,
                                 );
                                 let atlas = GLYPH_ATLAS_SIZE as f32;
                                 self.quad(
@@ -253,7 +381,7 @@ impl UiRenderer {
                                     size,
                                 );
                             }
-                            x += glyph.advance;
+                            x += glyph.advance / self.scale;
                         }
                     }
                 }
@@ -338,9 +466,12 @@ impl UiRenderer {
         text.chars().map(|ch| self.advance(ch, px)).sum()
     }
     fn advance(&self, ch: char, px: u32) -> f32 {
-        self.font.as_ref().map_or(px as f32 * 0.75, |font| {
-            font.metrics(ch, px as f32).advance_width
-        })
+        self.font
+            .as_ref()
+            .map_or((px * 3 / 4).max(8) as f32, |font| {
+                font.metrics(ch, px as f32).advance_width
+            })
+            / self.scale
     }
     fn text_lines(&self, text: &str, px: u32, max_width: Option<f32>) -> Vec<String> {
         let mut lines = Vec::new();
@@ -350,20 +481,23 @@ impl UiRenderer {
                 continue;
             };
             let mut line = String::new();
+            let mut line_width = 0.;
             for word in paragraph.split_inclusive(' ') {
-                if !line.is_empty()
-                    && self.text_width(&line, px) + self.text_width(word.trim_end(), px) > limit
-                {
+                if !line.is_empty() && line_width + self.text_width(word.trim_end(), px) > limit {
                     lines.push(line.trim_end().to_owned());
                     line.clear();
+                    line_width = 0.;
                 }
-                // Very long tokens are broken at characters to honor the clip.
+                // Keep wrapping linear in the log length: do not remeasure the
+                // entire growing line for every character in combat scrollback.
                 for ch in word.chars() {
-                    if !line.is_empty() && self.text_width(&line, px) + self.advance(ch, px) > limit
-                    {
+                    let advance = self.advance(ch, px);
+                    if !line.is_empty() && line_width + advance > limit {
                         lines.push(std::mem::take(&mut line));
+                        line_width = 0.;
                     }
                     line.push(ch);
+                    line_width += advance;
                 }
             }
             lines.push(line.trim_end().to_owned());
@@ -483,16 +617,54 @@ impl UiRenderer {
         texture: usize,
         size: [u32; 2],
     ) {
-        let Some(scissor) = scissor(clip, size) else {
-            return;
-        };
-        if rect.is_empty() || color[3] == 0 {
+        if rect.is_empty() {
             return;
         }
-        let x0 = rect.x / size[0] as f32 * 2. - 1.;
-        let x1 = rect.right() / size[0] as f32 * 2. - 1.;
-        let y0 = 1. - rect.y / size[1] as f32 * 2.;
-        let y1 = 1. - rect.bottom() / size[1] as f32 * 2.;
+        self.quad_points(
+            vertices,
+            [
+                [rect.x, rect.y],
+                [rect.x, rect.bottom()],
+                [rect.right(), rect.y],
+                [rect.right(), rect.bottom()],
+            ],
+            clip,
+            uv,
+            color,
+            texture,
+            size,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn quad_points(
+        &mut self,
+        vertices: &mut Vec<Vertex>,
+        points: [[f32; 2]; 4],
+        clip: Rect,
+        uv: [f32; 4],
+        color: Color,
+        texture: usize,
+        size: [u32; 2],
+    ) {
+        let physical_clip = Rect::new(
+            clip.x * self.scale,
+            clip.y * self.scale,
+            clip.width * self.scale,
+            clip.height * self.scale,
+        );
+        let Some(scissor) = scissor(physical_clip, size) else {
+            return;
+        };
+        if color[3] == 0 {
+            return;
+        }
+        let [a, b, c, d] = points.map(|[x, y]| {
+            [
+                x * self.scale / size[0] as f32 * 2. - 1.,
+                1. - y * self.scale / size[1] as f32 * 2.,
+            ]
+        });
         // Image textures are sRGB; vertex colors must enter the shader in linear
         // space as well or UI tints become washed out on an sRGB surface.
         let color = [
@@ -504,12 +676,12 @@ impl UiRenderer {
         let [u0, v0, u1, v1] = uv;
         let begin = vertices.len() as u32;
         for (position, uv) in [
-            ([x0, y0], [u0, v0]),
-            ([x0, y1], [u0, v1]),
-            ([x1, y0], [u1, v0]),
-            ([x1, y0], [u1, v0]),
-            ([x0, y1], [u0, v1]),
-            ([x1, y1], [u1, v1]),
+            (a, [u0, v0]),
+            (b, [u0, v1]),
+            (c, [u1, v0]),
+            (c, [u1, v0]),
+            (b, [u0, v1]),
+            (d, [u1, v1]),
         ] {
             vertices.push(Vertex {
                 position,
@@ -654,12 +826,17 @@ mod tests {
     use super::*;
 
     fn draw(renderer: &mut crate::Renderer, frame: &UiFrame) -> Vec<u8> {
+        draw_scaled(renderer, frame, 1.)
+    }
+
+    fn draw_scaled(renderer: &mut crate::Renderer, frame: &UiFrame, scale: f32) -> Vec<u8> {
         let mut ui = UiRenderer::new(&renderer.device, &renderer.queue, renderer.config.format);
-        ui.prepare(
+        ui.prepare_scaled(
             &renderer.device,
             &renderer.queue,
             frame,
             [renderer.width, renderer.height],
+            scale,
         );
         let mut encoder = renderer.device.create_command_encoder(&Default::default());
         let crate::Target::Offscreen { view, .. } = &renderer.target else {
@@ -739,6 +916,136 @@ mod tests {
                 > 50,
             "text should produce visible glyphs"
         );
+    }
+
+    #[test]
+    fn retina_scales_geometry_scissors_and_font_rasterization() {
+        let Ok(mut renderer) = crate::Renderer::new_headless(128, 64) else {
+            return;
+        };
+        let frame = UiFrame {
+            commands: vec![
+                DrawCommand::Fill {
+                    rect: Rect::new(4., 8., 20., 16.),
+                    clip: Rect::new(6., 10., 8., 8.),
+                    color: [255, 0, 0, 255],
+                },
+                DrawCommand::Text {
+                    rect: Rect::new(36., 2., 28., 25.),
+                    clip: Rect::new(36., 2., 28., 25.),
+                    text: "Hi".into(),
+                    font: 2,
+                    color: [0, 255, 0, 255],
+                    align: TextAlign::Left,
+                    vertical_center: false,
+                    wrap: false,
+                },
+            ],
+            ..Default::default()
+        };
+        let pixels = draw_scaled(&mut renderer, &frame, 2.);
+        let pixel = |x: usize, y: usize| &pixels[(y * 128 + x) * 4..(y * 128 + x) * 4 + 3];
+        assert_eq!(pixel(12, 20), &[255, 0, 0]);
+        assert_eq!(pixel(27, 35), &[255, 0, 0]);
+        assert_eq!(pixel(11, 20), &[0, 0, 0]);
+        assert_eq!(pixel(28, 20), &[0, 0, 0]);
+        assert_eq!(pixel(12, 36), &[0, 0, 0]);
+        assert!(
+            pixels
+                .chunks_exact(4)
+                .enumerate()
+                .filter(|(i, p)| i % 128 >= 72 && p[1] > 20)
+                .count()
+                > 100
+        );
+        let mut ui = UiRenderer::new(&renderer.device, &renderer.queue, renderer.config.format);
+        ui.prepare_scaled(&renderer.device, &renderer.queue, &frame, [128, 64], 2.);
+        assert!(
+            ui.glyphs.contains_key(&('H', 24)),
+            "12px logical font is rasterized at 24 physical pixels"
+        );
+        assert!(!ui.glyphs.contains_key(&('H', 12)));
+    }
+
+    #[test]
+    fn diagonal_map_lines_keep_thickness_and_clip() {
+        let Ok(mut renderer) = crate::Renderer::new_headless(64, 64) else {
+            return;
+        };
+        let frame = UiFrame {
+            commands: vec![
+                DrawCommand::Line {
+                    from: [0., 0.],
+                    to: [64., 64.],
+                    width: 3.,
+                    clip: Rect::new(8., 8., 40., 40.),
+                    color: [255, 0, 0, 255],
+                },
+                DrawCommand::Line {
+                    from: [f32::NAN, 0.],
+                    to: [64., 64.],
+                    width: 3.,
+                    clip: Rect::new(0., 0., 64., 64.),
+                    color: [0, 255, 0, 255],
+                },
+            ],
+            ..Default::default()
+        };
+        let pixels = draw(&mut renderer, &frame);
+        let pixel = |x: usize, y: usize| &pixels[(y * 64 + x) * 4..(y * 64 + x) * 4 + 3];
+        assert_eq!(pixel(20, 20), &[255, 0, 0]);
+        assert_eq!(pixel(20, 28), &[0, 0, 0]);
+        assert_eq!(pixel(4, 4), &[0, 0, 0]);
+        assert_eq!(pixel(52, 52), &[0, 0, 0]);
+    }
+
+    #[test]
+    fn chat_log_wraps_colors_and_scrolls_to_oldest_without_leaking_clip() {
+        let Ok(mut renderer) = crate::Renderer::new_headless(128, 64) else {
+            return;
+        };
+        let make_frame = |scroll_rows| {
+            UiFrame {
+            commands: vec![DrawCommand::TextLog {
+                rect: Rect::new(8., 8., 90., 34.),
+                clip: Rect::new(8., 8., 90., 34.),
+                lines: vec![
+                    openeq_ui::TextLine { text: "An old red message that wraps across several displayed rows in the chat window".into(), color: [255, 0, 0, 255] },
+                    openeq_ui::TextLine { text: "Newest".into(), color: [0, 255, 0, 255] },
+                ],
+                font: 2,
+                scroll_rows,
+            }],
+            ..Default::default()
+        }
+        };
+        let latest = draw(&mut renderer, &make_frame(0));
+        let oldest = draw(&mut renderer, &make_frame(usize::MAX));
+        let channel_pixels = |pixels: &[u8], channel: usize| {
+            pixels.chunks_exact(4).filter(|p| p[channel] > 30).count()
+        };
+        assert!(
+            channel_pixels(&latest, 0) > 10,
+            "previous wrapped row remains visible"
+        );
+        assert!(
+            channel_pixels(&latest, 1) > 10,
+            "latest row keeps its green color"
+        );
+        assert!(
+            channel_pixels(&oldest, 0) > 10,
+            "large scroll offsets clamp to oldest page"
+        );
+        assert_eq!(
+            channel_pixels(&oldest, 1),
+            0,
+            "newest row scrolls out of view"
+        );
+        for (i, p) in latest.chunks_exact(4).enumerate() {
+            if i % 128 < 8 || i % 128 >= 98 || i / 128 < 8 || i / 128 >= 42 {
+                assert_eq!(&p[..3], &[0, 0, 0], "chat escaped its clip");
+            }
+        }
     }
 
     #[test]

@@ -61,6 +61,22 @@ pub enum TextAlign {
 /// UVs (the authored `texture_size` is available as a hint, and can be zero).
 #[derive(Clone, Debug)]
 pub enum DrawCommand {
+    /// A screen-space line segment, batched as two triangles by the renderer.
+    Line {
+        from: [f32; 2],
+        to: [f32; 2],
+        width: f32,
+        clip: Rect,
+        color: Color,
+    },
+    /// Colored, word-wrapped rows, anchored to the bottom of a scrollable log.
+    TextLog {
+        rect: Rect,
+        clip: Rect,
+        lines: Vec<TextLine>,
+        font: u32,
+        scroll_rows: usize,
+    },
     Fill {
         rect: Rect,
         clip: Rect,
@@ -84,6 +100,12 @@ pub enum DrawCommand {
         vertical_center: bool,
         wrap: bool,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextLine {
+    pub text: String,
+    pub color: Color,
 }
 
 #[derive(Clone, Debug)]

@@ -141,3 +141,167 @@ fn wld_animation_decodes_packed_and_float_transforms() {
         assert_eq!(frame.scale, 2.0);
     }
 }
+
+#[test]
+fn real_equipment_follows_bones_and_appearance_variants_resolve() {
+    use openeq_assets::character::CharacterAppearance;
+    let Some(base) = openeq_assets::loader::default_client_dir() else {
+        return;
+    };
+    if !base.join("gequip.s3d").is_file() {
+        return;
+    }
+    let library = CharacterLibrary::load(&base, "poknowledge").unwrap();
+    let naked = library.load_model("HUM").unwrap();
+    let mut appearance = CharacterAppearance {
+        face: 3,
+        ..Default::default()
+    };
+    for slot in &mut appearance.equipment[..7] {
+        slot.material = 3;
+        slot.color = 0xff4080ff;
+    }
+    appearance.equipment[7].material = 1;
+    appearance.equipment[8].material = 201;
+    let equipped = library
+        .load_model_with_appearance("HUM", &appearance)
+        .unwrap();
+    assert_eq!(equipped.bounds_min[2], naked.bounds_min[2]);
+    assert_eq!(
+        equipped.bounds_max, naked.bounds_max,
+        "gear changes must not resize the body"
+    );
+    assert!(equipped.meshes.len() > naked.meshes.len());
+    let names: Vec<_> = equipped
+        .materials
+        .iter()
+        .flat_map(|m| &m.textures)
+        .collect();
+    assert!(
+        names.iter().any(|name| name.starts_with("humch03")),
+        "{names:?}"
+    );
+    assert!(
+        names.iter().any(|name| name.contains("#tint=ff4080ff")),
+        "{names:?}"
+    );
+    for name in names {
+        let texture = library
+            .texture(name)
+            .unwrap_or_else(|| panic!("missing {name}"));
+        assert!(texture.rgba.len() >= 4);
+        if let Some((source, _)) = name.split_once("#tint=") {
+            let untinted = library.texture(source).unwrap();
+            assert_ne!(texture.rgba, untinted.rgba, "tint not applied to {name}");
+            assert_eq!(texture.rgba[3], untinted.rgba[3]);
+        }
+    }
+    let a = equipped.sample("C05", 0.);
+    let b = equipped.sample("C05", 0.4);
+    let last = a.len() - 1;
+    assert_ne!(
+        a[last].vertices, b[last].vertices,
+        "held equipment did not move with attack"
+    );
+    assert_eq!(a[last].indices, b[last].indices);
+    assert_eq!(a[last].vertices[6..8], b[last].vertices[6..8]);
+    // A death must stay down, rather than wrap into the standing first frame.
+    let mut dead = equipped.meshes.clone();
+    let mut later = dead.clone();
+    equipped.sample_into_mode("D05", 10., false, &mut dead);
+    equipped.sample_into_mode("D05", 20., false, &mut later);
+    assert!(
+        dead.iter()
+            .zip(&later)
+            .all(|(a, b)| a.vertices == b.vertices)
+    );
+    let vertices = |m: &openeq_assets::character::CharacterModel| {
+        m.meshes.iter().map(|g| g.vertex_count()).sum::<usize>()
+    };
+    let mut robe = CharacterAppearance {
+        texture: 255,
+        helm_texture: 255,
+        ..Default::default()
+    };
+    robe.equipment[1].material = 10;
+    let robe = library.load_model_with_appearance("HUM", &robe).unwrap();
+    assert_ne!(
+        vertices(&robe),
+        vertices(&naked),
+        "robe did not replace the body mesh"
+    );
+    for name in robe.materials.iter().flat_map(|m| &m.textures) {
+        assert!(library.texture(name).is_some(), "robe texture {name}");
+    }
+    let mut robe_variant = CharacterAppearance {
+        texture: 255,
+        ..Default::default()
+    };
+    robe_variant.equipment[1].material = 16;
+    let robe_variant = library
+        .load_model_with_appearance("HUM", &robe_variant)
+        .unwrap();
+    assert!(
+        robe_variant
+            .materials
+            .iter()
+            .flat_map(|m| &m.textures)
+            .any(|name| name.starts_with("clk10"))
+    );
+    // Palette keyed masked textures must not display their key color.
+    let mask = library.texture("helm15.bmp#masked").unwrap();
+    assert!(mask.rgba.chunks_exact(4).any(|p| p[3] == 0));
+    assert!(
+        mask.rgba
+            .chunks_exact(4)
+            .filter(|p| p[..3] == [255, 0, 255])
+            .all(|p| p[3] == 0)
+    );
+}
+
+#[test]
+fn modern_weighted_characters_preserve_bind_pose_and_animate() {
+    let Some(base) = openeq_assets::loader::default_client_dir() else {
+        return;
+    };
+    if !base.join("ggy.eqg").is_file() {
+        return;
+    }
+    let library = CharacterLibrary::load(&base, "poknowledge").unwrap();
+    for code in ["GGY", "DKM", "DKF", "BDR", "ONM"] {
+        let model = library
+            .load_model(code)
+            .unwrap_or_else(|e| panic!("{code}: {e}"));
+        assert!(
+            model.animations.contains_key("L01"),
+            "{code} has no walking clip"
+        );
+        let bind = model.sample("", 0.);
+        for (a, b) in model.meshes.iter().zip(&bind) {
+            assert!(
+                a.vertices
+                    .iter()
+                    .zip(&b.vertices)
+                    .all(|(a, b)| (a - b).abs() < 0.0001),
+                "{code} bind pose drift"
+            );
+        }
+        let a = model.sample("L01", 0.);
+        let b = model.sample("L01", 0.22);
+        assert!(
+            a.iter().zip(&b).any(|(a, b)| a
+                .vertices
+                .iter()
+                .zip(&b.vertices)
+                .any(|(a, b)| (a - b).abs() > 0.02)),
+            "{code} animation is static"
+        );
+        for (a, b) in a.iter().zip(&b) {
+            assert_eq!(a.indices, b.indices);
+            assert!(b.vertices.iter().all(|v| v.is_finite()));
+        }
+        for name in model.materials.iter().flat_map(|m| &m.textures) {
+            assert!(library.texture(name).is_some(), "{code} missing {name}");
+        }
+    }
+}

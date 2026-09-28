@@ -150,6 +150,31 @@ impl Texture {
         })
     }
 
+    /// Classic masked BMPs use palette index zero as their transparent key.
+    /// Ordinary BMP decoding loses this convention because the palette's
+    /// reserved byte is not an alpha channel. Apply only to masked materials.
+    pub fn mask_palette_index_zero(&mut self, source: &[u8]) {
+        if source.len() < 54
+            || !source.starts_with(b"BM")
+            || u16::from_le_bytes([source[28], source[29]]) != 8
+        {
+            return;
+        }
+        let header = u32::from_le_bytes(source[14..18].try_into().unwrap()) as usize;
+        let Some(palette) = 14usize
+            .checked_add(header)
+            .and_then(|start| source.get(start..start + 4))
+        else {
+            return;
+        };
+        let key = [palette[2], palette[1], palette[0]];
+        for pixel in self.rgba.chunks_exact_mut(4) {
+            if pixel[..3] == key {
+                pixel[3] = 0;
+            }
+        }
+    }
+
     /// Decodes a texture, falling back to a magenta placeholder on failure.
     ///
     /// Asset files in the wild occasionally contain truncated or exotic

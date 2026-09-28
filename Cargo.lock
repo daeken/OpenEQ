@@ -2696,6 +2696,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bevy",
+ "encoding_rs",
  "glam 0.30.10",
  "image",
  "openeq-assets",

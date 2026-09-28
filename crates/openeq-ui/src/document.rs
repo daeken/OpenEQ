@@ -91,12 +91,17 @@ pub struct UiImageFrame {
 pub struct UiAnimation {
     pub frames: Vec<UiImageFrame>,
     pub cycle: bool,
+    /// Grid animations use explicit cell selection rather than elapsed time.
+    pub grid: bool,
 }
 
 impl UiAnimation {
     pub fn frame(&self, time_ms: u64, index: Option<usize>) -> Option<&UiImageFrame> {
         if let Some(index) = index {
             return self.frames.get(index);
+        }
+        if self.grid {
+            return self.frames.first();
         }
         let total: u64 = self.frames.iter().map(|frame| frame.duration_ms).sum();
         if total == 0 {
@@ -308,7 +313,7 @@ impl UiDocument {
                     );
                 }
                 "Ui2DAnimation" => {
-                    let frames = element
+                    let mut frames: Vec<UiImageFrame> = element
                         .children
                         .iter()
                         .filter(|child| child.kind == "Frames")
@@ -328,11 +333,49 @@ impl UiDocument {
                             })
                         })
                         .collect();
+                    let grid = element.boolean("Grid", false);
+                    if grid {
+                        let cell_w = element.number("CellWidth", 0.).max(0.) as u32;
+                        let cell_h = element.number("CellHeight", 0.).max(0.) as u32;
+                        if cell_w > 0 && cell_h > 0 {
+                            // Vertical grids enumerate down each column first;
+                            // horizontal grids enumerate across each row. The
+                            // padding around the atlas is not another cell.
+                            let vertical = element.boolean("Vertical", false);
+                            frames = frames
+                                .into_iter()
+                                .flat_map(|frame| {
+                                    let mut cells = Vec::new();
+                                    let columns = frame.source.width as u32 / cell_w;
+                                    let rows = frame.source.height as u32 / cell_h;
+                                    for index in 0..columns * rows {
+                                        let (column, row) = if vertical {
+                                            (index / rows, index % rows)
+                                        } else {
+                                            (index % columns, index / columns)
+                                        };
+                                        cells.push(UiImageFrame {
+                                            texture: frame.texture.clone(),
+                                            source: Rect::new(
+                                                frame.source.x + (column * cell_w) as f32,
+                                                frame.source.y + (row * cell_h) as f32,
+                                                cell_w as f32,
+                                                cell_h as f32,
+                                            ),
+                                            duration_ms: frame.duration_ms,
+                                        });
+                                    }
+                                    cells
+                                })
+                                .collect();
+                        }
+                    }
                     self.animations.insert(
                         name.clone(),
                         UiAnimation {
                             frames,
                             cycle: element.boolean("Cycle", false),
+                            grid,
                         },
                     );
                 }

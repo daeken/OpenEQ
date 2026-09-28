@@ -1,0 +1,1245 @@
+//! Gameplay state shared by the windowed client and end-to-end probes.
+//!
+//! EQEmu does not echo successful item moves. The client applies sent moves and
+//! replaces them with the server's item/delete packets if validation rejects one.
+use crate::gameplay_ui::{ChatLine, UiItem};
+use openeq_net::{
+    gameplay::{Currency, GameplayEvent, PlayerProfile, ServerMessage},
+    inventory::{InventoryItem, InventorySlot},
+};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    path::Path,
+    time::{Duration, Instant},
+};
+
+const CHAT_LIMIT: usize = 500;
+pub const SYSTEM_COLOR: [u8; 4] = [240, 220, 150, 255];
+pub const ERROR_COLOR: [u8; 4] = [255, 125, 110, 255];
+
+#[derive(Default, Debug, Clone, Copy)]
+pub struct ResourceValue {
+    pub current: Option<u32>,
+    pub maximum: Option<u32>,
+}
+impl ResourceValue {
+    pub fn fraction(self) -> Option<f32> {
+        let maximum = self.maximum.filter(|m| *m > 0)?;
+        Some((self.current? as f32 / maximum as f32).clamp(0., 1.))
+    }
+}
+
+#[derive(Default)]
+pub struct StringTable(BTreeMap<u32, String>);
+impl StringTable {
+    pub fn load(base: &Path) -> Self {
+        let path = ["eqstr_us.txt", "eqstr_en.txt"]
+            .into_iter()
+            .map(|name| base.join(name))
+            .find(|path| path.is_file());
+        path.and_then(|path| std::fs::read(path).ok())
+            .map(|bytes| Self::parse(&encoding_rs::WINDOWS_1252.decode(&bytes).0))
+            .unwrap_or_default()
+    }
+    pub fn parse(text: &str) -> Self {
+        Self(
+            text.lines()
+                .filter_map(|line| {
+                    let (id, text) = line.split_once(' ')?;
+                    Some((id.parse().ok()?, text.trim_end().to_owned()))
+                })
+                .collect(),
+        )
+    }
+    pub fn format(&self, message: &ServerMessage) -> String {
+        if let Some(text) = &message.text {
+            return clean_text(text);
+        }
+        let Some(id) = message.string_id else {
+            return String::new();
+        };
+        let Some(template) = self.0.get(&id) else {
+            return format!("Server message {id}: {}", message.arguments.join(" "));
+        };
+        // Substitute from the template in one pass: percent sequences inside
+        // player names or arguments must never become additional substitutions.
+        let mut out = String::new();
+        let mut chars = template.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '%' {
+                match chars.peek().copied() {
+                    Some('%') => {
+                        chars.next();
+                        out.push('%');
+                        continue;
+                    }
+                    Some(digit @ '1'..='9') => {
+                        chars.next();
+                        if let Some(argument) = message.arguments.get(digit as usize - '1' as usize)
+                        {
+                            out.push_str(argument);
+                        }
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            out.push(ch);
+        }
+        clean_text(&out)
+    }
+}
+
+#[derive(Default)]
+pub struct Inventory {
+    pub items: BTreeMap<InventorySlot, InventoryItem>,
+    pub received: bool,
+}
+impl Inventory {
+    pub fn replace(&mut self, items: Vec<InventoryItem>) {
+        self.items.clear();
+        for item in items {
+            self.insert(item);
+        }
+        self.received = true;
+    }
+
+    pub fn insert(&mut self, mut item: InventoryItem) {
+        let children = std::mem::take(&mut item.children);
+        let slot = item.slot;
+        self.remove_tree(slot);
+        self.items.insert(slot, item);
+        for child in children {
+            self.insert(child);
+        }
+    }
+
+    fn remove_tree(&mut self, slot: InventorySlot) -> Option<InventoryItem> {
+        if slot.bag.is_none() {
+            self.items.retain(|key, _| {
+                !(key.kind == slot.kind && key.slot == slot.slot && key.bag.is_some())
+            });
+        }
+        self.items.remove(&slot)
+    }
+
+    pub fn delete(&mut self, slot: InventorySlot, count: u32) {
+        if let Some(item) = self.items.get_mut(&slot)
+            && count > 0
+            && count < item.count
+            && count != u32::MAX
+        {
+            item.count -= count;
+            return;
+        }
+        self.remove_tree(slot);
+    }
+
+    pub fn validate_move(
+        &self,
+        from: InventorySlot,
+        to: InventorySlot,
+        count: u32,
+    ) -> Result<(), String> {
+        if from == to {
+            return Err("Choose a different inventory slot.".into());
+        }
+        if from.kind != 0
+            || to.kind != 0
+            || from.augment.is_some()
+            || to.augment.is_some()
+            || from.server_slot().is_none()
+            || to.server_slot().is_none()
+        {
+            return Err("That inventory location is not supported yet.".into());
+        }
+        let item = self.items.get(&from).ok_or("That slot is empty.")?;
+        if count > item.count {
+            return Err("That stack does not contain enough items.".into());
+        }
+        self.validate_destination(item, to)?;
+        if let Some(other) = self.items.get(&to) {
+            let stacking = item.stack_size > 1 && item.id == other.id;
+            if stacking {
+                if other.count >= other.stack_size {
+                    return Err("The destination stack is full.".into());
+                }
+            } else {
+                if count > 0 && count < item.count {
+                    return Err("Split stacks need an empty slot or matching stack.".into());
+                }
+                self.validate_destination(other, from)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_destination(&self, item: &InventoryItem, to: InventorySlot) -> Result<(), String> {
+        if let Some(index) = to.bag {
+            let parent = InventorySlot { bag: None, ..to };
+            if item.slot == parent {
+                return Err("A bag cannot be placed inside itself.".into());
+            }
+            let bag = self
+                .items
+                .get(&parent)
+                .ok_or("That bag is no longer there.")?;
+            if index >= bag.bag_slots as u16 {
+                return Err("That bag slot does not exist.".into());
+            }
+            if item.bag_slots > 0 {
+                return Err("Containers cannot be put inside other containers.".into());
+            }
+            if item.size > bag.bag_size {
+                return Err("That item is too large for this bag.".into());
+            }
+        } else if to.slot < 23 && item.equip_slots & (1u32 << to.slot) == 0 {
+            return Err("That item cannot be equipped in this slot.".into());
+        }
+        Ok(())
+    }
+
+    /// Apply a sent move or an unsolicited server move. Normal successful moves
+    /// have no server echo; corrective item packets subsequently replace state.
+    pub fn move_item(
+        &mut self,
+        from: InventorySlot,
+        to: InventorySlot,
+        count: u32,
+    ) -> Result<(), String> {
+        if from == to {
+            return Ok(());
+        }
+        if to == InventorySlot::DELETE {
+            self.delete(from, count);
+            return Ok(());
+        }
+        self.validate_move(from, to, count)?;
+        let mut source = self.items.get(&from).unwrap().clone();
+        let amount = if count == 0 {
+            source.count
+        } else {
+            count.min(source.count)
+        };
+        if let Some(destination) = self.items.get_mut(&to)
+            && source.id == destination.id
+            && source.stack_size > 1
+        {
+            let moved = amount.min(destination.stack_size.saturating_sub(destination.count));
+            destination.count += moved;
+            self.delete(from, moved);
+            return Ok(());
+        }
+        if amount < source.count {
+            self.items.get_mut(&from).unwrap().count -= amount;
+            source.count = amount;
+            source.slot = to;
+            self.items.insert(to, source);
+            return Ok(());
+        }
+        let mut source_tree = self.take_tree(from);
+        let destination_tree = self.take_tree(to);
+        self.put_tree(from, to, &mut source_tree);
+        let mut destination_tree = destination_tree;
+        self.put_tree(to, from, &mut destination_tree);
+        Ok(())
+    }
+
+    fn take_tree(&mut self, slot: InventorySlot) -> Vec<InventoryItem> {
+        let keys: Vec<_> = self
+            .items
+            .keys()
+            .copied()
+            .filter(|key| {
+                *key == slot
+                    || (slot.bag.is_none()
+                        && key.kind == slot.kind
+                        && key.slot == slot.slot
+                        && key.bag.is_some())
+            })
+            .collect();
+        keys.into_iter()
+            .filter_map(|key| self.items.remove(&key))
+            .collect()
+    }
+    fn put_tree(
+        &mut self,
+        old_slot: InventorySlot,
+        slot: InventorySlot,
+        items: &mut Vec<InventoryItem>,
+    ) {
+        for mut item in items.drain(..) {
+            let bag = if item.slot == old_slot {
+                slot.bag
+            } else {
+                item.slot.bag
+            };
+            item.slot = InventorySlot { bag, ..slot };
+            self.items.insert(item.slot, item);
+        }
+    }
+}
+
+pub struct LootSession {
+    pub corpse_id: u32,
+    pub name: String,
+    pub opened: bool,
+    pub items_complete: bool,
+    pub items: BTreeMap<u16, InventoryItem>,
+    pub pending: Option<u16>,
+    pub take_all: bool,
+}
+
+pub struct ActiveCast {
+    pub spell_id: u32,
+    pub started: Instant,
+    pub duration: Duration,
+}
+
+#[derive(Default)]
+pub struct GameplayState {
+    pub inventory: Inventory,
+    pub chat: VecDeque<ChatLine>,
+    pub strings: StringTable,
+    pub profile: Option<PlayerProfile>,
+    pub hp: ResourceValue,
+    pub mana: ResourceValue,
+    pub endurance: ResourceValue,
+    pub currency: Currency,
+    pub attack: bool,
+    pub sitting: bool,
+    pub last_tell: Option<String>,
+    pub loot: Option<LootSession>,
+    pub inventory_command_pending: bool,
+    pub spell_catalog: crate::spells::SpellCatalog,
+    pub casting: Option<ActiveCast>,
+    pub cast_pending_until: Option<Instant>,
+    pub spell_cooldowns: BTreeMap<u8, Instant>,
+    pub buffs: BTreeMap<u32, openeq_net::gameplay::Buff>,
+    buff_updated: BTreeMap<u32, Instant>,
+}
+impl GameplayState {
+    pub fn buff_seconds(&self, slot: u32) -> Option<u32> {
+        let buff = self.buffs.get(&slot)?;
+        // Permanent buffs use an unsigned -1 duration. Ordinary durations are
+        // server ticks (six seconds); refreshes reset this presentation timer.
+        if buff.ticks_remaining == u32::MAX {
+            return None;
+        }
+        let elapsed = self.buff_updated.get(&slot).map_or(0, |time| {
+            time.elapsed().as_secs().min(u32::MAX as u64) as u32
+        });
+        Some(
+            buff.ticks_remaining
+                .saturating_mul(6)
+                .saturating_sub(elapsed),
+        )
+    }
+
+    pub fn line(&mut self, text: impl Into<String>, color: [u8; 4]) {
+        let text = clean_text(&text.into());
+        if text.is_empty() {
+            return;
+        }
+        self.chat.push_back(ChatLine { text, color });
+        while self.chat.len() > CHAT_LIMIT {
+            self.chat.pop_front();
+        }
+    }
+    pub fn notice(&mut self, text: impl Into<String>) {
+        self.line(text, SYSTEM_COLOR);
+    }
+    pub fn error(&mut self, text: impl Into<String>) {
+        self.line(text, ERROR_COLOR);
+    }
+
+    pub fn apply(
+        &mut self,
+        event: GameplayEvent,
+        own: Option<u32>,
+        target: Option<u32>,
+        name: impl Fn(u32) -> String,
+    ) {
+        match event {
+            GameplayEvent::SpellMemorized {
+                slot,
+                spell_id,
+                action,
+                reduction,
+            } => {
+                if action == 3
+                    && slot < 12
+                    && let Some(spell) = self.spell_catalog.spells.get(&spell_id)
+                {
+                    self.spell_cooldowns.insert(
+                        slot as u8,
+                        Instant::now()
+                            + Duration::from_millis(
+                                spell
+                                    .recast_ms
+                                    .saturating_sub(reduction)
+                                    .max(spell.recovery_ms) as u64,
+                            ),
+                    );
+                }
+                if let Some(profile) = &mut self.profile {
+                    let list = if action == 0 {
+                        &mut profile.spell_book
+                    } else {
+                        &mut profile.memorized_spells
+                    };
+                    if let Some(entry) = list.get_mut(slot as usize) {
+                        match action {
+                            0 | 1 => *entry = spell_id,
+                            2 => *entry = u32::MAX,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            GameplayEvent::BeginCast {
+                caster_id,
+                spell_id,
+                cast_time_ms,
+            } if Some(caster_id) == own => {
+                self.casting = Some(ActiveCast {
+                    spell_id,
+                    started: Instant::now(),
+                    duration: Duration::from_millis(cast_time_ms as u64),
+                });
+                self.cast_pending_until = None;
+            }
+            GameplayEvent::CastInterrupted {
+                id,
+                message,
+                string_id,
+            } if Some(id) == own || id == 0 => {
+                self.casting = None;
+                self.cast_pending_until = None;
+                if !message.is_empty() {
+                    self.notice(message);
+                } else {
+                    let text = self.strings.format(&ServerMessage {
+                        color: 0,
+                        string_id: Some(string_id),
+                        arguments: Vec::new(),
+                        text: None,
+                    });
+                    self.notice(text);
+                }
+            }
+            GameplayEvent::SpellBarEnabled {
+                keep_casting,
+                mana,
+                endurance,
+                ..
+            } => {
+                self.mana.current = Some(mana);
+                self.endurance.current = Some(endurance);
+                self.cast_pending_until = None;
+                if !keep_casting {
+                    self.casting = None;
+                }
+            }
+            GameplayEvent::Buffs { id, all, buffs, .. } if Some(id) == own => {
+                if all {
+                    self.buffs.clear();
+                    self.buff_updated.clear();
+                }
+                for buff in buffs {
+                    if buff.spell_id != u32::MAX && buff.spell_id != 0 {
+                        self.buff_updated.insert(buff.slot, Instant::now());
+                        self.buffs.insert(buff.slot, buff);
+                    } else {
+                        self.buff_updated.remove(&buff.slot);
+                        self.buffs.remove(&buff.slot);
+                    }
+                }
+            }
+            GameplayEvent::BuffChanged { id, buff, removed } if Some(id) == own => {
+                if removed || buff.spell_id == 0 || buff.spell_id == u32::MAX {
+                    self.buff_updated.remove(&buff.slot);
+                    self.buffs.remove(&buff.slot);
+                } else {
+                    self.buff_updated.insert(buff.slot, Instant::now());
+                    self.buffs.insert(buff.slot, buff);
+                }
+            }
+            GameplayEvent::Inventory(items) => self.inventory.replace(items),
+            GameplayEvent::Item { packet_type, item } => {
+                if packet_type == 0x66 {
+                    if let Some(loot) = &mut self.loot {
+                        loot.items.insert(item.slot.slot, item);
+                    }
+                } else {
+                    self.inventory.insert(item);
+                }
+            }
+            GameplayEvent::ItemMoved { from, to, count } => {
+                if let Err(error) = self.inventory.move_item(from, to, count) {
+                    self.error(error);
+                }
+            }
+            GameplayEvent::ItemDeleted { from, count } => self.inventory.delete(from, count),
+            GameplayEvent::ItemChargeUsed { from, count } => {
+                if let Some(item) = self.inventory.items.get_mut(&from)
+                    && item.charges >= 0
+                {
+                    // Non-expendable click items remain when their final charge
+                    // is used. Negative charges mean unlimited uses.
+                    item.charges = (item.charges as u32).saturating_sub(count) as i32;
+                }
+            }
+            GameplayEvent::Chat(message) => {
+                if message.channel == 7
+                    && !message.sender.is_empty()
+                    && own.is_none_or(|id| !message.sender.eq_ignore_ascii_case(&name(id)))
+                {
+                    self.last_tell = Some(message.sender.clone());
+                }
+                let channel = match message.channel {
+                    0 => "Guild",
+                    2 => "Group",
+                    3 => "Shout",
+                    4 => "Auction",
+                    5 => "OOC",
+                    7 | 14 => "Tell",
+                    8 => "Say",
+                    15 => "Raid",
+                    _ => "World",
+                };
+                let speaker = if message.sender.is_empty() {
+                    "You"
+                } else {
+                    &message.sender
+                };
+                let recipient = if message.channel == 14 && !message.target.is_empty() {
+                    format!(" → {}", message.target)
+                } else {
+                    String::new()
+                };
+                self.line(
+                    format!("[{channel}] {speaker}{recipient}: {}", message.text),
+                    chat_color(message.channel),
+                );
+            }
+            GameplayEvent::Message(message) => {
+                self.line(self.strings.format(&message), message_color(message.color));
+            }
+            GameplayEvent::Profile(profile) => {
+                // RoF2 profile resource fields can be placeholders in EQEmu.
+                // Only the live resource packets are used for gauge values.
+                self.currency = profile.currency;
+                self.buffs = profile
+                    .buffs
+                    .iter()
+                    .filter(|buff| buff.spell_id > 0 && buff.spell_id != u32::MAX)
+                    .map(|buff| (buff.slot, buff.clone()))
+                    .collect();
+                let now = Instant::now();
+                self.buff_updated = self
+                    .buffs
+                    .keys()
+                    .map(|&slot| (slot, Instant::now()))
+                    .collect();
+                self.spell_cooldowns = profile
+                    .spell_refresh
+                    .iter()
+                    .take(12)
+                    .enumerate()
+                    .filter(|(_, ms)| **ms > 0 && **ms < 86_400_000)
+                    .map(|(i, ms)| (i as u8, now + Duration::from_millis(*ms as u64)))
+                    .collect();
+                self.profile = Some(profile);
+            }
+            GameplayEvent::Health {
+                id,
+                current,
+                maximum,
+            } if Some(id) == own => {
+                self.hp = ResourceValue {
+                    current: Some(current.max(0) as u32),
+                    maximum: Some(maximum.max(0) as u32),
+                };
+            }
+            GameplayEvent::Mana { current, maximum } => {
+                self.mana.current = Some(current);
+                if maximum.is_some() {
+                    self.mana.maximum = maximum;
+                }
+            }
+            GameplayEvent::Endurance { current, maximum } => {
+                self.endurance.current = Some(current);
+                if maximum.is_some() {
+                    self.endurance.maximum = maximum;
+                }
+            }
+            GameplayEvent::ManaEndurance { mana, endurance } => {
+                self.mana.current = Some(mana);
+                self.endurance.current = Some(endurance);
+            }
+            GameplayEvent::Currency(currency) => self.currency = currency,
+            GameplayEvent::Consider(consider) => {
+                let difficulty = match consider.level {
+                    6 => "gray",
+                    2 => "green",
+                    4 => "blue",
+                    10 | 20 => "white",
+                    13 => "red",
+                    15 => "yellow",
+                    18 => "light blue",
+                    _ => "unknown difficulty",
+                };
+                // The server swaps apprehensive/scowls and dubious/threatening
+                // into the client's ordering in Handle_OP_Consider.
+                let attitude = match consider.faction {
+                    1 => "ally",
+                    2 => "warmly",
+                    3 => "kindly",
+                    4 => "amiably",
+                    5 => "indifferently",
+                    6 => "scowls, ready to attack",
+                    7 => "threateningly",
+                    8 => "apprehensively",
+                    9 => "dubiously",
+                    _ => "unknown faction",
+                };
+                self.notice(format!(
+                    "{}: {difficulty}; regards you {attitude}.",
+                    name(consider.target_id)
+                ));
+            }
+            // Spell effects such as buffs send zero-damage packets. Resists
+            // have their own server messages; neither is a melee miss.
+            GameplayEvent::Damage(damage)
+                if damage.amount == 0 && damage.spell_id > 0 && damage.spell_id < 0xffff => {}
+            GameplayEvent::Damage(damage)
+                if [Some(damage.source_id), Some(damage.target_id)]
+                    .iter()
+                    .any(|id| *id == own || *id == target) =>
+            {
+                let source = if Some(damage.source_id) == own {
+                    "You".to_owned()
+                } else {
+                    name(damage.source_id)
+                };
+                let target_name = if Some(damage.target_id) == own {
+                    "you".to_owned()
+                } else {
+                    name(damage.target_id)
+                };
+                let text = match damage.amount {
+                    amount if amount > 0 => {
+                        format!("{source} hit {target_name} for {amount} damage.")
+                    }
+                    -1 => format!("{source}'s attack on {target_name} was blocked."),
+                    -2 => format!("{source}'s attack on {target_name} was parried."),
+                    -3 => format!("{source}'s attack on {target_name} was riposted."),
+                    -4 => format!("{source}'s attack on {target_name} was dodged."),
+                    -5 => format!("{source}'s attack did not affect {target_name} (invulnerable)."),
+                    -6 => format!("{source}'s attack on {target_name} was absorbed by a rune."),
+                    _ => format!("{source} miss {target_name}."),
+                };
+                let color = if Some(damage.target_id) == own {
+                    ERROR_COLOR
+                } else {
+                    [255, 185, 95, 255]
+                };
+                self.line(text, color);
+            }
+            GameplayEvent::Death(death) => {
+                if Some(death.id) == own || Some(death.id) == target {
+                    self.notice(format!(
+                        "{} has been slain by {}.",
+                        name(death.id),
+                        name(death.killer_id)
+                    ));
+                    self.attack = false;
+                }
+            }
+            GameplayEvent::SpawnAppearance {
+                id,
+                kind: 14,
+                parameter,
+            } if Some(id) == own => {
+                self.sitting = parameter == 1 || parameter == 110;
+            }
+            GameplayEvent::LootOpened { response, currency } => {
+                if response == 1 || response == 6 {
+                    if let Some(loot) = &mut self.loot {
+                        loot.opened = true;
+                        loot.items_complete |= response == 6;
+                    }
+                    if currency.platinum + currency.gold + currency.silver + currency.copper > 0 {
+                        self.notice(format!(
+                            "Looted {} platinum, {} gold, {} silver, {} copper.",
+                            currency.platinum, currency.gold, currency.silver, currency.copper
+                        ));
+                    }
+                } else {
+                    self.loot = None;
+                    self.error(match response {
+                        0 => "Someone else is looting that corpse.",
+                        2 => "You cannot loot that corpse.",
+                        _ => "The corpse could not be opened.",
+                    });
+                }
+            }
+            GameplayEvent::LootItemAcknowledged {
+                corpse_id,
+                player_id,
+                slot,
+                rejected,
+            } => {
+                if let Some(loot) = &mut self.loot
+                    && loot.corpse_id == corpse_id
+                    && own == Some(player_id)
+                {
+                    if rejected {
+                        loot.take_all = false;
+                    } else {
+                        loot.items.remove(&slot);
+                    }
+                    loot.pending = None;
+                }
+            }
+            GameplayEvent::LootComplete => self.loot = None,
+            _ => {}
+        }
+    }
+}
+
+pub fn display_name(name: &str) -> String {
+    name.trim_end_matches(|c: char| c.is_ascii_digit())
+        .replace('_', " ")
+        .trim_start_matches('#')
+        .to_owned()
+}
+pub fn item_view(item: &InventoryItem) -> UiItem {
+    let mut details = Vec::new();
+    if item.damage > 0 {
+        details.push(format!("Damage {}  Delay {}", item.damage, item.delay));
+    }
+    if item.ac != 0 {
+        details.push(format!("AC {:+}", item.ac));
+    }
+    if item.hp != 0 || item.mana != 0 || item.endurance != 0 {
+        details.push(format!(
+            "HP {:+}  Mana {:+}  Endurance +{}",
+            item.hp, item.mana, item.endurance
+        ));
+    }
+    if item.required_level > 0 {
+        details.push(format!("Required level {}", item.required_level));
+    }
+    if item.bag_slots > 0 {
+        details.push(format!("{} container slots", item.bag_slots));
+    }
+    if item.charges > 0 && item.stack_size <= 1 {
+        details.push(format!("{} charges", item.charges));
+    }
+    details.push(format!("Weight {:.1}", item.weight as f32 / 10.));
+    if !item.lore.is_empty() && item.lore != item.name {
+        details.push(item.lore.clone());
+    }
+    UiItem {
+        id: item.id,
+        icon: item.icon,
+        name: item.name.clone(),
+        count: item.count,
+        details,
+        bag_slots: item.bag_slots,
+    }
+}
+pub fn clean_text(text: &str) -> String {
+    let mut output = String::new();
+    let mut segments = text.split('\u{12}');
+    if let Some(prefix) = segments.next() {
+        output.push_str(prefix);
+    }
+    while let Some(link) = segments.next() {
+        // RoF2 links are a 56-byte hexadecimal item/action descriptor followed
+        // by their readable label. Preserve that label even without a link UI.
+        if link.len() > 56 && link.as_bytes()[..56].iter().all(u8::is_ascii_hexdigit) {
+            output.push('[');
+            output.push_str(&link[56..]);
+            output.push(']');
+        } else {
+            output.push_str(link);
+        }
+        if let Some(following) = segments.next() {
+            output.push_str(following);
+        }
+    }
+    output
+        .chars()
+        .filter(|ch| *ch == '\n' || (!ch.is_control() && *ch != '\u{7f}'))
+        .collect()
+}
+fn chat_color(channel: u32) -> [u8; 4] {
+    match channel {
+        0 => [145, 245, 145, 255],
+        2 => [135, 220, 255, 255],
+        7 | 14 => [235, 150, 255, 255],
+        3..=5 => [130, 230, 150, 255],
+        _ => [235, 235, 235, 255],
+    }
+}
+fn message_color(color: u32) -> [u8; 4] {
+    match color {
+        13 | 256 | 265 | 267 => ERROR_COLOR,
+        10 | 15 => [245, 225, 120, 255],
+        2 | 14 => [130, 230, 150, 255],
+        _ => SYSTEM_COLOR,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn item(slot: u16, id: u32, count: u32) -> InventoryItem {
+        InventoryItem {
+            slot: InventorySlot::possessions(slot),
+            id,
+            instance_id: id,
+            name: format!("Item {id}"),
+            lore: String::new(),
+            id_file: String::new(),
+            icon: 500,
+            count,
+            charges: 0,
+            stack_size: 20,
+            item_class: 0,
+            item_type: 0,
+            equip_slots: 0x7fffff,
+            classes: u32::MAX,
+            races: u32::MAX,
+            material: 0,
+            color: 0,
+            damage: 0,
+            delay: 0,
+            ac: 0,
+            hp: 0,
+            mana: 0,
+            endurance: 0,
+            required_level: 0,
+            bag_slots: 0,
+            bag_size: 4,
+            weight: 10,
+            size: 1,
+            children: Vec::new(),
+        }
+    }
+    #[test]
+    fn spell_failure_does_not_start_cooldown_and_confirmed_cast_does() {
+        let mut state = GameplayState::default();
+        state.spell_catalog.spells.insert(
+            288,
+            crate::spells::Spell {
+                id: 288,
+                name: "Minor Shielding".into(),
+                icon: 0,
+                mana: 10,
+                cast_time_ms: 2500,
+                recovery_ms: 1500,
+                recast_ms: 9000,
+                range: 0.,
+                target_type: 6,
+                beneficial: true,
+                levels: [1; 16],
+                description: String::new(),
+            },
+        );
+        let apply = |state: &mut GameplayState, event| {
+            state.apply(event, Some(7), None, |id| id.to_string())
+        };
+        apply(
+            &mut state,
+            GameplayEvent::BeginCast {
+                caster_id: 7,
+                spell_id: 288,
+                cast_time_ms: 2500,
+            },
+        );
+        assert!(state.casting.is_some());
+        apply(
+            &mut state,
+            GameplayEvent::CastInterrupted {
+                id: 7,
+                string_id: 439,
+                message: "Interrupted".into(),
+            },
+        );
+        apply(
+            &mut state,
+            GameplayEvent::SpellBarEnabled {
+                spell_id: 288,
+                slot: 1,
+                keep_casting: false,
+                mana: 100,
+                endurance: 50,
+            },
+        );
+        assert!(state.casting.is_none());
+        assert!(state.spell_cooldowns.is_empty());
+        apply(
+            &mut state,
+            GameplayEvent::SpellMemorized {
+                spell_id: 288,
+                slot: 1,
+                action: 3,
+                reduction: 1000,
+            },
+        );
+        let remaining = state.spell_cooldowns[&1]
+            .duration_since(Instant::now())
+            .as_secs_f32();
+        assert!((7.9..=8.).contains(&remaining));
+        assert_eq!(state.mana.current, Some(100));
+    }
+
+    #[test]
+    fn partial_buff_removal_and_full_refresh_clear_stale_slots() {
+        let mut state = GameplayState::default();
+        let buff = |slot, spell_id| openeq_net::gameplay::Buff {
+            slot,
+            spell_id,
+            ticks_remaining: 10,
+            num_hits: 0,
+            caster: "Caster".into(),
+        };
+        let apply = |state: &mut GameplayState, all, buffs| {
+            state.apply(
+                GameplayEvent::Buffs {
+                    id: 7,
+                    all,
+                    tick_timer: 0,
+                    kind: 0,
+                    buffs,
+                },
+                Some(7),
+                None,
+                |id| id.to_string(),
+            )
+        };
+        apply(&mut state, true, vec![buff(0, 288), buff(1, 36)]);
+        assert_eq!(state.buff_seconds(0), Some(60));
+        state
+            .buff_updated
+            .insert(0, Instant::now() - Duration::from_secs(8));
+        assert_eq!(state.buff_seconds(0), Some(52));
+        apply(&mut state, false, vec![buff(1, u32::MAX)]);
+        assert!(state.buffs.contains_key(&0));
+        assert!(!state.buffs.contains_key(&1));
+        apply(&mut state, true, vec![buff(3, 54)]);
+        assert_eq!(state.buffs.keys().copied().collect::<Vec<_>>(), vec![3]);
+    }
+
+    #[test]
+    fn split_merge_and_swap_preserve_items() {
+        let mut inventory = Inventory::default();
+        inventory.replace(vec![item(23, 1, 10), item(24, 2, 1)]);
+        inventory
+            .move_item(InventorySlot::possessions(23), InventorySlot::CURSOR, 3)
+            .unwrap();
+        assert_eq!(inventory.items[&InventorySlot::possessions(23)].count, 7);
+        assert_eq!(inventory.items[&InventorySlot::CURSOR].count, 3);
+        inventory
+            .move_item(InventorySlot::CURSOR, InventorySlot::possessions(23), 0)
+            .unwrap();
+        assert_eq!(inventory.items[&InventorySlot::possessions(23)].count, 10);
+        assert!(!inventory.items.contains_key(&InventorySlot::CURSOR));
+        inventory
+            .move_item(
+                InventorySlot::possessions(23),
+                InventorySlot::possessions(24),
+                0,
+            )
+            .unwrap();
+        assert_eq!(inventory.items[&InventorySlot::possessions(24)].id, 1);
+        assert_eq!(inventory.items[&InventorySlot::possessions(23)].id, 2);
+    }
+    #[test]
+    fn bag_moves_relocate_contents_and_server_replacement_clears_old_children() {
+        let mut bag = item(23, 10, 1);
+        bag.bag_slots = 8;
+        bag.stack_size = 1;
+        let mut child = item(23, 20, 1);
+        child.slot = bag.slot.in_bag(2);
+        bag.children.push(child);
+        let mut inventory = Inventory::default();
+        inventory.replace(vec![bag.clone()]);
+        inventory
+            .move_item(bag.slot, InventorySlot::CURSOR, 0)
+            .unwrap();
+        assert_eq!(inventory.items[&InventorySlot::CURSOR.in_bag(2)].id, 20);
+        assert!(!inventory.items.contains_key(&bag.slot.in_bag(2)));
+        inventory
+            .move_item(InventorySlot::CURSOR, bag.slot, 0)
+            .unwrap();
+        bag.children.clear();
+        inventory.insert(bag);
+        assert!(
+            !inventory
+                .items
+                .contains_key(&InventorySlot::possessions(23).in_bag(2))
+        );
+    }
+    #[test]
+    fn invalid_moves_do_not_drop_or_duplicate_items() {
+        let mut inventory = Inventory::default();
+        inventory.replace(vec![item(23, 1, 10)]);
+        assert!(
+            inventory
+                .move_item(
+                    InventorySlot::possessions(23),
+                    InventorySlot::possessions(24).in_bag(0),
+                    0
+                )
+                .is_err()
+        );
+        assert!(
+            inventory
+                .move_item(InventorySlot::possessions(23), InventorySlot::CURSOR, 11)
+                .is_err()
+        );
+        assert_eq!(inventory.items.len(), 1);
+        assert_eq!(inventory.items[&InventorySlot::possessions(23)].count, 10);
+    }
+    #[test]
+    fn bag_contents_can_be_picked_up_and_placed_back() {
+        let mut bag = item(23, 10, 1);
+        bag.bag_slots = 8;
+        bag.stack_size = 1;
+        let inside = bag.slot.in_bag(2);
+        let mut child = item(23, 20, 1);
+        child.slot = inside;
+        bag.children.push(child);
+        let mut inventory = Inventory::default();
+        inventory.replace(vec![bag]);
+        inventory
+            .move_item(inside, InventorySlot::CURSOR, 0)
+            .unwrap();
+        assert_eq!(inventory.items[&InventorySlot::CURSOR].id, 20);
+        assert!(!inventory.items.contains_key(&inside));
+        inventory
+            .move_item(InventorySlot::CURSOR, inside, 0)
+            .unwrap();
+        assert_eq!(inventory.items[&inside].id, 20);
+        assert!(!inventory.items.contains_key(&InventorySlot::CURSOR));
+    }
+    #[test]
+    fn formatting_does_not_interpret_substitutions_inside_arguments() {
+        let table = StringTable::parse("EQST0002\n100 %1 hit %2 for %3 damage (100%%).\n");
+        let message = ServerMessage {
+            color: 0,
+            string_id: Some(100),
+            arguments: vec!["a %2 goblin".into(), "you".into(), "12".into()],
+            text: None,
+        };
+        assert_eq!(
+            table.format(&message),
+            "a %2 goblin hit you for 12 damage (100%)."
+        );
+    }
+    #[test]
+    fn logs_are_bounded_and_unknown_resources_hidden() {
+        let mut state = GameplayState::default();
+        for i in 0..600 {
+            state.notice(format!("line {i}"));
+        }
+        assert_eq!(state.chat.len(), CHAT_LIMIT);
+        assert_eq!(state.chat.front().unwrap().text, "line 100");
+        assert_eq!(state.mana.fraction(), None);
+        state.mana = ResourceValue {
+            current: Some(90),
+            maximum: Some(100),
+        };
+        assert_eq!(state.mana.fraction(), Some(0.9));
+    }
+    #[test]
+    fn server_links_show_labels_without_hex_descriptors() {
+        let body = "0".repeat(56);
+        let text = format!("Choose \u{12}{body}Reload Menu\u{12} or \u{12}{body}help\u{12}.");
+        assert_eq!(clean_text(&text), "Choose [Reload Menu] or [help].");
+        assert_eq!(clean_text("hello\0\u{12}short\u{12}!"), "helloshort!");
+    }
+    #[test]
+    fn zero_damage_spell_effects_are_not_misses_but_melee_outcomes_remain() {
+        let mut state = GameplayState::default();
+        let mut damage = openeq_net::gameplay::Damage {
+            source_id: 1,
+            target_id: 1,
+            skill: 0,
+            spell_id: 288,
+            amount: 0,
+            secondary: false,
+            special: 0,
+        };
+        let apply = |state: &mut GameplayState, damage| {
+            state.apply(GameplayEvent::Damage(damage), Some(1), None, |id| {
+                id.to_string()
+            })
+        };
+        apply(&mut state, damage.clone());
+        assert!(state.chat.is_empty());
+        damage.spell_id = 0xffff;
+        damage.target_id = 2;
+        apply(&mut state, damage.clone());
+        assert!(state.chat.back().unwrap().text.contains("miss"));
+        damage.amount = -3;
+        apply(&mut state, damage.clone());
+        assert!(state.chat.back().unwrap().text.contains("riposted"));
+        damage.spell_id = 54;
+        damage.amount = 14;
+        apply(&mut state, damage);
+        assert!(state.chat.back().unwrap().text.contains("14 damage"));
+        // Real resist feedback still travels through ordinary server messages.
+        state.apply(
+            GameplayEvent::Message(ServerMessage {
+                color: 0,
+                string_id: None,
+                arguments: vec![],
+                text: Some("Your target resisted Frost Bolt.".into()),
+            }),
+            Some(1),
+            None,
+            |id| id.to_string(),
+        );
+        assert_eq!(
+            state.chat.back().unwrap().text,
+            "Your target resisted Frost Bolt."
+        );
+    }
+    #[test]
+    fn consumed_stack_units_and_click_charges_keep_remaining_inventory() {
+        use openeq_net::gameplay::{Command, encode_command, parse_packet};
+        let slot = InventorySlot::possessions(23);
+        let packet = encode_command(Command::DeleteItem {
+            slot,
+            count: u32::MAX,
+        })
+        .unwrap();
+        let mut state = GameplayState::default();
+        state.inventory.replace(vec![item(23, 100, 3)]);
+        for remaining in [2, 1] {
+            state.apply(
+                parse_packet(0x18ad, &packet.data).unwrap().unwrap(),
+                Some(1),
+                None,
+                |id| id.to_string(),
+            );
+            assert_eq!(state.inventory.items[&slot].count, remaining);
+        }
+        // The final unit is removed with OP_MoveItem, not a charge decrement.
+        state.apply(
+            parse_packet(0x32ee, &packet.data).unwrap().unwrap(),
+            Some(1),
+            None,
+            |id| id.to_string(),
+        );
+        assert!(!state.inventory.items.contains_key(&slot));
+        let mut click = item(23, 101, 1);
+        click.stack_size = 1;
+        click.charges = 2;
+        state.inventory.replace(vec![click]);
+        for remaining in [1, 0] {
+            state.apply(
+                parse_packet(0x01b8, &packet.data).unwrap().unwrap(),
+                Some(1),
+                None,
+                |id| id.to_string(),
+            );
+            assert_eq!(state.inventory.items[&slot].charges, remaining);
+            assert_eq!(state.inventory.items[&slot].count, 1);
+        }
+        state.inventory.items.get_mut(&slot).unwrap().charges = -1;
+        state.apply(
+            parse_packet(0x01b8, &packet.data).unwrap().unwrap(),
+            Some(1),
+            None,
+            |id| id.to_string(),
+        );
+        assert_eq!(state.inventory.items[&slot].charges, -1);
+    }
+    #[test]
+    fn denied_loot_remains_on_corpse_and_stops_loot_all() {
+        use openeq_net::gameplay::{Command, encode_command, parse_packet};
+        let mut state = GameplayState {
+            loot: Some(LootSession {
+                corpse_id: 5,
+                name: "Corpse".into(),
+                opened: true,
+                items_complete: true,
+                items: BTreeMap::from([(23, item(23, 100, 1))]),
+                pending: Some(23),
+                take_all: true,
+            }),
+            ..Default::default()
+        };
+        let mut packet = encode_command(Command::LootItem {
+            corpse_id: 5,
+            player_id: 1,
+            slot: 23,
+            auto_loot: true,
+        })
+        .unwrap();
+        packet.data[12..16].copy_from_slice(&(-1i32).to_le_bytes());
+        state.apply(
+            parse_packet(packet.opcode, &packet.data).unwrap().unwrap(),
+            Some(1),
+            Some(5),
+            |id| id.to_string(),
+        );
+        let loot = state.loot.as_ref().unwrap();
+        assert!(loot.items.contains_key(&23));
+        assert!(loot.pending.is_none());
+        assert!(!loot.take_all);
+        // An unrelated corpse acknowledgment must not mutate the open session.
+        packet.data[12..16].copy_from_slice(&1u32.to_le_bytes());
+        packet.data[..4].copy_from_slice(&6u32.to_le_bytes());
+        state.apply(
+            parse_packet(packet.opcode, &packet.data).unwrap().unwrap(),
+            Some(1),
+            Some(5),
+            |id| id.to_string(),
+        );
+        assert!(state.loot.as_ref().unwrap().items.contains_key(&23));
+        packet.data[..4].copy_from_slice(&5u32.to_le_bytes());
+        state.apply(
+            parse_packet(packet.opcode, &packet.data).unwrap().unwrap(),
+            Some(1),
+            Some(5),
+            |id| id.to_string(),
+        );
+        assert!(state.loot.as_ref().unwrap().items.is_empty());
+    }
+    #[test]
+    fn loot_list_completion_keeps_items_available() {
+        let mut state = GameplayState {
+            loot: Some(LootSession {
+                corpse_id: 5,
+                name: "Corpse".into(),
+                opened: false,
+                items_complete: false,
+                items: BTreeMap::new(),
+                pending: None,
+                take_all: false,
+            }),
+            ..Default::default()
+        };
+        for response in [1, 6] {
+            state.apply(
+                GameplayEvent::LootOpened {
+                    response,
+                    currency: Currency::default(),
+                },
+                Some(1),
+                Some(5),
+                |id| id.to_string(),
+            );
+        }
+        assert!(state.loot.as_ref().unwrap().opened);
+        assert!(state.loot.as_ref().unwrap().items_complete);
+    }
+}

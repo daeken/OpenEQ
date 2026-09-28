@@ -116,14 +116,19 @@ animation tracks. Packed tracks use a fixed translation divisor of 256 and an
 independent scale field; float tracks have their own frame layout. Quaternion
 interpolation skins the original geometry without changing its topology.
 
-Actor rendering caches each race/gender model and its textures. One idle and
-one walking pose per model are updated each frame; independently placed NPCs
-use instancing. The game predicts sparse NPC patrol updates using EQEmu's heading and speed
+Actor rendering caches normalized appearances, decoded textures and reusable pose
+slots. Independent timelines restart repeated server actions and return one-shot
+animations to locomotion. Matching appearance/pose pairs use instancing. Classic
+armor/face textures, tints, helmets, robes and held IT equipment are supported;
+weapons follow authored skeleton attachment points. Modern EQGS/EQGM weighted
+meshes use inverse bind matrices and EQGA timed tracks, including gargoyles and
+Drakkin. Drakkin modular clothing/hair/attachments remain incomplete.
+
+The game predicts sparse NPC patrol updates using EQEmu's heading and speed
 convention, smooths small corrections over 150 ms, snaps teleports and stops
-predicting after six seconds without fresh motion data.
-Classic humanoids face +X in their source mesh, so heading conversion includes
-an initial +90° rotation. Spawn size normalizes the model's bind-pose height.
-Equipment, alternate skins and modern EQG character skeletons are not decoded.
+predicting after six seconds without fresh motion data. Classic humanoids face
++X in source data; heading conversion includes an initial +90° rotation. Spawn
+size normalizes the bind-pose height. See [character details](CHARACTER_RENDERING.md).
 
 ### Coordinate system
 
@@ -257,7 +262,12 @@ Online movement uses a 120 Hz fixed simulation step, with gravity, jumping,
 grounded stepping and sliding along walls. A spatial grid indexes collidable
 triangles from the drawable zone and placed objects; floor selection handles
 stacked decks and slopes, and ceiling checks limit upward motion. Invisible
-collision-only geometry, dynamic doors and swimming are still unsupported.
+collision-only geometry and swimming remain unsupported. A second collision
+world contains server-owned doors in their current final poses, rebuilt on state
+changes. Visual door transforms interpolate independently. The third-person
+camera clips its sight segment against static and door triangles on either side,
+rather than using the walking cylinder solver, so it cannot slide under slopes.
+Networking always uses the player position.
 The camera sits six units above the player's feet; outgoing server positions
 use a center three units above the feet. Developer flight bypasses collision.
 
@@ -274,11 +284,34 @@ The directional sun remains fixed while point lights use authored zone data.
 `openeq-ui` loads the original SIDL XML include graph, definitions, animation
 atlases and widgets into renderer-independent draw commands and hit targets.
 The GPU overlay clips and blends images and text. Game bindings supply all
-state: XML files cannot execute scripts or network commands. The live HUD uses
-PlayerWindow, TargetWindow and ChatWindow, with unknown stats and inactive
-indicators hidden. The chat area currently displays connection status, not a
-working chat editor. Advanced lists, rich STML, item interaction and inventory
-remain incomplete.
+state: XML files cannot execute scripts or network commands. The live HUD binds player/target resources, colored chat, inventory/equipment,
+bags, loot, spells, buffs and casting. Logical-pixel layout/hits are independent
+of framebuffer scale; images, clips and glyph rasterization use the actual
+physical density. Windows can be dragged; advanced XML widgets and STML remain
+incomplete.
+
+`chat.rs` owns Unicode-safe text editing and slash-command parsing.
+`interaction.rs` translates UI intentions into typed network commands and builds
+presentation models. `game.rs` reduces server gameplay events into inventory,
+resources, chat, loot and spell state. `live.rs` coordinates the network worker,
+entity actions, target state, door state and zone transitions. The UI does not
+send packets or infer inventory addresses from XML control IDs.
+
+Successful EQEmu item moves have no acknowledgment. The reducer applies a move
+after network submission and accepts later server corrections; tests verify
+persistence after reconnect. Loot delivery supplies its actual destination slot.
+Cooldowns begin on successful action-3 spell notifications, not spellbar unlocks,
+which also arrive for failed casts. See [protocol details](GAMEPLAY_PROTOCOL.md).
+
+During a zone handoff the worker retains authentication and suppresses movement;
+old actors, inventory and targets are cleared. Fresh server environment data
+selects the new geometry, character/door library, collision, map and atmosphere.
+Movement resumes only with a fresh player position. Server portals and requested
+travel work; authored border zone-line detection remains unfinished.
+
+Original client map files are parsed independently of the XML UI. Lines and
+landmarks use the original `(-X,-Y,Z)` map convention and are projected around the
+player with clipped drawing, zoom, target marker and waypoints.
 
 ## Testing
 
@@ -290,9 +323,13 @@ PNG that can be inspected directly.
 
 ## Remaining work
 
-- Modern EQG characters, equipment/skin selection, per-instance animation phases.
-- Combat, spells, inventory, doors, quests, chat and inter-zone travel.
-- Complete XML widgets and interactive login/character selection screens.
+- Merchants, banking, trading, richer quest links, group/raid management and UCS.
+- Interactive login/character creation and complete XML/STML widgets.
+- Authored zone-line triggers and exact special door/platform motion.
+- Luclin replacements, modular modern appearance, item/AA casting, particles/audio.
 - Full original collision volumes and movement rules, including swimming.
-- Cascaded shadows, animated directional lighting, full weather and water refraction.
+- Cascaded shadows, animated sun, complete weather and water refraction.
 - Remaining terrain ecosystem effects, procedural vegetation and tile water.
+
+The [milestone checklist](PLAYABLE_CLIENT_TASKS.md) records implemented scope and
+live verification rather than treating scaffolding as parity.

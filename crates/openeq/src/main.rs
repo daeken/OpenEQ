@@ -9,17 +9,19 @@
 //! openeq akanon --dir /path/to/EverQuest --pos 100,-200,20
 //! ```
 
-mod hud;
-mod live;
-mod movement;
+use openeq::{chat, hud, live, movement};
 use openeq_net::session::ConnectionConfig;
 use openeq_render::actors::ActorRenderer;
 use std::path::PathBuf;
 
 use bevy::ecs::system::NonSendMarker;
-use bevy::input::mouse::AccumulatedMouseMotion;
+use bevy::input::{
+    ButtonState,
+    keyboard::KeyboardInput,
+    mouse::{AccumulatedMouseMotion, MouseWheel},
+};
 use bevy::prelude::*;
-use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused};
+use bevy::window::{CursorGrabMode, CursorOptions, Ime, PrimaryWindow, WindowFocused};
 use bevy::winit::{WINIT_WINDOWS, WinitSettings};
 use openeq_assets::loader;
 use openeq_render::Renderer;
@@ -58,6 +60,13 @@ struct Runtime {
     collision: Option<openeq_assets::collision::CollisionWorld>,
     fly: bool,
     ground_motion: movement::GroundMotion,
+    interaction: openeq::interaction::Interaction,
+    loaded_zone: Option<String>,
+    zone_map: Option<openeq::map::ZoneMap>,
+    map_state: openeq::map::MapState,
+    map_open: bool,
+    third_person: bool,
+    doors: Option<openeq_render::doors::DoorRenderer>,
 }
 
 impl Runtime {
@@ -78,6 +87,13 @@ impl Runtime {
             collision: None,
             fly: true,
             ground_motion: movement::GroundMotion::default(),
+            interaction: openeq::interaction::Interaction::default(),
+            loaded_zone: None,
+            zone_map: None,
+            map_state: openeq::map::MapState::default(),
+            map_open: false,
+            third_person: false,
+            doors: None,
         }
     }
 }
@@ -98,7 +114,11 @@ fn main() -> AppExit {
 
     let mut runtime = Runtime::new(camera);
     if let Some(config) = options.connection.clone() {
-        runtime.live = Some(live::LiveWorld::start(config));
+        let mut live = live::LiveWorld::start(config);
+        live.game.strings = openeq::game::StringTable::load(&options.dir);
+        live.game.spell_catalog =
+            openeq::spells::SpellCatalog::load(&options.dir).unwrap_or_default();
+        runtime.live = Some(live);
         runtime.fly = false;
     }
 
@@ -116,7 +136,13 @@ fn main() -> AppExit {
         // Capture runs first so the camera sees this frame's grab state.
         .add_systems(
             Update,
-            (handle_targeting, handle_cursor_capture, update_camera).chain(),
+            (
+                handle_gameplay_input,
+                handle_targeting,
+                handle_cursor_capture,
+                update_camera,
+            )
+                .chain(),
         )
         .add_systems(Last, render_frame)
         .run()
@@ -187,14 +213,24 @@ fn update_camera(
 ) {
     runtime.moving = false;
     let online = runtime.live.is_some();
-    if online && keys.just_pressed(KeyCode::KeyF) {
+    let controls = !runtime.interaction.editor.active
+        && !runtime.interaction.controls_blocked
+        && runtime
+            .live
+            .as_ref()
+            .is_none_or(|live| live.ready && live.error.is_none());
+    if online && controls && keys.just_pressed(KeyCode::KeyF) {
         runtime.fly = !runtime.fly;
         runtime.ground_motion = movement::GroundMotion::default();
     }
     let mut camera = runtime.camera;
 
     let captured = cursors.single().map(is_captured).unwrap_or(false);
-    let delta = if captured { motion.delta } else { Vec2::ZERO };
+    let delta = if captured && controls {
+        motion.delta
+    } else {
+        Vec2::ZERO
+    };
     if delta != Vec2::ZERO {
         // Yaw increases anticlockwise in EverQuest space, so moving the mouse
         // right (positive x) turns right by adding.
@@ -208,22 +244,22 @@ fn update_camera(
     let mut forward = 0.0f32;
     let mut strafe = 0.0f32;
     let mut lift = 0.0f32;
-    if keys.pressed(KeyCode::KeyW) {
+    if controls && keys.pressed(KeyCode::KeyW) {
         forward += 1.0;
     }
-    if keys.pressed(KeyCode::KeyS) {
+    if controls && keys.pressed(KeyCode::KeyS) {
         forward -= 1.0;
     }
-    if keys.pressed(KeyCode::KeyD) {
+    if controls && keys.pressed(KeyCode::KeyD) {
         strafe += 1.0;
     }
-    if keys.pressed(KeyCode::KeyA) {
+    if controls && keys.pressed(KeyCode::KeyA) {
         strafe -= 1.0;
     }
-    if keys.pressed(KeyCode::Space) {
+    if controls && keys.pressed(KeyCode::Space) {
         lift += 1.0;
     }
-    if keys.pressed(KeyCode::ControlLeft) {
+    if controls && keys.pressed(KeyCode::ControlLeft) {
         lift -= 1.0;
     }
     let horizontal_length = (forward * forward + strafe * strafe).sqrt().max(1.);
@@ -258,11 +294,12 @@ fn update_camera(
             camera.position[2] - 6.,
         ];
         let mut motion = std::mem::take(&mut runtime.ground_motion);
-        let moved = motion.step(
+        let moved = motion.step_with_dynamic(
             runtime.collision.as_ref().unwrap(),
+            runtime.doors.as_ref().map(|doors| doors.collision_world()),
             feet,
             velocity_xy,
-            keys.just_pressed(KeyCode::Space),
+            controls && keys.just_pressed(KeyCode::Space),
             dt,
         );
         runtime.ground_motion = motion;
@@ -284,6 +321,7 @@ fn handle_cursor_capture(
     mut focus: MessageReader<WindowFocused>,
     mut exit: MessageWriter<AppExit>,
     runtime: Res<Runtime>,
+    windows: Query<&Window, With<PrimaryWindow>>,
 ) {
     let Ok((entity, mut cursor)) = cursors.single_mut() else {
         return;
@@ -297,9 +335,19 @@ fn handle_cursor_capture(
         }
     }
 
+    if runtime.interaction.editor.active || runtime.interaction.escape_handled {
+        return;
+    }
+    let ui_hit = windows
+        .single()
+        .ok()
+        .and_then(|window| window.cursor_position().map(|p| [p.x, p.y]))
+        .is_some_and(|p| runtime.ui_frame.hit_test(p).is_some());
+
     if (mouse.just_pressed(MouseButton::Right)
         || (runtime.live.is_none() && mouse.just_pressed(MouseButton::Left)))
         && !captured
+        && !ui_hit
     {
         cursor.visible = false;
         cursor.grab_mode = CursorGrabMode::Locked;
@@ -319,6 +367,355 @@ fn handle_cursor_capture(
 
 fn is_captured(options: &CursorOptions) -> bool {
     options.grab_mode != CursorGrabMode::None
+}
+
+fn handle_gameplay_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    (mut keyboard, mut ime, mut wheel): (
+        MessageReader<KeyboardInput>,
+        MessageReader<Ime>,
+        MessageReader<MouseWheel>,
+    ),
+    mut windows: Query<(Entity, &mut Window, &mut CursorOptions), With<PrimaryWindow>>,
+    mut runtime: ResMut<Runtime>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    let Ok((window_id, mut window, mut cursor)) = windows.single_mut() else {
+        return;
+    };
+    let camera_position = runtime.camera.position;
+    let Runtime {
+        live: Some(live),
+        interaction,
+        ui_frame,
+        zone_map,
+        map_state,
+        map_open,
+        third_person,
+        ..
+    } = &mut *runtime
+    else {
+        keyboard.clear();
+        ime.clear();
+        wheel.clear();
+        return;
+    };
+    live.poll();
+    if let Some(environment) = &live.environment {
+        let title = format!("OpenEQ - {}", environment.short_name);
+        if window.title != title {
+            window.title = title;
+        }
+    }
+    interaction.controls_blocked = interaction.editor.active;
+    interaction.escape_handled = false;
+    interaction.pointer = window.cursor_position().map(|p| [p.x, p.y]);
+    let command_modifier = keys.pressed(KeyCode::ControlLeft)
+        || keys.pressed(KeyCode::ControlRight)
+        || keys.pressed(KeyCode::SuperLeft)
+        || keys.pressed(KeyCode::SuperRight);
+    for event in keyboard
+        .read()
+        .filter(|event| event.window == window_id && event.state == ButtonState::Pressed)
+    {
+        if !interaction.editor.active {
+            if event.key_code == KeyCode::Enter || event.key_code == KeyCode::NumpadEnter {
+                interaction.editor.open("");
+            } else if event.text.as_deref() == Some("/") && !command_modifier {
+                interaction.editor.open("/");
+            } else {
+                continue;
+            }
+            release_cursor(&mut cursor);
+            interaction.controls_blocked = true;
+            continue;
+        }
+        interaction.controls_blocked = true;
+        match event.key_code {
+            KeyCode::Enter | KeyCode::NumpadEnter if !interaction.ime_composing => {
+                if let Some(text) = interaction.editor.submit()
+                    && interaction.submit(&text, live, camera_position)
+                {
+                    exit.write(AppExit::Success);
+                }
+            }
+            KeyCode::Escape => {
+                interaction.editor.cancel();
+                interaction.ime_composing = false;
+                interaction.escape_handled = true;
+            }
+            KeyCode::Backspace if !interaction.ime_composing => {
+                interaction.editor.backspace(command_modifier)
+            }
+            KeyCode::Delete if !interaction.ime_composing => interaction.editor.delete(),
+            KeyCode::ArrowLeft if !interaction.ime_composing => interaction.editor.left(),
+            KeyCode::ArrowRight if !interaction.ime_composing => interaction.editor.right(),
+            KeyCode::Home => interaction.editor.cursor = 0,
+            KeyCode::End => interaction.editor.cursor = interaction.editor.text.len(),
+            KeyCode::ArrowUp if !interaction.ime_composing => interaction.editor.history(true),
+            KeyCode::ArrowDown if !interaction.ime_composing => interaction.editor.history(false),
+            KeyCode::PageUp => {
+                interaction.chat_scroll = interaction.chat_scroll.saturating_add(8).min(5000)
+            }
+            KeyCode::PageDown => {
+                interaction.chat_scroll = interaction.chat_scroll.saturating_sub(8)
+            }
+            KeyCode::KeyU if command_modifier => {
+                interaction.editor.text.clear();
+                interaction.editor.cursor = 0;
+            }
+            _ if !command_modifier && !interaction.ime_composing => {
+                if let Some(text) = &event.text {
+                    interaction.editor.insert(text);
+                }
+            }
+            _ => {}
+        }
+    }
+    for event in ime.read() {
+        if !interaction.editor.active {
+            continue;
+        }
+        match event {
+            Ime::Preedit { window, value, .. } if *window == window_id => {
+                interaction.editor.preedit.clone_from(value);
+                interaction.ime_composing = !value.is_empty();
+            }
+            Ime::Commit { window, value } if *window == window_id => {
+                interaction.editor.insert(value);
+                interaction.editor.preedit.clear();
+                interaction.ime_composing = false;
+            }
+            Ime::Disabled { window } if *window == window_id => {
+                interaction.editor.preedit.clear();
+                interaction.ime_composing = false;
+            }
+            _ => {}
+        }
+    }
+    window.ime_enabled = interaction.editor.active;
+    if !interaction.controls_blocked && !interaction.editor.active {
+        if keys.just_pressed(KeyCode::KeyM) {
+            if zone_map.is_some() {
+                *map_open = !*map_open;
+            } else {
+                live.game
+                    .notice("No original map file was found for this zone.");
+            }
+        }
+        if keys.just_pressed(KeyCode::F9) {
+            *third_person = !*third_person;
+        }
+        if keys.just_pressed(KeyCode::KeyB) {
+            interaction.spellbook_open = !interaction.spellbook_open;
+        }
+        if keys.just_pressed(KeyCode::F1) {
+            live.set_target(live.own_id);
+        }
+        if keys.pressed(KeyCode::AltLeft) || keys.pressed(KeyCode::AltRight) {
+            for (gem, key) in [
+                KeyCode::Digit1,
+                KeyCode::Digit2,
+                KeyCode::Digit3,
+                KeyCode::Digit4,
+                KeyCode::Digit5,
+                KeyCode::Digit6,
+                KeyCode::Digit7,
+                KeyCode::Digit8,
+                KeyCode::Digit9,
+                KeyCode::Digit0,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if keys.just_pressed(key) {
+                    interaction.cast(gem as u8, live);
+                }
+            }
+        }
+        if keys.just_pressed(KeyCode::KeyE) {
+            let closest = live
+                .doors
+                .values()
+                .map(|door| {
+                    (
+                        door.id,
+                        door.position
+                            .iter()
+                            .zip(camera_position)
+                            .map(|(a, b)| (a - b).powi(2))
+                            .sum::<f32>(),
+                    )
+                })
+                .filter(|(_, distance)| *distance < 25. * 25.)
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|entry| entry.0);
+            if let (Some(door_id), Some(player_id)) = (closest, live.own_id) {
+                live.command(openeq_net::gameplay::Command::ClickDoor { door_id, player_id });
+            } else {
+                live.game.notice("No door or portal is within reach.");
+            }
+        }
+        for (key, action) in [
+            (KeyCode::KeyI, chat::Action::Inventory),
+            (KeyCode::KeyQ, chat::Action::Attack(None)),
+            (KeyCode::KeyH, chat::Action::Hail),
+            (KeyCode::KeyX, chat::Action::Sit(!live.game.sitting)),
+            (KeyCode::KeyL, chat::Action::Loot),
+            (KeyCode::KeyC, chat::Action::Consider),
+            (KeyCode::KeyV, chat::Action::Assist(None)),
+        ] {
+            if keys.just_pressed(key) {
+                interaction.action(action, live, camera_position);
+            }
+        }
+        if live.game.sitting
+            && [
+                KeyCode::KeyW,
+                KeyCode::KeyA,
+                KeyCode::KeyS,
+                KeyCode::KeyD,
+                KeyCode::Space,
+            ]
+            .iter()
+            .any(|key| keys.just_pressed(*key))
+        {
+            interaction.action(chat::Action::Sit(false), live, camera_position);
+        }
+        if keys.just_pressed(KeyCode::Escape) && !is_captured(&cursor) {
+            if live.game.casting.is_some()
+                || live
+                    .game
+                    .cast_pending_until
+                    .is_some_and(|until| until > std::time::Instant::now())
+            {
+                live.command(openeq_net::gameplay::Command::InterruptSpell);
+                interaction.escape_handled = true;
+            } else if interaction.inspected_item.take().is_some() {
+                interaction.escape_handled = true;
+            } else if interaction.spellbook_open {
+                interaction.spellbook_open = false;
+                interaction.escape_handled = true;
+            } else if live.game.loot.is_some() {
+                interaction.close_window("loot", live);
+                interaction.escape_handled = true;
+            } else if !interaction.open_bags.is_empty() {
+                interaction.open_bags.clear();
+                interaction.escape_handled = true;
+            } else if interaction.inventory_open {
+                interaction.inventory_open = false;
+                interaction.escape_handled = true;
+            } else if *map_open {
+                *map_open = false;
+                interaction.escape_handled = true;
+            }
+        }
+    }
+    if !is_captured(&cursor)
+        && let Some(point) = interaction.pointer
+    {
+        if mouse.pressed(MouseButton::Left)
+            && let Some((window_name, offset)) = &interaction.drag
+        {
+            let origin = [
+                (point[0] - offset[0]).clamp(0., (window.width() - 40.).max(0.)),
+                (point[1] - offset[1]).clamp(0., (window.height() - 30.).max(0.)),
+            ];
+            if window_name == "map" {
+                map_state.rect.x = origin[0];
+                map_state.rect.y = origin[1];
+            } else {
+                interaction
+                    .window_positions
+                    .insert(window_name.clone(), origin);
+            }
+        }
+        if mouse.just_released(MouseButton::Left) {
+            interaction.drag = None;
+        }
+        if let Some(hit) = ui_frame.hit_test(point) {
+            if let Some(action) = openeq::map::MapAction::from_hit(hit) {
+                use openeq::map::{MapAction, MapMarker};
+                if mouse.just_pressed(MouseButton::Left) {
+                    match action {
+                        MapAction::Close => *map_open = false,
+                        MapAction::ZoomIn => {
+                            map_state.units_per_pixel = (map_state.units_per_pixel / 1.4).max(0.25)
+                        }
+                        MapAction::ZoomOut => {
+                            map_state.units_per_pixel = (map_state.units_per_pixel * 1.4).min(128.)
+                        }
+                        MapAction::Recenter => map_state.center = None,
+                        MapAction::BeginDrag => {
+                            interaction.drag = Some((
+                                "map".into(),
+                                [point[0] - map_state.rect.x, point[1] - map_state.rect.y],
+                            ))
+                        }
+                        MapAction::Canvas => {
+                            if let Some(position) = map_state.world_at(point) {
+                                map_state.waypoints = vec![MapMarker {
+                                    position,
+                                    label: "Waypoint".into(),
+                                    ..Default::default()
+                                }];
+                            }
+                        }
+                        MapAction::Label(index) => {
+                            if let Some(label) =
+                                zone_map.as_ref().and_then(|map| map.labels.get(index))
+                            {
+                                map_state.waypoints = vec![MapMarker {
+                                    position: label.position,
+                                    label: label.text.clone(),
+                                    ..Default::default()
+                                }];
+                            }
+                        }
+                    }
+                }
+                if mouse.just_pressed(MouseButton::Right) {
+                    map_state.waypoints.clear();
+                }
+                for event in wheel.read() {
+                    map_state.units_per_pixel =
+                        (map_state.units_per_pixel * 1.2f32.powf(-event.y)).clamp(0.25, 128.);
+                }
+            }
+            if (mouse.just_pressed(MouseButton::Left) || mouse.just_pressed(MouseButton::Right))
+                && let Some(action) = hud::UiAction::from_hit(hit)
+            {
+                if let hud::UiAction::BeginWindowDrag(name) = action {
+                    if mouse.just_pressed(MouseButton::Left) {
+                        interaction.drag =
+                            Some((name, [point[0] - hit.rect.x, point[1] - hit.rect.y]));
+                    }
+                } else {
+                    interaction.ui_action(
+                        action,
+                        mouse.just_pressed(MouseButton::Right),
+                        keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight),
+                        live,
+                        camera_position,
+                    );
+                }
+            }
+            if hit.item == "game:chat_log" || hit.item == "game:chat_input" {
+                for event in wheel.read() {
+                    let rows = (event.y.abs() * 3.).ceil() as usize;
+                    if event.y > 0. {
+                        interaction.chat_scroll =
+                            interaction.chat_scroll.saturating_add(rows).min(5000);
+                    } else {
+                        interaction.chat_scroll = interaction.chat_scroll.saturating_sub(rows);
+                    }
+                }
+            }
+        }
+    }
+    wheel.clear();
+    interaction.tick(live);
 }
 
 fn release_cursor(cursor: &mut CursorOptions) {
@@ -365,6 +762,10 @@ fn render_frame(
         return;
     };
     let size = (window.physical_width(), window.physical_height());
+    let ui_size = [
+        window.width().round() as u32,
+        window.height().round() as u32,
+    ];
     if size.0 > 0
         && size.1 > 0
         && size != runtime.size
@@ -385,10 +786,27 @@ fn render_frame(
     }
     // `Camera` is `Copy`, and the renderer is taken out and put back so the
     // borrow checker can see the two accesses as disjoint.
-    let camera = runtime.camera;
+    let player_camera = runtime.camera;
+    let camera = view_camera(&runtime);
     if let Some(mut renderer) = runtime.renderer.take() {
+        let new_zone = runtime
+            .live
+            .as_ref()
+            .filter(|live| live.ready)
+            .and_then(|live| live.environment.as_ref())
+            .map(|env| env.short_name.as_str());
+        if new_zone.is_some()
+            && new_zone != runtime.loaded_zone.as_deref()
+            && let Err(error) = load_world_scene(&mut runtime, &mut renderer, &options, false)
+        {
+            tracing::error!(%error,"zone asset loading failed");
+            if let Some(live) = &mut runtime.live {
+                live.game.error(format!("Unable to load zone: {error}"));
+                live.ready = false;
+            }
+        }
         if let Some(live) = runtime.live.as_ref() {
-            live.camera_position(&camera, runtime.moving);
+            live.camera_position(&player_camera, runtime.moving);
         }
         if let Some(live) = &runtime.live
             && let Some(env) = &live.environment
@@ -414,13 +832,37 @@ fn render_frame(
                 runtime.atmosphere_zone = Some(desired);
             }
         }
-        let states = runtime
-            .live
-            .as_ref()
-            .map(|live| live.actors(camera.position));
+        let states = runtime.live.as_ref().map(|live| {
+            live.actor_states(
+                camera.position,
+                runtime
+                    .third_person
+                    .then_some((&player_camera, runtime.moving)),
+            )
+        });
         let elapsed = runtime.started.elapsed().as_secs_f32();
         if let (Some(actors), Some(states)) = (runtime.actors.as_mut(), states) {
             actors.update(&renderer, &states, elapsed);
+        }
+        let doors = runtime.live.as_ref().map(|live| {
+            live.doors
+                .values()
+                .map(|door| openeq_render::doors::DoorState {
+                    id: door.id,
+                    name: door.name.clone(),
+                    position: door.position,
+                    heading: door.heading,
+                    incline: door.incline,
+                    size: door.size,
+                    open_type: door.open_type,
+                    state: door.state,
+                    inverted: door.inverted,
+                    parameter: door.parameter,
+                })
+                .collect::<Vec<_>>()
+        });
+        if let (Some(renderer_doors), Some(states)) = (runtime.doors.as_mut(), doors) {
+            renderer_doors.update(&renderer, &states, elapsed);
         }
         if let (Some(hud), Some(live)) = (&runtime.hud, &runtime.live) {
             let player = live.own_id.and_then(|id| live.entities.get(&id));
@@ -436,12 +878,12 @@ fn render_frame(
                 character: live.character.clone(),
                 player_level: player.map_or(0, |e| e.spawn.level),
                 hp: player.map_or(0., |e| e.spawn.hp_percent as f32 / 100.),
-                mana: None,
-                endurance: None,
+                mana: live.game.mana.fraction(),
+                endurance: live.game.endurance.fraction(),
                 target,
                 status: live.error.clone().unwrap_or_else(|| {
                     if live.ready {
-                        "Connected • Tab selects an NPC • Right-click to look".into()
+                        "Connected • Enter chat • I inventory • Q attack • /help".into()
                     } else {
                         "Connecting to world…".into()
                     }
@@ -449,17 +891,45 @@ fn render_frame(
                 entities: live.entities.len(),
                 movement_updates: live.moves,
             };
-            let mut frame = hud.frame([size.0, size.1], &state);
-            add_nameplates(&mut frame, live, &camera, [size.0, size.1]);
-            renderer.set_ui(&frame);
+            let game = runtime.interaction.view(live);
+            let mut frame = hud.gameplay_frame(ui_size, &state, &game);
+            add_nameplates(&mut frame, live, &camera, ui_size);
+            if runtime.map_open {
+                let mut map_state = runtime.map_state.clone();
+                map_state.player_position = [
+                    player_camera.position[0],
+                    player_camera.position[1],
+                    player_camera.position[2] - 3.,
+                ];
+                map_state.heading = player_camera.yaw;
+                map_state.pointer = runtime.interaction.pointer;
+                map_state.target =
+                    live.target
+                        .and_then(|id| live.entities.get(&id))
+                        .map(|entity| openeq::map::MapMarker {
+                            position: entity.position(std::time::Instant::now()),
+                            label: display_name(&entity.spawn.name),
+                            color: [255, 120, 100, 255],
+                        });
+                if let Some(map) = &runtime.zone_map {
+                    let mut overlay = map.frame(ui_size, &map_state);
+                    frame.commands.append(&mut overlay.commands);
+                    frame.hit_targets.append(&mut overlay.hit_targets);
+                }
+                runtime.map_state = map_state;
+            }
+            renderer.set_ui_scaled(&frame, window.scale_factor());
             runtime.ui_frame = frame;
         }
         if let Some(scene) = runtime.scene.as_ref() {
-            let actors = runtime
+            let mut actors = runtime
                 .actors
                 .as_ref()
                 .map(|a| a.draws())
                 .unwrap_or_default();
+            if let Some(doors) = &runtime.doors {
+                actors.extend(doors.draws());
+            }
             renderer.render_with_actors(scene, &camera, &actors);
         }
         runtime.renderer = Some(renderer);
@@ -501,6 +971,19 @@ fn initialise(
     let mut renderer =
         pollster::block_on(Renderer::new_surface(&instance, surface, width, height))?;
 
+    load_world_scene(runtime, &mut renderer, options, true)?;
+    runtime.size = (width, height);
+    runtime.instance = Some(instance);
+    runtime.renderer = Some(renderer);
+    Ok(())
+}
+
+fn load_world_scene(
+    runtime: &mut Runtime,
+    renderer: &mut Renderer,
+    options: &Options,
+    initial: bool,
+) -> anyhow::Result<()> {
     let zone = runtime
         .live
         .as_ref()
@@ -530,7 +1013,7 @@ fn initialise(
             Some(&sky),
         );
     }
-    if runtime.live.is_some() {
+    if runtime.live.is_some() && runtime.hud.is_none() {
         match hud::Hud::load(&options.dir) {
             Ok(hud) => runtime.hud = Some(hud),
             Err(error) => tracing::warn!(%error, "XML HUD unavailable"),
@@ -538,17 +1021,23 @@ fn initialise(
     }
 
     // Drop the camera into the middle of the zone unless the user said otherwise.
-    if options.position.is_none() {
+    if initial && options.position.is_none() {
         let center = (gpu_scene.bounds_min + gpu_scene.bounds_max) * 0.5;
         runtime.camera.position = [center.x, center.y, center.z + 80.0];
     }
-    runtime.size = (width, height);
-    runtime.instance = Some(instance);
     runtime.scene = Some(gpu_scene);
     if runtime.live.is_some() {
         runtime.actors = Some(ActorRenderer::load(&options.dir, &zone)?);
+        runtime.doors = Some(openeq_render::doors::DoorRenderer::load(
+            &options.dir,
+            &zone,
+        )?);
     }
-    runtime.renderer = Some(renderer);
+    runtime.zone_map = openeq::map::ZoneMap::load(&options.dir, &zone).ok();
+    runtime.map_state.waypoints.clear();
+    runtime.map_state.center = None;
+    runtime.loaded_zone = Some(zone);
+    runtime.atmosphere_zone = None;
     Ok(())
 }
 
@@ -557,6 +1046,28 @@ fn display_name(name: &str) -> String {
         .replace('_', " ")
         .trim_start_matches('#')
         .to_owned()
+}
+
+fn view_camera(runtime: &Runtime) -> Camera {
+    let mut camera = runtime.camera;
+    if runtime.third_person {
+        let delta = [
+            -camera.yaw.sin() * camera.pitch.cos() * 18.,
+            -camera.yaw.cos() * camera.pitch.cos() * 18.,
+            -camera.pitch.sin() * 18.,
+        ];
+        let focus = camera.position;
+        let desired = std::array::from_fn(|i| focus[i] + delta[i]);
+        camera.position = runtime.collision.as_ref().map_or(desired, |collision| {
+            collision.clip_camera(focus, desired, 0.35)
+        });
+        if let Some(doors) = &runtime.doors {
+            camera.position = doors
+                .collision_world()
+                .clip_camera(focus, camera.position, 0.35);
+        }
+    }
+    camera
 }
 
 fn add_nameplates(
@@ -623,13 +1134,14 @@ fn handle_targeting(
     windows: Query<(&Window, &CursorOptions), With<PrimaryWindow>>,
     mut runtime: ResMut<Runtime>,
 ) {
+    if runtime.interaction.controls_blocked || runtime.interaction.editor.active {
+        return;
+    }
     let Ok((window, cursor)) = windows.single() else {
         return;
     };
-    let camera = runtime.camera;
-    let point = window
-        .cursor_position()
-        .map(|p| [p.x * window.scale_factor(), p.y * window.scale_factor()]);
+    let camera = view_camera(&runtime);
+    let point = window.cursor_position().map(|p| [p.x, p.y]);
     let ui_hit = point.is_some_and(|p| runtime.ui_frame.hit_test(p).is_some());
     let Some(live) = runtime.live.as_mut() else {
         return;
@@ -665,10 +1177,7 @@ fn handle_targeting(
         && !ui_hit
         && let Some(point) = point
     {
-        let size = [
-            window.physical_width() as f32,
-            window.physical_height() as f32,
-        ];
+        let size = [window.width(), window.height()];
         let matrix = camera.view_projection(size[0] / size[1].max(1.), 0.2, 20000.);
         let target = live
             .entities

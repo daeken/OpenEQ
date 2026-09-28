@@ -54,6 +54,25 @@ impl WorldClient {
         account_id: u32,
         session_key: &str,
     ) -> Result<Self, WorldError> {
+        Self::connect_mode(address, account_id, session_key, false).await
+    }
+
+    /// Reconnect to world while crossing a zone boundary using the existing
+    /// authenticated login session. This does not return to character select.
+    pub async fn connect_zoning(
+        address: SocketAddr,
+        account_id: u32,
+        session_key: &str,
+    ) -> Result<Self, WorldError> {
+        Self::connect_mode(address, account_id, session_key, true).await
+    }
+
+    async fn connect_mode(
+        address: SocketAddr,
+        account_id: u32,
+        session_key: &str,
+        zoning: bool,
+    ) -> Result<Self, WorldError> {
         let stream = EqStream::connect(address).await?;
         let client = Self { stream };
 
@@ -63,6 +82,8 @@ impl WorldClient {
         let bytes = text.as_bytes();
         let length = bytes.len().min(payload.len());
         payload[..length].copy_from_slice(&bytes[..length]);
+        // RoF2 LoginInfo_Struct places zoning at byte188 (464 total bytes).
+        payload[188] = u8::from(zoning);
 
         client
             .stream

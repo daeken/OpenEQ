@@ -31,6 +31,18 @@ impl GroundMotion {
     pub fn step(
         &mut self,
         world: &CollisionWorld,
+        feet: [f32; 3],
+        velocity_xy: [f32; 2],
+        jump: bool,
+        elapsed: f32,
+    ) -> [f32; 3] {
+        self.step_with_dynamic(world, None, feet, velocity_xy, jump, elapsed)
+    }
+
+    pub fn step_with_dynamic(
+        &mut self,
+        world: &CollisionWorld,
+        dynamic: Option<&CollisionWorld>,
         mut feet: [f32; 3],
         velocity_xy: [f32; 2],
         jump: bool,
@@ -55,7 +67,8 @@ impl GroundMotion {
         // simulation time. Keeping the accumulator in f64 avoids further drift.
         while self.accumulator + 1e-7 >= STEP {
             self.accumulator = (self.accumulator - STEP).max(0.0);
-            let grounded = on_ground(world, feet);
+            let grounded =
+                on_ground(world, feet) || dynamic.is_some_and(|world| on_ground(world, feet));
             if grounded && self.velocity_z < 0.0 {
                 self.velocity_z = 0.0;
             }
@@ -75,7 +88,15 @@ impl GroundMotion {
             } else {
                 0.0
             };
-            let moved = world.move_player(feet, displacement, RADIUS, HEIGHT, step_height);
+            let mut moved = world.move_player(feet, displacement, RADIUS, HEIGHT, step_height);
+            if let Some(dynamic) = dynamic {
+                let displacement = std::array::from_fn(|i| moved[i] - feet[i]);
+                moved = dynamic.move_player(feet, displacement, RADIUS, HEIGHT, step_height);
+                // Resolve again against the static world after a door/platform
+                // correction so a second collider cannot push through a wall.
+                let displacement = std::array::from_fn(|i| moved[i] - feet[i]);
+                moved = world.move_player(feet, displacement, RADIUS, HEIGHT, step_height);
+            }
             if (moved[2] - (feet[2] + displacement[2])).abs() > 0.001 {
                 self.velocity_z = 0.0;
             }
@@ -221,6 +242,32 @@ mod tests {
         assert!(motion.accumulator < STEP);
         let feet = motion.step(&world, feet, [40., 0.], false, 0.1);
         near(feet[0], 14.);
+    }
+
+    #[test]
+    fn closing_dynamic_door_blocks_motion_and_opening_restores_passage() {
+        let floor = flat();
+        let closed = world(&[[
+            [5., -20., 0.],
+            [5., 20., 0.],
+            [5., 20., 20.],
+            [5., -20., 20.],
+        ]]);
+        let opened = world(&[]);
+        let mut motion = GroundMotion::default();
+        let mut feet = [0.; 3];
+        for _ in 0..120 {
+            feet =
+                motion.step_with_dynamic(&floor, Some(&closed), feet, [20., 0.], false, 1. / 120.);
+        }
+        near(feet[0], 4.);
+        near(feet[2], 0.);
+        for _ in 0..120 {
+            feet =
+                motion.step_with_dynamic(&floor, Some(&opened), feet, [20., 0.], false, 1. / 120.);
+        }
+        near(feet[0], 24.);
+        near(feet[2], 0.);
     }
 
     #[test]

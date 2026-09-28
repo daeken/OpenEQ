@@ -1,8 +1,5 @@
 //! Reproducible end-to-end NPC render probe against a configured EQEmu world.
-#[path = "../hud.rs"]
-mod hud;
-#[path = "../live.rs"]
-mod live;
+use openeq::{hud, live};
 use openeq_net::session::ConnectionConfig;
 use openeq_render::{Camera, GpuScene, Renderer, actors::ActorRenderer};
 use std::{
@@ -16,9 +13,18 @@ fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
     let config = args
         .next()
-        .ok_or_else(|| anyhow::anyhow!("usage: live_smoke CONFIG OUTPUT.png"))?;
+        .ok_or_else(|| anyhow::anyhow!("usage: live_smoke CONFIG OUTPUT.png [SECONDS]"))?;
     let output = PathBuf::from(args.next().unwrap_or_else(|| "/tmp/openeq-live.png".into()));
+    let seconds: u64 = args.next().map_or(Ok(40), |value| value.parse())?;
+    anyhow::ensure!(
+        (1..=180).contains(&seconds),
+        "duration must be 1–180 seconds"
+    );
     let mut live = live::LiveWorld::start(ConnectionConfig::load(std::path::Path::new(&config))?);
+    let mut interaction = openeq::interaction::Interaction {
+        inventory_open: true,
+        ..Default::default()
+    };
     let start = Instant::now();
     while !live.ready || live.environment.is_none() {
         live.poll();
@@ -27,6 +33,16 @@ fn main() -> anyhow::Result<()> {
         std::thread::sleep(Duration::from_millis(20));
     }
     let base = openeq_assets::loader::default_client_dir().unwrap();
+    live.game.strings = openeq::game::StringTable::load(&base);
+    live.game.spell_catalog = openeq::spells::SpellCatalog::load(&base)?;
+    interaction.open_bags.extend(
+        live.game
+            .inventory
+            .items
+            .values()
+            .filter(|item| item.bag_slots > 0)
+            .filter_map(|item| item.slot.server_slot().map(|slot| slot as i32)),
+    );
     let zone = &live.environment.as_ref().unwrap().short_name;
     let scene = openeq_assets::loader::load_zone(&base, zone)?;
     let mut renderer = Renderer::new_headless(1280, 720)?;
@@ -48,6 +64,7 @@ fn main() -> anyhow::Result<()> {
     .ok();
     renderer.set_environment(settings, sky.as_ref());
     let hud = hud::Hud::load(&base)?;
+    let collision = openeq_assets::collision::CollisionWorld::build(&scene);
     let scene = GpuScene::build(renderer.device(), renderer.queue(), &scene)?;
     renderer.set_scene(&scene);
     let mut actors = ActorRenderer::load(&base, zone)?;
@@ -56,15 +73,19 @@ fn main() -> anyhow::Result<()> {
         position: [position.x, position.y, position.z + 3.],
         ..Default::default()
     };
-    // Frame the nearest NPC from a short distance so texture, pose and ground
-    // alignment can be inspected along with the actual surrounding zone.
+    // Consume spawns received while assets loaded. Prefer a walking NPC so the
+    // capture exercises tracking as well as texture, pose and ground alignment.
+    live.poll();
     let nearest = live
         .entities
         .values()
         .filter(|e| e.spawn.npc && e.spawn.race <= 12)
         .min_by_key(|e| {
-            ((e.spawn.position.x - position.x).powi(2) + (e.spawn.position.y - position.y).powi(2))
-                as u64
+            (
+                e.spawn.position.animation == 0,
+                ((e.spawn.position.x - position.x).powi(2)
+                    + (e.spawn.position.y - position.y).powi(2)) as u64,
+            )
         })
         .unwrap();
     let target = [
@@ -80,7 +101,8 @@ fn main() -> anyhow::Result<()> {
     let frame_start = Instant::now();
     let mut previous_motion = std::collections::BTreeMap::new();
     let mut predicted_motion_frames = 0u64;
-    while frame_start.elapsed().as_secs() < 40 {
+    let mut last_diagnostic_second = u64::MAX;
+    while frame_start.elapsed().as_secs() < seconds {
         live.poll();
         anyhow::ensure!(
             live.error.is_none() && live.ready,
@@ -93,6 +115,36 @@ fn main() -> anyhow::Result<()> {
             ..Default::default()
         };
         live.camera_position(&player, false);
+        if let Some(entity) = live.target.and_then(|id| live.entities.get(&id)) {
+            let target = entity.position(Instant::now());
+            let focus = [target[0], target[1], target[2] + 2.];
+            camera.position =
+                collision.clip_camera(focus, [focus[0] - 14., focus[1] - 22., focus[2] + 4.], 0.5);
+            let delta: [f32; 3] = std::array::from_fn(|i| focus[i] - camera.position[i]);
+            camera.yaw = delta[0].atan2(delta[1]);
+            camera.pitch = delta[2].atan2(delta[0].hypot(delta[1]));
+            let second = frame_start.elapsed().as_secs();
+            if second != last_diagnostic_second {
+                last_diagnostic_second = second;
+                let p = entity.spawn.position;
+                println!(
+                    "FRAME {second}: authoritative={:?}, predicted={target:?}, camera={:?}, floor_at_authoritative={:?}, floor_at_predicted={:?}, floor_at_camera={:?}, heading={}, animation={}",
+                    [p.x, p.y, p.z],
+                    camera.position,
+                    collision.ground_height(p.x, p.y, p.z, 300., 300.),
+                    collision.ground_height(target[0], target[1], target[2], 300., 300.),
+                    collision.ground_height(
+                        camera.position[0],
+                        camera.position[1],
+                        camera.position[2],
+                        300.,
+                        300.
+                    ),
+                    p.heading,
+                    p.animation,
+                );
+            }
+        }
         let states = live.actors(camera.position);
         for actor in &states {
             let position = live.entities[&actor.id].spawn.position;
@@ -123,18 +175,23 @@ fn main() -> anyhow::Result<()> {
                 hp: e.spawn.hp_percent as f32 / 100.,
                 level: e.spawn.level,
             });
-        renderer.set_ui(&hud.frame(
+        renderer.set_ui(&hud.gameplay_frame(
             [1280, 720],
             &hud::HudState {
                 character: live.character.clone(),
                 player_level: player.map_or(0, |e| e.spawn.level),
                 hp: player.map_or(0., |e| e.spawn.hp_percent as f32 / 100.),
+                mana: live.game.mana.fraction(),
+                endurance: live.game.endurance.fraction(),
                 target,
-                status: "Connected to Storage2 • Plane of Knowledge".into(),
+                status: format!(
+                    "Connected to Storage2 • {}",
+                    live.environment.as_ref().unwrap().short_name
+                ),
                 entities: live.entities.len(),
                 movement_updates: live.moves,
-                ..Default::default()
             },
+            &interaction.view(&live),
         ));
         renderer.render_with_actors(&scene, &camera, &actors.draws());
         std::thread::sleep(Duration::from_millis(50));

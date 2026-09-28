@@ -105,7 +105,9 @@ fn clipping_disabled_controls_and_window_position_are_consistent() {
     assert_eq!(frame.hit_test([5., 5.]).unwrap().item, "window");
     for command in frame.commands {
         let clip = match command {
-            DrawCommand::Fill { clip, .. }
+            DrawCommand::Line { clip, .. }
+            | DrawCommand::TextLog { clip, .. }
+            | DrawCommand::Fill { clip, .. }
             | DrawCommand::Image { clip, .. }
             | DrawCommand::Text { clip, .. } => clip,
         };
@@ -178,4 +180,44 @@ fn resolves_type_qualified_piece_references() {
         )
     );
     assert!(document.definition("Button:label").is_none());
+}
+
+#[test]
+fn grid_cells_preserve_atlas_boundaries_and_do_not_animate() {
+    let document = UiDocument::from_xml(r#"<XML><Ui2DAnimation item="icons"><Grid>true</Grid><CellWidth>40</CellWidth><CellHeight>40</CellHeight><Cycle>true</Cycle><Frames><Texture>first.dds</Texture><Location><X>4</X><Y>8</Y></Location><Size><CX>256</CX><CY>256</CY></Size></Frames><Frames><Texture>second.dds</Texture><Location><X>0</X><Y>0</Y></Location><Size><CX>80</CX><CY>40</CY></Size></Frames></Ui2DAnimation></XML>"#).unwrap();
+    let icons = &document.animations["icons"];
+    assert_eq!(icons.frames.len(), 38);
+    assert_eq!(
+        icons.frame(90000, None).unwrap().source,
+        Rect::new(4., 8., 40., 40.)
+    );
+    assert_eq!(
+        icons.frame(0, Some(5)).unwrap().source,
+        Rect::new(204., 8., 40., 40.)
+    );
+    assert_eq!(
+        icons.frame(0, Some(6)).unwrap().source,
+        Rect::new(4., 48., 40., 40.)
+    );
+    assert_eq!(
+        icons.frame(0, Some(35)).unwrap().source,
+        Rect::new(204., 208., 40., 40.)
+    );
+    assert_eq!(icons.frame(0, Some(36)).unwrap().texture, "second.dds");
+    assert_eq!(
+        icons.frame(0, Some(37)).unwrap().source,
+        Rect::new(40., 0., 40., 40.)
+    );
+    assert!(icons.frame(0, Some(38)).is_none());
+}
+
+#[test]
+fn vertical_grids_enumerate_columns_before_rows() {
+    let document = UiDocument::from_xml(r#"<XML><Ui2DAnimation item="icons"><Grid>true</Grid><Vertical>true</Vertical><CellWidth>40</CellWidth><CellHeight>40</CellHeight><Frames><Texture>icons.dds</Texture><Size><CX>256</CX><CY>256</CY></Size></Frames></Ui2DAnimation></XML>"#).unwrap();
+    let icons = &document.animations["icons"];
+    assert_eq!(icons.frames.len(), 36);
+    assert_eq!(icons.frames[1].source, Rect::new(0., 40., 40., 40.));
+    assert_eq!(icons.frames[6].source, Rect::new(40., 0., 40., 40.));
+    assert_eq!(icons.frames[29].source, Rect::new(160., 200., 40., 40.));
+    assert_eq!(icons.frames[34].source, Rect::new(200., 160., 40., 40.));
 }

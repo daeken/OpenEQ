@@ -33,3 +33,8 @@ pub use stream::{EqStream, StreamError};
 
 pub mod session;
 pub mod zone;
+
+pub mod gameplay;
+pub mod inventory;
+
+mod wire;

@@ -3,8 +3,9 @@
 //! Layouts follow EQEmu's RoF2 encoder, including its variable-length spawn
 //! names/equipment and signed, fixed-point position fields. Coordinates here
 //! remain in EQ's Z-up coordinate system; conversion belongs in the renderer.
+use crate::gameplay::{self, CharacterAppearance, Command, GameplayEvent};
 use crate::{AppPacket, EqStream, StreamError, ZoneOp};
-use std::net::SocketAddr;
+use std::{collections::VecDeque, future::Future, net::SocketAddr, pin::Pin};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ZoneError {
@@ -14,6 +15,12 @@ pub enum ZoneError {
     Malformed(&'static str),
     #[error("zone connection closed")]
     Closed,
+    #[error(transparent)]
+    World(#[from] crate::world::WorldError),
+    #[error("a zone handoff is in progress")]
+    Zoning,
+    #[error("this direct zone connection has no authenticated world session for zoning")]
+    MissingWorldSession,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -45,6 +52,9 @@ pub struct Spawn {
     pub run_speed: f32,
     pub body_type: u32,
     pub position: Position,
+    pub appearance: CharacterAppearance,
+    pub is_corpse: bool,
+    pub stand_state: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +75,7 @@ pub struct Environment {
 
 #[derive(Debug, Clone)]
 pub enum ZoneEvent {
+    Gameplay(GameplayEvent),
     Spawn(Spawn),
     Movement { id: u32, position: Position },
     Despawn(u32),
@@ -75,11 +86,26 @@ pub enum ZoneEvent {
     Other { opcode: u16, size: usize },
 }
 
+// Contains a login handoff key: deliberately no Debug implementation.
+#[derive(Clone)]
+struct WorldHandoff {
+    address: SocketAddr,
+    account_id: u32,
+    key: String,
+}
+type PendingHandoff = Pin<Box<dyn Future<Output = Result<ZoneClient, ZoneError>> + Send>>;
+
 pub struct ZoneClient {
     stream: EqStream,
     requested_spawns: bool,
     ready: bool,
     sequence: u16,
+    pending: VecDeque<ZoneEvent>,
+    control: VecDeque<AppPacket>,
+    character: String,
+    current_zone: Option<(u16, u16)>,
+    world: Option<WorldHandoff>,
+    handoff: Option<PendingHandoff>,
 }
 
 impl ZoneClient {
@@ -98,18 +124,133 @@ impl ZoneClient {
             requested_spawns: false,
             ready: false,
             sequence: 0,
+            pending: VecDeque::new(),
+            control: VecDeque::new(),
+            character: character.into(),
+            current_zone: None,
+            world: None,
+            handoff: None,
         })
     }
 
+    pub(crate) fn enable_zoning(&mut self, address: SocketAddr, account_id: u32, key: String) {
+        self.world = Some(WorldHandoff {
+            address,
+            account_id,
+            key,
+        });
+    }
+
+    pub fn is_zoning(&self) -> bool {
+        self.handoff.is_some()
+    }
+
+    fn begin_handoff(&mut self) -> Result<(), ZoneError> {
+        let context = self.world.clone().ok_or(ZoneError::MissingWorldSession)?;
+        let character = self.character.clone();
+        self.handoff = Some(Box::pin(async move {
+            let mut world = crate::world::WorldClient::connect_zoning(
+                context.address,
+                context.account_id,
+                &context.key,
+            )
+            .await?;
+            let address = world.enter_world(&character).await?;
+            let mut zone = ZoneClient::connect(address, &character).await?;
+            zone.world = Some(context);
+            Ok(zone)
+        }));
+        Ok(())
+    }
+
     pub async fn next_event(&mut self) -> Result<ZoneEvent, ZoneError> {
+        if let Some(event) = self.pending.pop_front() {
+            return Ok(event);
+        }
+        // Store the future on self: a caller's heartbeat/select may cancel this
+        // method repeatedly without restarting the world/zone handshakes.
+        if let Some(handoff) = &mut self.handoff {
+            let next = handoff.await;
+            self.handoff = None;
+            *self = next?;
+        }
+        while let Some(packet) = self.control.front() {
+            self.stream.send(packet).await?;
+            self.control.pop_front();
+        }
         let packet = self.stream.recv().await.ok_or(ZoneError::Closed)?;
         let data = &packet.data;
+        if let Some(event) = gameplay::parse_packet(packet.opcode, data) {
+            let event = event.inspect_err(|_| {
+                tracing::warn!(
+                    opcode = format!("{:#06x}", packet.opcode),
+                    size = data.len(),
+                    "malformed gameplay packet"
+                );
+            })?;
+            if let GameplayEvent::SpellBarEnabled {
+                mana, endurance, ..
+            } = event
+            {
+                self.pending
+                    .push_back(ZoneEvent::Gameplay(GameplayEvent::ManaEndurance {
+                        mana,
+                        endurance,
+                    }));
+            }
+            match &event {
+                GameplayEvent::ZoneChangeRequested(destination) => {
+                    if self.current_zone != Some((destination.zone_id, destination.instance_id)) {
+                        self.control
+                            .push_back(gameplay::encode_command(Command::ZoneChange {
+                                character: self.character.clone(),
+                                zone_id: destination.zone_id,
+                                instance_id: destination.instance_id,
+                                position: destination.position,
+                                reason: 0,
+                            })?);
+                    }
+                }
+                GameplayEvent::ZoneChangeResult {
+                    zone_id,
+                    instance_id,
+                    success,
+                    ..
+                } if *success == 1 && self.current_zone != Some((*zone_id, *instance_id)) => {
+                    let transition = GameplayEvent::ZoneTransition {
+                        zone_id: *zone_id,
+                        instance_id: *instance_id,
+                    };
+                    self.begin_handoff()?;
+                    self.pending.push_back(ZoneEvent::Gameplay(event));
+                    return Ok(ZoneEvent::Gameplay(transition));
+                }
+                _ => {}
+            }
+            if let GameplayEvent::Health {
+                id,
+                current,
+                maximum,
+            } = event
+            {
+                self.pending.push_back(ZoneEvent::Hp {
+                    id,
+                    percent: if maximum > 0 {
+                        ((current.max(0) as f64 / maximum as f64) * 100.).clamp(0., 100.) as u8
+                    } else {
+                        0
+                    },
+                });
+            }
+            return Ok(ZoneEvent::Gameplay(event));
+        }
         Ok(match packet.opcode {
             op if op == ZoneOp::ZoneEntry as u16 || op == ZoneOp::NewSpawn as u16 => {
                 ZoneEvent::Spawn(parse_spawn(data).ok_or(ZoneError::Malformed("spawn"))?)
             }
             op if op == ZoneOp::NewZone as u16 => {
                 let env = parse_environment(data).ok_or(ZoneError::Malformed("environment"))?;
+                self.current_zone = Some((env.zone_id, u16::from_le_bytes([data[854], data[855]])));
                 if !self.requested_spawns {
                     self.stream
                         .send(&AppPacket::empty(ZoneOp::ReqClientSpawn as u16))
@@ -168,6 +309,11 @@ impl ZoneClient {
     }
 
     pub async fn send_position(&mut self, id: u32, position: Position) -> Result<(), ZoneError> {
+        // Heartbeats from the old scene must not move the character during a
+        // transfer. Fresh spawn state supplies the next zone's position.
+        if self.is_zoning() {
+            return Ok(());
+        }
         if ![position.x, position.y, position.z, position.heading]
             .iter()
             .all(|v| v.is_finite())
@@ -197,7 +343,20 @@ impl ZoneClient {
         Ok(())
     }
 
+    pub async fn command(&self, command: Command) -> Result<(), ZoneError> {
+        if self.is_zoning() {
+            return Err(ZoneError::Zoning);
+        }
+        self.stream
+            .send(&gameplay::encode_command(command)?)
+            .await?;
+        Ok(())
+    }
+
     pub async fn target(&self, id: u32) -> Result<(), ZoneError> {
+        if self.is_zoning() {
+            return Err(ZoneError::Zoning);
+        }
         self.stream
             .send(&AppPacket::new(0x075d, id.to_le_bytes().to_vec()))
             .await?;
@@ -240,7 +399,9 @@ pub fn parse_spawn(data: &[u8]) -> Option<Spawn> {
     let id = c.u32()?;
     let level = c.u8()?;
     c.skip(4)?;
-    let npc = c.u8()? != 0;
+    let spawn_kind = c.u8()?;
+    let npc = spawn_kind != 0;
+    let is_corpse = matches!(spawn_kind, 2 | 3);
     let gender = (c.u32()? & 3) as u8;
     let other = c.u8()?;
     c.skip(8)?;
@@ -259,24 +420,46 @@ pub fn parse_spawn(data: &[u8]) -> Option<Spawn> {
         }
     }
     let hp_percent = c.u8()?;
-    c.skip(6 + 12 + 4)?;
+    c.skip(6 + 12)?;
+    let texture = c.u8()?;
+    c.skip(2)?;
+    let helm_texture = c.u8()?;
     let size = c.float()?;
-    c.skip(1)?;
+    let face = c.u8()?;
     let walk_speed = c.float()?;
     let run_speed = c.float()?;
     let race = c.u32()?;
     c.skip(1 + 12)?;
     let class = c.u8()?;
-    c.skip(4)?;
+    c.skip(1)?;
+    let stand_state = c.u8()?;
+    c.skip(2)?;
     let last_name = c.string()?;
     c.skip(4 + 2 + 4 + 1 + 4 + 20)?;
-    c.skip(
-        if !npc || race <= 12 || matches!(race, 128 | 130 | 330 | 522) {
-            216
-        } else {
-            60
-        },
-    )?;
+    let mut appearance = CharacterAppearance {
+        texture,
+        helm_texture,
+        face,
+        ..CharacterAppearance::default()
+    };
+    if !npc || race <= 12 || matches!(race, 128 | 130 | 330 | 522) {
+        for part in &mut appearance.equipment {
+            part.color = c.u32()?;
+        }
+        for part in &mut appearance.equipment {
+            part.material = c.u32()?;
+            c.skip(4)?;
+            part.elite_material = c.u32()?;
+            part.hero_forge_model = c.u32()?;
+            c.skip(4)?;
+        }
+    } else {
+        c.skip(20)?;
+        appearance.equipment[7].material = c.u32()?;
+        c.skip(16)?;
+        appearance.equipment[8].material = c.u32()?;
+        c.skip(16)?;
+    }
     let position = parse_position(c.take(20)?)?;
     Some(Spawn {
         id,
@@ -293,6 +476,9 @@ pub fn parse_spawn(data: &[u8]) -> Option<Spawn> {
         run_speed,
         body_type,
         position,
+        appearance,
+        is_corpse,
+        stand_state,
     })
 }
 

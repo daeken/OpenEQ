@@ -1,14 +1,19 @@
-//! Classic EverQuest characters and their rigid-bone WLD animations.
+//! EverQuest characters with rigid WLD or weighted EQG skeletal animations.
 //!
 //! A library reads global character archives, a zone's character archives and
 //! its `_chr.txt` imports. Models retain their source vertex-to-bone bindings;
 //! [`CharacterModel::sample`] skins them on the CPU into the same geometry
 //! format used by the zone renderer. Skinning never changes mesh topology.
-//! Modern EQG character skeletons, equipment and alternate skins are not yet
-//! decoded by this module.
+//! Classic equipment and appearance variants share these skeleton bindings.
+//! Modern EQGS/EQGM models use inverse bind matrices and timed EQGA tracks.
+
+mod appearance;
+mod modern;
+pub use appearance::{CharacterAppearance, EquipmentAppearance};
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use glam::{Mat4, Quat, Vec3};
 
@@ -25,8 +30,13 @@ pub struct CharacterLibrary {
     wlds: Vec<Wld>,
     actors: BTreeMap<String, (usize, usize)>,
     tracks: HashMap<String, (usize, usize)>,
+    equipment: BTreeMap<String, (usize, usize)>,
     textures: HashMap<String, (usize, String)>,
     loose_textures: HashMap<String, PathBuf>,
+    eqg_files: HashMap<String, PathBuf>,
+    modern_archives: Mutex<HashMap<String, Arc<Archive>>>,
+    base_models: Mutex<HashMap<String, CharacterModel>>,
+    decoded_textures: Mutex<HashMap<String, Texture>>,
 }
 
 /// An authored animation. WLD skeletal tracks are normally sampled at 10 Hz;
@@ -61,12 +71,16 @@ pub struct CharacterModel {
     pub meshes: Vec<Geometry>,
     /// EQ animation codes, e.g. `P01` (standing), `L01` (walking).
     /// The empty code is the bind pose.
-    pub animations: BTreeMap<String, CharacterAnimation>,
+    pub animations: Arc<BTreeMap<String, CharacterAnimation>>,
     pub bounds_min: [f32; 3],
     pub bounds_max: [f32; 3],
     bindings: Vec<Vec<BoundVertex>>,
+    material_slots: Vec<Option<usize>>,
     parents: Vec<Option<usize>>,
     bone_order: Vec<usize>,
+    /// Original attachment and skeletal track names, in transform order.
+    pub bone_names: Vec<String>,
+    modern: Option<Arc<modern::ModernModel>>,
 }
 
 impl CharacterLibrary {
@@ -113,13 +127,30 @@ impl CharacterLibrary {
                 }
             }
         }
+        wanted.extend(
+            files
+                .keys()
+                .filter(|name| name.starts_with("gequip") && name.ends_with(".s3d"))
+                .cloned(),
+        );
         let mut library = Self {
             archives: Vec::new(),
             wlds: Vec::new(),
             actors: BTreeMap::new(),
+            equipment: BTreeMap::new(),
             tracks: HashMap::new(),
             textures: HashMap::new(),
             loose_textures: HashMap::new(),
+            eqg_files: files
+                .iter()
+                .filter_map(|(name, path)| {
+                    name.strip_suffix(".eqg")
+                        .map(|code| (code.to_owned(), path.clone()))
+                })
+                .collect(),
+            modern_archives: Mutex::new(HashMap::new()),
+            base_models: Mutex::new(HashMap::new()),
+            decoded_textures: Mutex::new(HashMap::new()),
         };
         let mut seen = BTreeSet::new();
         for name in wanted {
@@ -139,8 +170,12 @@ impl CharacterLibrary {
                         match &chunk.fragment {
                             Fragment::ActorDef(_) => {
                                 if let Some(code) = chunk.name.strip_suffix("_ACTORDEF") {
-                                    library
-                                        .actors
+                                    let actors = if name.starts_with("gequip") {
+                                        &mut library.equipment
+                                    } else {
+                                        &mut library.actors
+                                    };
+                                    actors
                                         .entry(code.to_ascii_uppercase())
                                         .or_insert((wld_index, index));
                                 }
@@ -180,13 +215,53 @@ impl CharacterLibrary {
     }
 
     pub fn texture(&self, name: &str) -> Option<Texture> {
-        let name_lower = name.to_ascii_lowercase();
+        if let Some((source, color)) = name.rsplit_once("#tint=") {
+            let color = u32::from_str_radix(color, 16).ok()?;
+            let mut texture = self.texture(source)?;
+            texture.name = name.to_owned();
+            let tint = [(color >> 16) as u8, (color >> 8) as u8, color as u8];
+            for pixel in texture.rgba.chunks_exact_mut(4) {
+                for channel in 0..3 {
+                    pixel[channel] =
+                        (u16::from(pixel[channel]) * u16::from(tint[channel]) / 255) as u8;
+                }
+            }
+            return Some(texture);
+        }
+        let (source_name, masked) = name
+            .strip_suffix("#masked")
+            .map_or((name, false), |source| (source, true));
+        let name_lower = source_name.to_ascii_lowercase();
+        if let Some(texture) = self
+            .decoded_textures
+            .lock()
+            .ok()?
+            .get(&name.to_ascii_lowercase())
+        {
+            let mut texture = texture.clone();
+            texture.name = name.to_owned();
+            return Some(texture);
+        }
         let bytes = if let Some((archive, filename)) = self.textures.get(&name_lower) {
             self.archives[*archive].read(filename).ok()?
+        } else if let Some(path) = self.loose_textures.get(&name_lower) {
+            std::fs::read(path).ok()?
         } else {
-            std::fs::read(self.loose_textures.get(&name_lower)?).ok()?
+            self.modern_archives
+                .lock()
+                .ok()?
+                .values()
+                .find_map(|archive| archive.read(&name_lower).ok())?
         };
-        Texture::decode(name, &bytes).ok()
+        let mut texture = Texture::decode(name, &bytes).ok()?;
+        if masked {
+            texture.mask_palette_index_zero(&bytes);
+        }
+        self.decoded_textures
+            .lock()
+            .ok()?
+            .insert(name.to_ascii_lowercase(), texture.clone());
+        Some(texture)
     }
 
     /// Returns an error for unmapped/unavailable races. The caller may display
@@ -201,6 +276,55 @@ impl CharacterLibrary {
     }
 
     pub fn load_model(&self, code: &str) -> Result<CharacterModel> {
+        self.load_model_with_appearance(code, &CharacterAppearance::default())
+    }
+
+    pub fn load_race_with_appearance(
+        &self,
+        race: u32,
+        gender: u8,
+        appearance: &CharacterAppearance,
+    ) -> Result<CharacterModel> {
+        let code = race_model_code(race, gender).ok_or_else(|| {
+            Error::NotFound(format!(
+                "character model mapping for race {race}, gender {gender}"
+            ))
+        })?;
+        self.load_model_with_appearance(code, appearance)
+    }
+
+    pub fn load_model_with_appearance(
+        &self,
+        code: &str,
+        appearance: &CharacterAppearance,
+    ) -> Result<CharacterModel> {
+        let code = code.to_ascii_uppercase();
+        let cached = self.base_models.lock().unwrap().get(&code).cloned();
+        let mut model = if let Some(model) = cached {
+            model
+        } else {
+            let model = self.load_model_uncached(&code)?;
+            self.base_models
+                .lock()
+                .unwrap()
+                .insert(code.clone(), model.clone());
+            model
+        };
+        if *appearance != CharacterAppearance::default() {
+            if model.modern.is_some() {
+                self.apply_modern_appearance(&mut model, appearance);
+            } else {
+                self.rebuild_appearance_meshes(&mut model, appearance)?;
+            }
+        }
+        Ok(model)
+    }
+
+    fn load_model_uncached(&self, code: &str) -> Result<CharacterModel> {
+        if !self.actors.contains_key(code) {
+            return self.load_modern_model(code);
+        }
+        let appearance = &CharacterAppearance::default();
         let code = code.to_ascii_uppercase();
         let &(wld_index, actor_index) = self
             .actors
@@ -234,14 +358,18 @@ impl CharacterLibrary {
             code,
             materials: Vec::new(),
             meshes: Vec::new(),
-            animations: BTreeMap::new(),
+            animations: Arc::new(BTreeMap::new()),
             bounds_min: [f32::INFINITY; 3],
             bounds_max: [f32::NEG_INFINITY; 3],
             bindings: Vec::new(),
+            material_slots: Vec::new(),
             parents,
             bone_order,
+            bone_names: Vec::new(),
+            modern: None,
         };
         let mut seen_meshes = BTreeSet::new();
+        let mut original_meshes = Vec::new();
         for reference in &skeleton.meshes {
             if reference.0 == 0 {
                 continue;
@@ -255,7 +383,18 @@ impl CharacterLibrary {
             if !seen_meshes.insert(mesh_ref.0) {
                 continue;
             }
-            append_mesh(wld, mesh, skeleton.tracks.len(), &mut model)?;
+            original_meshes.push(mesh);
+            let mesh = self.appearance_mesh(wld, mesh_ref, mesh, &model.code, appearance);
+            let is_head = wld
+                .resolve(mesh_ref)
+                .is_some_and(|chunk| chunk.name.starts_with(&format!("{}HE", model.code)));
+            append_mesh(
+                wld,
+                mesh,
+                skeleton.tracks.len(),
+                is_head.then_some(0),
+                &mut model,
+            )?;
         }
         if model.meshes.is_empty() {
             return Err(Error::Format(format!(
@@ -272,6 +411,7 @@ impl CharacterLibrary {
                     .to_owned()
             })
             .collect();
+        model.bone_names = names.clone();
         let donor = animation_source(&model.code);
         let donor_names: Vec<_> = names
             .iter()
@@ -343,7 +483,7 @@ impl CharacterLibrary {
                 }
                 tracks.push(frames);
             }
-            model.animations.insert(
+            Arc::make_mut(&mut model.animations).insert(
                 prefix,
                 CharacterAnimation {
                     frame_time_ms: frame_time_ms.unwrap_or(100),
@@ -353,14 +493,26 @@ impl CharacterLibrary {
             );
         }
         model.meshes = model.sample("", 0.0);
-        for mesh in &model.meshes {
-            for vertex in mesh.vertices.chunks_exact(8) {
-                for (axis, &value) in vertex.iter().take(3).enumerate() {
-                    model.bounds_min[axis] = model.bounds_min[axis].min(value);
-                    model.bounds_max[axis] = model.bounds_max[axis].max(value);
+        // Instance size describes the body, not the selected helmet/robe.
+        // Measure the original naked bind meshes so gear changes cannot resize
+        // an actor, and keep weapons outside these normalization bounds.
+        let transforms = model.bone_transforms("", 0., false).expect("bind pose");
+        for mesh in original_meshes {
+            let bones: Vec<_> = mesh
+                .vertex_pieces
+                .iter()
+                .flat_map(|(count, bone)| std::iter::repeat_n(*bone as usize, *count as usize))
+                .collect();
+            for (index, position) in mesh.vertices.iter().enumerate() {
+                let bone = bones.get(index).copied().unwrap_or(0);
+                let vertex = transforms[bone].transform_point3(Vec3::from_array(*position));
+                for axis in 0..3 {
+                    model.bounds_min[axis] = model.bounds_min[axis].min(vertex[axis]);
+                    model.bounds_max[axis] = model.bounds_max[axis].max(vertex[axis]);
                 }
             }
         }
+        self.apply_appearance(&mut model, appearance);
         Ok(model)
     }
 
@@ -401,6 +553,20 @@ impl CharacterModel {
     /// Reuses geometry buffers from an earlier sample of this model. Returns
     /// false if the supplied mesh topology does not match, without modifying it.
     pub fn sample_into(&self, animation: &str, time_seconds: f32, meshes: &mut [Geometry]) -> bool {
+        self.sample_into_mode(animation, time_seconds, true, meshes)
+    }
+
+    /// Samples a loop or a one-shot. One-shots hold their last authored frame.
+    pub fn sample_into_mode(
+        &self,
+        animation: &str,
+        time_seconds: f32,
+        looping: bool,
+        meshes: &mut [Geometry],
+    ) -> bool {
+        if let Some(modern) = &self.modern {
+            return modern.sample_into(animation, time_seconds, looping, meshes);
+        }
         if meshes.len() != self.bindings.len()
             || meshes
                 .iter()
@@ -409,35 +575,9 @@ impl CharacterModel {
         {
             return false;
         }
-        let Some(clip) = self
-            .animations
-            .get(animation)
-            .or_else(|| self.animations.get(""))
-        else {
+        let Some(transforms) = self.bone_transforms(animation, time_seconds, looping) else {
             return false;
         };
-        let time = if time_seconds.is_finite() {
-            time_seconds.max(0.0)
-        } else {
-            0.0
-        };
-        let phase = (time * 1000.0 / clip.frame_time_ms as f32) % clip.frame_count as f32;
-        let frame = phase.floor() as usize;
-        let blend = phase.fract();
-        let mut transforms = vec![Mat4::IDENTITY; self.parents.len()];
-        for &bone in &self.bone_order {
-            let frames = &clip.tracks[bone];
-            let a = frames[frame % frames.len()];
-            let b = frames[(frame + 1) % frames.len()];
-            let rotation = rotation(a.rotation).slerp(rotation(b.rotation), blend);
-            let translation =
-                Vec3::from_array(a.translation).lerp(Vec3::from_array(b.translation), blend);
-            let scale = a.scale + (b.scale - a.scale) * blend;
-            let local =
-                Mat4::from_scale_rotation_translation(Vec3::splat(scale), rotation, translation);
-            transforms[bone] =
-                self.parents[bone].map_or(local, |parent| transforms[parent] * local);
-        }
         for (mesh, bindings) in meshes.iter_mut().zip(&self.bindings) {
             for (vertex, binding) in mesh.vertices.chunks_exact_mut(8).zip(bindings) {
                 let transform = transforms[binding.bone];
@@ -452,6 +592,57 @@ impl CharacterModel {
             }
         }
         true
+    }
+    /// Absolute transforms of the named bones, before spawn position/heading.
+    /// Equipment attachment points and body vertices use the same transforms.
+    pub fn bone_transforms(
+        &self,
+        animation: &str,
+        time_seconds: f32,
+        looping: bool,
+    ) -> Option<Vec<Mat4>> {
+        if let Some(modern) = &self.modern {
+            return Some(modern.bone_transforms(animation, time_seconds, looping));
+        }
+        let clip = self
+            .animations
+            .get(animation)
+            .or_else(|| self.animations.get(""))?;
+        let time = if time_seconds.is_finite() {
+            time_seconds.max(0.0)
+        } else {
+            0.0
+        };
+        let phase = time * 1000.0 / clip.frame_time_ms as f32;
+        let phase = if looping {
+            phase % clip.frame_count as f32
+        } else {
+            phase.min(clip.frame_count.saturating_sub(1) as f32)
+        };
+        let frame = phase.floor() as usize;
+        let blend = phase.fract();
+        let mut transforms = vec![Mat4::IDENTITY; self.parents.len()];
+        for &bone in &self.bone_order {
+            let frames = &clip.tracks[bone];
+            let index = |frame: usize| {
+                if looping {
+                    frame % frames.len()
+                } else {
+                    frame.min(frames.len() - 1)
+                }
+            };
+            let a = frames[index(frame)];
+            let b = frames[index(frame + 1)];
+            let rotation = rotation(a.rotation).slerp(rotation(b.rotation), blend);
+            let translation =
+                Vec3::from_array(a.translation).lerp(Vec3::from_array(b.translation), blend);
+            let scale = a.scale + (b.scale - a.scale) * blend;
+            let local =
+                Mat4::from_scale_rotation_translation(Vec3::splat(scale), rotation, translation);
+            transforms[bone] =
+                self.parents[bone].map_or(local, |parent| transforms[parent] * local);
+        }
+        Some(transforms)
     }
 }
 
@@ -506,7 +697,13 @@ fn resolve_mesh(wld: &Wld, reference: Ref) -> Option<(Ref, &Mesh)> {
     }
 }
 
-fn append_mesh(wld: &Wld, source: &Mesh, bones: usize, model: &mut CharacterModel) -> Result<()> {
+fn append_mesh(
+    wld: &Wld,
+    source: &Mesh,
+    bones: usize,
+    slot: Option<usize>,
+    model: &mut CharacterModel,
+) -> Result<()> {
     let mut vertex_bones = Vec::with_capacity(source.vertices.len());
     for &(count, bone) in &source.vertex_pieces {
         if bone as usize >= bones {
@@ -568,6 +765,7 @@ fn append_mesh(wld: &Wld, source: &Mesh, bones: usize, model: &mut CharacterMode
             .position(|m| *m == material)
             .unwrap_or_else(|| {
                 model.materials.push(material);
+                model.material_slots.push(slot);
                 model.materials.len() - 1
             });
         let mut remap = HashMap::new();
@@ -851,6 +1049,7 @@ pub fn race_model_code(race: u32, gender: u8) -> Option<&'static str> {
                 "GFM"
             }
         }
+        113 => "DRI",
         119 => "STC",
         120 => "WOE",
         123 => "INN",
@@ -903,11 +1102,25 @@ pub fn race_model_code(race: u32, gender: u8) -> Option<&'static str> {
         }
         187 => "SIR",
         190 => "OTM",
+        240 => match gender {
+            0 => "TPM",
+            1 => "TPF",
+            _ => "TPN",
+        },
+        243 => "NYM",
         330 => {
             if female {
                 "FRF"
             } else {
                 "FRM"
+            }
+        }
+        464 => "GGY",
+        522 => {
+            if female {
+                "DKF"
+            } else {
+                "DKM"
             }
         }
         _ => return None,
@@ -1010,17 +1223,20 @@ mod tests {
         let model = CharacterModel {
             code: "TEST".into(),
             materials: vec![],
+            material_slots: vec![],
             meshes: vec![Geometry {
                 vertices: vec![0.; 8],
                 indices: vec![0],
                 material: 0,
                 collidable: false,
             }],
-            animations: BTreeMap::from([("L01".into(), animation)]),
+            animations: Arc::new(BTreeMap::from([("L01".into(), animation)])),
             bounds_min: [0.; 3],
             bounds_max: [0.; 3],
             parents: vec![None, Some(0)],
             bone_order: vec![0, 1],
+            bone_names: vec!["root".into(), "hand".into()],
+            modern: None,
             bindings: vec![vec![BoundVertex {
                 position: Vec3::X,
                 normal: Vec3::X,

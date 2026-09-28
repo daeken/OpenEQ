@@ -1,8 +1,13 @@
 //! Live HUD binding for the original EverQuest XML skin.
 //!
-//! Presentation uses the client's PlayerWindow, TargetWindow and ChatWindow.
-//! Connection diagnostics are displayed as plain text in the chat output area;
-//! chat editing and gameplay actions are not implied by this display.
+//! Resource bars use the client's PlayerWindow and TargetWindow. The legacy
+//! frame method displays connection diagnostics; gameplay_frame adds chat,
+//! inventory, bags, loot and hit actions through the gameplay_ui module.
+
+pub use crate::gameplay_ui::{
+    ChatLine, GameHudState, UiAction, UiBag, UiBuff, UiCasting, UiItem, UiLoot, UiLootItem, UiSlot,
+    UiSpell, UiSpellGem,
+};
 
 use anyhow::Context;
 use openeq_ui::{Rect, UiBindings, UiDocument, UiFrame};
@@ -32,8 +37,8 @@ pub struct HudState {
 }
 
 pub struct Hud {
-    ui: UiDocument,
-    initial_bindings: UiBindings,
+    pub(crate) ui: UiDocument,
+    pub(crate) initial_bindings: UiBindings,
 }
 
 impl Hud {
@@ -127,52 +132,7 @@ impl Hud {
         bindings.widget_mut("TargetWindow").rect = Some(target);
         bindings.widget_mut("ChatWindow").rect = Some(chat);
 
-        let character = if state.character.is_empty() {
-            "Player"
-        } else {
-            &state.character
-        };
-        bindings.widget_mut("Player_HP").text = Some(with_level(character, state.player_level));
-        set_gauge(
-            &mut bindings,
-            "Player_HP",
-            "Player_HPLabel",
-            "Player_HPPercLabel",
-            Some(state.hp),
-        );
-        set_gauge(
-            &mut bindings,
-            "Player_Mana",
-            "Player_ManaLabel",
-            "Player_ManaPercLabel",
-            state.mana,
-        );
-        set_gauge(
-            &mut bindings,
-            "Player_Fatigue",
-            "Player_FatigueLabel",
-            "Player_FatiguePercLabel",
-            state.endurance,
-        );
-
-        bindings.widget_mut("Target_HP").text = Some(state.target.as_ref().map_or_else(
-            || "No target".to_owned(),
-            |target| with_level(&target.name, target.level),
-        ));
-        if let Some(target) = &state.target {
-            set_gauge(
-                &mut bindings,
-                "Target_HP",
-                "Target_HPLabel",
-                "Target_HPPercLabel",
-                Some(target.hp),
-            );
-        } else {
-            // Keep the target name area visible, but no invented health label.
-            bindings.widget_mut("Target_HP").gauge = Some(0.);
-            bindings.widget_mut("Target_HPLabel").visible = Some(false);
-            bindings.widget_mut("Target_HPPercLabel").visible = Some(false);
-        }
+        self.bind_resources(&mut bindings, state);
 
         bindings.widget_mut("ChatWindow").text = Some("World connection".to_owned());
         bindings.widget_mut("CW_ChatOutput").rect = Some(Rect::new(
@@ -210,6 +170,54 @@ impl Hud {
         result.warnings.sort();
         result.warnings.dedup();
         result
+    }
+    pub(crate) fn bind_resources(&self, bindings: &mut UiBindings, state: &HudState) {
+        let character = if state.character.is_empty() {
+            "Player"
+        } else {
+            &state.character
+        };
+        bindings.widget_mut("Player_HP").text = Some(with_level(character, state.player_level));
+        set_gauge(
+            bindings,
+            "Player_HP",
+            "Player_HPLabel",
+            "Player_HPPercLabel",
+            Some(state.hp),
+        );
+        set_gauge(
+            bindings,
+            "Player_Mana",
+            "Player_ManaLabel",
+            "Player_ManaPercLabel",
+            state.mana,
+        );
+        set_gauge(
+            bindings,
+            "Player_Fatigue",
+            "Player_FatigueLabel",
+            "Player_FatiguePercLabel",
+            state.endurance,
+        );
+
+        bindings.widget_mut("Target_HP").text = Some(state.target.as_ref().map_or_else(
+            || "No target".to_owned(),
+            |target| with_level(&target.name, target.level),
+        ));
+        if let Some(target) = &state.target {
+            set_gauge(
+                bindings,
+                "Target_HP",
+                "Target_HPLabel",
+                "Target_HPPercLabel",
+                Some(target.hp),
+            );
+        } else {
+            // Keep the target name area visible, but no invented health label.
+            bindings.widget_mut("Target_HP").gauge = Some(0.);
+            bindings.widget_mut("Target_HPLabel").visible = Some(false);
+            bindings.widget_mut("Target_HPPercLabel").visible = Some(false);
+        }
     }
 }
 

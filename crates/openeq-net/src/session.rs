@@ -44,12 +44,9 @@ impl ConnectionConfig {
             .find(|s| self.server_id.map_or(s.is_up(), |id| s.server_id == id))
             .context("requested world is unavailable")?;
         login.play(server.server_id).await?;
-        let mut world = WorldClient::connect(
-            SocketAddr::new(server.address, self.world_port),
-            session.account_id,
-            &session.key,
-        )
-        .await?;
+        let world_address = SocketAddr::new(server.address, self.world_port);
+        let mut world =
+            WorldClient::connect(world_address, session.account_id, &session.key).await?;
         let characters = world.characters().await?;
         tracing::info!(names = ?characters.iter().map(|c| &c.name).collect::<Vec<_>>(), "character list");
         if !characters
@@ -60,7 +57,8 @@ impl ConnectionConfig {
         }
         let address = world.enter_world(&self.character).await?;
         tracing::info!(%address, character = %self.character, "entering zone");
-        let zone = ZoneClient::connect(address, &self.character).await?;
+        let mut zone = ZoneClient::connect(address, &self.character).await?;
+        zone.enable_zoning(world_address, session.account_id, session.key);
         Ok(zone)
     }
 }

@@ -1,8 +1,9 @@
 //! Conservative static-zone locomotion in EverQuest coordinates (Z is up).
 //!
 //! This uses the *rendered* scene's collidable triangles. Invisible collision
-//! surfaces discarded by mesh baking are unavailable, as are closed doors and
-//! dynamic actors. It is therefore a useful walking aid, not authoritative EQ
+//! surfaces discarded by mesh baking are unavailable. Dynamic doors can be
+//! supplied through a separate world built with `add_geometry`. Dynamic actors
+//! are not represented. It is therefore a useful walking aid, not authoritative EQ
 //! physics. Water is excluded. Callers supply gravity/jump displacement and send
 //! the resulting feet position to the server. The body is an upright cylinder
 //! rather than an exact rounded capsule; motion is substepped to avoid tunneling.
@@ -69,6 +70,25 @@ impl Triangle {
             None
         }
     }
+
+    /// Double-sided segment/triangle intersection, expressed as 0..=1 of delta.
+    fn segment_hit(&self, origin: Vec3, delta: Vec3) -> Option<f32> {
+        let [a, b, c] = self.points;
+        let edge1 = b - a;
+        let edge2 = c - a;
+        let cross = delta.cross(edge2);
+        let determinant = edge1.dot(cross);
+        if determinant.abs() < 1e-8 {
+            return None;
+        }
+        let inverse = determinant.recip();
+        let relative = origin - a;
+        let u = relative.dot(cross) * inverse;
+        let cross = relative.cross(edge1);
+        let v = delta.dot(cross) * inverse;
+        let t = edge2.dot(cross) * inverse;
+        (u >= -1e-5 && v >= -1e-5 && u + v <= 1.00001 && (0. ..=1.).contains(&t)).then_some(t)
+    }
 }
 
 /// A sparse XY grid. Very large triangles are held in a short global list so
@@ -129,6 +149,33 @@ impl CollisionWorld {
 
     pub fn triangle_count(&self) -> usize {
         self.triangles.len()
+    }
+
+    /// Keeps an orbit camera on the unobstructed segment from `focus` toward
+    /// `desired`. Both sides of triangles block, including ceilings and slopes.
+    /// `padding` is clearance along that segment in world units; this is a point
+    /// ray, not a body sweep, and it does not slide or depenetrate the focus.
+    pub fn clip_camera(&self, focus: [f32; 3], desired: [f32; 3], padding: f32) -> [f32; 3] {
+        let origin = Vec3::from(focus);
+        let desired = Vec3::from(desired);
+        if !origin.is_finite() || !desired.is_finite() || !padding.is_finite() {
+            return focus;
+        }
+        let delta = desired - origin;
+        let distance = delta.length();
+        if distance <= 1e-7 {
+            return focus;
+        }
+        let hit = self
+            .candidates(
+                origin.min(desired).truncate(),
+                origin.max(desired).truncate(),
+            )
+            .into_iter()
+            .filter_map(|index| self.triangles[index].segment_hit(origin, delta))
+            .min_by(f32::total_cmp);
+        let fraction = hit.map_or(1., |t| (t - padding.max(0.) / distance).max(0.));
+        (origin + delta * fraction).to_array()
     }
 
     /// Returns the closest walkable surface to the supplied feet height within
@@ -393,7 +440,9 @@ impl CollisionWorld {
         None
     }
 
-    fn add_geometry(&mut self, geometry: &Geometry, transform: Mat4) {
+    /// Adds a prefiltered local mesh at a world transform. Useful for small
+    /// dynamic-object worlds; callers decide which materials are collidable.
+    pub fn add_geometry(&mut self, geometry: &Geometry, transform: Mat4) {
         if !transform.is_finite() {
             return;
         }
@@ -592,6 +641,44 @@ mod tests {
         near(world.ground_height(0., 0., 19.9, 1., 100.).unwrap(), 20.);
         assert_eq!(world.ground_height(0., 0., 10., 1., 1.), None);
         assert_eq!(world.ground_height(100., 0., 0., 1., 1.), None);
+    }
+
+    #[test]
+    fn camera_segment_stops_at_floor_from_either_side() {
+        let mut world = CollisionWorld::default();
+        floor(&mut world, 0.);
+        let above = world.clip_camera([0., 0., 5.], [10., 0., -5.], 0.5);
+        let below = world.clip_camera([10., 0., -5.], [0., 0., 5.], 0.5);
+        near(above[0], 5. - 0.5 / 2f32.sqrt());
+        near(above[2], 0.5 / 2f32.sqrt());
+        near(below[0], 5. + 0.5 / 2f32.sqrt());
+        near(below[2], -0.5 / 2f32.sqrt());
+        assert_eq!(
+            world.clip_camera([0., 0., 5.], [10., 0., 5.], 1.),
+            [10., 0., 5.]
+        );
+    }
+
+    #[test]
+    fn camera_segment_uses_nearest_diagonal_wall_without_sliding() {
+        let mut world = CollisionWorld::default();
+        // Diagonal plane x+y=10; the ray reaches it at (7.5, 2.5, 5).
+        quad(
+            &mut world,
+            [0., 10., 0.],
+            [10., 0., 0.],
+            [10., 0., 10.],
+            [0., 10., 10.],
+        );
+        wall(&mut world, 12., 0., 10.);
+        let camera = world.clip_camera([0., 0., 5.], [15., 5., 5.], 0.5);
+        near(camera[0] / camera[1], 3.);
+        near(Vec3::from(camera).distance(Vec3::new(7.5, 2.5, 5.)), 0.5);
+        assert!(camera[0] + camera[1] < 10.);
+        assert_eq!(
+            world.clip_camera([0., 0., 5.], [15., 5., 5.], 100.),
+            [0., 0., 5.]
+        );
     }
 
     #[test]

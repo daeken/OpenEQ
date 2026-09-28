@@ -1,9 +1,11 @@
 //! Background networking and bounded prediction of server-authoritative spawns.
+use crate::game::{GameplayState, display_name};
 use openeq_net::{
+    gameplay::{Command, Door, GameplayEvent, ZoneDestination},
     session::ConnectionConfig,
     zone::{Environment, Position, Spawn, ZoneEvent},
 };
-use openeq_render::actors::ActorState;
+use openeq_render::actors::{ActorAction, ActorState, CharacterAppearance, EquipmentAppearance};
 use std::{
     collections::BTreeMap,
     sync::{Mutex, mpsc},
@@ -11,8 +13,14 @@ use std::{
 };
 
 pub enum Message {
-    Event(ZoneEvent),
+    Event(Box<ZoneEvent>),
     Error(String),
+    CommandSent(Command),
+    Notice(String),
+}
+enum NetworkCommand {
+    Target(u32),
+    Gameplay(Command),
 }
 // EQEmu sends NPC walking corrections every five seconds. Predict only a little
 // beyond that interval, and converge small network corrections without a jump.
@@ -26,15 +34,24 @@ pub struct Entity {
     heading_correction: f32,
     arrived: Instant,
     moving_until: Instant,
+    action: ActorAction,
+    action_sequence: u64,
 }
 impl Entity {
     fn new(spawn: Spawn, now: Instant) -> Self {
+        let action = if spawn.is_corpse {
+            ActorAction::Dead
+        } else {
+            posture_action(spawn.stand_state as u32)
+        };
         Self {
             spawn,
             correction: [0.; 3],
             heading_correction: 0.,
             arrived: now,
             moving_until: now,
+            action,
+            action_sequence: 0,
         }
     }
 
@@ -46,7 +63,7 @@ impl Entity {
         let age = self.age(now);
         let p = self.spawn.position;
         let mut target = [p.x, p.y, p.z];
-        if self.spawn.npc {
+        if self.spawn.npc && !self.spawn.is_corpse {
             // MoveToCommand sends zero velocity deltas: animation is its actual
             // speed. CalculateHeadingToTarget is clockwise from +Y (north).
             let angle = p.heading * std::f32::consts::TAU / 512.;
@@ -118,36 +135,62 @@ pub struct LiveWorld {
     pub hour: u8,
     pub minute: u8,
     pub target: Option<u32>,
+    pub game: GameplayState,
+    pub doors: BTreeMap<u8, Door>,
+    pending_destination: Option<ZoneDestination>,
     rx: Mutex<mpsc::Receiver<Message>>,
     movement: tokio::sync::watch::Sender<Option<Position>>,
-    targets: tokio::sync::mpsc::UnboundedSender<u32>,
+    commands: tokio::sync::mpsc::UnboundedSender<NetworkCommand>,
 }
 
 impl LiveWorld {
     pub fn start(config: ConnectionConfig) -> Self {
         let (tx, rx) = mpsc::channel();
         let (movement, mut updates) = tokio::sync::watch::channel(None);
-        let (targets, mut commands) = tokio::sync::mpsc::unbounded_channel();
+        let (commands, mut requests) = tokio::sync::mpsc::unbounded_channel();
         let character = config.character.clone();
         std::thread::Builder::new().name("eq-network".into()).spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("network runtime");
             let result = rt.block_on(async {
                 let mut zone = config.connect().await?;
                 let mut own = None;
+                let mut movement_ready = false;
                 let mut heartbeat = tokio::time::interval(std::time::Duration::from_millis(100));
                 loop {
                     tokio::select! {
-                        Some(id) = commands.recv() => { zone.target(id).await?; },
-                        changed = updates.changed() => if changed.is_err() { zone.logout().await?; break; },
+                        Some(request) = requests.recv() => {
+                            match request {
+                                NetworkCommand::Target(id) => { if !zone.is_zoning() { zone.target(id).await?; } },
+                                NetworkCommand::Gameplay(command) => {
+                                    match zone.command(command.clone()).await {
+                                        Ok(()) => { let _ = tx.send(Message::CommandSent(command)); }
+                                        Err(openeq_net::zone::ZoneError::Malformed(what)) => {
+                                            let _ = tx.send(Message::Notice(format!("Invalid {what}; action was not sent.")));
+                                        }
+                                        Err(openeq_net::zone::ZoneError::Zoning) => {
+                                            let _ = tx.send(Message::Notice("Please wait for zone travel to finish.".into()));
+                                        }
+                                        Err(error) => return Err(error.into()),
+                                    }
+                                }
+                            }
+                        },
+                        changed = updates.changed() => {
+                            if changed.is_err() { zone.logout().await?; break; }
+                            movement_ready = own.is_some() && !zone.is_zoning();
+                        },
                         _ = heartbeat.tick() => {
                             let position = *updates.borrow();
-                            if let (Some(id), Some(position)) = (own, position) { zone.send_position(id, position).await?; }
+                            if movement_ready && let (Some(id), Some(position)) = (own, position) { zone.send_position(id, position).await?; }
                         }
                         event = zone.next_event() => {
                             let event = event?;
+                            if matches!(&event, ZoneEvent::Gameplay(GameplayEvent::ZoneTransition { .. })) {
+                                own = None; movement_ready = false;
+                            }
                             if let ZoneEvent::Spawn(spawn) = &event
                                 && spawn.name.eq_ignore_ascii_case(&config.character) { own = Some(spawn.id); }
-                            if tx.send(Message::Event(event)).is_err() { zone.logout().await?; break; }
+                            if tx.send(Message::Event(Box::new(event))).is_err() { zone.logout().await?; break; }
                         }
                     }
                 }
@@ -167,72 +210,298 @@ impl LiveWorld {
             hour: 12,
             minute: 0,
             target: None,
+            game: GameplayState::default(),
+            doors: BTreeMap::new(),
+            pending_destination: None,
             rx: Mutex::new(rx),
             movement,
-            targets,
+            commands,
         }
     }
 
     pub fn poll(&mut self) {
         let now = Instant::now();
-        for message in self.rx.lock().unwrap().try_iter() {
+        let messages: Vec<_> = self.rx.lock().unwrap().try_iter().collect();
+        for message in messages {
             match message {
                 Message::Error(error) => {
                     tracing::error!(%error, "live connection failed");
                     self.error = Some(error);
                     self.ready = false;
+                    self.game.attack = false;
+                    self.game.inventory_command_pending = false;
+                    self.game.error(format!(
+                        "Connection lost: {}",
+                        self.error.as_deref().unwrap_or("unknown error")
+                    ));
                 }
-                Message::Event(event) => match event {
-                    ZoneEvent::Spawn(spawn) => {
-                        if spawn.name.eq_ignore_ascii_case(&self.character) {
-                            self.own_id = Some(spawn.id);
-                            self.initial_position = Some(spawn.position);
+                Message::Notice(notice) => {
+                    self.game.inventory_command_pending = false;
+                    self.game.error(notice);
+                }
+                Message::CommandSent(command) => self.command_sent(command),
+                Message::Event(event) => {
+                    match *event {
+                        ZoneEvent::Spawn(spawn) => {
+                            if spawn.name.eq_ignore_ascii_case(&self.character) {
+                                self.own_id = Some(spawn.id);
+                                self.initial_position = Some(spawn.position);
+                            }
+                            self.entities.insert(spawn.id, Entity::new(spawn, now));
                         }
-                        self.entities.insert(spawn.id, Entity::new(spawn, now));
-                    }
-                    ZoneEvent::Movement { id, position } => {
-                        if let Some(entity) = self.entities.get_mut(&id)
-                            && entity.update(position, now)
-                            && entity.spawn.npc
-                        {
-                            self.moves += 1;
+                        ZoneEvent::Movement { id, position } => {
+                            if let Some(entity) = self.entities.get_mut(&id)
+                                && entity.update(position, now)
+                                && entity.spawn.npc
+                            {
+                                self.moves += 1;
+                            }
                         }
-                    }
-                    ZoneEvent::Despawn(id) => {
-                        self.entities.remove(&id);
-                        if self.target == Some(id) {
-                            self.target = None;
+                        ZoneEvent::Despawn(id) => {
+                            self.entities.remove(&id);
+                            if self.target == Some(id) {
+                                self.target = None;
+                            }
                         }
-                    }
-                    ZoneEvent::Environment(environment) => {
-                        tracing::info!(zone = %environment.short_name, "zone environment received");
-                        self.environment = Some(environment);
-                    }
-                    ZoneEvent::Ready => {
-                        self.ready = true;
-                        tracing::info!(entities = self.entities.len(), "live zone ready");
-                    }
-                    ZoneEvent::Time { hour, minute } => {
-                        self.hour = hour;
-                        self.minute = minute;
-                    }
-                    ZoneEvent::Hp { id, percent } => {
-                        if let Some(e) = self.entities.get_mut(&id) {
-                            e.spawn.hp_percent = percent;
+                        ZoneEvent::Environment(environment) => {
+                            tracing::info!(zone = %environment.short_name, "zone environment received");
+                            self.environment = Some(environment);
                         }
+                        ZoneEvent::Ready => {
+                            self.ready = true;
+                            tracing::info!(entities = self.entities.len(), "live zone ready");
+                            self.game.notice("Connected. Enter opens chat; /help lists commands. I opens inventory.");
+                        }
+                        ZoneEvent::Time { hour, minute } => {
+                            self.hour = hour;
+                            self.minute = minute;
+                        }
+                        ZoneEvent::Hp { id, percent } => {
+                            if let Some(e) = self.entities.get_mut(&id) {
+                                e.spawn.hp_percent = percent;
+                            }
+                        }
+                        ZoneEvent::Gameplay(event) => self.gameplay_event(event),
+                        ZoneEvent::Other { .. } => {}
                     }
-                    ZoneEvent::Other { .. } => {}
-                },
+                }
             }
         }
     }
 
     pub fn set_target(&mut self, id: Option<u32>) {
         self.target = id;
-        let _ = self.targets.send(id.unwrap_or(0));
+        let _ = self.commands.send(NetworkCommand::Target(id.unwrap_or(0)));
+    }
+
+    pub fn command(&mut self, command: Command) -> bool {
+        if !self.ready || self.error.is_some() {
+            self.game.error("You are not connected to the zone.");
+            return false;
+        }
+        if let Command::MoveItem { from, to, count } = &command {
+            if self.game.inventory_command_pending {
+                return false;
+            }
+            if let Err(error) = self.game.inventory.validate_move(*from, *to, *count) {
+                self.game.error(error);
+                return false;
+            }
+        }
+        let inventory_command = matches!(command, Command::MoveItem { .. });
+        if self
+            .commands
+            .send(NetworkCommand::Gameplay(command))
+            .is_err()
+        {
+            self.game.error("The network worker has stopped.");
+            return false;
+        }
+        if inventory_command {
+            self.game.inventory_command_pending = true;
+        }
+        true
+    }
+
+    fn command_sent(&mut self, command: Command) {
+        match command {
+            Command::MoveItem { from, to, count } => {
+                self.game.inventory_command_pending = false;
+                if let Err(error) = self.game.inventory.move_item(from, to, count) {
+                    self.game.error(error);
+                }
+            }
+            Command::AutoAttack(active) => self.game.attack = active,
+            Command::Posture { player_id, posture } => {
+                self.game.sitting = posture == 1;
+                if let Some(entity) = self.entities.get_mut(&player_id) {
+                    entity.action = posture_action(posture);
+                    entity.action_sequence = entity.action_sequence.wrapping_add(1);
+                }
+            }
+            Command::EndLoot(_) => self.game.loot = None,
+            _ => {}
+        }
+    }
+
+    fn gameplay_event(&mut self, event: GameplayEvent) {
+        match &event {
+            GameplayEvent::ZoneTransition { zone_id, .. } => {
+                self.ready = false;
+                self.entities.clear();
+                self.doors.clear();
+                self.own_id = None;
+                self.target = None;
+                self.initial_position = None;
+                self.game.inventory = Default::default();
+                self.game.loot = None;
+                self.game.attack = false;
+                self.game.sitting = false;
+                self.game.inventory_command_pending = false;
+                self.game.hp = Default::default();
+                self.game.mana = Default::default();
+                self.game.endurance = Default::default();
+                self.game.casting = None;
+                self.game.cast_pending_until = None;
+                self.game.spell_cooldowns.clear();
+                self.game.notice(format!("Traveling to zone {zone_id}…"));
+            }
+            GameplayEvent::ZoneChangeRequested(destination) => {
+                if self
+                    .environment
+                    .as_ref()
+                    .is_some_and(|environment| environment.zone_id == destination.zone_id)
+                {
+                    self.initial_position = Some(Position {
+                        x: destination.position[0],
+                        y: destination.position[1],
+                        z: destination.position[2],
+                        heading: destination.heading,
+                        ..Default::default()
+                    });
+                }
+                self.pending_destination = Some(destination.clone());
+            }
+            GameplayEvent::ZoneChangeResult {
+                zone_id,
+                position,
+                success,
+                ..
+            } => {
+                if *success == 1
+                    && self
+                        .environment
+                        .as_ref()
+                        .is_some_and(|env| env.zone_id == *zone_id)
+                {
+                    self.initial_position = Some(Position {
+                        x: position[0],
+                        y: position[1],
+                        z: position[2],
+                        heading: self
+                            .pending_destination
+                            .as_ref()
+                            .map_or(0., |destination| destination.heading),
+                        ..Default::default()
+                    });
+                } else if *success != 1 {
+                    self.game
+                        .error(format!("Zone travel was rejected ({success})."));
+                }
+            }
+            GameplayEvent::Doors(doors) => {
+                self.doors = doors.iter().map(|door| (door.id, door.clone())).collect()
+            }
+            GameplayEvent::DoorMoved { id, action } => {
+                if let Some(door) = self.doors.get_mut(id) {
+                    match action {
+                        2 => door.state = u8::from(!door.inverted),
+                        3 => door.state = u8::from(door.inverted),
+                        _ => {}
+                    }
+                }
+            }
+            GameplayEvent::Assist(id) => self.set_target(Some(*id)),
+            GameplayEvent::BeginCast { caster_id, .. } => {
+                if let Some(entity) = self.entities.get_mut(caster_id) {
+                    entity.action = ActorAction::Cast;
+                    entity.action_sequence = entity.action_sequence.wrapping_add(1);
+                }
+            }
+            GameplayEvent::Animation { id, action, .. } => {
+                if let Some(entity) = self.entities.get_mut(id) {
+                    entity.action = ActorAction::Animation(*action);
+                    entity.action_sequence = entity.action_sequence.wrapping_add(1);
+                }
+            }
+            GameplayEvent::WearChange(change) => {
+                if let Some(entity) = self.entities.get_mut(&change.id)
+                    && let Some(slot) = entity
+                        .spawn
+                        .appearance
+                        .equipment
+                        .get_mut(change.slot as usize)
+                {
+                    *slot = change.appearance;
+                }
+            }
+            GameplayEvent::SpawnAppearance {
+                id,
+                kind,
+                parameter,
+            } => {
+                if let Some(entity) = self.entities.get_mut(id) {
+                    match kind {
+                        14 => {
+                            entity.action = posture_action(*parameter);
+                            entity.action_sequence = entity.action_sequence.wrapping_add(1);
+                        }
+                        29 => entity.spawn.size = *parameter as f32,
+                        1 => entity.spawn.level = (*parameter).min(255) as u8,
+                        _ => {}
+                    }
+                }
+            }
+            GameplayEvent::Health {
+                id,
+                current,
+                maximum,
+            } => {
+                if let Some(entity) = self.entities.get_mut(id)
+                    && *maximum > 0
+                {
+                    entity.spawn.hp_percent =
+                        (*current as f64 / *maximum as f64 * 100.).clamp(0., 100.) as u8;
+                }
+            }
+            GameplayEvent::Death(death) => {
+                if self.game.attack
+                    && (Some(death.id) == self.target || Some(death.id) == self.own_id)
+                {
+                    self.command(Command::AutoAttack(false));
+                }
+                if let Some(entity) = self.entities.get_mut(&death.id) {
+                    entity.action = ActorAction::Dead;
+                    entity.action_sequence = entity.action_sequence.wrapping_add(1);
+                    entity.spawn.is_corpse = true;
+                    entity.spawn.hp_percent = 0;
+                    entity.spawn.position.animation = 0;
+                }
+            }
+            _ => {}
+        }
+        let entities = &self.entities;
+        self.game.apply(event, self.own_id, self.target, |id| {
+            entities
+                .get(&id)
+                .map_or_else(|| format!("Entity {id}"), |e| display_name(&e.spawn.name))
+        });
     }
 
     pub fn camera_position(&self, camera: &openeq_render::Camera, moving: bool) {
+        if !self.ready {
+            return;
+        }
         self.movement.send_replace(Some(Position {
             x: camera.position[0],
             y: camera.position[1],
@@ -244,14 +513,36 @@ impl LiveWorld {
     }
 
     pub fn actors(&self, camera: [f32; 3]) -> Vec<ActorState> {
+        self.actor_states(camera, None)
+    }
+
+    pub fn actor_states(
+        &self,
+        camera: [f32; 3],
+        player: Option<(&openeq_render::Camera, bool)>,
+    ) -> Vec<ActorState> {
         let now = Instant::now();
         self.entities
             .values()
             .filter(|e| {
-                Some(e.spawn.id) != self.own_id && e.spawn.race != 127 && e.spawn.body_type < 66
+                (Some(e.spawn.id) != self.own_id || player.is_some())
+                    && e.spawn.race != 127
+                    && e.spawn.body_type < 66
             })
             .filter_map(|e| {
-                let p = e.position(now);
+                let own = (Some(e.spawn.id) == self.own_id)
+                    .then_some(player)
+                    .flatten();
+                let p = own.map_or_else(
+                    || e.position(now),
+                    |(camera, _)| {
+                        [
+                            camera.position[0],
+                            camera.position[1],
+                            camera.position[2] - 3.,
+                        ]
+                    },
+                );
                 let distance: f32 = p.iter().zip(camera).map(|(a, b)| (a - b) * (a - b)).sum();
                 (distance < 1500. * 1500.).then_some(ActorState {
                     id: e.spawn.id,
@@ -259,11 +550,39 @@ impl LiveWorld {
                     gender: e.spawn.gender,
                     size: e.spawn.size,
                     position: p,
-                    heading: e.heading(now),
-                    moving: e.moving(now),
+                    heading: own.map_or_else(
+                        || e.heading(now),
+                        |(camera, _)| camera.yaw * 512. / std::f32::consts::TAU,
+                    ),
+                    moving: own.map_or_else(|| e.moving(now), |(_, moving)| moving),
+                    appearance: CharacterAppearance {
+                        texture: e.spawn.appearance.texture,
+                        helm_texture: e.spawn.appearance.helm_texture,
+                        face: e.spawn.appearance.face,
+                        equipment: std::array::from_fn(|i| {
+                            let value = e.spawn.appearance.equipment[i];
+                            EquipmentAppearance {
+                                material: value.material,
+                                elite_material: value.elite_material,
+                                hero_forge_model: value.hero_forge_model,
+                                color: value.color,
+                            }
+                        }),
+                    },
+                    action: e.action,
+                    action_sequence: e.action_sequence,
                 })
             })
             .collect()
+    }
+}
+
+fn posture_action(posture: u32) -> ActorAction {
+    match posture {
+        1 | 110 => ActorAction::Sit,
+        2 | 111 => ActorAction::Duck,
+        3 | 115 => ActorAction::Dead,
+        _ => ActorAction::Auto,
     }
 }
 
@@ -289,12 +608,67 @@ mod tests {
                 run_speed: 1.25,
                 body_type: 1,
                 position,
+                appearance: Default::default(),
+                is_corpse: false,
+                stand_state: 100,
             },
             now,
         )
     }
     fn close(actual: f32, expected: f32) {
         assert!((actual - expected).abs() < 0.001, "{actual} != {expected}");
+    }
+
+    #[test]
+    fn target_death_stops_server_autoattack_before_another_target_is_selected() {
+        let (_, events) = mpsc::channel();
+        let (movement, _) = tokio::sync::watch::channel(None);
+        let (commands, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let mut live = LiveWorld {
+            entities: BTreeMap::new(),
+            environment: None,
+            own_id: Some(1),
+            initial_position: None,
+            character: "Player".into(),
+            ready: true,
+            error: None,
+            moves: 0,
+            hour: 12,
+            minute: 0,
+            target: Some(2),
+            game: GameplayState::default(),
+            doors: BTreeMap::new(),
+            pending_destination: None,
+            rx: Mutex::new(events),
+            movement,
+            commands,
+        };
+        live.game.attack = true;
+        let death = |id| {
+            GameplayEvent::Death(openeq_net::gameplay::Death {
+                id,
+                killer_id: 1,
+                corpse_id: id,
+                skill: 0,
+                spell_id: u32::MAX,
+                damage: 12,
+            })
+        };
+        // An unrelated nearby fight must not cancel our current combat.
+        live.gameplay_event(death(3));
+        assert!(received.try_recv().is_err());
+        assert!(live.game.attack);
+        live.gameplay_event(death(2));
+        live.set_target(Some(4));
+        assert!(matches!(
+            received.try_recv().unwrap(),
+            NetworkCommand::Gameplay(Command::AutoAttack(false))
+        ));
+        assert!(matches!(
+            received.try_recv().unwrap(),
+            NetworkCommand::Target(4)
+        ));
+        assert!(!live.game.attack);
     }
 
     #[test]

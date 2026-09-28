@@ -9,6 +9,7 @@
 //! whole pipeline can be exercised headlessly by tests and tools.
 
 pub mod actors;
+pub mod doors;
 pub mod environment;
 pub mod scene;
 mod shadow;
@@ -629,10 +630,22 @@ impl Renderer {
     }
 
     pub fn set_ui(&mut self, frame: &openeq_ui::UiFrame) {
+        self.set_ui_scaled(frame, 1.);
+    }
+
+    /// The frame and its hit regions use logical pixels; scale is the window's
+    /// physical pixel density, including Retina/HiDPI displays.
+    pub fn set_ui_scaled(&mut self, frame: &openeq_ui::UiFrame, scale: f32) {
         let ui = self.ui.get_or_insert_with(|| {
             ui::UiRenderer::new(&self.device, &self.queue, self.config.format)
         });
-        ui.prepare(&self.device, &self.queue, frame, [self.width, self.height]);
+        ui.prepare_scaled(
+            &self.device,
+            &self.queue,
+            frame,
+            [self.width, self.height],
+            scale,
+        );
     }
 
     pub fn format(&self) -> wgpu::TextureFormat {

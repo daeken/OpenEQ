@@ -121,6 +121,56 @@ impl Scene {
         }
     }
 
+    /// Extracts one unplaced object definition for dynamic doors, lifts and
+    /// server-spawned props. Only that object's used materials are decoded.
+    pub fn object_model(&self, name: &str) -> Result<Scene> {
+        let key = object_key(name);
+        let object = self
+            .objects
+            .iter()
+            .find(|object| object_key(&object.name) == key)
+            .ok_or_else(|| Error::NotFound(format!("object {name} in {}", self.name)))?;
+        let mut materials = Vec::new();
+        let mut textures = HashMap::new();
+        let mut remap = HashMap::new();
+        let mut meshes = Vec::new();
+        for index in &object.meshes {
+            let mut mesh = self.meshes[*index].clone();
+            let material = *remap.entry(mesh.material).or_insert_with(|| {
+                let mut material = self.materials[mesh.material].clone();
+                for name in &mut material.textures {
+                    let source = name.clone();
+                    if material.alpha_mask {
+                        *name = format!("{source}#masked");
+                    }
+                    if let Some(mut texture) = self.texture(&source) {
+                        if material.alpha_mask
+                            && let Some(bytes) = self.texture_bytes(&source)
+                        {
+                            texture.mask_palette_index_zero(&bytes);
+                        }
+                        texture.name = name.clone();
+                        textures.insert(name.clone(), texture);
+                    }
+                }
+                let index = materials.len();
+                materials.push(material);
+                index
+            });
+            mesh.material = material;
+            meshes.push(mesh);
+        }
+        if meshes.is_empty() {
+            return Err(Error::NotFound(format!("visible object {name}")));
+        }
+        Ok(Scene::from_geometry(
+            key,
+            materials,
+            meshes,
+            textures.into_values().collect(),
+        ))
+    }
+
     /// All texture names referenced by the scene's materials.
     pub fn texture_names(&self) -> Vec<String> {
         let mut names: Vec<String> = self.textures.keys().cloned().collect();
@@ -132,6 +182,103 @@ impl Scene {
     pub fn triangle_count(&self) -> usize {
         self.meshes.iter().map(|mesh| mesh.indices.len() / 3).sum()
     }
+}
+
+fn object_key(name: &str) -> String {
+    name.trim()
+        .to_ascii_lowercase()
+        .trim_end_matches("_actordef")
+        .trim_end_matches("_dmspritedef")
+        .trim_end_matches(".mod")
+        .to_owned()
+}
+
+/// Loads reusable object definitions without loading zone terrain. Includes
+/// modern supplemental archives named by the original zone's assets manifest.
+/// Dynamic doors are generally absent from the zone's static placement list.
+pub fn load_object_library(base: impl AsRef<Path>, zone: &str) -> Result<Scene> {
+    let base = base.as_ref();
+    let zone = zone.to_ascii_lowercase();
+    let mut files = std::collections::BTreeMap::new();
+    for entry in std::fs::read_dir(base)? {
+        let entry = entry?;
+        files.insert(
+            entry.file_name().to_string_lossy().to_ascii_lowercase(),
+            entry.path(),
+        );
+    }
+    let mut wanted: Vec<String> = files
+        .keys()
+        .filter(|name| {
+            ((name.starts_with(&format!("{zone}_obj"))
+                || name.starts_with(&format!("{zone}_2_obj")))
+                && (name.ends_with(".s3d") || name.ends_with(".eqg")))
+                || *name == &format!("{zone}.eqg")
+                || *name == "global_obj.s3d"
+        })
+        .cloned()
+        .collect();
+    if let Some(manifest) = files.get(&format!("{zone}_assets.txt")) {
+        for line in std::fs::read_to_string(manifest)?.lines() {
+            let line = line.trim().to_ascii_lowercase();
+            if !line.contains(['/', '\\']) && (line.ends_with(".eqg") || line.ends_with(".s3d")) {
+                wanted.push(line);
+            }
+        }
+    }
+    wanted.sort();
+    wanted.dedup();
+    let mut scene = Scene {
+        name: format!("{zone} object library"),
+        materials: Vec::new(),
+        meshes: Vec::new(),
+        objects: Vec::new(),
+        instances: Vec::new(),
+        lights: Vec::new(),
+        archives: Vec::new(),
+        textures: HashMap::new(),
+        loose_textures: loose_textures(base),
+    };
+    for name in wanted {
+        let Some(path) = files.get(&name) else {
+            continue;
+        };
+        let archive = Archive::open(path)?;
+        let index = scene.archives.len();
+        let filenames = archive.names().to_vec();
+        scene.archives.push(archive);
+        for filename in filenames {
+            let lower = filename.to_ascii_lowercase();
+            if lower.ends_with(".wld") {
+                let wld = Wld::open(&scene.archives[index], &filename)?;
+                for (chunk, mesh) in wld.iter::<wld::Mesh>() {
+                    let (materials, meshes) = mesh::bake_wld_meshes(&wld, [mesh]);
+                    let start = scene.meshes.len();
+                    append_baked(&mut scene, index, materials, meshes);
+                    let end = scene.meshes.len();
+                    scene.objects.push(SceneObject {
+                        name: object_key(&chunk.name),
+                        meshes: (start..end).collect(),
+                    });
+                }
+            } else if lower.ends_with(".mod") {
+                let object = TerMod::parse(&scene.archives[index].read(&filename)?, false)?;
+                append_eqg_object(&mut scene, &object, &object_key(&filename), index);
+            }
+        }
+    }
+    // Supplemental archives can provide textures referenced by an earlier
+    // object archive. Retry unresolved names once the full library is present.
+    let names: Vec<_> = scene
+        .materials
+        .iter()
+        .flat_map(|m| m.textures.iter().chain(m.normal_map.iter()))
+        .cloned()
+        .collect();
+    for name in names {
+        register_texture(&mut scene, 0, &name);
+    }
+    Ok(scene)
 }
 
 /// Loads a zone by name from a client data directory.
