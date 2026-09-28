@@ -4,6 +4,9 @@
 pub use crate::commerce_ui::{CommerceAction, UiBank, UiMerchant, UiMerchantStock, UiMoney};
 use crate::hud::{Hud, HudState};
 pub use crate::social_ui::{SocialAction, UiGroup, UiGroupMember};
+pub use crate::trade_ui::{
+    ItemUseAction, TradeAction, UiItemUse, UiTrade, UiTradeSlot, UiTradeStage,
+};
 pub use openeq_ui::TextLink as UiChatLink;
 use openeq_ui::{Color, DrawCommand, HitTarget, Rect, TextAlign, TextLine, UiBindings, UiFrame};
 use std::collections::BTreeMap;
@@ -98,6 +101,9 @@ pub const SPELLBOOK_PAGE_SIZE: usize = 12;
 
 #[derive(Clone, Debug, Default)]
 pub struct GameHudState {
+    pub trade: Option<UiTrade>,
+    /// Only set for a persistent inspection of a revalidated owned item.
+    pub item_use: Option<UiItemUse>,
     pub group: Option<UiGroup>,
     pub money: Option<UiMoney>,
     pub merchant: Option<UiMerchant>,
@@ -130,7 +136,8 @@ pub struct GameHudState {
     pub attack: bool,
     pub sitting: bool,
     /// Keys: player, target, chat, actions, inventory, loot, bag:<parent_slot>,
-    /// spellbar, spellbook, casting, buffs. All coordinates are logical pixels.
+    /// spellbar, spellbook, casting, buffs, merchant, bank, group, trade.
+    /// All coordinates are logical pixels.
     pub window_positions: BTreeMap<String, [f32; 2]>,
     /// Optional persistent right-click inspection (hover inspection is automatic).
     pub inspected_item: Option<UiItem>,
@@ -138,6 +145,8 @@ pub struct GameHudState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UiAction {
+    Trade(TradeAction),
+    ItemUse(ItemUseAction),
     ChatLink(u64),
     Social(SocialAction),
     Commerce(CommerceAction),
@@ -166,6 +175,12 @@ pub enum UiAction {
 
 impl UiAction {
     pub fn from_hit(hit: &HitTarget) -> Option<Self> {
+        if let Some(action) = TradeAction::from_hit(hit) {
+            return Some(Self::Trade(action));
+        }
+        if let Some(action) = ItemUseAction::from_hit(hit) {
+            return Some(Self::ItemUse(action));
+        }
         if let Some(action) = CommerceAction::from_hit(hit) {
             return Some(Self::Commerce(action));
         }
@@ -535,6 +550,9 @@ impl Hud {
             draw.spellbook(state);
         }
         draw.commerce(state);
+        if let Some(trade) = &state.trade {
+            draw.trade(state, trade);
+        }
         if let Some(casting) = &state.casting {
             draw.casting(state, casting);
         }
@@ -569,10 +587,30 @@ impl Hud {
                     .iter()
                     .find(|item| item.slot == id)
                     .map(|item| &item.item),
+                Some(UiAction::Trade(TradeAction::OwnSlot(id))) => state
+                    .trade
+                    .as_ref()?
+                    .own_slots
+                    .iter()
+                    .find(|slot| slot.slot == id)
+                    .and_then(|slot| slot.item.as_ref()),
+                Some(UiAction::Trade(TradeAction::InspectPartner(id))) => state
+                    .trade
+                    .as_ref()?
+                    .partner_slots
+                    .iter()
+                    .find(|slot| slot.slot == id)
+                    .and_then(|slot| slot.item.as_ref()),
                 _ => None,
             });
-        if state.cursor_item.is_none()
-            && let Some(item) = state.inspected_item.as_ref().or(hovered)
+        if let Some(item) = state
+            .inspected_item
+            .as_ref()
+            .or(if state.cursor_item.is_none() {
+                hovered
+            } else {
+                None
+            })
         {
             let persistent = state.inspected_item.is_some();
             let anchor = if persistent {
@@ -580,7 +618,8 @@ impl Hud {
             } else {
                 state.pointer.unwrap_or([screen.width * 0.5, 190.])
             };
-            let rect = draw.tooltip(item, anchor);
+            let item_use = state.item_use.as_ref().filter(|_| persistent);
+            let rect = draw.tooltip(item, anchor, if item_use.is_some() { 84. } else { 0. });
             if persistent {
                 draw.hit("game:inspect", "ItemInspection", rect, None);
                 let close = Rect::new(rect.right() - 20., rect.y + 2., 18., 18.);
@@ -591,6 +630,9 @@ impl Hud {
                     close,
                     Some("Close item details".into()),
                 );
+                if let Some(item_use) = item_use {
+                    draw.item_use_controls(item_use, rect);
+                }
             }
         }
         if state.cursor_item.is_none()
@@ -873,7 +915,13 @@ impl Painter<'_> {
         );
     }
 
-    fn item_slot(&mut self, template: &str, rect: Rect, item: Option<&UiItem>, selected: bool) {
+    pub(crate) fn item_slot(
+        &mut self,
+        template: &str,
+        rect: Rect,
+        item: Option<&UiItem>,
+        selected: bool,
+    ) {
         let mut bindings = UiBindings::default();
         bindings.widget_mut(template).rect = Some(rect);
         self.widget(template, &bindings);
@@ -1230,8 +1278,8 @@ impl Painter<'_> {
         self.widget("Casting_Gauge", &bindings);
     }
 
-    fn tooltip(&mut self, item: &UiItem, point: [f32; 2]) -> Rect {
-        let height = 78. + item.details.len().min(16) as f32 * 17.;
+    fn tooltip(&mut self, item: &UiItem, point: [f32; 2], extra_height: f32) -> Rect {
+        let height = 78. + item.details.len().min(16) as f32 * 17. + extra_height;
         let width = 310_f32.min(self.screen.width);
         let x = if point[0] + 22. + width > self.screen.width {
             point[0] - width - 12.

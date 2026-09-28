@@ -21,6 +21,8 @@ pub struct Interaction {
     pub pointer: Option<[f32; 2]>,
     pub window_positions: BTreeMap<String, [f32; 2]>,
     pub inspected_item: Option<UiItem>,
+    /// Owned inventory identity, separate from linked/merchant/trade inspections.
+    pub inspected_owned: Option<(InventorySlot, u32, u32)>,
     pub drag: Option<(String, [f32; 2])>,
     /// Captures the whole frame even when Enter/Escape closes the editor.
     pub controls_blocked: bool,
@@ -33,6 +35,8 @@ pub struct Interaction {
     pub merchant_sell: Option<InventorySlot>,
     pub merchant_quantity: u32,
     pub merchant_scroll: usize,
+    pub trade_coin: u8,
+    pub trade_quantity: u32,
     pub bank_coin: u8,
     pub bank_quantity: u32,
 }
@@ -215,6 +219,8 @@ impl Interaction {
         };
         self.commerce_view(live, &mut view);
         self.social_view(live, &mut view);
+        self.trade_view(live, &mut view);
+        self.item_use_view(live, &mut view);
         view
     }
 
@@ -373,6 +379,10 @@ impl Interaction {
                     live.game.error(format!("No nearby target matches {name}."));
                 }
             }
+            Action::Trade => self.trade_request(live),
+            Action::CancelTrade => self.trade_cancel(live),
+            Action::Scribe => self.item_use_action(live, ItemUseAction::Scribe),
+            Action::UseItem => self.item_use_action(live, ItemUseAction::Use),
             Action::UseTarget => self.open_service(live, None),
             Action::Merchant => self.open_service(live, Some(crate::commerce::MERCHANT_CLASS)),
             Action::Bank => self.open_service(live, Some(crate::commerce::BANKER_CLASS)),
@@ -443,11 +453,14 @@ impl Interaction {
             return;
         }
         match action {
+            UiAction::Trade(action) => self.trade_action(live, action),
+            UiAction::ItemUse(action) => self.item_use_action(live, action),
             UiAction::Commerce(action) => self.commerce_action(action, live),
             UiAction::Social(action) => self.social_action(action, live),
             UiAction::ChatLink(id) => {
                 if let Some(link) = live.game.chat_links.get(&id).cloned() {
                     self.inspected_item = None;
+                    self.inspected_owned = None;
                     live.game.linked_item = None;
                     live.command(Command::Social(
                         openeq_net::social::SocialCommand::ActivateLink(link),
@@ -534,6 +547,8 @@ impl Interaction {
                             }
                         } else {
                             self.inspected_item = Some(game::item_view(item));
+                            self.inspected_owned = Some((slot, item.id, item.instance_id));
+                            live.game.linked_item = None;
                         }
                     }
                 } else if live
@@ -574,6 +589,7 @@ impl Interaction {
             }
             UiAction::LootItem(slot) => {
                 if right {
+                    self.inspected_owned = None;
                     self.inspected_item = live
                         .game
                         .loot
@@ -611,7 +627,9 @@ impl Interaction {
     }
 
     pub fn close_window(&mut self, window: &str, live: &mut LiveWorld) {
-        if window == "merchant" {
+        if window == "trade" {
+            self.trade_cancel(live);
+        } else if window == "merchant" {
             live.command(Command::MerchantClose);
             live.game.commerce.merchant = None;
             self.merchant_stock = None;
@@ -631,6 +649,7 @@ impl Interaction {
             }
         } else if window == "inspect" {
             self.inspected_item = None;
+            self.inspected_owned = None;
             live.game.linked_item = None;
         } else if let Some(id) = window
             .strip_prefix("bag:")
@@ -641,6 +660,8 @@ impl Interaction {
     }
 
     pub fn tick(&mut self, live: &mut LiveWorld) {
+        live.trade_tick();
+        self.item_use_tick(live);
         if live
             .game
             .commerce

@@ -17,9 +17,9 @@ pub enum Message {
     Event(Box<ZoneEvent>),
     Error(String),
     CommandSent(Command),
-    Notice(String),
+    CommandRejected { command: Command, notice: String },
 }
-enum NetworkCommand {
+pub(crate) enum NetworkCommand {
     Target(u32),
     Gameplay(Command),
 }
@@ -173,10 +173,10 @@ impl LiveWorld {
                                     match zone.command(wire_command).await {
                                         Ok(()) => { let _ = tx.send(Message::CommandSent(command)); }
                                         Err(openeq_net::zone::ZoneError::Malformed(what)) => {
-                                            let _ = tx.send(Message::Notice(format!("Invalid {what}; action was not sent.")));
+                                            let _ = tx.send(Message::CommandRejected { command, notice: format!("Invalid {what}; action was not sent.") });
                                         }
                                         Err(openeq_net::zone::ZoneError::Zoning) => {
-                                            let _ = tx.send(Message::Notice("Please wait for zone travel to finish.".into()));
+                                            let _ = tx.send(Message::CommandRejected { command, notice: "Please wait for zone travel to finish.".into() });
                                         }
                                         Err(error) => return Err(error.into()),
                                     }
@@ -239,15 +239,17 @@ impl LiveWorld {
                     self.ready = false;
                     self.game.attack = false;
                     self.game.commerce.close_services();
+                    self.game.trade = Default::default();
+                    self.game.inventory.clear_trade();
+                    self.item_use_reset();
                     self.game.inventory_command_pending = false;
                     self.game.error(format!(
                         "Connection lost: {}",
                         self.error.as_deref().unwrap_or("unknown error")
                     ));
                 }
-                Message::Notice(notice) => {
-                    self.game.inventory_command_pending = false;
-                    self.game.error(notice);
+                Message::CommandRejected { command, notice } => {
+                    self.command_rejected(command, notice)
                 }
                 Message::CommandSent(command) => self.command_sent(command),
                 Message::Event(event) => {
@@ -270,6 +272,7 @@ impl LiveWorld {
                             }
                         }
                         ZoneEvent::Despawn(id) => {
+                            self.trade_partner_gone(id);
                             self.entities.remove(&id);
                             if self.target == Some(id) {
                                 self.target = None;
@@ -363,6 +366,9 @@ impl LiveWorld {
     pub fn command(&mut self, command: Command) -> bool {
         if !self.ready || self.error.is_some() {
             self.game.error("You are not connected to the zone.");
+            return false;
+        }
+        if !self.trade_command_allowed(&command) || !self.item_use_command_allowed(&command) {
             return false;
         }
         if let Command::MoveItem { from, to, count } = &command {
@@ -528,12 +534,14 @@ impl LiveWorld {
         let inventory_command = matches!(command, Command::MoveItem { .. });
         if self
             .commands
-            .send(NetworkCommand::Gameplay(command))
+            .send(NetworkCommand::Gameplay(command.clone()))
             .is_err()
         {
             self.game.error("The network worker has stopped.");
             return false;
         }
+        self.trade_queued(&command);
+        self.item_use_queued(&command);
         if inventory_command {
             self.game.inventory_command_pending = true;
         }
@@ -549,7 +557,8 @@ impl LiveWorld {
         true
     }
 
-    fn command_sent(&mut self, command: Command) {
+    pub(crate) fn command_sent(&mut self, command: Command) {
+        let sent = command.clone();
         match command {
             Command::MoveCoin {
                 from,
@@ -583,9 +592,51 @@ impl LiveWorld {
             Command::EndLoot(_) => self.game.loot = None,
             _ => {}
         }
+        self.trade_command_sent(&sent);
+        self.item_use_command_sent(&sent);
     }
 
-    fn gameplay_event(&mut self, mut event: GameplayEvent) {
+    pub(crate) fn command_rejected(&mut self, command: Command, notice: String) {
+        self.trade_command_rejected(&command);
+        self.item_use_command_rejected(&command);
+        // The worker rejected this command before transmission. Release only
+        // its pending state; another outstanding action may still be valid.
+        match command {
+            Command::MoveItem { .. } => self.game.inventory_command_pending = false,
+            Command::MoveCoin { .. } => self.game.commerce.coin_pending = false,
+            Command::MerchantClose => self.game.commerce.merchant_closing = false,
+            Command::MerchantOpen { merchant_id, .. } => {
+                if self
+                    .game
+                    .commerce
+                    .merchant
+                    .as_ref()
+                    .is_some_and(|m| m.id == merchant_id && !m.opened)
+                {
+                    self.game.commerce.merchant = None;
+                }
+            }
+            Command::MerchantBuy { merchant_id, .. }
+            | Command::MerchantSell { merchant_id, .. } => {
+                if self
+                    .game
+                    .commerce
+                    .pending
+                    .as_ref()
+                    .is_some_and(|p| p.merchant_id == merchant_id)
+                {
+                    self.game.commerce.pending = None;
+                }
+            }
+            Command::CastSpell { .. } => self.game.cast_pending_until = None,
+            _ => {}
+        }
+        self.game.error(notice);
+    }
+
+    pub(crate) fn gameplay_event(&mut self, mut event: GameplayEvent) {
+        self.trade_event(&event);
+        self.item_use_event(&event);
         // Network structs stay in EQEmu's coordinates. Everything retained by
         // LiveWorld uses the original assets' coordinate basis.
         match &mut event {
@@ -622,6 +673,8 @@ impl LiveWorld {
                     ..Default::default()
                 };
                 self.game.inventory = Default::default();
+                self.game.trade = Default::default();
+                self.item_use_reset();
                 self.game.loot = None;
                 self.game.attack = false;
                 self.game.sitting = false;
@@ -750,6 +803,16 @@ impl LiveWorld {
                 }
             }
             GameplayEvent::Death(death) => {
+                if Some(death.id) == self.own_id {
+                    self.item_use_reset();
+                    if self.game.trade.engaged() {
+                        self.command(Command::Trade(openeq_net::trade::TradeCommand::Cancel {
+                            player_id: death.id,
+                        }));
+                    }
+                } else {
+                    self.trade_partner_gone(death.id);
+                }
                 if self.game.attack
                     && (Some(death.id) == self.target || Some(death.id) == self.own_id)
                 {
@@ -862,7 +925,7 @@ fn posture_action(posture: u32) -> ActorAction {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::commerce::{BankSession, MerchantSession, PendingTransaction, TransactionKind};
     use openeq_net::{
@@ -871,7 +934,7 @@ mod tests {
     };
     use std::time::Duration;
 
-    fn command_world(
+    pub(crate) fn command_world(
         class: u8,
         distance: f32,
     ) -> (
@@ -921,7 +984,7 @@ mod tests {
         (live, received)
     }
 
-    fn carried_item(slot: InventorySlot) -> InventoryItem {
+    pub(crate) fn carried_item(slot: InventorySlot) -> InventoryItem {
         InventoryItem {
             slot,
             id: 13005,
@@ -952,12 +1015,377 @@ mod tests {
             mana: 0,
             endurance: 0,
             required_level: 0,
+            click: Default::default(),
+            scroll_spell_id: None,
+            recast_timestamp: 0,
             bag_slots: 0,
             bag_size: 0,
             weight: 10,
             size: 1,
             children: Vec::new(),
         }
+    }
+
+    #[test]
+    fn trade_offers_predict_once_and_remote_views_do_not_replace_worn_items() {
+        use crate::trade::{TradePhase, TradeSession};
+        use openeq_net::trade::{TradeCommand, TradeEvent};
+        let (mut live, mut wire) = command_world(1, 10.);
+        live.entities.get_mut(&2).unwrap().spawn.npc = false;
+        live.game.trade.session = Some(TradeSession::new(2, "Partner".into(), TradePhase::Active));
+        live.game
+            .inventory
+            .insert(carried_item(InventorySlot::possessions(0)));
+        let offer = Command::Trade(TradeCommand::OfferCoin {
+            coin: CoinType::Platinum,
+            amount: 3,
+        });
+        assert!(live.command(offer.clone()));
+        assert_eq!(
+            live.game.currency.platinum, 10,
+            "enqueue is not transmission"
+        );
+        assert!(
+            !live.command(offer.clone()),
+            "pending offer cannot be double submitted"
+        );
+        assert!(matches!(
+            wire.try_recv(),
+            Ok(NetworkCommand::Gameplay(Command::Trade(_)))
+        ));
+        live.command_sent(offer);
+        assert_eq!(live.game.currency.platinum, 7);
+        assert_eq!(
+            live.game.trade.session.as_ref().unwrap().own_money.platinum,
+            3
+        );
+        let accept = Command::Trade(TradeCommand::Accept { player_id: 1 });
+        assert!(live.command(accept.clone()));
+        live.command_sent(accept);
+        assert!(
+            !live.command(Command::Trade(TradeCommand::OfferCoin {
+                coin: CoinType::Platinum,
+                amount: 1
+            })),
+            "peer may already have completed the exchange"
+        );
+        assert!(!live.command(Command::MoveItem {
+            from: InventorySlot::possessions(0),
+            to: InventorySlot::CURSOR,
+            count: 0
+        }));
+        assert!(!live.command(Command::DeleteItem {
+            slot: InventorySlot::possessions(0),
+            count: 1
+        }));
+        live.gameplay_event(GameplayEvent::Trade(TradeEvent::Accepted { player_id: 2 }));
+        assert_eq!(
+            live.game.trade.session.as_ref().unwrap().phase,
+            TradePhase::Completing
+        );
+        let mut remote = carried_item(InventorySlot::possessions(0));
+        remote.id = 999;
+        live.gameplay_event(GameplayEvent::Item {
+            packet_type: 0x65,
+            item: remote,
+        });
+        let session = live.game.trade.session.as_ref().unwrap();
+        assert!(!session.you_accepted && !session.partner_accepted);
+        assert_eq!(session.phase, TradePhase::Active);
+        assert_eq!(session.partner_items[&0].id, 999);
+        assert_eq!(
+            live.game.inventory.items[&InventorySlot::possessions(0)].id,
+            13005
+        );
+        assert!(!live.command(Command::DeleteItem {
+            slot: InventorySlot::trade(0),
+            count: 1
+        }));
+        assert!(!live.command(Command::MerchantOpen {
+            merchant_id: 2,
+            player_id: 1
+        }));
+    }
+
+    #[test]
+    fn trade_cancel_waits_for_refunds_and_late_peer_reply_without_ping_pong() {
+        use crate::trade::{TradePhase, TradeSession};
+        use openeq_net::trade::{TradeCommand, TradeEvent};
+        let (mut live, mut wire) = command_world(1, 10.);
+        live.entities.get_mut(&2).unwrap().spawn.npc = false;
+        live.game.trade.session = Some(TradeSession::new(2, "Partner".into(), TradePhase::Active));
+        live.game
+            .inventory
+            .insert(carried_item(InventorySlot::trade(0)));
+        assert!(live.command(Command::Trade(TradeCommand::Cancel { player_id: 1 })));
+        assert!(wire.try_recv().is_ok());
+        live.gameplay_event(GameplayEvent::Currency(Currency {
+            platinum: 10,
+            ..Default::default()
+        }));
+        live.gameplay_event(GameplayEvent::Item {
+            packet_type: 0x67,
+            item: carried_item(InventorySlot::possessions(23)),
+        });
+        live.gameplay_event(GameplayEvent::Trade(TradeEvent::WindowClosed));
+        assert!(
+            live.game
+                .inventory
+                .items
+                .contains_key(&InventorySlot::trade(0))
+        );
+        live.gameplay_event(GameplayEvent::Trade(TradeEvent::WindowClosed2));
+        assert!(
+            !live
+                .game
+                .inventory
+                .items
+                .contains_key(&InventorySlot::trade(0))
+        );
+        assert!(
+            live.game
+                .inventory
+                .items
+                .contains_key(&InventorySlot::possessions(23))
+        );
+        assert!(
+            live.game.trade.engaged(),
+            "old untagged reciprocal cancel must drain first"
+        );
+        assert!(!live.command(Command::Trade(TradeCommand::Request {
+            to_id: 2,
+            from_id: 1
+        })));
+        live.gameplay_event(GameplayEvent::Trade(TradeEvent::Cancelled {
+            player_id: 1,
+            action: 0,
+        }));
+        assert_eq!(
+            live.game.trade.session.as_ref().unwrap().phase,
+            TradePhase::Ended
+        );
+        assert!(
+            wire.try_recv().is_err(),
+            "reciprocal cancel never sends another reply"
+        );
+        live.gameplay_event(GameplayEvent::Trade(TradeEvent::Cancelled {
+            player_id: 1,
+            action: 0,
+        }));
+        assert!(wire.try_recv().is_err());
+    }
+
+    #[test]
+    fn trade_remote_cancel_replies_once_and_disconnect_cannot_leave_escrow_locked() {
+        use crate::trade::{TradePhase, TradeSession};
+        use openeq_net::trade::{TradeCommand, TradeEvent};
+        let (mut live, mut wire) = command_world(1, 10.);
+        live.entities.get_mut(&2).unwrap().spawn.npc = false;
+        live.game.trade.session = Some(TradeSession::new(2, "Partner".into(), TradePhase::Active));
+        for _ in 0..2 {
+            live.gameplay_event(GameplayEvent::Trade(TradeEvent::Cancelled {
+                player_id: 1,
+                action: 0,
+            }));
+        }
+        assert!(matches!(
+            wire.try_recv(),
+            Ok(NetworkCommand::Gameplay(Command::Trade(
+                TradeCommand::Cancel { player_id: 1 }
+            )))
+        ));
+        assert!(wire.try_recv().is_err());
+        live.gameplay_event(GameplayEvent::Trade(TradeEvent::WindowClosed2));
+        assert!(!live.game.trade.engaged());
+        live.game.trade.session = Some(TradeSession::new(2, "Partner".into(), TradePhase::Active));
+        live.trade_partner_gone(2);
+        assert!(wire.try_recv().is_ok());
+        live.gameplay_event(GameplayEvent::Trade(TradeEvent::WindowClosed2));
+        assert!(
+            !live.game.trade.engaged(),
+            "gone peer cannot send a reciprocal cancel"
+        );
+    }
+
+    #[test]
+    fn queued_trade_ack_must_cancel_server_escrow_even_before_sent_callback() {
+        use crate::trade::{TradePhase, TradeSession};
+        use openeq_net::trade::TradeCommand;
+        let (mut live, mut wire) = command_world(1, 10.);
+        live.entities.get_mut(&2).unwrap().spawn.npc = false;
+        live.game.trade.session = Some(TradeSession::new(
+            2,
+            "Partner".into(),
+            TradePhase::Invitation,
+        ));
+        let ack = Command::Trade(TradeCommand::Acknowledge {
+            to_id: 2,
+            from_id: 1,
+        });
+        assert!(live.command(ack.clone()));
+        let mut ui = crate::interaction::Interaction::default();
+        ui.trade_cancel(&mut live);
+        assert!(matches!(
+            wire.try_recv(),
+            Ok(NetworkCommand::Gameplay(Command::Trade(
+                TradeCommand::Acknowledge { .. }
+            )))
+        ));
+        assert!(matches!(
+            wire.try_recv(),
+            Ok(NetworkCommand::Gameplay(Command::Trade(
+                TradeCommand::Cancel { .. }
+            )))
+        ));
+        live.command_sent(ack);
+        let session = live.game.trade.session.as_ref().unwrap();
+        assert_eq!(session.phase, TradePhase::Completing);
+        assert!(session.cancel_sent);
+    }
+
+    #[test]
+    fn withdrawn_invitation_waits_for_peer_and_late_ack_requires_another_close() {
+        use crate::trade::{TradePhase, TradeSession};
+        use openeq_net::trade::{TradeCommand, TradeEvent};
+        let (mut live, mut wire) = command_world(1, 10.);
+        live.entities.get_mut(&2).unwrap().spawn.npc = false;
+        live.game.trade.session = Some(TradeSession::new(2, "Partner".into(), TradePhase::Waiting));
+        assert!(live.command(Command::Trade(TradeCommand::Cancel { player_id: 1 })));
+        assert!(wire.try_recv().is_ok());
+        assert!(matches!(
+            wire.try_recv(),
+            Ok(NetworkCommand::Gameplay(Command::Trade(
+                TradeCommand::Busy { .. }
+            )))
+        ));
+        live.gameplay_event(GameplayEvent::Trade(TradeEvent::WindowClosed2));
+        assert!(
+            live.game.trade.engaged(),
+            "local close does not drain an in-flight peer ACK"
+        );
+        live.gameplay_event(GameplayEvent::Trade(TradeEvent::Acknowledged {
+            to_id: 1,
+            from_id: 2,
+        }));
+        assert!(!live.game.trade.desynchronized);
+        assert!(matches!(
+            wire.try_recv(),
+            Ok(NetworkCommand::Gameplay(Command::Trade(
+                TradeCommand::Cancel { .. }
+            )))
+        ));
+        live.gameplay_event(GameplayEvent::Trade(TradeEvent::Cancelled {
+            player_id: 1,
+            action: 0,
+        }));
+        assert!(
+            live.game.trade.engaged(),
+            "old close cannot finish new server escrow"
+        );
+        live.gameplay_event(GameplayEvent::Trade(TradeEvent::WindowClosed2));
+        assert!(!live.game.trade.engaged());
+    }
+
+    #[test]
+    fn withdrawing_invitation_replies_busy_once_and_unexpected_ack_freezes_state() {
+        use crate::trade::{TradePhase, TradeSession};
+        use openeq_net::trade::{TradeCommand, TradeEvent};
+        let (mut live, mut wire) = command_world(1, 10.);
+        live.game.trade.session = Some(TradeSession::new(
+            2,
+            "Partner".into(),
+            TradePhase::Invitation,
+        ));
+        let busy = GameplayEvent::Trade(TradeEvent::Busy {
+            to_id: 1,
+            from_id: 2,
+        });
+        live.gameplay_event(busy.clone());
+        live.gameplay_event(busy);
+        assert!(matches!(
+            wire.try_recv(),
+            Ok(NetworkCommand::Gameplay(Command::Trade(
+                TradeCommand::Busy { .. }
+            )))
+        ));
+        assert!(wire.try_recv().is_err());
+        live.game.trade.session = Some(TradeSession::new(2, "Partner".into(), TradePhase::Active));
+        live.gameplay_event(GameplayEvent::Trade(TradeEvent::Acknowledged {
+            to_id: 1,
+            from_id: 2,
+        }));
+        assert!(
+            live.game.trade.desynchronized,
+            "even a same-partner duplicate ACK resets server escrow"
+        );
+        assert!(!live.game.commerce.currency_ready);
+        assert!(matches!(
+            wire.try_recv(),
+            Ok(NetworkCommand::Gameplay(Command::Trade(
+                TradeCommand::Cancel { .. }
+            )))
+        ));
+        live.gameplay_event(GameplayEvent::Trade(TradeEvent::Cancelled {
+            player_id: 1,
+            action: 0,
+        }));
+        live.gameplay_event(GameplayEvent::Trade(TradeEvent::WindowClosed2));
+        assert!(
+            live.game.trade.engaged(),
+            "desynchronized ownership needs a fresh connection"
+        );
+        assert!(!live.command(Command::Trade(TradeCommand::Request {
+            to_id: 2,
+            from_id: 1
+        })));
+        assert!(!live.command(Command::MoveItem {
+            from: InventorySlot::possessions(23),
+            to: InventorySlot::CURSOR,
+            count: 0
+        }));
+    }
+
+    #[test]
+    fn trade_money_cannot_exceed_server_signed_credit_limit() {
+        use crate::trade::{TradePhase, TradeSession};
+        use openeq_net::trade::TradeCommand;
+        let (mut live, _wire) = command_world(1, 10.);
+        live.entities.get_mut(&2).unwrap().spawn.npc = false;
+        let mut session = TradeSession::new(2, "Partner".into(), TradePhase::Active);
+        session.own_money.platinum = i32::MAX as u32;
+        live.game.trade.session = Some(session);
+        assert!(!live.command(Command::Trade(TradeCommand::OfferCoin {
+            coin: CoinType::Platinum,
+            amount: 1
+        })));
+        let session = live.game.trade.session.as_mut().unwrap();
+        session.own_money.platinum = 0;
+        session.partner_money.platinum = i32::MAX as u32;
+        assert!(!live.command(Command::Trade(TradeCommand::Accept { player_id: 1 })));
+    }
+
+    #[test]
+    fn unsolicited_trade_view_is_never_an_owned_item_and_finished_is_neutral() {
+        use crate::trade::{TradePhase, TradeSession};
+        use openeq_net::trade::TradeEvent;
+        let (mut live, _) = command_world(1, 10.);
+        live.gameplay_event(GameplayEvent::Item {
+            packet_type: 0x65,
+            item: carried_item(InventorySlot::possessions(0)),
+        });
+        assert!(live.game.inventory.items.is_empty());
+        live.game.trade.session = Some(TradeSession::new(2, "Partner".into(), TradePhase::Active));
+        live.game
+            .inventory
+            .insert(carried_item(InventorySlot::trade(0)));
+        live.gameplay_event(GameplayEvent::Trade(TradeEvent::Finished));
+        let session = live.game.trade.session.as_ref().unwrap();
+        assert_eq!(session.phase, TradePhase::Ended);
+        assert_eq!(
+            session.status,
+            "Trade ended. Check your inventory and chat for the result."
+        );
+        assert!(live.game.inventory.items.is_empty());
     }
 
     #[test]

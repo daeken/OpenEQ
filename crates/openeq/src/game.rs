@@ -135,6 +135,27 @@ impl Inventory {
         self.remove_tree(slot);
     }
 
+    /// Discard ended-session escrow only. Refunded/delivered possession slots
+    /// remain whatever the server actually sent; never invent a return slot.
+    pub fn clear_trade(&mut self) {
+        self.items.retain(|slot, _| slot.kind != 3);
+    }
+
+    fn tree_is_tradable(&self, slot: InventorySlot) -> bool {
+        fn tradable(item: &InventoryItem) -> bool {
+            !item.no_drop && !item.attuned && item.children.iter().all(tradable)
+        }
+        self.items
+            .values()
+            .filter(|entry| {
+                entry.slot == slot
+                    || (slot.bag.is_none()
+                        && entry.slot.kind == slot.kind
+                        && entry.slot.slot == slot.slot)
+            })
+            .all(tradable)
+    }
+
     pub fn validate_move(
         &self,
         from: InventorySlot,
@@ -145,7 +166,7 @@ impl Inventory {
             return Err("Choose a different inventory slot.".into());
         }
         if from.kind > 2
-            || to.kind > 2
+            || to.kind > 3
             || from.augment.is_some()
             || to.augment.is_some()
             || from.server_slot().is_none()
@@ -156,6 +177,28 @@ impl Inventory {
         let item = self.items.get(&from).ok_or("That slot is empty.")?;
         if count > item.count {
             return Err("That stack does not contain enough items.".into());
+        }
+        if to.kind == 3 {
+            if from != InventorySlot::CURSOR || to.bag.is_some() || count != 0 {
+                return Err(
+                    "Place the item on your cursor, then offer it in an empty trade slot.".into(),
+                );
+            }
+            if self
+                .items
+                .keys()
+                .any(|key| key.kind == 3 && key.slot == to.slot)
+            {
+                return Err(
+                    "That trade slot is occupied. Cancel the trade to change its items.".into(),
+                );
+            }
+            if !self.tree_is_tradable(from) {
+                return Err(
+                    "No-trade or attuned items and their containers cannot be offered.".into(),
+                );
+            }
+            return Ok(());
         }
         self.validate_destination(item, to)?;
         if let Some(other) = self.items.get(&to) {
@@ -175,15 +218,7 @@ impl Inventory {
     }
 
     fn validate_destination(&self, item: &InventoryItem, to: InventorySlot) -> Result<(), String> {
-        if to.kind == 2
-            && self.items.values().any(|entry| {
-                (entry.slot == item.slot
-                    || (item.slot.bag.is_none()
-                        && entry.slot.kind == item.slot.kind
-                        && entry.slot.slot == item.slot.slot))
-                    && (entry.no_drop || entry.attuned)
-            })
-        {
+        if to.kind == 2 && !self.tree_is_tradable(item.slot) {
             return Err("No-trade or attuned items cannot enter the shared bank.".into());
         }
         if let Some(index) = to.bag {
@@ -218,6 +253,9 @@ impl Inventory {
         to: InventorySlot,
         count: u32,
     ) -> Result<(), String> {
+        if from.kind == 3 {
+            return Err("Cancel the trade to recover offered items.".into());
+        }
         if from == to {
             return Ok(());
         }
@@ -311,6 +349,8 @@ pub struct ActiveCast {
 pub struct GameplayState {
     pub inventory: Inventory,
     pub commerce: crate::commerce::CommerceState,
+    pub trade: crate::trade::TradeState,
+    pub item_use: crate::item_use_state::ItemUseState,
     pub group: crate::group::GroupState,
     pub chat: VecDeque<ChatLine>,
     pub chat_links: BTreeMap<u64, openeq_net::social::LinkPayload>,
@@ -600,6 +640,8 @@ impl GameplayState {
             GameplayEvent::Item { packet_type, item } => {
                 if packet_type == 0 {
                     self.linked_item = Some(item);
+                } else if packet_type == 0x65 {
+                    self.trade.remote_item(item);
                 } else if packet_type == 0x64 {
                     if let Some(merchant) = &mut self.commerce.merchant
                         && merchant.opened
@@ -959,6 +1001,9 @@ mod tests {
             mana: 0,
             endurance: 0,
             required_level: 0,
+            click: Default::default(),
+            scroll_spell_id: None,
+            recast_timestamp: 0,
             bag_slots: 0,
             bag_size: 4,
             weight: 10,
@@ -1071,6 +1116,121 @@ mod tests {
         assert_eq!(state.buffs.keys().copied().collect::<Vec<_>>(), vec![3]);
     }
 
+    #[test]
+    fn trade_escrow_only_accepts_whole_cursor_items_into_empty_top_slots() {
+        let carried = InventorySlot::possessions(23);
+        let cursor = InventorySlot::CURSOR;
+        let offer = InventorySlot::trade(0);
+        let mut inventory = Inventory::default();
+        inventory.replace(vec![item(23, 10, 10)]);
+        assert!(inventory.move_item(carried, offer, 0).is_err());
+        inventory.move_item(carried, cursor, 3).unwrap();
+        for (to, count) in [
+            (offer, 1),
+            (offer, 3),
+            (InventorySlot::trade(8), 0),
+            (offer.in_bag(0), 0),
+            (
+                InventorySlot {
+                    augment: Some(0),
+                    ..offer
+                },
+                0,
+            ),
+        ] {
+            assert!(inventory.move_item(cursor, to, count).is_err());
+            assert_eq!(inventory.items[&cursor].count, 3);
+            assert_eq!(inventory.items[&carried].count, 7);
+        }
+        inventory.move_item(cursor, offer, 0).unwrap();
+        assert_eq!(inventory.items[&offer].count, 3);
+        assert!(!inventory.items.contains_key(&cursor));
+        inventory.move_item(carried, cursor, 2).unwrap();
+        // Even an otherwise-compatible stack cannot replace/extend an offer.
+        assert!(inventory.move_item(cursor, offer, 0).is_err());
+        for to in [cursor, carried, offer.in_bag(0), InventorySlot::DELETE] {
+            assert!(inventory.move_item(offer, to, 0).is_err());
+        }
+        assert_eq!(inventory.items[&cursor].count, 2);
+        assert_eq!(inventory.items[&carried].count, 5);
+        assert_eq!(inventory.items[&offer].count, 3);
+    }
+
+    #[test]
+    fn trade_escrow_rejects_bound_items_and_nested_bag_contents() {
+        let cursor = InventorySlot::CURSOR;
+        for (child_bound, attuned) in [(false, false), (false, true), (true, false), (true, true)] {
+            let mut bag = item(33, 10, 1);
+            bag.stack_size = 1;
+            bag.bag_slots = 8;
+            let mut child = item(33, 20, 1);
+            child.slot = cursor.in_bag(2);
+            let bound = if child_bound { &mut child } else { &mut bag };
+            bound.attuned = attuned;
+            bound.no_drop = !attuned;
+            bag.children.push(child);
+            let mut inventory = Inventory::default();
+            inventory.replace(vec![bag]);
+            assert!(
+                inventory
+                    .move_item(cursor, InventorySlot::trade(7), 0)
+                    .is_err()
+            );
+            assert_eq!(inventory.items.len(), 2);
+            assert_eq!(inventory.items[&cursor.in_bag(2)].id, 20);
+        }
+        // Public item storage can also contain unflattened metadata; a nested
+        // bound child must not bypass the same rule before insertion flattens it.
+        let mut outer = item(33, 10, 1);
+        let mut inner = item(33, 20, 1);
+        let mut bound = item(33, 30, 1);
+        bound.attuned = true;
+        inner.children.push(bound);
+        outer.children.push(inner);
+        let mut inventory = Inventory::default();
+        inventory.items.insert(cursor, outer);
+        assert!(
+            inventory
+                .validate_move(cursor, InventorySlot::trade(0), 0)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn trade_bag_prediction_and_cleanup_preserve_authoritative_refunds() {
+        let cursor = InventorySlot::CURSOR;
+        let offer = InventorySlot::trade(7);
+        let returned = InventorySlot::possessions(26);
+        let mut bag = item(33, 10, 1);
+        bag.stack_size = 1;
+        bag.bag_slots = 8;
+        let mut child = item(33, 20, 5);
+        child.slot = cursor.in_bag(2);
+        bag.children.push(child);
+        let mut inventory = Inventory::default();
+        inventory.replace(vec![bag, item(23, 30, 1)]);
+        inventory.move_item(cursor, offer, 0).unwrap();
+        assert_eq!(inventory.items[&offer].id, 10);
+        assert_eq!(inventory.items[&offer.in_bag(2)].count, 5);
+        assert!(!inventory.items.contains_key(&cursor));
+        assert!(!inventory.items.contains_key(&cursor.in_bag(2)));
+        assert!(inventory.move_item(offer.in_bag(2), cursor, 0).is_err());
+        // A server-selected refund slot can arrive before window-close. Keep it
+        // and all its children while dropping the old separate escrow tree.
+        let mut refund = inventory.items[&offer].clone();
+        refund.slot = returned;
+        let mut refund_child = inventory.items[&offer.in_bag(2)].clone();
+        refund_child.slot = returned.in_bag(2);
+        refund.children.push(refund_child);
+        inventory.insert(refund);
+        inventory.clear_trade();
+        inventory.clear_trade();
+        assert_eq!(inventory.items.len(), 3);
+        assert_eq!(inventory.items[&returned].id, 10);
+        assert_eq!(inventory.items[&returned.in_bag(2)].count, 5);
+        assert_eq!(inventory.items[&InventorySlot::possessions(23)].id, 30);
+        assert!(!inventory.items.keys().any(|slot| slot.kind == 3));
+    }
     #[test]
     fn split_merge_and_swap_preserve_items() {
         let mut inventory = Inventory::default();

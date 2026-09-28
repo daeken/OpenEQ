@@ -149,3 +149,36 @@ cargo test -p openeq-render ui::tests
 
 The first command writes `openeq-commerce-ui.png` and
 `openeq-commerce-ui-retina.png` when the capture directory is set.
+
+`UiTrade` uses the original `TradeWnd`, its sixteen inventory backgrounds,
+coin controls, and accept/cancel button art. Each participant has eight explicitly
+addressed offer indices (0–7); a partner slot produces an inspection action, never
+an inventory move. Clicking an occupied own-offer slot with an empty cursor
+inspects it; individual item retraction is not supported. Offered amounts and
+the two acceptance flags remain separate.
+Invitation, waiting, active, confirmation-pending, and ended states have distinct
+controls. An ended exchange displays the application's outcome text; the UI does
+not infer success from a generic server finish message. Offered coins cannot be
+removed individually, so the window explains that cancellation returns them.
+The application owns invitation, transfer, acceptance, cancellation, and item
+inspection behavior through `UiAction::Trade(TradeAction)`.
+
+Persistent item inspection can expose `UiItemUse` controls for explicit Scribe
+and Use actions. The application supplies the labels, readiness, reason text,
+and a revalidated owned slot/instance; linked items and other players' offers
+must not provide this state. Hovering never exposes these action buttons, and
+holding an item does not hide an already-open persistent inspection. Rendering
+does not consume an item, scribe a spell, or start a cast.
+
+```
+OPENEQ_UI_CAPTURE_DIR=/tmp cargo test -p openeq --lib trade_ui::tests -- --include-ignored --nocapture
+cargo test -p openeq --lib trade_interaction::tests
+```
+
+This verifies original artwork, explicit slot hits, disabled actions, pending
+and failed exchanges, and item-use visibility. With a capture directory, it
+writes Retina captures `openeq-trade-ui.png`, `openeq-scribe-ui.png`, and
+`openeq-item-use-ui.png` using verified client icon IDs.
+The binding tests use local command channels to verify player/session addresses,
+separate offer inventories, inspection-only offered items, currency enqueueing,
+and single cancellation without connecting a character to the server.

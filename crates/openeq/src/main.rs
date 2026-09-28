@@ -613,6 +613,9 @@ fn handle_gameplay_input(
             } else if interaction.inspected_item.is_some() || live.game.linked_item.is_some() {
                 interaction.close_window("inspect", live);
                 interaction.escape_handled = true;
+            } else if live.game.trade.session.is_some() {
+                interaction.close_window("trade", live);
+                interaction.escape_handled = true;
             } else if live.game.commerce.merchant.is_some() {
                 interaction.close_window("merchant", live);
                 interaction.escape_handled = true;

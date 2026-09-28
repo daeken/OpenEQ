@@ -34,6 +34,12 @@ impl InventorySlot {
             ..Self::possessions(slot)
         }
     }
+    pub const fn trade(slot: u16) -> Self {
+        Self {
+            kind: 3,
+            ..Self::possessions(slot)
+        }
+    }
     pub fn in_bag(self, index: u16) -> Self {
         Self {
             bag: Some(index),
@@ -113,6 +119,10 @@ pub struct InventoryItem {
     pub mana: i32,
     pub endurance: u32,
     pub required_level: u32,
+    pub click: crate::item_use::ClickEffect,
+    pub scroll_spell_id: Option<u32>,
+    /// Server recast expiry, in Unix seconds.
+    pub recast_timestamp: u32,
     pub bag_slots: u8,
     pub bag_size: u8,
     pub weight: i32,
@@ -214,11 +224,14 @@ fn read_item(r: &mut Reader<'_>, depth: usize, budget: &mut usize) -> Option<Inv
     let tertiary = r.take(76)?;
     // Click, proc, worn, focus, scroll, bard: each has a fixed header,
     // variable name, and trailing unknown dword.
+    let mut effects = Vec::with_capacity(6);
     for _ in 0..6 {
-        r.skip(30)?;
+        effects.push(r.take(30)?);
         r.string(1024)?;
         r.skip(4)?;
     }
+    let click = effects[0];
+    let scroll = u32_at(effects[4], 0)?;
     r.skip(171)?; // ItemQuaternaryBodyStruct
     let child_count = r.u32()? as usize;
     if child_count > 200 || child_count > *budget {
@@ -267,6 +280,18 @@ fn read_item(r: &mut Reader<'_>, depth: usize, budget: &mut usize) -> Option<Inv
         mana: u32_at(b, 48)? as i32,
         endurance: u32_at(b, 52)?,
         required_level: u32_at(b, 121)?,
+        click: crate::item_use::ClickEffect {
+            spell_id: u32_at(click, 0)? as i32,
+            required_level: click[4],
+            effect_type: u32_at(click, 5)?,
+            level: click[9],
+            max_charges: u32_at(click, 10)? as i32,
+            cast_time_ms: u32_at(click, 14)? as i32,
+            recast_seconds: u32_at(click, 18)?,
+            recast_type: u32_at(click, 22)? as i32,
+        },
+        scroll_spell_id: (scroll > 0 && scroll <= 45000).then_some(scroll),
+        recast_timestamp: u32_at(h, 52)?,
         bag_slots: secondary[69],
         bag_size: secondary[70],
         weight: u32_at(b, 4)? as i32,
@@ -315,6 +340,42 @@ mod tests {
             out.extend(child);
         }
         out
+    }
+    #[test]
+    fn click_scroll_and_recast_metadata_survive_item_serialization() {
+        let mut raw = item(13005, 23, &[]);
+        put(&mut raw, 52, 1_800_000_000);
+        let effects = 77 + 2 + 26 + b"Test Item\0Lore\0IT123\0\0".len() + 255 + 1 + 74 + 1 + 76;
+        put(&mut raw, effects, 278);
+        raw[effects + 4] = 10;
+        put(&mut raw, effects + 5, 3);
+        raw[effects + 9] = 12;
+        put(&mut raw, effects + 10, u32::MAX);
+        put(&mut raw, effects + 14, 2500);
+        put(&mut raw, effects + 18, 30);
+        put(&mut raw, effects + 22, 7);
+        put(&mut raw, effects + 35 * 4, 34);
+        let mut packet = 0x65u32.to_le_bytes().to_vec();
+        packet.extend(raw);
+        let (_, parsed) = parse_item_packet(&packet).unwrap();
+        assert_eq!(
+            parsed.click,
+            crate::item_use::ClickEffect {
+                spell_id: 278,
+                required_level: 10,
+                effect_type: 3,
+                level: 12,
+                max_charges: -1,
+                cast_time_ms: 2500,
+                recast_seconds: 30,
+                recast_type: 7,
+            }
+        );
+        assert_eq!(parsed.scroll_spell_id, Some(34));
+        assert_eq!(parsed.recast_timestamp, 1_800_000_000);
+        assert_eq!(InventorySlot::trade(7).server_slot(), Some(3007));
+        assert_eq!(InventorySlot::trade(0).in_bag(5).server_slot(), Some(11415));
+        assert_eq!(InventorySlot::trade(8).server_slot(), None);
     }
     #[test]
     fn merchant_metadata_and_bank_addresses_survive_binary_items() {

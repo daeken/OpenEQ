@@ -37,6 +37,8 @@ pub enum CoinType {
 #[derive(Debug, Clone)]
 pub enum Command {
     Social(crate::social::SocialCommand),
+    Trade(crate::trade::TradeCommand),
+    ItemUse(crate::item_use::ItemUseCommand),
     MerchantOpen {
         merchant_id: u32,
         player_id: u32,
@@ -254,6 +256,8 @@ pub struct ZoneDestination {
 #[derive(Debug, Clone)]
 pub enum GameplayEvent {
     Social(crate::social::SocialEvent),
+    Trade(crate::trade::TradeEvent),
+    ItemUse(crate::item_use::ItemUseEvent),
     MerchantOpened {
         merchant_id: u32,
         command: u32,
@@ -447,6 +451,8 @@ pub fn encode_command(command: Command) -> Result<AppPacket, ZoneError> {
     let mut out = Vec::new();
     let opcode = match command {
         Command::Social(command) => return crate::social::encode_command(command),
+        Command::Trade(command) => return crate::trade::encode_command(command),
+        Command::ItemUse(command) => return crate::item_use::encode_command(command),
         Command::MerchantOpen {
             merchant_id,
             player_id,
@@ -699,6 +705,12 @@ pub fn encode_command(command: Command) -> Result<AppPacket, ZoneError> {
 /// None means an opcode belongs to another subsystem; a recognized truncated
 /// gameplay packet is an error, never a fabricated empty inventory or message.
 pub fn parse_packet(opcode: u16, data: &[u8]) -> Option<Result<GameplayEvent, ZoneError>> {
+    if let Some(event) = crate::trade::parse_packet(opcode, data) {
+        return Some(event.map(GameplayEvent::Trade));
+    }
+    if let Some(event) = crate::item_use::parse_packet(opcode, data) {
+        return Some(event.map(GameplayEvent::ItemUse));
+    }
     if let Some(event) = crate::social::parse_packet(opcode, data) {
         return Some(event.map(GameplayEvent::Social));
     }

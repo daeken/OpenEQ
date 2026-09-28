@@ -20,3 +20,9 @@ pub mod map;
 pub mod commerce_ui;
 
 pub mod social_ui;
+pub mod trade_ui;
+
+mod item_use_interaction;
+pub mod item_use_state;
+pub mod trade;
+mod trade_interaction;

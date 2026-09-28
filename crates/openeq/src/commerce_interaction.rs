@@ -22,6 +22,11 @@ fn money(value: Currency) -> UiMoney {
 }
 impl Interaction {
     pub fn open_service(&mut self, live: &mut LiveWorld, expected: Option<u8>) {
+        if live.game.trade.engaged() || live.game.item_use.busy() {
+            live.game
+                .notice("Finish the current trade or item action before opening an NPC service.");
+            return;
+        }
         let Some(entity) = live.target.and_then(|id| live.entities.get(&id)) else {
             live.game.notice("Select a merchant or banker first.");
             return;

@@ -32,6 +32,8 @@ Controls:
 | I | Inventory and equipment |
 | Left-click item; Shift-click | Pick up/place item; move one from a stack |
 | Right-click item | Open bag or inspect item |
+| Scribe / Use in item inspection | Learn a scroll or activate an owned item's effect |
+| /trade; /canceltrade | Invite the selected nearby player; cancel and return offers |
 | Q, X, H, C, V | Autoattack, sit/stand, hail, consider, assist |
 | L | Loot targeted corpse; click items or use Loot All |
 | B; Alt+1 through Alt+0 | Spellbook; cast gems 1–10 |
@@ -55,6 +57,16 @@ withdraw; shared coin controls move platinum on the configured Storage2 server.
 Groups support `/invite [NAME]`, `/accept`, `/decline`, `/leavegroup` (or
 `/disband`) and `/makeleader NAME`, with invitation/member controls in the group
 window. `/group` sends to the current group.
+Use `/trade` with a nearby player selected, then accept the invitation on the
+other client. Pick up an inventory item and click an empty slot in your offer;
+choose a denomination and amount to add coins. Both players must accept the
+current offer. Any addition clears both acceptance indicators. Cancel to return
+offered items and coins before changing an existing offer.
+Right-click a carried scroll or clickable item to inspect it, then choose
+**Scribe** or **Use**. `/scribe` and `/useitem` act on that inspected owned item.
+Scribing moves one scroll to an empty cursor and waits for the server to confirm
+the book entry and consumption. Item effects use server cast times, charge
+updates and reuse timers, including effects from inside bags.
 With the spellbook open, select a gem then a learned spell to memorize it.
 Window title bars can be dragged. Escape interrupts casting before closing panels;
 with no active panel or captured mouse, it exits.
@@ -70,11 +82,15 @@ you up and automatically returns, following the default five-second cycle.
 - Merchant catalogs with server prices/stock, purchases, sales and quantities.
 - Personal/shared bank items, containers and coins, with service range checks
   and persistence verified across reconnects.
+- Player trade invitations, separate item/coin offers, acceptance resets,
+  cancellation/refunds and server-confirmed termination.
 - Clickable quest and item links; group invitations, acceptance/decline, member
   health/targeting, group chat, leaving and leadership transfer.
 - Target/assist/consider, autoattack, damage, deaths, corpse loot and Loot All.
 - Spellbook/gems, memorization, casting, interruption, cooldown feedback, mana
   consumption, buffs and dismissal. Effects remain authoritative on EQEmu.
+- Scroll scribing and item effects, with owned-item validation, finite charges,
+  consumable stacks, interrupted casts and shared reuse timers.
 - Classic armor/skins/tints and held equipment; independent attack/hit/sit/death
   animation. Weighted modern EQG characters include gargoyles and Drakkin.
 - Dynamic doors/portals, door collision, maps with waypoints, third-person camera.
@@ -86,7 +102,7 @@ you up and automatically returns, following the default five-second cycle.
 - Classic WLD zones, binary EQGZ v1/v2 zones and EQTZP heightmap terrain.
 
 This is a playable development milestone, with substantial parity work remaining:
-player trading/augmentation, raid and guild management, quest journals,
+NPC quest hand-ins, augmentation, raid and guild management, quest journals,
 interactive account/character creation, authored border zone
 triggers, spell particles/audio, advanced XML widgets and full swimming/movement
 rules. Modern Drakkin modular armor/hair/equipment, Luclin replacements, weather,
@@ -100,6 +116,9 @@ See the [completed milestone and remaining parity list](docs/PLAYABLE_CLIENT_TAS
 The [commerce and social checklist](docs/COMMERCE_SOCIAL_TASKS.md) records the
 next verified milestone. Unknown purchase outcomes deliberately block additional
 trades until reconnecting; the client never retries an uncertain purchase.
+The [trading and item-use checklist](docs/TRADE_ITEM_USE_TASKS.md) tracks the next
+milestone. See [trade protocol findings](docs/TRADE_PROTOCOL.md) and
+[item-use findings](docs/ITEM_USE_PROTOCOL.md) for server behavior and live probes.
 
 ## Offline tools and verification
 
@@ -133,6 +152,15 @@ cargo run -p openeq --bin commerce_smoke -- \
 cargo run -p openeq --bin social_smoke -- \
   "$HOME/.config/openeq/storage2-social1-credentials.json" \
   "$HOME/.config/openeq/storage2-social2-credentials.json"
+
+# Player trading through the ordinary client controls, restoring both fixtures.
+cargo run -p openeq --bin trade_smoke -- \
+  "$HOME/.config/openeq/storage2-trade1-credentials.json" \
+  "$HOME/.config/openeq/storage2-trade2-credentials.json"
+
+# Scroll/item protocol proof; consumes dedicated fixture items (see item-use docs).
+cargo run -p openeq --bin item_use_smoke -- \
+  "$HOME/.config/openeq/storage2-itemuse-credentials.json"
 
 # Actual Kelethin buttons, animated lift collision and rider physics.
 cargo run -p openeq --bin lift_smoke -- \
