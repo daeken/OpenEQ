@@ -283,6 +283,15 @@ Networking always uses the player position.
 The camera sits six units above the player's feet; outgoing server positions
 use a center three units above the feet. Developer flight bypasses collision.
 
+Walking queries the static and dynamic spatial indexes together: floor selection,
+step-up, sliding, and ceiling clearance share one solve, so terrain cannot snap
+a player back off a moving platform. Step-up and ground contact use the whole
+circular footprint rather than a single forward probe or discrete edge samples.
+Small ledges remain walkable at glancing angles, with the existing two-unit step
+limit and wall/ceiling restrictions. Regression coverage includes oblique steps,
+mixed static/dynamic clearance, and both directions across all three original
+Kelethin lifts' lower ramps and upper landings at 20 and 120 FPS.
+
 ## Atmosphere and XML UI
 
 Live fog colors/ranges and indoor/sky flags come from `OP_NewZone`. The offline

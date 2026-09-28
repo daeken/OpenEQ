@@ -35,7 +35,16 @@ dynamic collision follows the animated lift pose. `take_platform_displacement`
 returns a translation only when the player's feet were supported by the lift's
 original mesh at the previous pose; consuming it prevents a second application
 in the same frame. Jumping or flying discards pending carry. Static zone
-collision remains separate from these moving objects.
+geometry and moving objects retain separate spatial indexes, but player movement
+queries both together so a nearby static floor cannot undo platform support.
+
+The original-asset movement regression walks diagonally across the lower ramp
+and upper landing of each of the three lifts, in both directions at 20 and
+120 FPS, without jumping:
+
+```sh
+cargo test -p openeq --lib actual_kelethin_lift_landings_are_walkable -- --ignored --nocapture
+```
 
 ## Reproducible live proof
 

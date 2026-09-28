@@ -88,15 +88,14 @@ impl GroundMotion {
             } else {
                 0.0
             };
-            let mut moved = world.move_player(feet, displacement, RADIUS, HEIGHT, step_height);
-            if let Some(dynamic) = dynamic {
-                let displacement = std::array::from_fn(|i| moved[i] - feet[i]);
-                moved = dynamic.move_player(feet, displacement, RADIUS, HEIGHT, step_height);
-                // Resolve again against the static world after a door/platform
-                // correction so a second collider cannot push through a wall.
-                let displacement = std::array::from_fn(|i| moved[i] - feet[i]);
-                moved = world.move_player(feet, displacement, RADIUS, HEIGHT, step_height);
-            }
+            let moved = world.move_player_with_dynamic(
+                dynamic,
+                feet,
+                displacement,
+                RADIUS,
+                HEIGHT,
+                step_height,
+            );
             if (moved[2] - (feet[2] + displacement[2])).abs() > 0.001 {
                 self.velocity_z = 0.0;
             }
@@ -107,33 +106,7 @@ impl GroundMotion {
 }
 
 fn on_ground(world: &CollisionWorld, feet: [f32; 3]) -> bool {
-    // Test center first for the common case. Edge probes keep a body supported
-    // on a stair lip even before its center crosses the step; the cylinder's
-    // collision solver uses its full footprint for that same support behavior.
-    const DIAGONAL: f32 = std::f32::consts::FRAC_1_SQRT_2;
-    [
-        [0.0, 0.0],
-        [RADIUS, 0.0],
-        [-RADIUS, 0.0],
-        [0.0, RADIUS],
-        [0.0, -RADIUS],
-        [DIAGONAL, DIAGONAL],
-        [-DIAGONAL, DIAGONAL],
-        [DIAGONAL, -DIAGONAL],
-        [-DIAGONAL, -DIAGONAL],
-    ]
-    .into_iter()
-    .any(|offset| {
-        world
-            .ground_height(
-                feet[0] + offset[0],
-                feet[1] + offset[1],
-                feet[2],
-                0.05,
-                0.05,
-            )
-            .is_some()
-    })
+    world.supports_player(feet, RADIUS, 0.05)
 }
 
 #[cfg(test)]
@@ -307,6 +280,156 @@ mod tests {
             near(feet[0], 14.);
             near(feet[1], 2.);
             near(feet[2], 2.);
+        }
+    }
+
+    #[test]
+    fn short_ledges_can_be_walked_over_at_oblique_angles() {
+        for rise in [0.125, 0.5, 2.] {
+            let ledge = [
+                [
+                    [5., -200., 0.],
+                    [5., 200., 0.],
+                    [5., 200., rise],
+                    [5., -200., rise],
+                ],
+                [
+                    [5., -200., rise],
+                    [100., -200., rise],
+                    [100., 200., rise],
+                    [5., 200., rise],
+                ],
+            ];
+            let floor = flat();
+            let obstacles = world(&ledge);
+            let combined = world(&[
+                [
+                    [-200., -200., 0.],
+                    [200., -200., 0.],
+                    [200., 200., 0.],
+                    [-200., 200., 0.],
+                ],
+                ledge[0],
+                ledge[1],
+            ]);
+            for angle in [0f32, 30., 60., 80.] {
+                let velocity = [
+                    20. * angle.to_radians().cos(),
+                    20. * angle.to_radians().sin(),
+                ];
+                for fps in [20, 120] {
+                    let frames = (10. / velocity[0] * fps as f32).ceil() as usize;
+                    for dynamic in [false, true] {
+                        let mut motion = GroundMotion::default();
+                        let mut feet = [0.; 3];
+                        for _ in 0..frames {
+                            feet = if dynamic {
+                                motion.step_with_dynamic(
+                                    &floor,
+                                    Some(&obstacles),
+                                    feet,
+                                    velocity,
+                                    false,
+                                    1. / fps as f32,
+                                )
+                            } else {
+                                motion.step(&combined, feet, velocity, false, 1. / fps as f32)
+                            };
+                        }
+                        assert!(
+                            (feet[0] - velocity[0] * frames as f32 / fps as f32).abs() < 0.025,
+                            "stuck on {rise}-unit ledge at {angle} degrees, {fps} FPS, dynamic={dynamic}: {feet:?}"
+                        );
+                        near(feet[2], rise);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires original Greater Faydark assets and GPU"]
+    fn actual_kelethin_lift_landings_are_walkable() {
+        use glam::{Quat, Vec3};
+        use openeq_assets::loader;
+        use openeq_render::{
+            Renderer,
+            doors::{DoorRenderer, DoorState},
+        };
+        let base = loader::default_client_dir().expect("original client assets");
+        let terrain = CollisionWorld::build(&loader::load_zone(&base, "gfaydark").unwrap());
+        let renderer = Renderer::new_headless(64, 64).unwrap();
+        for (id, position, heading, parameter) in [
+            (69, [137.463, 350.014, 2.1582], 256., 68),
+            (77, [872.302, 221.448, -27.6523], 128., 98),
+            (80, [-88.6519, -136.173, 2.4082], 128., 69),
+        ] {
+            for open in [0, 1] {
+                let mut doors = DoorRenderer::load(&base, "gfaydark").unwrap();
+                doors.update(
+                    &renderer,
+                    &[DoorState {
+                        id,
+                        name: "FAYLEVATOR".into(),
+                        position,
+                        heading,
+                        open_type: 59,
+                        inverted: true,
+                        parameter,
+                        size: 100,
+                        state: open,
+                        ..Default::default()
+                    }],
+                    0.,
+                );
+                let z = position[2] + 2.99893 + f32::from(open) * parameter as f32;
+                // Lower: ramp -> lip -> platform. Upper: platform -> city deck,
+                // whose authored height differs slightly from the lift.
+                let xs = if open == 0 { [136., 97.] } else { [100., 60.] };
+                let rotation = Quat::from_rotation_z(
+                    std::f32::consts::FRAC_PI_2 - heading * std::f32::consts::TAU / 512.,
+                );
+                let surface = |x, y| {
+                    // Parts of the lower ramps are buried in the forest floor.
+                    // Start on the top surface, not the buried ramp underside.
+                    [&terrain, doors.collision_world()]
+                        .into_iter()
+                        .filter_map(|world| world.ground_height(x, y, z + 20., 0., 40.))
+                        .max_by(f32::total_cmp)
+                        .unwrap()
+                };
+                let endpoints = [[xs[0], -6., 0.], [xs[1], 6., 0.]].map(|local| {
+                    let p = Vec3::from(position) + rotation * Vec3::from(local);
+                    [p.x, p.y, surface(p.x, p.y)]
+                });
+                for reverse in [false, true] {
+                    let [start, end] = if reverse {
+                        [endpoints[1], endpoints[0]]
+                    } else {
+                        endpoints
+                    };
+                    for fps in [20, 120] {
+                        let mut motion = GroundMotion::default();
+                        let mut feet = start;
+                        for _ in 0..fps * 2 {
+                            feet = motion.step_with_dynamic(
+                                &terrain,
+                                Some(doors.collision_world()),
+                                feet,
+                                [(end[0] - start[0]) / 2., (end[1] - start[1]) / 2.],
+                                false,
+                                1. / fps as f32,
+                            );
+                        }
+                        eprintln!(
+                            "lift{id} open={open}, reverse={reverse}, fps={fps}: {start:?} -> {feet:?}; expected {end:?}"
+                        );
+                        for i in 0..3 {
+                            near(feet[i], end[i]);
+                        }
+                    }
+                }
+            }
         }
     }
 }

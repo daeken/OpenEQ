@@ -100,6 +100,13 @@ pub struct CollisionWorld {
     large: Vec<usize>,
 }
 
+/// Borrow static and moving geometry together so support and clearance are
+/// solved in the same pass without rebuilding either spatial index.
+struct CollisionQuery<'a> {
+    world: &'a CollisionWorld,
+    dynamic: Option<&'a CollisionWorld>,
+}
+
 impl CollisionWorld {
     /// Matches the renderer's object ownership and instance transforms. Source
     /// object meshes without an instance do not accidentally collide at origin.
@@ -210,6 +217,22 @@ impl CollisionWorld {
             })
     }
 
+    /// Ground contact across the body's circular footprint, including narrow
+    /// overlaps at rotated ledges that a few point samples can miss.
+    pub fn supports_player(&self, feet: [f32; 3], radius: f32, tolerance: f32) -> bool {
+        let feet = Vec3::from(feet);
+        feet.is_finite()
+            && radius.is_finite()
+            && radius > 0.
+            && tolerance.is_finite()
+            && tolerance >= 0.
+            && CollisionQuery {
+                world: self,
+                dynamic: None,
+            }
+            .supported(feet.truncate(), feet.z, radius, tolerance)
+    }
+
     /// Slides an upright body through static geometry and follows reachable
     /// ground. `position` is the feet, `delta` is displacement (not velocity),
     /// all in EQ world units. Supply negative delta Z for gravity, positive for
@@ -221,6 +244,20 @@ impl CollisionWorld {
     /// leave the player in place rather than pushing through large obstacles.
     pub fn move_player(
         &self,
+        position: [f32; 3],
+        delta: [f32; 3],
+        radius: f32,
+        height: f32,
+        max_step: f32,
+    ) -> [f32; 3] {
+        self.move_player_with_dynamic(None, position, delta, radius, height, max_step)
+    }
+
+    /// Uses one support/clearance solve for static terrain and moving objects.
+    /// Sequential solves can snap a player off a platform to the floor below.
+    pub fn move_player_with_dynamic(
+        &self,
+        dynamic: Option<&Self>,
         position: [f32; 3],
         delta: [f32; 3],
         radius: f32,
@@ -249,10 +286,46 @@ impl CollisionWorld {
         }
         let steps = (delta.length() / step_length).ceil().max(1.) as usize;
         let motion = delta / steps as f32;
+        let query = CollisionQuery {
+            world: self,
+            dynamic,
+        };
         for _ in 0..steps {
-            position = self.move_step(position, motion, radius, height, max_step);
+            position = query.move_step(position, motion, radius, height, max_step);
         }
         position.to_array()
+    }
+}
+
+impl<'a> CollisionQuery<'a> {
+    fn candidates(&self, min: Vec2, max: Vec2) -> impl Iterator<Item = &'a Triangle> {
+        std::iter::once(self.world)
+            .chain(self.dynamic)
+            .flat_map(move |world| {
+                world
+                    .candidates(min, max)
+                    .into_iter()
+                    .map(|i| &world.triangles[i])
+            })
+    }
+
+    fn ground_height(
+        &self,
+        x: f32,
+        y: f32,
+        feet: f32,
+        max_step: f32,
+        max_drop: f32,
+    ) -> Option<f32> {
+        std::iter::once(self.world)
+            .chain(self.dynamic)
+            .filter_map(|world| world.ground_height(x, y, feet, max_step, max_drop))
+            .min_by(|a, b| {
+                (a - feet)
+                    .abs()
+                    .total_cmp(&(b - feet).abs())
+                    .then_with(|| a.total_cmp(b))
+            })
     }
 
     fn move_step(
@@ -288,13 +361,29 @@ impl CollisionWorld {
         });
         if blocked && motion.truncate().length_squared() > 1e-8 && max_step > SKIN && motion.z <= 0.
         {
-            // A radius-ahead support probe lets the body clear a short stair
-            // riser before its center crosses the edge. The head sweep and full
-            // body check prevent stepping through a low ceiling or tall wall.
-            let ahead = desired.truncate() + motion.truncate().normalize() * radius;
-            let support =
-                self.ground_height(ahead.x, ahead.y, position.z + max_step, 0., max_step - SKIN);
-            if let Some(support) = support.filter(|z| *z > position.z + SKIN) {
+            // Check the same circular footprint used by collision. A single
+            // forward probe never reaches a ledge at a glancing approach: the
+            // side of the body touches the riser before that probe reaches its
+            // top. Try the lowest reachable support first, retaining head and
+            // full-body clearance checks for ceilings and tall obstacles.
+            let xy = desired.truncate();
+            let mut supports: Vec<_> = self
+                .candidates(xy - Vec2::splat(radius), xy + Vec2::splat(radius))
+                .filter_map(|triangle| {
+                    if !triangle.walkable()
+                        || footprint_push(xy, &triangle.points.map(Vec3::truncate), radius, Vec2::X)
+                            .is_none()
+                    {
+                        return None;
+                    }
+                    triangle
+                        .plane_z(xy)
+                        .filter(|z| *z > position.z + SKIN && *z <= position.z + max_step + SKIN)
+                })
+                .collect();
+            supports.sort_by(f32::total_cmp);
+            supports.dedup_by(|a, b| (*a - *b).abs() < SKIN);
+            for support in supports {
                 let rise = support - position.z;
                 let head_clear = self
                     .ceiling(
@@ -338,28 +427,28 @@ impl CollisionWorld {
         max_step: f32,
         max_drop: f32,
     ) -> Option<f32> {
-        let ground = self.ground_height(xy.x, xy.y, feet, max_step, max_drop)?;
-        if ground < feet - SKIN {
+        let ground = self.ground_height(xy.x, xy.y, feet, max_step, max_drop);
+        if ground.is_none_or(|z| z < feet - SKIN) {
             // Keep resting on the edge until the body's footprint clears it.
             // Dropping when only the center leaves a step embeds the rear of
             // the body in its riser and incorrectly pushes the player forward.
-            let supported = self
-                .candidates(xy - Vec2::splat(radius), xy + Vec2::splat(radius))
-                .into_iter()
-                .any(|index| {
-                    let triangle = &self.triangles[index];
-                    triangle.walkable()
-                        && triangle
-                            .plane_z(xy)
-                            .is_some_and(|z| (z - feet).abs() <= SKIN)
-                        && footprint_push(xy, &triangle.points.map(Vec3::truncate), radius, Vec2::X)
-                            .is_some()
-                });
-            if supported {
+            if self.supported(xy, feet, radius, SKIN) {
                 return Some(feet);
             }
         }
-        Some(ground)
+        ground
+    }
+
+    fn supported(&self, xy: Vec2, feet: f32, radius: f32, tolerance: f32) -> bool {
+        self.candidates(xy - Vec2::splat(radius), xy + Vec2::splat(radius))
+            .any(|triangle| {
+                triangle.walkable()
+                    && triangle
+                        .plane_z(xy)
+                        .is_some_and(|z| (z - feet).abs() <= tolerance + SKIN)
+                    && footprint_push(xy, &triangle.points.map(Vec3::truncate), radius, Vec2::X)
+                        .is_some()
+            })
     }
 
     fn ceiling(&self, xy: Vec2, radius: f32, old_head: f32, new_head: f32) -> Option<f32> {
@@ -367,9 +456,7 @@ impl CollisionWorld {
             return None;
         }
         self.candidates(xy - Vec2::splat(radius), xy + Vec2::splat(radius))
-            .into_iter()
-            .filter_map(|index| {
-                let triangle = &self.triangles[index];
+            .filter_map(|triangle| {
                 if !triangle.walkable()
                     || triangle.max.z < old_head - SKIN
                     || triangle.min.z > new_head + SKIN
@@ -391,8 +478,7 @@ impl CollisionWorld {
         for _ in 0..8 {
             let xy = desired.truncate();
             let mut changed = false;
-            for index in self.candidates(xy - Vec2::splat(radius), xy + Vec2::splat(radius)) {
-                let triangle = &self.triangles[index];
+            for triangle in self.candidates(xy - Vec2::splat(radius), xy + Vec2::splat(radius)) {
                 if triangle.max.z <= desired.z + SKIN || triangle.min.z >= desired.z + height - SKIN
                 {
                     continue;
@@ -439,7 +525,9 @@ impl CollisionWorld {
         }
         None
     }
+}
 
+impl CollisionWorld {
     /// Adds a prefiltered local mesh at a world transform. Useful for small
     /// dynamic-object worlds; callers decide which materials are collidable.
     pub fn add_geometry(&mut self, geometry: &Geometry, transform: Mat4) {
@@ -718,6 +806,58 @@ mod tests {
         let blocked = world.move_player([0., 0., 0.], [10., 0., 0.], 0.5, 6., 1.);
         near(blocked[0], 4.5);
         near(blocked[2], 0.);
+    }
+
+    #[test]
+    fn rotated_ledge_support_covers_the_whole_footprint() {
+        let rotation = Quat::from_rotation_z(22.5f32.to_radians());
+        let points = [
+            [5., -20., 2.],
+            [20., -20., 2.],
+            [20., 20., 2.],
+            [5., 20., 2.],
+        ]
+        .map(|p| (rotation * Vec3::from(p)).to_array());
+        let mut world = CollisionWorld::default();
+        quad(&mut world, points[0], points[1], points[2], points[3]);
+        // The circle overlaps by 0.01, between the old eight edge probes.
+        let edge = (rotation * Vec3::new(4.01, 0., 2.)).to_array();
+        assert!(world.supports_player(edge, 1., 0.05));
+        near(world.move_player(edge, [0., 0., -0.1], 1., 6., 2.)[2], 2.);
+        let clear = (rotation * Vec3::new(3.9, 0., 2.)).to_array();
+        assert!(!world.supports_player(clear, 1., 0.05));
+        near(world.move_player(clear, [0., 0., -0.1], 1., 6., 2.)[2], 1.9);
+    }
+
+    #[test]
+    fn combined_worlds_preserve_wall_and_ceiling_clearance() {
+        for (rise, roof) in [(0.5, 6.25), (2.5, 20.)] {
+            let mut terrain = CollisionWorld::default();
+            floor(&mut terrain, 0.);
+            floor(&mut terrain, roof);
+            let mut platform = CollisionWorld::default();
+            wall(&mut platform, 5., 0., rise);
+            quad(
+                &mut platform,
+                [5., -20., rise],
+                [15., -20., rise],
+                [15., 20., rise],
+                [5., 20., rise],
+            );
+            for (world, dynamic) in [(&terrain, &platform), (&platform, &terrain)] {
+                let moved = world.move_player_with_dynamic(
+                    Some(dynamic),
+                    [0.; 3],
+                    [10., 2., -0.1],
+                    1.,
+                    6.,
+                    2.,
+                );
+                near(moved[0], 4.);
+                near(moved[1], 2.);
+                near(moved[2], 0.);
+            }
+        }
     }
 
     #[test]
