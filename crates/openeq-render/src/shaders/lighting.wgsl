@@ -91,12 +91,42 @@ fn fs_main(in: Fragment) -> @location(0) vec4<f32> {
     let sun = normalize(globals.sun_direction.xyz);
     let lambert = max(dot(normal, sun), 0.0);
     if (lambert > 0.0) {
-        let light_clip = globals.light_view_proj * vec4<f32>(world, 1.0);
+        // Offset the receiver along its own normal before projecting into light
+        // space. This is what keeps large flat surfaces - platforms, floors,
+        // roofs - from shadowing themselves into stripes.
+        let biased = world + normal * (globals.params.w * 2.0);
+        let light_clip = globals.light_view_proj * vec4<f32>(biased, 1.0);
         let light_ndc = light_clip.xyz / light_clip.w;
         let shadow_uv = vec2<f32>(light_ndc.x * 0.5 + 0.5, 0.5 - light_ndc.y * 0.5);
         var shadow = 1.0;
-        if (all(shadow_uv >= vec2<f32>(0.0)) && all(shadow_uv <= vec2<f32>(1.0)) && light_ndc.z <= 1.0) {
-            shadow = textureSampleCompare(shadow_map, shadow_sampler, shadow_uv, light_ndc.z - 0.0015);
+        let inside = all(shadow_uv >= vec2<f32>(0.0))
+            && all(shadow_uv <= vec2<f32>(1.0))
+            && light_ndc.z >= 0.0
+            && light_ndc.z <= 1.0;
+        if (inside) {
+            // A 3x3 comparison tap softens the edges and hides residual acne.
+            let texel = globals.params.z;
+            var lit = 0.0;
+            for (var y = -1; y <= 1; y = y + 1) {
+                for (var x = -1; x <= 1; x = x + 1) {
+                    let offset = vec2<f32>(f32(x), f32(y)) * texel;
+                    lit = lit + textureSampleCompare(
+                        shadow_map,
+                        shadow_sampler,
+                        shadow_uv + offset,
+                        light_ndc.z - 0.0006,
+                    );
+                }
+            }
+            shadow = lit / 9.0;
+
+            // Fade out near the edge of the map so its boundary is not a hard
+            // line drawn across the world.
+            let edge = min(
+                min(shadow_uv.x, 1.0 - shadow_uv.x),
+                min(shadow_uv.y, 1.0 - shadow_uv.y),
+            );
+            shadow = mix(1.0, shadow, smoothstep(0.0, 0.06, edge));
         }
         accum += globals.sun_color.rgb * lambert * shadow;
     }

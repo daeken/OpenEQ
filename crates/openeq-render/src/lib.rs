@@ -453,7 +453,10 @@ impl Renderer {
                 compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState {
-                cull_mode: Some(wgpu::Face::Back),
+                // EverQuest geometry is single-sided, so a wall facing away from
+                // the sun still has to occlude; culling here leaves holes in the
+                // shadow.
+                cull_mode: None,
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -462,8 +465,10 @@ impl Renderer {
                 depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: Default::default(),
                 bias: wgpu::DepthBiasState {
-                    constant: 2,
-                    slope_scale: 2.0,
+                    // Surfaces at a glancing angle to the light need the slope
+                    // term; the receiver-side normal offset handles the rest.
+                    constant: 4,
+                    slope_scale: 3.0,
                     clamp: 0.0,
                 },
             }),
@@ -743,6 +748,9 @@ impl Renderer {
         let light_view_projection = light_projection * light_view;
 
         let elapsed = self.start.elapsed().as_secs_f32() * 1000.0;
+        // Shadow-map texel size, used for the receiver offset and the PCF taps.
+        let shadow_texel_world = (2.0 * radius) / SHADOW_SIZE as f32;
+        let shadow_texel_uv = 1.0 / SHADOW_SIZE as f32;
         let globals = Globals {
             view_projection: view_projection.to_cols_array_2d(),
             light_view_projection: light_view_projection.to_cols_array_2d(),
@@ -751,7 +759,12 @@ impl Renderer {
             ambient: Vec4::new(0.22, 0.24, 0.30, 1.0).into(),
             sun_direction: Vec4::new(sun.x, sun.y, sun.z, 1.0).into(),
             sun_color: Vec4::new(1.0, 0.96, 0.86, 1.0).into(),
-            params: [elapsed, scene.light_count as f32, 0.0, 0.0],
+            params: [
+                elapsed,
+                scene.light_count as f32,
+                shadow_texel_uv,
+                shadow_texel_world,
+            ],
         };
         self.queue
             .write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));

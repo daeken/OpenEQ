@@ -125,6 +125,28 @@ buffers.
 Zone light falloff is `pow(1 - distance / radius, 3)` scaled by `N dot L`, the
 same curve the original engine's deferred pathway used.
 
+### Shadow details that matter here
+
+EverQuest's assets break three assumptions a textbook shadow pass makes, and
+each one produces a very visible artifact:
+
+* **Foliage is cut out, not solid.** Trees are cross-plane quads with a texture
+  whose transparent texels carry the silhouette. A depth-only shadow pass with
+  no fragment work makes every one of those quads cast a solid slab, which reads
+  as broad diagonal bands across whatever is underneath. The shadow shader
+  samples the atlas and discards below the same alpha threshold the G-buffer
+  uses, so canopies cast dappled shade.
+* **Surfaces are single-sided.** Culling back faces in the shadow pass means a
+  wall facing away from the sun occludes nothing, and light leaks through it.
+  The shadow pass disables culling so every surface casts.
+* **Large flat surfaces self-shadow.** Platforms, floors and roofs are big,
+  coplanar, and often nearly edge-on to the light, so they stripe with acne. The
+  lighting pass offsets the receiver along its own normal by a couple of shadow
+  texels before projecting into light space, and the shadow pipeline adds a
+  slope-scaled depth bias on top. A 3x3 comparison tap softens what is left, and
+  the shadow contribution fades out over the last few percent of the map so its
+  boundary is not a line drawn across the world.
+
 `Renderer` can target a window surface or an offscreen texture, which is what
 makes `renderzone` possible: the whole pipeline runs headlessly and the result is
 read back as a PNG.
