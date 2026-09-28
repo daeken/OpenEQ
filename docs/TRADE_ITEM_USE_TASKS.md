@@ -42,7 +42,7 @@ and verify actual item, charge, money and spellbook persistence.
 - [x] Inspect the native UI and/or GPU captures of the new controls.
 - [x] Run appropriate workspace, original-asset/GPU, format and lint checks.
 - [x] Document controls, protocol findings and remaining limitations.
-- [ ] Commit and push the verified milestone to master.
+- [x] Commit and push the verified milestone to master (`a9feb3e`).
 
 ## Separate scope
 
@@ -72,6 +72,5 @@ consumed fixture state documented in ITEM_USE_PROTOCOL.md.
 All 202 workspace tests and all 15 opt-in original-asset/GPU tests passed.
 Original-art trade, Scribe and Use captures were visually reviewed, alongside
 captures of the live fixture's learned-scroll control, cooldown and remaining
-charges. Strict workspace Clippy, formatting and the native client build are
-part of publication verification. No original assets or private connection
+charges. Strict workspace Clippy, formatting and the native client build also passed. No original assets or private connection
 credentials are included in this change.
