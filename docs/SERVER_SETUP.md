@@ -57,6 +57,12 @@ and logs in `logs/`. MariaDB stores the `peq` database in `/var/lib/mysql/peq`.
 Manual backups include the database and private configuration in
 `/srv/eqemu/backups`. Treat backups as sensitive.
 
+Zone services also restart after a successful exit: the override at
+`/etc/systemd/system/eqemu-zone@.service.d/restart.conf` sets `Restart=always`.
+Dynamic workers can exit normally when an empty zone shuts down; without this
+override the spare worker pool eventually disappears and travel fails with
+“zone is unavailable.” Explicit service stops still leave them stopped.
+
 The reproducible provisioning, service-generation, test-account, and backup
 scripts are saved in `/home/daeken/eqemu-bootstrap`. Do **not** re-import the
 initial PEQ dump into a server containing player progress: its scripts recreate
