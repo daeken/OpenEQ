@@ -97,6 +97,13 @@ with a fixed matrix mapping `(x, y, z)` to `(x, z, -y)`, which preserves
 handedness, puts up along +Y and north along -Z, matching `wgpu`'s conventions.
 Doing the conversion on the GPU keeps the asset data faithful to the original.
 
+Placement rotations are a separate trap. Both zone formats store them as
+`(around Z, around Y, around X)`, composed as `Rz * Ry * Rx`. Applying those
+components to the matching-looking axes instead turns a tree's yaw into a lean:
+in Greater Faydark the median placed object ends up rotated 90 degrees, lying
+flat. The readers normalise every placement into a plain `(X, Y, Z)` triple so
+one helper, with named per-axis angles, serves both formats.
+
 ## Renderer
 
 Three passes per frame:

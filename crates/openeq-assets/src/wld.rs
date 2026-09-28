@@ -516,6 +516,9 @@ fn read_fragment(
             } else {
                 [1.0; 3]
             };
+            // The file stores placement angles as (around Z, around Y, around
+            // X) in 1/256 pi units; normalise to a plain (X, Y, Z) triple so
+            // every consumer sees the same convention.
             let rotation = [
                 raw_rotation[2] / 256.0 * std::f32::consts::PI,
                 raw_rotation[1] / 256.0 * std::f32::consts::PI,

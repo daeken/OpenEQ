@@ -141,7 +141,10 @@ impl ZoneFile {
             let object_id = reader.i32()?;
             let name = string_at(&strings, reader.i32()? as usize);
             let position = reader.vec3()?;
-            let rotation = reader.vec3()?;
+            // Stored as (around Z, around Y, around X); normalise to (X, Y, Z)
+            // so both zone formats share one convention.
+            let raw_rotation = reader.vec3()?;
+            let rotation = [raw_rotation[2], raw_rotation[1], raw_rotation[0]];
             let scale = reader.f32()?;
             placeables.push(Placeable {
                 object_id,

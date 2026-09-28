@@ -445,12 +445,16 @@ fn strip_extension(value: &str) -> &str {
     }
 }
 
-/// Builds a quaternion as `Rz * Ry * Rx`, matching the original client's
-/// placement convention.
-fn rotation_from_euler([x, y, z]: [f32; 3]) -> [f32; 4] {
-    let z_axis = axis_angle([0.0, 0.0, 1.0], x);
-    let y_axis = axis_angle([0.0, 1.0, 0.0], y);
-    let x_axis = axis_angle([1.0, 0.0, 0.0], z);
+/// Builds a placement quaternion from per-axis angles in `(X, Y, Z)` order,
+/// composed as `Rz * Ry * Rx` like the original client.
+///
+/// The parameter order is part of the contract, not a detail: placement angles
+/// are stored in the files as `(Z, Y, X)`, and applying them to the wrong axes
+/// turns a tree's yaw into a lean. Callers normalise into `(X, Y, Z)` first.
+fn rotation_from_euler([around_x, around_y, around_z]: [f32; 3]) -> [f32; 4] {
+    let x_axis = axis_angle([1.0, 0.0, 0.0], around_x);
+    let y_axis = axis_angle([0.0, 1.0, 0.0], around_y);
+    let z_axis = axis_angle([0.0, 0.0, 1.0], around_z);
     quat_mul(quat_mul(z_axis, y_axis), x_axis)
 }
 
@@ -476,4 +480,53 @@ pub fn default_client_dir() -> Option<PathBuf> {
         Some(PathBuf::from("/Users/daeken/EverQuest")),
     ];
     candidates.into_iter().flatten().find(|path| path.is_dir())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f32::consts::FRAC_PI_2;
+
+    /// A yaw must come out as a rotation about Z, not as a lean. Getting this
+    /// backwards turns every placed object in a zone into a tilted one.
+    #[test]
+    fn x_angle_leaves_z_alone() {
+        let quarter_turn_about_x = rotation_from_euler([FRAC_PI_2, 0.0, 0.0]);
+        // Rotation about X by 90 degrees maps up onto -Y.
+        let up = rotate([0.0, 0.0, 1.0], quarter_turn_about_x);
+        assert!(
+            up[1].abs() > 0.99,
+            "expected up to tip toward Y, got {up:?}"
+        );
+        assert!(up[2].abs() < 0.01);
+    }
+
+    #[test]
+    fn z_angle_spins_in_plane() {
+        let quarter_turn_about_z = rotation_from_euler([0.0, 0.0, FRAC_PI_2]);
+        let up = rotate([0.0, 0.0, 1.0], quarter_turn_about_z);
+        assert!(up[2] > 0.999, "a yaw must not tilt, got {up:?}");
+        let east = rotate([1.0, 0.0, 0.0], quarter_turn_about_z);
+        assert!(east[1] > 0.99, "a yaw should map +X to +Y, got {east:?}");
+    }
+
+    /// Rotates a vector by a quaternion `(x, y, z, w)`.
+    fn rotate(v: [f32; 3], q: [f32; 4]) -> [f32; 3] {
+        let [x, y, z, w] = q;
+        let cross = |a: [f32; 3], b: [f32; 3]| {
+            [
+                a[1] * b[2] - a[2] * b[1],
+                a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0],
+            ]
+        };
+        let axis = [x, y, z];
+        let first = cross(axis, v);
+        let second = cross(axis, first);
+        [
+            v[0] + 2.0 * (w * first[0] + second[0]),
+            v[1] + 2.0 * (w * first[1] + second[1]),
+            v[2] + 2.0 * (w * first[2] + second[2]),
+        ]
+    }
 }

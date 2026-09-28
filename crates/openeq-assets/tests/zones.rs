@@ -121,3 +121,50 @@ fn horizontal_spread(geometry: &openeq_assets::mesh::Geometry) -> f32 {
     }
     total / count as f32
 }
+
+/// Placed objects stand up. A misplaced yaw shows up here as a large lean,
+/// which is how a zone full of trees ends up looking wind-blown.
+#[test]
+fn placed_objects_stand_upright() {
+    let Some(dir) = client_dir() else {
+        return;
+    };
+    if !dir.join("gfaydark_obj.s3d").is_file() {
+        return;
+    }
+    let scene = openeq_assets::load_zone(&dir, "gfaydark").expect("gfaydark should load");
+    let mut tilts: Vec<f32> = scene
+        .instances
+        .iter()
+        .map(|instance| tilt_degrees(instance.rotation))
+        .collect();
+    if tilts.is_empty() {
+        eprintln!("gfaydark has no placed objects; skipping");
+        return;
+    }
+    tilts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let median = tilts[tilts.len() / 2];
+    let upright = tilts.iter().filter(|tilt| **tilt < 30.0).count() as f32 / tilts.len() as f32;
+    eprintln!(
+        "{} instances, median tilt {median:.1} deg, {:.0}% within 30 deg",
+        tilts.len(),
+        upright * 100.0
+    );
+    assert!(
+        median < 15.0,
+        "placed objects should mostly stand upright, median tilt was {median:.1} deg"
+    );
+    assert!(
+        upright > 0.8,
+        "expected most placed objects to be near-upright, only {:.0}% were",
+        upright * 100.0
+    );
+}
+
+/// Angle between the instance's up axis and the world up axis. A pure yaw
+/// scores zero.
+fn tilt_degrees(q: [f32; 4]) -> f32 {
+    let [x, y, _, _] = q;
+    let up_z = (1.0 - 2.0 * (x * x + y * y)).clamp(-1.0, 1.0);
+    up_z.acos().to_degrees()
+}
