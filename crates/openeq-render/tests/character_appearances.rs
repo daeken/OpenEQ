@@ -168,6 +168,79 @@ fn changed_pixels(a: &RgbaImage, b: &RgbaImage) -> usize {
         .count()
 }
 
+#[test]
+#[ignore = "requires original classic wood elf assets and GPU; writes /tmp/openeq-matrick-outfits.png"]
+fn original_classic_matrick_outfits_and_equipment_render() {
+    let base = loader::default_client_dir().expect("original client assets");
+    let mut actors = ActorRenderer::load(&base, "poknowledge").unwrap();
+    let mut renderer = Renderer::new_headless(WIDTH, HEIGHT).expect("GPU");
+    renderer.set_environment(
+        EnvironmentSettings {
+            sky_enabled: false,
+            ..Default::default()
+        },
+        None,
+    );
+    let stage = stage(&renderer);
+    let mut cards = Vec::new();
+    for (gender, title, texture, face) in [
+        (0, "Male default", 0, 2),
+        (0, "Tratlan outfit20", 20, 2),
+        (0, "Higwyn outfit21", 21, 3),
+        (1, "Sherin outfit21", 21, 1),
+    ] {
+        let actor = state(
+            100,
+            4,
+            gender,
+            CharacterAppearance {
+                texture,
+                helm_texture: 255,
+                face,
+                ..Default::default()
+            },
+        );
+        cards.push((
+            title.to_owned(),
+            render_card(&mut renderer, &mut actors, &stage, &actor, 0., false),
+        ));
+    }
+    assert!(
+        changed_pixels(&cards[0].1, &cards[1].1) > 2_000,
+        "Tratlan's extended outfit fell back to the default clothing"
+    );
+    assert!(
+        changed_pixels(&cards[1].1, &cards[2].1) > 2_000,
+        "distinct Matrick outfits did not render"
+    );
+    let mut higwyn = state(
+        100,
+        4,
+        0,
+        CharacterAppearance {
+            texture: 21,
+            helm_texture: 255,
+            face: 3,
+            ..Default::default()
+        },
+    );
+    higwyn.appearance.equipment[1].material = 3;
+    higwyn.appearance.equipment[1].color = 0xff4080ff;
+    higwyn.appearance.equipment[7].material = 1;
+    let equipped = render_card(&mut renderer, &mut actors, &stage, &higwyn, 0., false);
+    assert!(
+        changed_pixels(&cards[2].1, &equipped) > 500,
+        "equipment change failed on extended outfit"
+    );
+    higwyn.appearance.equipment = Default::default();
+    let restored = render_card(&mut renderer, &mut actors, &stage, &higwyn, 0., false);
+    assert_eq!(
+        cards[2].1, restored,
+        "removing equipment did not restore the original outfit"
+    );
+    gallery(&cards, "/tmp/openeq-matrick-outfits.png");
+}
+
 fn verify_attachments(library: &CharacterLibrary, race: u32, gender: u8, sword: &[Geometry]) {
     let mut appearance = CharacterAppearance {
         texture: 3,

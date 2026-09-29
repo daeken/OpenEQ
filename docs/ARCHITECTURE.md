@@ -272,7 +272,9 @@ creation or account setup flow yet.
 ## Player movement and collision
 
 Online movement uses a 120 Hz fixed simulation step, with gravity, jumping,
-grounded stepping and sliding along walls. A spatial grid indexes collidable
+grounded stepping and sliding along walls. Jump impulse is 32 units/s and
+gravity is 128 units/s²: a standing jump rises about 3.9 units, reaches its apex
+in 0.25 seconds and lands in about 0.5 seconds. A spatial grid indexes collidable
 triangles from the drawable zone and placed objects; floor selection handles
 stacked decks and slopes, and ceiling checks limit upward motion. Invisible
 collision-only geometry and swimming remain unsupported. A second collision
@@ -291,6 +293,12 @@ Walking queries the static and dynamic spatial indexes together: floor selection
 step-up, sliding, and ceiling clearance share one solve, so terrain cannot snap
 a player back off a moving platform. Step-up and ground contact use the whole
 circular footprint rather than a single forward probe or discrete edge samples.
+For raised ramp edges, support height is the highest actual triangle point
+inside that circle. Evaluating an infinite ramp plane at the body center misses
+thin end caps and can invent higher floors beyond the ramp's end. The reported
+Greater Faydark pose `(41.50, -96.93, 76.97)`, heading `138.75`, crosses a cap only
+0.09375 units above its adjoining deck; an original-asset regression walks it
+in both directions at two speeds and four frame rates without jumping.
 Small ledges remain walkable at glancing angles, with the existing two-unit step
 limit and wall/ceiling restrictions. Regression coverage includes oblique steps,
 mixed static/dynamic clearance, and both directions across all three original

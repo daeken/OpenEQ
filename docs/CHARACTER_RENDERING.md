@@ -95,6 +95,15 @@ hands, legs, feet, primary and secondary. Supported classic appearance features:
   authored SHIELD_POINT when present. Other offhand items remain in the hand.
 - Body size stays constant when helmets, robes or weapons change.
 
+Classic characters also load the original `global17_amr.s3d` through
+`global23_amr.s3d` extended armor archives. They are shared appearance assets,
+not Luclin-only replacements. For example, Plane of Knowledge's Tratlan Matrick
+uses male wood elf skin 20/face 2, Higwyn Matrick uses skin 21/face 3, and Sherin
+Matrick uses female skin 21/face 1. Missing these archives previously left their
+bodies wearing the default skin despite the server requesting those outfits.
+Explicit equipment still overrides each body slot, and unequipping restores the
+requested NPC outfit. Default player appearances retain their original skin 0.
+
 Actors sharing an appearance and current sampled pose are instanced. Each
 appearance has reusable pose slots, expanded only when additional concurrent
 poses are required; texture and index buffers are not recreated each frame.
@@ -160,6 +169,11 @@ cargo run -p openeq-assets --bin characterscan -- HUM
 cargo run -p openeq-assets --bin characterscan -- HUM --luclin
 cargo run -p openeq-assets --bin characterscan -- IT201
 ```
+
+The `original_classic_matrick_outfits_and_equipment_render` gallery writes
+`/tmp/openeq-matrick-outfits.png`, compares the two reported NPC outfits with
+default clothing, and verifies that an equipment change can be reversed without
+altering the restored image.
 
 The GPU test uses original assets, exercises equipment/tint/independent actions,
 checks for magenta pixels, and writes `/tmp/openeq-characters.png`. Set

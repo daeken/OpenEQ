@@ -154,8 +154,11 @@ impl CharacterLibrary {
                 ]
                 .map(str::to_owned),
             );
-            wanted.extend((17..=23).map(|i| format!("global{i}_amr.s3d")));
         }
+        // Extended armor textures also dress classic player-race NPCs (for
+        // example PoK's Matrick family uses wood elf skins 20 and 21). These
+        // archives must not depend on opting into Luclin replacement models.
+        wanted.extend((17..=23).map(|i| format!("global{i}_amr.s3d")));
         wanted.push("global_chr.s3d".to_owned());
         wanted.extend((2..=7).map(|i| format!("global{i}_chr.s3d")));
         wanted.extend([

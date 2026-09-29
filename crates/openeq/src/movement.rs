@@ -5,8 +5,11 @@
 use openeq_assets::collision::CollisionWorld;
 
 const STEP: f64 = 1.0 / 120.0;
-const GRAVITY: f32 = 32.0;
-const JUMP_SPEED: f32 = 12.0;
+// A roughly four-unit hop reaches its apex in a quarter second and lands in
+// half a second. Increase impulse together with gravity: height alone should
+// not make the player hang in the air longer.
+const GRAVITY: f32 = 128.0;
+const JUMP_SPEED: f32 = 32.0;
 const RADIUS: f32 = 1.0;
 const HEIGHT: f32 = 6.0;
 
@@ -175,7 +178,7 @@ mod tests {
     fn jump_arc_matches_at_equal_time_across_frame_rates() {
         // Check both airborne descent and the completed landing, not just the
         // final zero height (which would hide premature floor snapping).
-        for tenths in [3, 5, 10] {
+        for tenths in [1, 3, 6] {
             let (reference, reference_velocity) = simulate(120, 12 * tenths, true);
             for fps in [10, 60] {
                 let (feet, velocity) = simulate(fps, fps * tenths / 10, true);
@@ -184,16 +187,52 @@ mod tests {
                 }
                 near(velocity, reference_velocity);
             }
-            if tenths == 5 {
+            if tenths == 3 {
                 assert!(
-                    reference[2] > 1.8,
+                    reference[2] > 3.,
                     "fall should not snap to ground: {reference:?}"
                 );
             }
-            if tenths == 10 {
+            if tenths == 6 {
                 near(reference[2], 0.);
             }
         }
+    }
+
+    #[test]
+    fn jump_is_a_taller_short_hop_and_falling_accelerates_promptly() {
+        let world = flat();
+        let mut motion = GroundMotion::default();
+        let mut feet = [0.; 3];
+        let mut apex = (0., 0.);
+        let mut landing = None;
+        for tick in 1..=120 {
+            feet = motion.step(&world, feet, [0.; 2], tick == 1, 1. / 120.);
+            if feet[2] > apex.0 {
+                apex = (feet[2], tick as f32 / 120.);
+            }
+            if feet[2] <= 0. && landing.is_none() {
+                landing = Some(tick as f32 / 120.);
+            }
+        }
+        assert!((3.75..4.1).contains(&apex.0), "jump height {apex:?}");
+        assert!((0.23..0.27).contains(&apex.1), "jump apex {apex:?}");
+        assert!(
+            (0.46..0.53).contains(&landing.unwrap()),
+            "airtime {landing:?}"
+        );
+        near(motion.velocity_z, 0.);
+
+        let mut falling = GroundMotion::default();
+        let mut feet = [0., 0., 100.];
+        for _ in 0..30 {
+            feet = falling.step(&world, feet, [0.; 2], false, 1. / 120.);
+        }
+        assert!(
+            (95.7..96.1).contains(&feet[2]),
+            "fall should accelerate: {feet:?}"
+        );
+        near(falling.velocity_z, -32.);
     }
 
     #[test]

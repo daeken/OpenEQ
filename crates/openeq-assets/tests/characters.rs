@@ -4,6 +4,92 @@
 use openeq_assets::character::CharacterLibrary;
 
 #[test]
+fn classic_matrick_outfits_load_original_extended_armor_and_keep_equipment_overrides() {
+    use openeq_assets::character::CharacterAppearance;
+    let Some(base) = openeq_assets::loader::default_client_dir() else {
+        return;
+    };
+    if !base.join("global20_amr.s3d").is_file() || !base.join("global21_amr.s3d").is_file() {
+        return;
+    }
+    let library = CharacterLibrary::load(&base, "poknowledge").unwrap();
+    // These are the actual PEQ PoK NPC appearances: the default body texture
+    // is not their outfit. Extended armor lives outside global_chr.s3d.
+    for (npc, gender, texture, face) in [
+        ("Tratlan_Matrick", 0, 20, 2),
+        ("Higwyn_Matrick", 0, 21, 3),
+        ("Sherin_Matrick", 1, 21, 1),
+    ] {
+        let appearance = library.normalize_race_appearance(
+            4,
+            gender,
+            CharacterAppearance {
+                texture,
+                helm_texture: 255,
+                face,
+                ..Default::default()
+            },
+        );
+        let model = library
+            .load_race_with_appearance(4, gender, &appearance)
+            .unwrap();
+        let code = model.code.to_ascii_lowercase();
+        let names = |model: &openeq_assets::character::CharacterModel| {
+            model
+                .materials
+                .iter()
+                .flat_map(|m| m.textures.clone())
+                .collect::<Vec<_>>()
+        };
+        let outfit = names(&model);
+        for part in ["ch", "ua", "fa", "hn", "lg", "ft"] {
+            let expected = format!("{code}{part}{texture:02}01.bmp");
+            assert!(
+                outfit.contains(&expected),
+                "{npc} did not select {expected}: {outfit:?}"
+            );
+        }
+        assert!(outfit.contains(&format!("{code}he00{face}1.bmp")));
+        for name in &outfit {
+            let source = library
+                .texture(name)
+                .unwrap_or_else(|| panic!("missing {npc} texture {name}"));
+            assert!(source.width > 1 && source.height > 1);
+        }
+        let mut equipped = appearance;
+        equipped.equipment[1].material = 3;
+        equipped.equipment[1].color = 0xff4080ff;
+        equipped.equipment[7].material = 1;
+        let equipped = library
+            .load_race_with_appearance(4, gender, &equipped)
+            .unwrap();
+        let overridden = names(&equipped);
+        assert!(overridden.contains(&format!("{code}ch0301.bmp#tint=ff4080ff")));
+        assert!(overridden.contains(&format!("{code}lg{texture:02}01.bmp")));
+        assert_eq!(equipped.bounds_min, model.bounds_min);
+        assert_eq!(equipped.bounds_max, model.bounds_max);
+        assert!(equipped.meshes.len() > model.meshes.len());
+        assert_eq!(
+            names(
+                &library
+                    .load_race_with_appearance(4, gender, &appearance)
+                    .unwrap()
+            ),
+            outfit
+        );
+        let default = library.load_race(4, gender).unwrap();
+        assert!(names(&default).contains(&format!("{code}ch0001.bmp")));
+        assert_ne!(
+            library
+                .texture(&format!("{code}ch{texture:02}01.bmp"))
+                .unwrap()
+                .rgba,
+            library.texture(&format!("{code}ch0001.bmp")).unwrap().rgba
+        );
+    }
+}
+
+#[test]
 fn original_eqg_items_attach_without_changing_body_scale() {
     use openeq_assets::character::CharacterAppearance;
     let Some(base) = openeq_assets::loader::default_client_dir() else {

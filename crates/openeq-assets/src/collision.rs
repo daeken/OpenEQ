@@ -71,6 +71,52 @@ impl Triangle {
         }
     }
 
+    /// Highest actual point of a walkable triangle inside the body footprint.
+    /// A plane evaluated at the body center can miss a raised ramp edge, or
+    /// invent a higher step beyond the ramp's end. Clip to the circle instead.
+    fn max_z_in_footprint(&self, xy: Vec2, radius: f32) -> Option<f32> {
+        if !self.walkable() {
+            return None;
+        }
+        let mut highest = self.ground_at(xy);
+        let mut include = |z: f32| {
+            highest = Some(highest.map_or(z, |previous| previous.max(z)));
+        };
+        // A linear height function on a disk reaches its maximum uphill. If
+        // that point lies outside the triangle, the maximum is on an edge.
+        let gradient = -self.normal.truncate() / self.normal.z;
+        if let Some(uphill) = gradient.try_normalize()
+            && let Some(z) = self.ground_at(xy + uphill * radius)
+        {
+            include(z);
+        }
+        for i in 0..3 {
+            let a = self.points[i];
+            let b = self.points[(i + 1) % 3];
+            let edge = (b - a).truncate();
+            let length_squared = edge.length_squared();
+            if length_squared <= 1e-10 {
+                if a.truncate().distance_squared(xy) <= radius * radius {
+                    include(a.z.max(b.z));
+                }
+                continue;
+            }
+            let center = (xy - a.truncate()).dot(edge) / length_squared;
+            let distance_squared = (a.truncate() + edge * center).distance_squared(xy);
+            if distance_squared > radius * radius {
+                continue;
+            }
+            let extent = ((radius * radius - distance_squared) / length_squared).sqrt();
+            let start = (center - extent).max(0.);
+            let end = (center + extent).min(1.);
+            if start <= end {
+                include(a.z + (b.z - a.z) * start);
+                include(a.z + (b.z - a.z) * end);
+            }
+        }
+        highest
+    }
+
     /// Double-sided segment/triangle intersection, expressed as 0..=1 of delta.
     fn segment_hit(&self, origin: Vec3, delta: Vec3) -> Option<f32> {
         let [a, b, c] = self.points;
@@ -370,14 +416,8 @@ impl<'a> CollisionQuery<'a> {
             let mut supports: Vec<_> = self
                 .candidates(xy - Vec2::splat(radius), xy + Vec2::splat(radius))
                 .filter_map(|triangle| {
-                    if !triangle.walkable()
-                        || footprint_push(xy, &triangle.points.map(Vec3::truncate), radius, Vec2::X)
-                            .is_none()
-                    {
-                        return None;
-                    }
                     triangle
-                        .plane_z(xy)
+                        .max_z_in_footprint(xy, radius)
                         .filter(|z| *z > position.z + SKIN && *z <= position.z + max_step + SKIN)
                 })
                 .collect();
@@ -442,12 +482,14 @@ impl<'a> CollisionQuery<'a> {
     fn supported(&self, xy: Vec2, feet: f32, radius: f32, tolerance: f32) -> bool {
         self.candidates(xy - Vec2::splat(radius), xy + Vec2::splat(radius))
             .any(|triangle| {
-                triangle.walkable()
-                    && triangle
-                        .plane_z(xy)
+                // Ordinary ramps use center support; raised edges use the
+                // highest contact inside the circle until the body clears it.
+                triangle
+                    .ground_at(xy)
+                    .is_some_and(|z| (z - feet).abs() <= tolerance + SKIN)
+                    || triangle
+                        .max_z_in_footprint(xy, radius)
                         .is_some_and(|z| (z - feet).abs() <= tolerance + SKIN)
-                    && footprint_push(xy, &triangle.points.map(Vec3::truncate), radius, Vec2::X)
-                        .is_some()
             })
     }
 
@@ -882,6 +924,31 @@ mod tests {
             [0., 10., 0.],
         );
         assert_eq!(steep.ground_height(2., 0., 4., 1., 1.), None);
+    }
+
+    #[test]
+    fn footprint_support_uses_local_slope_height_and_stops_at_triangle_edges() {
+        let ramp = Triangle::new([
+            Vec3::new(0., -20., 0.),
+            Vec3::new(20., -20., 10.),
+            Vec3::new(0., 20., 0.),
+        ])
+        .unwrap();
+        // The uphill contact is inside the face, far below its distant peak.
+        near(ramp.max_z_in_footprint(Vec2::new(4., 0.), 1.).unwrap(), 2.5);
+        // Only a small sliver of the left edge overlaps the circular body.
+        near(
+            ramp.max_z_in_footprint(Vec2::new(-0.75, 0.), 1.).unwrap(),
+            0.125,
+        );
+        // A square approximation would incorrectly reach this corner.
+        assert_eq!(ramp.max_z_in_footprint(Vec2::new(-0.8, 20.8), 1.), None);
+        // Contact is clipped to the actual high vertex, never its infinite plane.
+        near(
+            ramp.max_z_in_footprint(Vec2::new(20.5, -20.), 1.).unwrap(),
+            10.,
+        );
+        assert_eq!(ramp.max_z_in_footprint(Vec2::new(21.1, -20.), 1.), None);
     }
 
     #[test]
