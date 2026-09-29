@@ -1486,6 +1486,7 @@ mod tests {
                 quantity: 2,
             },
             started: Instant::now(),
+            sent: true,
         });
         let ack = |merchant_id| GameplayEvent::MerchantBought {
             merchant_id,
@@ -1519,6 +1520,7 @@ mod tests {
                 quantity: 1,
             },
             started: Instant::now(),
+            sent: true,
         });
         let sold = GameplayEvent::MerchantSold {
             merchant_id: 10,

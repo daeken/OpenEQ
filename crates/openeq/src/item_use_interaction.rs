@@ -455,7 +455,7 @@ mod tests {
         };
         assert!(ui.view(&live).item_use.unwrap().can_scribe);
         ui.item_use_action(&mut live, ItemUseAction::Scribe);
-        let NetworkCommand::Gameplay(movement) = commands.try_recv().unwrap() else {
+        let NetworkCommand::Gameplay(movement, _) = commands.try_recv().unwrap() else {
             panic!("move command")
         };
         assert!(matches!(movement, Command::MoveItem { count: 0, .. }));
@@ -466,7 +466,7 @@ mod tests {
             live.game.inventory.items[&InventorySlot::CURSOR].instance_id,
             selected.instance_id
         );
-        let NetworkCommand::Gameplay(scribe) = commands.try_recv().unwrap() else {
+        let NetworkCommand::Gameplay(scribe, _) = commands.try_recv().unwrap() else {
             panic!("scribe command")
         };
         assert!(matches!(
@@ -508,11 +508,11 @@ mod tests {
         };
         assert!(ui.view(&live).item_use.unwrap().can_scribe);
         ui.item_use_action(&mut live, ItemUseAction::Scribe);
-        let NetworkCommand::Gameplay(posture) = commands.try_recv().unwrap() else {
+        let NetworkCommand::Gameplay(posture, _) = commands.try_recv().unwrap() else {
             panic!("posture command")
         };
         live.command_sent(posture);
-        let NetworkCommand::Gameplay(movement) = commands.try_recv().unwrap() else {
+        let NetworkCommand::Gameplay(movement, _) = commands.try_recv().unwrap() else {
             panic!("move command")
         };
         assert!(matches!(
@@ -536,7 +536,7 @@ mod tests {
         live.command_sent(movement);
         assert_eq!(live.game.inventory.items[&selected.slot].count, 2);
         assert_eq!(live.game.inventory.items[&InventorySlot::CURSOR].count, 1);
-        let NetworkCommand::Gameplay(scribe) = commands.try_recv().unwrap() else {
+        let NetworkCommand::Gameplay(scribe, _) = commands.try_recv().unwrap() else {
             panic!("scribe command")
         };
         assert!(matches!(
@@ -597,7 +597,7 @@ mod tests {
         assert!(commands.try_recv().is_err());
         ui.inspected_owned = Some((selected.slot, selected.id, selected.instance_id));
         ui.item_use_action(&mut live, ItemUseAction::Scribe);
-        let NetworkCommand::Gameplay(movement) = commands.try_recv().unwrap() else {
+        let NetworkCommand::Gameplay(movement, _) = commands.try_recv().unwrap() else {
             panic!("move")
         };
         live.command_rejected(movement, "zone changed".into());

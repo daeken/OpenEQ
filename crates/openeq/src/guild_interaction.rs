@@ -369,7 +369,7 @@ mod tests {
         assert_eq!(live.game.guild.members.len(), 4);
         ui.submit("/guild hello", &mut live, [0.; 3]);
         assert!(
-            matches!(wire.try_recv().unwrap(), NetworkCommand::Gameplay(Command::Chat { channel: ChatChannel::Guild, text, .. }) if text == "hello")
+            matches!(wire.try_recv().unwrap(), NetworkCommand::Gameplay(Command::Chat { channel: ChatChannel::Guild, text, .. }, _) if text == "hello")
         );
         assert!(wire.try_recv().is_err());
     }

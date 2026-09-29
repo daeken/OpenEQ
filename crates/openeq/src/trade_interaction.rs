@@ -277,12 +277,13 @@ mod tests {
         interaction.trade_request(&mut live);
         assert!(matches!(
             wire.try_recv(),
-            Ok(NetworkCommand::Gameplay(Command::Trade(
-                TradeCommand::Request {
+            Ok(NetworkCommand::Gameplay(
+                Command::Trade(TradeCommand::Request {
                     to_id: 2,
                     from_id: 1
-                }
-            )))
+                }),
+                _
+            ))
         ));
         assert!(interaction.inventory_open);
         assert_eq!((interaction.trade_coin, interaction.trade_quantity), (3, 1));
@@ -328,12 +329,13 @@ mod tests {
         interaction.trade_action(&mut live, TradeAction::AcceptInvite);
         assert!(matches!(
             wire.try_recv(),
-            Ok(NetworkCommand::Gameplay(Command::Trade(
-                TradeCommand::Acknowledge {
+            Ok(NetworkCommand::Gameplay(
+                Command::Trade(TradeCommand::Acknowledge {
                     to_id: 2,
                     from_id: 1
-                }
-            )))
+                }),
+                _
+            ))
         ));
         assert!(interaction.inventory_open);
 
@@ -346,12 +348,13 @@ mod tests {
         interaction.trade_action(&mut live, TradeAction::DeclineInvite);
         assert!(matches!(
             wire.try_recv(),
-            Ok(NetworkCommand::Gameplay(Command::Trade(
-                TradeCommand::Busy {
+            Ok(NetworkCommand::Gameplay(
+                Command::Trade(TradeCommand::Busy {
                     to_id: 2,
                     from_id: 1
-                }
-            )))
+                }),
+                _
+            ))
         ));
         assert!(live.game.trade.session.is_none());
     }
@@ -409,7 +412,8 @@ mod tests {
             .insert(carried_item(InventorySlot::CURSOR));
         let mut interaction = Interaction::default();
         interaction.trade_action(&mut live, TradeAction::OwnSlot(6));
-        let Ok(NetworkCommand::Gameplay(Command::MoveItem { from, to, count })) = wire.try_recv()
+        let Ok(NetworkCommand::Gameplay(Command::MoveItem { from, to, count }, _)) =
+            wire.try_recv()
         else {
             panic!("trade slot must queue an item move")
         };
@@ -499,12 +503,13 @@ mod tests {
         interaction.trade_action(&mut live, TradeAction::AddCoin);
         assert!(matches!(
             wire.try_recv(),
-            Ok(NetworkCommand::Gameplay(Command::Trade(
-                TradeCommand::OfferCoin {
+            Ok(NetworkCommand::Gameplay(
+                Command::Trade(TradeCommand::OfferCoin {
                     coin: CoinType::Platinum,
                     amount: 4
-                }
-            )))
+                }),
+                _
+            ))
         ));
         assert_eq!(live.game.currency.platinum, 10);
         assert_eq!(
@@ -522,9 +527,10 @@ mod tests {
         interaction.trade_cancel(&mut live);
         assert!(matches!(
             wire.try_recv(),
-            Ok(NetworkCommand::Gameplay(Command::Trade(
-                TradeCommand::Cancel { player_id: 1 }
-            )))
+            Ok(NetworkCommand::Gameplay(
+                Command::Trade(TradeCommand::Cancel { player_id: 1 }),
+                _
+            ))
         ));
         interaction.trade_cancel(&mut live);
         assert!(wire.try_recv().is_err());

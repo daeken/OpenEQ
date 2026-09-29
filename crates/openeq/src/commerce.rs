@@ -46,6 +46,9 @@ pub struct PendingTransaction {
     pub merchant_id: u32,
     pub kind: TransactionKind,
     pub started: Instant,
+    /// The worker dispatched this request; a delayed server result must still
+    /// reconcile after death closes the merchant. This is not a success ACK.
+    pub sent: bool,
 }
 
 #[derive(Default)]
@@ -69,6 +72,14 @@ impl CommerceState {
         self.merchant = None;
         self.bank = None;
         self.merchant_closing = false;
+    }
+    pub(crate) fn retire_queued_transactions(&mut self) {
+        // The worker publishes sent callbacks before processing the event that
+        // retires their epoch. Remaining unsent work can no longer be sent.
+        self.coin_pending = false;
+        if self.pending.as_ref().is_some_and(|pending| !pending.sent) {
+            self.pending = None;
+        }
     }
     pub fn pending_message(&self) -> Option<&'static str> {
         self.pending.as_ref().map(|pending| {

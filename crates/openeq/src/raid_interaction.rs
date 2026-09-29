@@ -320,7 +320,7 @@ mod tests {
         assert!(
             matches!(wire.try_recv().unwrap(), NetworkCommand::Gameplay(Command::Chat {
             channel: openeq_net::gameplay::ChatChannel::Raid, text, ..
-        }) if text == "Ready here")
+        }, _) if text == "Ready here")
         );
     }
 

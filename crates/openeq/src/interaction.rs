@@ -928,7 +928,7 @@ mod inventory_move_tests {
                 &mut live,
                 [0.; 3],
             );
-            let NetworkCommand::Gameplay(command) = wire.try_recv().unwrap() else {
+            let NetworkCommand::Gameplay(command, _) = wire.try_recv().unwrap() else {
                 panic!("inventory command")
             };
             assert!(
@@ -988,7 +988,7 @@ mod inventory_move_tests {
                     &mut live,
                     [0.; 3],
                 );
-                let NetworkCommand::Gameplay(command) = wire.try_recv().unwrap() else {
+                let NetworkCommand::Gameplay(command, _) = wire.try_recv().unwrap() else {
                     panic!("inventory command")
                 };
                 assert!(

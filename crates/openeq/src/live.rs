@@ -1,4 +1,7 @@
 //! Background networking and bounded prediction of server-authoritative spawns.
+#[cfg(test)]
+mod action_epoch_tests;
+
 use crate::coordinates;
 use crate::game::{GameplayState, display_name};
 use openeq_assets::collision::CollisionWorld;
@@ -17,9 +20,13 @@ use std::{
 pub enum Message {
     Event(Box<ZoneEvent>),
     Error(String),
-    CommandSent(Command),
+    CommandSent {
+        command: Command,
+        epoch: u64,
+    },
     CommandRejected {
         command: Command,
+        epoch: u64,
         notice: String,
     },
     RecoverySent(crate::death::RecoveryToken),
@@ -34,8 +41,8 @@ pub enum Message {
     },
 }
 pub(crate) enum NetworkCommand {
-    Target(u32),
-    Gameplay(Command),
+    Target(u32, u64),
+    Gameplay(Command, u64),
     Raid {
         request: crate::raid::QueuedRequest,
         motion_revision: u64,
@@ -222,6 +229,9 @@ struct MovementAuthority {
     revision: u64,
     suspended: bool,
     awaiting_spawn: bool,
+    /// Inventory/services are reset on these boundaries. Ordinary position
+    /// corrections do not retire a command or its pending foreground state.
+    action_epoch: u64,
 }
 
 impl MovementAuthority {
@@ -231,6 +241,7 @@ impl MovementAuthority {
         }
         self.own_id = None;
         self.revision = self.revision.wrapping_add(1);
+        self.action_epoch = self.action_epoch.wrapping_add(1);
         self.suspended = true;
         self.awaiting_spawn = true;
     }
@@ -288,6 +299,10 @@ impl MovementAuthority {
         let update = update?;
         (!self.suspended && self.own_id == Some(update.id) && self.revision == update.revision)
             .then_some((update.id, update.position))
+    }
+
+    fn permits_gameplay(&self, epoch: u64, command: &Command) -> bool {
+        epoch == self.action_epoch && (!self.suspended || command_while_dead(command))
     }
 }
 
@@ -396,10 +411,10 @@ impl NetworkIo {
                                         Err(error) => return Err(error.into()),
                                     }
                                 }
-                                NetworkCommand::Target(id) => { if !zone.is_zoning() && !motion.suspended { zone.target(id).await?; } },
-                                NetworkCommand::Gameplay(command) => {
-                                    if motion.suspended && !command_while_dead(&command) {
-                                        let _ = tx.send(Message::CommandRejected { command, notice: "Wait for your character to recover before doing that.".into() });
+                                NetworkCommand::Target(id, epoch) => { if epoch == motion.action_epoch && !zone.is_zoning() && !motion.suspended { zone.target(id).await?; } },
+                                NetworkCommand::Gameplay(command, epoch) => {
+                                    if !motion.permits_gameplay(epoch, &command) {
+                                        let _ = tx.send(Message::CommandRejected { command, epoch, notice: "That action belongs to a previous zone or recovery state.".into() });
                                         continue;
                                     }
                                     let mut wire_command = command.clone();
@@ -417,13 +432,13 @@ impl NetworkIo {
                                             if matches!(&command, Command::Death(openeq_net::death::DeathCommand::AnswerResurrection { accept: true, .. })) {
                                                 motion.suspended = true;
                                             }
-                                            let _ = tx.send(Message::CommandSent(command));
+                                            let _ = tx.send(Message::CommandSent { command, epoch });
                                         }
                                         Err(openeq_net::zone::ZoneError::Malformed(what)) => {
-                                            let _ = tx.send(Message::CommandRejected { command, notice: format!("Invalid {what}; action was not sent.") });
+                                            let _ = tx.send(Message::CommandRejected { command, epoch, notice: format!("Invalid {what}; action was not sent.") });
                                         }
                                         Err(openeq_net::zone::ZoneError::Zoning) => {
-                                            let _ = tx.send(Message::CommandRejected { command, notice: "Please wait for zone travel to finish.".into() });
+                                            let _ = tx.send(Message::CommandRejected { command, epoch, notice: "Please wait for zone travel to finish.".into() });
                                         }
                                         Err(error) => return Err(error.into()),
                                     }
@@ -603,10 +618,20 @@ impl LiveWorld {
                         self.error.as_deref().unwrap_or("unknown error")
                     ));
                 }
-                Message::CommandRejected { command, notice } => {
-                    self.command_rejected(command, notice)
+                Message::CommandRejected {
+                    command,
+                    epoch,
+                    notice,
+                } => {
+                    if epoch == self.movement_authority.action_epoch {
+                        self.command_rejected(command, notice);
+                    }
                 }
-                Message::CommandSent(command) => self.command_sent(command),
+                Message::CommandSent { command, epoch } => {
+                    if epoch == self.movement_authority.action_epoch {
+                        self.command_sent(command);
+                    }
+                }
                 Message::RaidSent(token) => self.game.raid.sent(token, now),
                 Message::RaidRejected { token, notice } => {
                     if self.game.raid.rejected(token) {
@@ -754,7 +779,10 @@ impl LiveWorld {
 
     pub fn set_target(&mut self, id: Option<u32>) {
         self.target = id;
-        let _ = self.commands.send(NetworkCommand::Target(id.unwrap_or(0)));
+        let _ = self.commands.send(NetworkCommand::Target(
+            id.unwrap_or(0),
+            self.movement_authority.action_epoch,
+        ));
     }
 
     pub fn zone_request_pending(&self) -> bool {
@@ -992,6 +1020,7 @@ impl LiveWorld {
                         quantity: *quantity,
                     },
                     started: Instant::now(),
+                    sent: false,
                 });
             }
             Command::MerchantSell {
@@ -1036,6 +1065,7 @@ impl LiveWorld {
                         quantity: *quantity,
                     },
                     started: Instant::now(),
+                    sent: false,
                 });
             }
             Command::MoveCoin {
@@ -1078,7 +1108,10 @@ impl LiveWorld {
         let inventory_command = matches!(command, Command::MoveItem { .. });
         if self
             .commands
-            .send(NetworkCommand::Gameplay(command.clone()))
+            .send(NetworkCommand::Gameplay(
+                command.clone(),
+                self.movement_authority.action_epoch,
+            ))
             .is_err()
         {
             self.game.error("The network worker has stopped.");
@@ -1123,6 +1156,31 @@ impl LiveWorld {
                 self.game.inventory_command_pending = false;
                 if let Err(error) = self.game.inventory.move_item(from, to, count) {
                     self.game.error(error);
+                }
+            }
+            Command::MerchantBuy {
+                merchant_id,
+                slot,
+                quantity,
+                ..
+            } => {
+                if let Some(pending) = &mut self.game.commerce.pending
+                    && pending.merchant_id == merchant_id
+                    && matches!(pending.kind, crate::commerce::TransactionKind::Buy { slot: expected, quantity: amount } if expected == slot && amount == quantity)
+                {
+                    pending.sent = true;
+                }
+            }
+            Command::MerchantSell {
+                merchant_id,
+                slot,
+                quantity,
+            } => {
+                if let Some(pending) = &mut self.game.commerce.pending
+                    && pending.merchant_id == merchant_id
+                    && matches!(pending.kind, crate::commerce::TransactionKind::Sell { slot: expected, quantity: amount } if expected == slot && amount == quantity)
+                {
+                    pending.sent = true;
                 }
             }
             Command::Chat {
@@ -1497,6 +1555,7 @@ impl LiveWorld {
                     self.game.trade = Default::default();
                     self.game.inventory.clear_trade();
                     self.game.inventory_command_pending = false;
+                    self.game.commerce.retire_queued_transactions();
                 } else {
                     self.trade_partner_gone(death.id);
                 }
@@ -1537,6 +1596,7 @@ impl LiveWorld {
                     self.game.trade = Default::default();
                     self.game.inventory.clear_trade();
                     self.game.inventory_command_pending = false;
+                    self.game.commerce.retire_queued_transactions();
                     if let openeq_net::death::DeathEvent::BindTransfer(bind) = event {
                         self.zone_request = Some(PendingZoneRequest {
                             started: Instant::now(),
@@ -1854,7 +1914,7 @@ pub(crate) mod tests {
         };
         assert!(live.command(chat(ChatChannel::Raid, "Ready here")));
         assert!(live.game.chat.is_empty());
-        let NetworkCommand::Gameplay(sent) = wire.try_recv().unwrap() else {
+        let NetworkCommand::Gameplay(sent, _) = wire.try_recv().unwrap() else {
             panic!("expected chat command");
         };
         live.command_sent(sent);
@@ -1862,7 +1922,7 @@ pub(crate) mod tests {
         assert_eq!(live.game.chat[0].text, "[Raid] Player: Ready here");
 
         assert!(live.command(chat(ChatChannel::Raid, "Not sent")));
-        let NetworkCommand::Gameplay(rejected) = wire.try_recv().unwrap() else {
+        let NetworkCommand::Gameplay(rejected, _) = wire.try_recv().unwrap() else {
             panic!("expected chat command");
         };
         live.command_rejected(rejected, "Zone travel has already started.".into());
@@ -1931,12 +1991,15 @@ pub(crate) mod tests {
         assert!(wire.try_recv().is_err());
         assert!(live.cross_zone_line(4, &camera));
         assert!(!live.cross_zone_line(4, &camera));
-        let NetworkCommand::Gameplay(Command::ZoneChange {
-            zone_id,
-            position,
-            reason,
-            ..
-        }) = wire.try_recv().unwrap()
+        let NetworkCommand::Gameplay(
+            Command::ZoneChange {
+                zone_id,
+                position,
+                reason,
+                ..
+            },
+            _,
+        ) = wire.try_recv().unwrap()
         else {
             panic!("expected zone request");
         };
@@ -1964,7 +2027,7 @@ pub(crate) mod tests {
         let (mut live, mut wire) = command_world(1, 10.);
         add_zone_test_point(&mut live);
         assert!(live.cross_zone_line(4, &openeq_render::Camera::default()));
-        let NetworkCommand::Gameplay(command) = wire.try_recv().unwrap() else {
+        let NetworkCommand::Gameplay(command, _) = wire.try_recv().unwrap() else {
             panic!("expected request");
         };
         live.command_rejected(command, "invalid test request".into());
@@ -2096,7 +2159,7 @@ pub(crate) mod tests {
         );
         assert!(matches!(
             wire.try_recv(),
-            Ok(NetworkCommand::Gameplay(Command::Trade(_)))
+            Ok(NetworkCommand::Gameplay(Command::Trade(_), _))
         ));
         live.command_sent(offer);
         assert_eq!(live.game.currency.platinum, 7);
@@ -2235,9 +2298,10 @@ pub(crate) mod tests {
         }
         assert!(matches!(
             wire.try_recv(),
-            Ok(NetworkCommand::Gameplay(Command::Trade(
-                TradeCommand::Cancel { player_id: 1 }
-            )))
+            Ok(NetworkCommand::Gameplay(
+                Command::Trade(TradeCommand::Cancel { player_id: 1 }),
+                _
+            ))
         ));
         assert!(wire.try_recv().is_err());
         live.gameplay_event(GameplayEvent::Trade(TradeEvent::WindowClosed2));
@@ -2272,15 +2336,17 @@ pub(crate) mod tests {
         ui.trade_cancel(&mut live);
         assert!(matches!(
             wire.try_recv(),
-            Ok(NetworkCommand::Gameplay(Command::Trade(
-                TradeCommand::Acknowledge { .. }
-            )))
+            Ok(NetworkCommand::Gameplay(
+                Command::Trade(TradeCommand::Acknowledge { .. }),
+                _
+            ))
         ));
         assert!(matches!(
             wire.try_recv(),
-            Ok(NetworkCommand::Gameplay(Command::Trade(
-                TradeCommand::Cancel { .. }
-            )))
+            Ok(NetworkCommand::Gameplay(
+                Command::Trade(TradeCommand::Cancel { .. }),
+                _
+            ))
         ));
         live.command_sent(ack);
         let session = live.game.trade.session.as_ref().unwrap();
@@ -2299,9 +2365,10 @@ pub(crate) mod tests {
         assert!(wire.try_recv().is_ok());
         assert!(matches!(
             wire.try_recv(),
-            Ok(NetworkCommand::Gameplay(Command::Trade(
-                TradeCommand::Busy { .. }
-            )))
+            Ok(NetworkCommand::Gameplay(
+                Command::Trade(TradeCommand::Busy { .. }),
+                _
+            ))
         ));
         live.gameplay_event(GameplayEvent::Trade(TradeEvent::WindowClosed2));
         assert!(
@@ -2315,9 +2382,10 @@ pub(crate) mod tests {
         assert!(!live.game.trade.desynchronized);
         assert!(matches!(
             wire.try_recv(),
-            Ok(NetworkCommand::Gameplay(Command::Trade(
-                TradeCommand::Cancel { .. }
-            )))
+            Ok(NetworkCommand::Gameplay(
+                Command::Trade(TradeCommand::Cancel { .. }),
+                _
+            ))
         ));
         live.gameplay_event(GameplayEvent::Trade(TradeEvent::Cancelled {
             player_id: 1,
@@ -2349,9 +2417,10 @@ pub(crate) mod tests {
         live.gameplay_event(busy);
         assert!(matches!(
             wire.try_recv(),
-            Ok(NetworkCommand::Gameplay(Command::Trade(
-                TradeCommand::Busy { .. }
-            )))
+            Ok(NetworkCommand::Gameplay(
+                Command::Trade(TradeCommand::Busy { .. }),
+                _
+            ))
         ));
         assert!(wire.try_recv().is_err());
         live.game.trade.session = Some(TradeSession::new(2, "Partner".into(), TradePhase::Active));
@@ -2366,9 +2435,10 @@ pub(crate) mod tests {
         assert!(!live.game.commerce.currency_ready);
         assert!(matches!(
             wire.try_recv(),
-            Ok(NetworkCommand::Gameplay(Command::Trade(
-                TradeCommand::Cancel { .. }
-            )))
+            Ok(NetworkCommand::Gameplay(
+                Command::Trade(TradeCommand::Cancel { .. }),
+                _
+            ))
         ));
         live.gameplay_event(GameplayEvent::Trade(TradeEvent::Cancelled {
             player_id: 1,
@@ -2612,7 +2682,7 @@ pub(crate) mod tests {
                     assert_eq!(live.game.commerce.bank_money.platinum, 10);
                     if allowed {
                         assert!(
-                            matches!(received.try_recv().unwrap(), NetworkCommand::Gameplay(Command::MoveCoin { from: queued_from, to: queued_to, coin: CoinType::Platinum, amount: 2 }) if queued_from == from && queued_to == to)
+                            matches!(received.try_recv().unwrap(), NetworkCommand::Gameplay(Command::MoveCoin { from: queued_from, to: queued_to, coin: CoinType::Platinum, amount: 2 }, _) if queued_from == from && queued_to == to)
                         );
                     }
                     assert!(
@@ -2643,7 +2713,7 @@ pub(crate) mod tests {
                     assert!(!live.game.inventory.items.contains_key(&to));
                     if allowed {
                         assert!(
-                            matches!(received.try_recv().unwrap(), NetworkCommand::Gameplay(Command::MoveItem { from: queued_from, to: queued_to, count: 2 }) if queued_from == from && queued_to == to)
+                            matches!(received.try_recv().unwrap(), NetworkCommand::Gameplay(Command::MoveItem { from: queued_from, to: queued_to, count: 2 }, _) if queued_from == from && queued_to == to)
                         );
                     }
                     assert!(
@@ -2674,6 +2744,7 @@ pub(crate) mod tests {
                 merchant_id: 2,
                 kind,
                 started: Instant::now(),
+                sent: false,
             });
             let command = Command::MoveItem {
                 from,
@@ -2687,7 +2758,7 @@ pub(crate) mod tests {
             live.game.commerce.pending = None;
             assert!(live.command(command));
             assert!(
-                matches!(received.try_recv().unwrap(), NetworkCommand::Gameplay(Command::MoveItem { from: queued_from, to: InventorySlot::CURSOR, count: 2 }) if queued_from == from)
+                matches!(received.try_recv().unwrap(), NetworkCommand::Gameplay(Command::MoveItem { from: queued_from, to: InventorySlot::CURSOR, count: 2 }, _) if queued_from == from)
             );
             assert!(received.try_recv().is_err());
         }
@@ -2710,7 +2781,7 @@ pub(crate) mod tests {
         assert!(!live.command(reopen.clone()));
         assert!(matches!(
             received.try_recv().unwrap(),
-            NetworkCommand::Gameplay(Command::MerchantClose)
+            NetworkCommand::Gameplay(Command::MerchantClose, _)
         ));
         assert!(received.try_recv().is_err());
         live.command_sent(Command::MerchantClose);
@@ -2725,10 +2796,13 @@ pub(crate) mod tests {
         assert!(live.command(reopen));
         assert!(matches!(
             received.try_recv().unwrap(),
-            NetworkCommand::Gameplay(Command::MerchantOpen {
-                merchant_id: 2,
-                player_id: 1
-            })
+            NetworkCommand::Gameplay(
+                Command::MerchantOpen {
+                    merchant_id: 2,
+                    player_id: 1
+                },
+                _
+            )
         ));
         live.game.commerce.merchant = Some(MerchantSession::new(2, "Merchant".into()));
         live.gameplay_event(GameplayEvent::MerchantClosed);
@@ -3061,6 +3135,156 @@ pub(crate) mod tests {
                 resources: [0; 3],
             },
         ))
+    }
+
+    #[test]
+    fn retired_inventory_callbacks_cannot_change_a_new_zone_pending_move() {
+        for old_sent in [false, true] {
+            let (mut live, mut commands) = command_world(1, 10.);
+            let (events, received) = mpsc::channel();
+            live.rx = Mutex::new(received);
+            let slot = InventorySlot::possessions(23);
+            live.game.inventory.insert(carried_item(slot));
+            let request = Command::MoveItem {
+                from: slot,
+                to: InventorySlot::CURSOR,
+                count: 0,
+            };
+            assert!(live.command(request.clone()));
+            let NetworkCommand::Gameplay(_, old_epoch) = commands.try_recv().unwrap() else {
+                panic!("move command");
+            };
+            live.gameplay_event(GameplayEvent::ZoneTransition {
+                zone_id: 202,
+                instance_id: 1,
+            });
+            live.ready = true;
+            live.own_id = Some(1); // An entity ID may be reused after travel.
+            live.movement_authority.suspended = false;
+            live.movement_authority.awaiting_spawn = false;
+            live.game.recovery.own_spawn(live.zone_generation, 1);
+            live.game.inventory.insert(carried_item(slot));
+            assert!(live.command(request.clone()));
+            let NetworkCommand::Gameplay(_, fresh_epoch) = commands.try_recv().unwrap() else {
+                panic!("new move command");
+            };
+            assert_ne!(old_epoch, fresh_epoch);
+            assert!(live.game.inventory_command_pending);
+            let old = if old_sent {
+                Message::CommandSent {
+                    command: request.clone(),
+                    epoch: old_epoch,
+                }
+            } else {
+                Message::CommandRejected {
+                    command: request.clone(),
+                    epoch: old_epoch,
+                    notice: "old zone command".into(),
+                }
+            };
+            events.send(old).unwrap();
+            live.poll();
+            assert!(
+                live.game.inventory_command_pending,
+                "old callback must not release a new zone's move"
+            );
+            assert!(live.game.inventory.items.contains_key(&slot));
+            assert!(
+                !live
+                    .game
+                    .inventory
+                    .items
+                    .contains_key(&InventorySlot::CURSOR)
+            );
+            events
+                .send(Message::CommandSent {
+                    command: request,
+                    epoch: fresh_epoch,
+                })
+                .unwrap();
+            live.poll();
+            assert!(!live.game.inventory_command_pending);
+            assert!(!live.game.inventory.items.contains_key(&slot));
+            assert!(
+                live.game
+                    .inventory
+                    .items
+                    .contains_key(&InventorySlot::CURSOR)
+            );
+        }
+    }
+
+    #[test]
+    fn worker_retires_old_actions_on_zone_death_and_bind_boundaries() {
+        let movement = Command::MoveItem {
+            from: InventorySlot::possessions(23),
+            to: InventorySlot::CURSOR,
+            count: 0,
+        };
+        let chat = Command::Chat {
+            channel: openeq_net::gameplay::ChatChannel::Say,
+            target: String::new(),
+            text: "hello".into(),
+            language: 0,
+        };
+        for boundary in [
+            GameplayEvent::ZoneTransition {
+                zone_id: 202,
+                instance_id: 1,
+            },
+            player_death(1),
+            bind_transfer(202, 0),
+        ] {
+            let mut authority = MovementAuthority {
+                own_id: Some(1),
+                ..Default::default()
+            };
+            let epoch = authority.action_epoch;
+            assert!(authority.permits_gameplay(epoch, &movement));
+            authority.gameplay(&boundary, Some((202, 0)));
+            assert!(!authority.permits_gameplay(epoch, &movement));
+            assert!(
+                !authority.permits_gameplay(epoch, &chat),
+                "even death-permitted commands cannot cross a retired context"
+            );
+            assert!(authority.permits_gameplay(authority.action_epoch, &chat));
+            assert!(!authority.permits_gameplay(authority.action_epoch, &movement));
+            authority.suspended = false;
+            assert!(
+                !authority.permits_gameplay(epoch, &movement),
+                "old work remains retired after recovery"
+            );
+            assert!(authority.permits_gameplay(authority.action_epoch, &movement));
+        }
+    }
+
+    #[test]
+    fn movement_only_corrections_preserve_actions_and_targets_use_current_epoch() {
+        let (mut live, mut commands) = command_world(1, 10.);
+        let request = Command::AutoAttack(false);
+        let epoch = live.movement_authority.action_epoch;
+        live.movement_authority
+            .gameplay(&player_death(2), Some((202, 0)));
+        // Same-zone boundary rejection rewinds the camera without resetting services.
+        live.movement_authority.gameplay(
+            &GameplayEvent::ZoneChangeResult {
+                zone_id: 202,
+                instance_id: 0,
+                position: [0.; 3],
+                success: 1,
+            },
+            Some((202, 0)),
+        );
+        assert_eq!(epoch, live.movement_authority.action_epoch);
+        assert!(live.movement_authority.permits_gameplay(epoch, &request));
+        assert!(live.command(request));
+        assert!(
+            matches!(commands.try_recv().unwrap(), NetworkCommand::Gameplay(_, sent_epoch) if sent_epoch == epoch)
+        );
+        live.set_target(Some(2));
+        assert!(
+            matches!(commands.try_recv().unwrap(), NetworkCommand::Target(2, sent_epoch) if sent_epoch == epoch)
+        );
     }
 
     #[test]
@@ -3491,11 +3715,11 @@ pub(crate) mod tests {
         live.set_target(Some(4));
         assert!(matches!(
             received.try_recv().unwrap(),
-            NetworkCommand::Gameplay(Command::AutoAttack(false))
+            NetworkCommand::Gameplay(Command::AutoAttack(false), _)
         ));
         assert!(matches!(
             received.try_recv().unwrap(),
-            NetworkCommand::Target(4)
+            NetworkCommand::Target(4, _)
         ));
         assert!(!live.game.attack);
     }

@@ -468,7 +468,7 @@ mod tests {
         ));
         assert!(matches!(
             wire.try_recv().unwrap(),
-            NetworkCommand::Gameplay(Command::AutoAttack(true))
+            NetworkCommand::Gameplay(Command::AutoAttack(true), _)
         ));
         assert!(wire.try_recv().is_err());
         for command in ["/cast 1", "/reply hello", "/useitem"] {
@@ -491,7 +491,7 @@ mod tests {
             live.game.last_tell = Some(recipient.into());
             interaction.activate_hotbutton(interaction.hotbuttons.token(), 0, &mut live, [0.; 3]);
             assert!(
-                matches!(wire.try_recv().unwrap(), NetworkCommand::Gameplay(Command::Chat { channel: ChatChannel::Tell, target, text, .. }) if target == recipient && text == "hello")
+                matches!(wire.try_recv().unwrap(), NetworkCommand::Gameplay(Command::Chat { channel: ChatChannel::Tell, target, text, .. }, _) if target == recipient && text == "hello")
             );
         }
         assert!(wire.try_recv().is_err());

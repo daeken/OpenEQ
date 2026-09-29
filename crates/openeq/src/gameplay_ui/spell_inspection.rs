@@ -198,17 +198,20 @@ mod tests {
         interaction.ui_action(action, false, false, &mut live, [0.; 3]);
         assert!(matches!(
             wire.try_recv(),
-            Ok(NetworkCommand::Gameplay(Command::Posture {
-                posture: 1,
-                ..
-            }))
+            Ok(NetworkCommand::Gameplay(
+                Command::Posture { posture: 1, .. },
+                _
+            ))
         ));
         assert!(matches!(
             wire.try_recv(),
-            Ok(NetworkCommand::Gameplay(Command::MemorizeSpell {
-                slot: 2,
-                spell_id: 288
-            }))
+            Ok(NetworkCommand::Gameplay(
+                Command::MemorizeSpell {
+                    slot: 2,
+                    spell_id: 288
+                },
+                _
+            ))
         ));
         interaction.ui_action(UiAction::CastGem(4), true, false, &mut live, [0.; 3]);
         assert!(interaction.spellbook_open);
@@ -219,10 +222,13 @@ mod tests {
         interaction.ui_action(UiAction::RemoveBuff(2), true, false, &mut live, [0.; 3]);
         assert!(matches!(
             wire.try_recv(),
-            Ok(NetworkCommand::Gameplay(Command::RemoveBuff {
-                slot: 2,
-                player_id: 1
-            }))
+            Ok(NetworkCommand::Gameplay(
+                Command::RemoveBuff {
+                    slot: 2,
+                    player_id: 1
+                },
+                _
+            ))
         ));
         interaction.close_window(WINDOW, &mut live);
         assert_eq!(interaction.spell_inspection.id(), None);
