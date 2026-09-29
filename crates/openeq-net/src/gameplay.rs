@@ -88,6 +88,10 @@ pub enum Command {
         door_id: u8,
         player_id: u32,
     },
+    /// Requests a zone change; the server must accept before the client leaves.
+    /// For a natural border crossing, use the destination zone/instance from
+    /// its zone point and reason 0. The server resolves the exit from the last
+    /// reported player position, so send movement before this request.
     ZoneChange {
         character: String,
         zone_id: u16,
@@ -253,6 +257,22 @@ pub struct ZoneDestination {
     pub heading: f32,
 }
 
+/// A server-provided destination for an asset-defined zone-line trigger.
+/// This packet does not include source coordinates or trigger geometry.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ZonePoint {
+    /// Exact `zone_points.number` (the wire calls this `iterator`), not the
+    /// record's ordinal in the packet and not a destination zone ID.
+    pub number: u32,
+    pub zone_id: u16,
+    pub instance_id: u16,
+    /// Destination XYZ in server coordinates. A component of 999999 means
+    /// retain that source coordinate; the server resolves this on acceptance.
+    pub position: [f32; 3],
+    /// Destination EQ heading; 999 means retain the source heading.
+    pub heading: f32,
+}
+
 #[derive(Debug, Clone)]
 pub enum GameplayEvent {
     Social(crate::social::SocialEvent),
@@ -331,6 +351,9 @@ pub enum GameplayEvent {
         removed: bool,
     },
     Doors(Vec<Door>),
+    /// Replaces the destination table for the current zone. Source trigger
+    /// containment must be determined from zone assets, not these positions.
+    ZonePoints(Vec<ZonePoint>),
     DoorMoved {
         id: u8,
         action: u8,
@@ -730,6 +753,7 @@ pub fn parse_packet(opcode: u16, data: &[u8]) -> Option<Result<GameplayEvent, Zo
             | 0x4f4b
             | 0x659c
             | 0x7291
+            | 0x69a4
             | 0x08e8
             | 0x3fcf
             | 0x2d18
@@ -1007,6 +1031,35 @@ fn parse_known(opcode: u16, data: &[u8]) -> Option<GameplayEvent> {
                 });
             }
             GameplayEvent::Doors(doors)
+        }
+        0x69a4 => {
+            let count = r.u32()? as usize;
+            // RoF2 always includes one extra, unused 32-byte record. Validate
+            // the full size before allocating, including count overflow.
+            let size = count.checked_add(1)?.checked_mul(32)?.checked_add(4)?;
+            if data.len() != size {
+                return None;
+            }
+            let mut points = Vec::with_capacity(count);
+            for _ in 0..count {
+                let number = r.u32()?;
+                let y = r.float()?;
+                let x = r.float()?;
+                let z = r.float()?;
+                let heading = r.float()?;
+                let zone_id = r.u16()?;
+                let instance_id = r.u16()?;
+                r.skip(8)?;
+                points.push(ZonePoint {
+                    number,
+                    zone_id,
+                    instance_id,
+                    position: [x, y, z],
+                    heading,
+                });
+            }
+            r.skip(32)?; // unused trailer, not another zone point
+            GameplayEvent::ZonePoints(points)
         }
         0x08e8 => {
             let id = r.u8()?;
@@ -1969,6 +2022,76 @@ mod tests {
         }
     }
     #[test]
+    fn zone_points_preserve_destination_numbers_coordinates_and_sentinels() {
+        // EQEmu sends these destination fields from zone_points.target_*.
+        // The final 32-byte record is outside count and must be ignored.
+        let mut data = vec![0; 4 + 3 * 32];
+        data[..4].copy_from_slice(&2u32.to_le_bytes());
+        data[4..8].copy_from_slice(&177u32.to_le_bytes());
+        for (offset, value) in [(8, 838f32), (12, 882.), (16, -157.), (20, 2.)] {
+            data[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        data[24..26].copy_from_slice(&202u16.to_le_bytes());
+        data[26..28].copy_from_slice(&7u16.to_le_bytes());
+        data[36..40].copy_from_slice(&3u32.to_le_bytes());
+        for (offset, value) in [(40, 999999f32), (44, -3082.), (48, 3.13), (52, 999.)] {
+            data[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        data[56..58].copy_from_slice(&68u16.to_le_bytes());
+        data[68..].fill(0xff); // not a record, even if its floats are NaNs
+        let GameplayEvent::ZonePoints(points) = parse_packet(0x69a4, &data).unwrap().unwrap()
+        else {
+            panic!("zone points")
+        };
+        assert_eq!(
+            points,
+            vec![
+                ZonePoint {
+                    number: 177,
+                    zone_id: 202,
+                    instance_id: 7,
+                    position: [882., 838., -157.],
+                    heading: 2.,
+                },
+                ZonePoint {
+                    number: 3,
+                    zone_id: 68,
+                    instance_id: 0,
+                    position: [-3082., 999999., 3.13],
+                    heading: 999.,
+                },
+            ]
+        );
+        for length in 0..data.len() {
+            assert!(parse_packet(0x69a4, &data[..length]).unwrap().is_err());
+        }
+        data.push(0);
+        assert!(parse_packet(0x69a4, &data).unwrap().is_err());
+    }
+
+    #[test]
+    fn zone_points_reject_invalid_count_and_nonfinite_destinations() {
+        assert!(matches!(
+            parse_packet(0x69a4, &[0; 36]).unwrap().unwrap(),
+            GameplayEvent::ZonePoints(points) if points.is_empty()
+        ));
+        let mut data = vec![0; 68];
+        for count in [0u32, 2, u32::MAX] {
+            data[..4].copy_from_slice(&count.to_le_bytes());
+            assert!(parse_packet(0x69a4, &data).unwrap().is_err());
+        }
+        data[..4].copy_from_slice(&1u32.to_le_bytes());
+        for offset in [8, 12, 16, 20] {
+            for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                data[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+                assert!(parse_packet(0x69a4, &data).unwrap().is_err());
+            }
+            data[offset..offset + 4].fill(0);
+        }
+        assert!(parse_packet(0x69a4, &data).unwrap().is_ok());
+    }
+
+    #[test]
     fn door_records_and_zone_changes_use_rof2_offsets() {
         let mut door = vec![0; 100];
         door[..10].copy_from_slice(b"POKDOOR500");
@@ -2005,6 +2128,11 @@ mod tests {
         })
         .unwrap();
         assert_eq!(packet.data.len(), 100);
+        assert_eq!(&packet.data[64..68], &[202, 0, 7, 0]);
+        assert_eq!(&packet.data[76..80], &2f32.to_le_bytes()); // wire Y first
+        assert_eq!(&packet.data[80..84], &1f32.to_le_bytes());
+        assert_eq!(&packet.data[84..88], &3f32.to_le_bytes());
+        assert_eq!(&packet.data[88..100], &[0; 12]); // natural reason, success, unknown
         assert!(matches!(
             parse_packet(packet.opcode, &packet.data).unwrap().unwrap(),
             GameplayEvent::ZoneChangeResult {

@@ -354,8 +354,25 @@ the RoF2 group encoder's placeholder levels are ignored. See
 During a zone handoff the worker retains authentication and suppresses movement;
 old actors, inventory and targets are cleared. Fresh server environment data
 selects the new geometry, character/door library, collision, map and atmosphere.
-Movement resumes only with a fresh player position. Server portals and requested
-travel work; authored border zone-line detection remains unfinished.
+Movement resumes only with a fresh player position. Classic WLD BSP cells and
+region declarations now identify exact reference zone-line volumes. Swept player
+motion resolves their numbers against the current server destination table;
+arrival/teleport baselines suppress accidental bounce-back. Requests flush the
+latest movement first, pause controls, and wait for server acceptance, rejection,
+or cancellation with rewind. The zone-point table is replaced on every handoff.
+EQG region transforms and WLD absolute destinations still need verification.
+
+World assets and GPU model uploads run on a worker while a UI-only render pass
+keeps startup and zone travel responsive. A generation serial rejects stale work
+and distinguishes repeat visits to the same zone. Initial strings/spells/XML
+load before networking begins, preserving early server messages. Once a complete
+scene is installed, the loading overlay is removed and gameplay resumes.
+
+Combat feedback retains a bounded queue of relevant server damage packets in
+`LiveWorld`. It projects short-lived numbers/avoidance outcomes using animated
+actor bounds, with incoming first-person hits beside the crosshair. These
+annotations draw behind HUD windows and never add hit regions. Negative damage
+codes are avoidance results, not healing; no HP-delta estimates are displayed.
 
 Original client map files are parsed independently of the XML UI. Lines and
 landmarks use `(-serverX,-serverY,Z)` and are transposed into asset coordinates.
@@ -374,7 +391,7 @@ PNG that can be inspected directly.
 
 - Player trading, augmentation, quest journals, raid/guild management and UCS.
 - Interactive login/character creation and complete XML/STML widgets.
-- Authored zone-line triggers and exact special door/platform motion.
+- EQG/absolute-destination zone triggers and exact special door/platform motion.
 - Luclin replacements, modular modern appearance, item/AA casting, particles/audio.
 - Full original collision volumes and movement rules, including swimming.
 - Cascaded shadows, animated sun, complete weather and water refraction.

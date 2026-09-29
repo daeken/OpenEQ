@@ -75,6 +75,12 @@ updates and reuse timers, including effects from inside bags.
 With the spellbook open, select a gem then a learned spell to memorize it.
 Window title bars can be dragged. Escape interrupts casting before closing panels;
 with no active panel or captured mouse, it exits.
+Walking through a supported classic zone exit requests travel automatically.
+The server still checks access and chooses the arrival point. If it refuses a
+crossing, back away before trying again; spawning inside a border never sends
+you straight back. Combat numbers come from server hit packets; heals and resists
+retain their chat messages until their separate event formats are supported.
+
 In Kelethin, stand on a lift near its button and press E. The platform carries
 you up and automatically returns, following the default five-second cycle.
 
@@ -92,6 +98,8 @@ you up and automatically returns, following the default five-second cycle.
 - Clickable quest and item links; group invitations, acceptance/decline, member
   health/targeting, group chat, leaving and leadership transfer.
 - Target/assist/consider, autoattack, damage, deaths, corpse loot and Loot All.
+- Floating combat feedback: gold outgoing hits, red incoming hits, misses and
+  named avoidance outcomes, with short lifetimes and bounded stacking.
 - Spellbook/gems, memorization, casting, interruption, cooldown feedback, mana
   consumption, buffs and dismissal. Effects remain authoritative on EQEmu.
 - Scroll scribing and item effects, with owned-item validation, finite charges,
@@ -99,6 +107,8 @@ you up and automatically returns, following the default five-second cycle.
 - Classic armor/skins/tints and held equipment; independent attack/hit/sit/death
   animation. Weighted modern EQG characters include gargoyles and Drakkin.
 - Dynamic doors/portals, door collision, maps with waypoints, third-person camera.
+- Natural border travel through authored classic WLD reference volumes, including
+  Greater Faydark's four exits; authenticated handoffs use server destination data.
 - Kelethin lift buttons, moving platform collision and passenger carrying.
 - Original XML artwork and layout definitions for gameplay windows, with sharp
   high-density text and correctly scaled mouse hit testing.
@@ -108,7 +118,7 @@ you up and automatically returns, following the default five-second cycle.
 
 This is a playable development milestone, with substantial parity work remaining:
 NPC quest hand-ins, augmentation, raid and guild management, quest journals,
-interactive account/character creation, authored border zone
+interactive account/character creation, EQG/absolute-destination border
 triggers, spell particles/audio, advanced XML widgets and full swimming/movement
 rules. Modern Drakkin modular armor/hair/equipment, Luclin replacements, weather,
 terrain ecosystem effects and water refraction remain incomplete. Door motion
@@ -116,6 +126,10 @@ classes include approximations; ordinary door collision switches to the final
 pose, while lifts collide throughout their motion. Lift timing is approximate.
 Some skins/layouts need more work at small window sizes. No original assets are
 redistributed.
+
+See the [exploration and combat checklist](docs/EXPLORATION_COMBAT_TASKS.md) and
+[zone travel protocol](docs/ZONE_TRAVEL_PROTOCOL.md) for supported border formats
+and reproducible verification.
 
 See the [completed milestone and remaining parity list](docs/PLAYABLE_CLIENT_TASKS.md).
 The [commerce and social checklist](docs/COMMERCE_SOCIAL_TASKS.md) records the

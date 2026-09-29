@@ -3,7 +3,7 @@ use crate::coordinates;
 use crate::game::{GameplayState, display_name};
 use openeq_assets::collision::CollisionWorld;
 use openeq_net::{
-    gameplay::{Command, Door, GameplayEvent, ZoneDestination},
+    gameplay::{Command, Door, GameplayEvent, ZoneDestination, ZonePoint},
     session::ConnectionConfig,
     zone::{Environment, Position, Spawn, ZoneEvent},
 };
@@ -179,6 +179,11 @@ impl Entity {
     }
 }
 
+struct PendingZoneRequest {
+    started: Instant,
+    heading: f32,
+}
+
 pub struct LiveWorld {
     pub entities: BTreeMap<u32, Entity>,
     pub environment: Option<Environment>,
@@ -195,6 +200,9 @@ pub struct LiveWorld {
     pub target: Option<u32>,
     pub game: GameplayState,
     pub doors: BTreeMap<u8, Door>,
+    pub zone_points: BTreeMap<u32, ZonePoint>,
+    pub combat_feedback: crate::combat_feedback::CombatFeedback,
+    zone_request: Option<PendingZoneRequest>,
     door_return_deadlines: BTreeMap<u8, Instant>,
     pending_destination: Option<ZoneDestination>,
     rx: Mutex<mpsc::Receiver<Message>>,
@@ -226,6 +234,12 @@ impl LiveWorld {
                                     let mut wire_command = command.clone();
                                     if let Command::ZoneChange { position, .. } = &mut wire_command {
                                         *position = coordinates::scene_point_to_server(*position);
+                                        // The server validates borders against its last player
+                                        // position, not the destination in the zone request.
+                                        let current = *updates.borrow();
+                                        if !zone.is_zoning() && let (Some(id), Some(current)) = (own, current) {
+                                            zone.send_position(id, coordinates::scene_to_server(current)).await?;
+                                        }
                                     }
                                     match zone.command(wire_command).await {
                                         Ok(()) => { let _ = tx.send(Message::CommandSent(command)); }
@@ -278,6 +292,9 @@ impl LiveWorld {
             target: None,
             game,
             doors: BTreeMap::new(),
+            zone_points: BTreeMap::new(),
+            combat_feedback: Default::default(),
+            zone_request: None,
             door_return_deadlines: BTreeMap::new(),
             pending_destination: None,
             rx: Mutex::new(rx),
@@ -295,6 +312,8 @@ impl LiveWorld {
                     tracing::error!(%error, "live connection failed");
                     self.error = Some(error);
                     self.ready = false;
+                    self.zone_request = None;
+                    self.combat_feedback.clear();
                     self.game.attack = false;
                     self.game.commerce.close_services();
                     self.game.trade = Default::default();
@@ -362,6 +381,8 @@ impl LiveWorld {
                 }
             }
         }
+        self.check_zone_request_timeout(now);
+        self.combat_feedback.prune(now);
         self.advance_door_cycles(now);
     }
 
@@ -395,6 +416,68 @@ impl LiveWorld {
     pub fn set_target(&mut self, id: Option<u32>) {
         self.target = id;
         let _ = self.commands.send(NetworkCommand::Target(id.unwrap_or(0)));
+    }
+
+    pub fn zone_request_pending(&self) -> bool {
+        self.zone_request.is_some()
+    }
+
+    /// Use only a server-advertised destination for an authored boundary number.
+    /// The server retains control over access checks and the final arrival pose.
+    pub fn cross_zone_line(&mut self, number: u32, camera: &openeq_render::Camera) -> bool {
+        if !self.ready
+            || self.error.is_some()
+            || self.zone_request.is_some()
+            || self.own_id.is_none()
+        {
+            return false;
+        }
+        let Some(point) = self.zone_points.get(&number).cloned() else {
+            self.game
+                .notice("This zone exit is not available on the server.");
+            return false;
+        };
+        // Same-zone teleports need separately verified authored semantics.
+        if point.zone_id == 0
+            || self
+                .environment
+                .as_ref()
+                .is_none_or(|env| env.zone_id == point.zone_id)
+        {
+            return false;
+        }
+        self.camera_position(camera, false);
+        if !self.command(Command::ZoneChange {
+            character: self.character.clone(),
+            zone_id: point.zone_id,
+            instance_id: point.instance_id,
+            position: [
+                camera.position[0],
+                camera.position[1],
+                camera.position[2] - 3.,
+            ],
+            reason: 0,
+        }) {
+            return false;
+        }
+        self.zone_request = Some(PendingZoneRequest {
+            started: Instant::now(),
+            heading: camera.yaw.rem_euclid(std::f32::consts::TAU) * 512. / std::f32::consts::TAU,
+        });
+        true
+    }
+
+    fn check_zone_request_timeout(&mut self, now: Instant) {
+        if self
+            .zone_request
+            .as_ref()
+            .is_some_and(|request| now.saturating_duration_since(request.started).as_secs() >= 30)
+        {
+            self.zone_request = None;
+            self.ready = false;
+            self.movement.send_replace(None);
+            self.error = Some("Zone travel timed out. Please reconnect.".into());
+        }
     }
 
     pub fn player_position(&self) -> Option<[f32; 3]> {
@@ -689,12 +772,19 @@ impl LiveWorld {
             Command::CastSpell { .. } => self.game.cast_pending_until = None,
             _ => {}
         }
+        if matches!(command, Command::ZoneChange { .. }) {
+            self.zone_request = None;
+        }
         self.game.error(notice);
     }
 
     pub(crate) fn gameplay_event(&mut self, mut event: GameplayEvent) {
         self.trade_event(&event);
         self.item_use_event(&event);
+        if let GameplayEvent::Damage(damage) = &event {
+            self.combat_feedback
+                .record_damage(damage, self.own_id, self.target, Instant::now());
+        }
         // Network structs stay in EQEmu's coordinates. Everything retained by
         // LiveWorld uses the original assets' coordinate basis.
         match &mut event {
@@ -704,6 +794,15 @@ impl LiveWorld {
             }
             GameplayEvent::ZoneChangeResult { position, .. } => {
                 *position = coordinates::server_point_to_scene(*position);
+            }
+            GameplayEvent::ZonePoints(points) => {
+                for point in points {
+                    point.position = coordinates::server_point_to_scene(point.position);
+                    if point.heading != 999. {
+                        // Server sentinel: preserve current heading.
+                        point.heading = coordinates::server_heading_to_scene(point.heading);
+                    }
+                }
             }
             GameplayEvent::Doors(doors) => {
                 for door in doors {
@@ -721,6 +820,10 @@ impl LiveWorld {
                 self.zone_generation = self.zone_generation.wrapping_add(1);
                 self.ready = false;
                 self.environment = None;
+                self.zone_points.clear();
+                self.zone_request = None;
+                self.pending_destination = None;
+                self.combat_feedback.clear();
                 self.entities.clear();
                 self.doors.clear();
                 self.door_return_deadlines.clear();
@@ -769,6 +872,7 @@ impl LiveWorld {
                 success,
                 ..
             } => {
+                let request = self.zone_request.take();
                 if *success == 1
                     && self
                         .environment
@@ -779,16 +883,30 @@ impl LiveWorld {
                         x: position[0],
                         y: position[1],
                         z: position[2],
-                        heading: self
-                            .pending_destination
+                        heading: request
                             .as_ref()
-                            .map_or(0., |destination| destination.heading),
+                            .map(|request| request.heading)
+                            .or_else(|| {
+                                self.pending_destination
+                                    .as_ref()
+                                    .map(|destination| destination.heading)
+                            })
+                            .unwrap_or(0.),
                         ..Default::default()
                     });
+                    if request.is_some() {
+                        self.game.notice("Zone travel was cancelled. Back away from the exit before trying again.");
+                    }
                 } else if *success != 1 {
                     self.game
                         .error(format!("Zone travel was rejected ({success})."));
                 }
+            }
+            GameplayEvent::ZonePoints(points) => {
+                self.zone_points = points
+                    .iter()
+                    .map(|point| (point.number, point.clone()))
+                    .collect();
             }
             GameplayEvent::Doors(doors) => {
                 self.doors = doors.iter().map(|door| (door.id, door.clone())).collect();
@@ -898,7 +1016,7 @@ impl LiveWorld {
     }
 
     pub fn camera_position(&self, camera: &openeq_render::Camera, moving: bool) {
-        if !self.ready {
+        if !self.ready || self.zone_request_pending() {
             return;
         }
         self.movement.send_replace(Some(Position {
@@ -1043,6 +1161,9 @@ pub(crate) mod tests {
             target: None,
             game: GameplayState::default(),
             doors: BTreeMap::new(),
+            zone_points: BTreeMap::new(),
+            combat_feedback: Default::default(),
+            zone_request: None,
             door_return_deadlines: BTreeMap::new(),
             pending_destination: None,
             rx: Mutex::new(events),
@@ -1100,6 +1221,145 @@ pub(crate) mod tests {
             size: 1,
             children: Vec::new(),
         }
+    }
+
+    fn zone_test_environment() -> Environment {
+        Environment {
+            short_name: "gfaydark".into(),
+            long_name: "Greater Faydark".into(),
+            zone_id: 54,
+            fog_color: [[0.; 3]; 4],
+            fog_start: [0.; 4],
+            fog_end: [1000.; 4],
+            fog_density: 0.,
+            min_clip: 1.,
+            max_clip: 1000.,
+            sky: 1,
+            zone_type: 1,
+            safe_position: [0.; 3],
+        }
+    }
+
+    fn add_zone_test_point(live: &mut LiveWorld) {
+        live.environment = Some(zone_test_environment());
+        live.gameplay_event(GameplayEvent::ZonePoints(vec![ZonePoint {
+            number: 4,
+            zone_id: 58,
+            instance_id: 0,
+            position: [162., -660., 4.],
+            heading: 999.,
+        }]));
+    }
+
+    #[test]
+    fn border_request_is_single_flight_and_server_rewind_preserves_heading() {
+        let (mut live, mut wire) = command_world(1, 10.);
+        add_zone_test_point(&mut live);
+        let camera = openeq_render::Camera {
+            position: [2616., -55., 22.],
+            yaw: 1.1,
+            ..Default::default()
+        };
+        assert_eq!(live.zone_points[&4].position, [-660., 162., 4.]);
+        assert!(!live.cross_zone_line(99, &camera));
+        assert!(wire.try_recv().is_err());
+        assert!(live.cross_zone_line(4, &camera));
+        assert!(!live.cross_zone_line(4, &camera));
+        let NetworkCommand::Gameplay(Command::ZoneChange {
+            zone_id,
+            position,
+            reason,
+            ..
+        }) = wire.try_recv().unwrap()
+        else {
+            panic!("expected zone request");
+        };
+        assert_eq!(zone_id, 58);
+        assert_eq!(position, [2616., -55., 19.]);
+        assert_eq!(reason, 0);
+        assert_eq!(live.movement.borrow().unwrap().x, 2616.);
+        assert_eq!(live.movement.borrow().unwrap().animation, 0);
+        assert!(wire.try_recv().is_err());
+        live.gameplay_event(GameplayEvent::ZoneChangeResult {
+            zone_id: 54,
+            instance_id: 0,
+            position: [-55., 2608., 19.],
+            success: 1,
+        });
+        assert!(!live.zone_request_pending());
+        assert!(live.ready);
+        let rewind = live.initial_position.unwrap();
+        assert_eq!([rewind.x, rewind.y, rewind.z], [2608., -55., 19.]);
+        assert!((rewind.heading - camera.yaw * 512. / std::f32::consts::TAU).abs() < 0.001);
+    }
+
+    #[test]
+    fn rejected_and_timed_out_travel_cannot_stay_pending_or_retry() {
+        let (mut live, mut wire) = command_world(1, 10.);
+        add_zone_test_point(&mut live);
+        assert!(live.cross_zone_line(4, &openeq_render::Camera::default()));
+        let NetworkCommand::Gameplay(command) = wire.try_recv().unwrap() else {
+            panic!("expected request");
+        };
+        live.command_rejected(command, "invalid test request".into());
+        assert!(!live.zone_request_pending());
+        assert!(live.cross_zone_line(4, &openeq_render::Camera::default()));
+        wire.try_recv().unwrap();
+        live.check_zone_request_timeout(Instant::now() + std::time::Duration::from_secs(31));
+        assert!(!live.zone_request_pending());
+        assert!(!live.ready);
+        assert!(live.error.as_ref().unwrap().contains("timed out"));
+        assert!(!live.cross_zone_line(4, &openeq_render::Camera::default()));
+        assert!(live.movement.borrow().is_none());
+        assert!(wire.try_recv().is_err());
+    }
+
+    #[test]
+    fn live_damage_populates_feedback_and_zone_transition_clears_it() {
+        let (mut live, _) = command_world(1, 10.);
+        let camera = openeq_render::Camera {
+            position: [0., -30., 8.],
+            ..Default::default()
+        };
+        let actors = BTreeMap::from([(
+            2,
+            openeq_render::actors::ActorBounds {
+                min: [-2., -2., 0.],
+                max: [2., 2., 8.],
+            },
+        )]);
+        live.gameplay_event(GameplayEvent::Damage(openeq_net::gameplay::Damage {
+            source_id: 1,
+            target_id: 2,
+            amount: 17,
+            skill: 1,
+            spell_id: 0xffff,
+            secondary: false,
+            special: 0,
+        }));
+        let frame = |live: &LiveWorld| {
+            let mut frame = openeq_ui::UiFrame::default();
+            live.combat_feedback.append(
+                &mut frame,
+                &camera,
+                [1280, 720],
+                &actors,
+                live.own_id,
+                Instant::now(),
+            );
+            frame
+        };
+        assert!(
+            frame(&live)
+                .commands
+                .iter()
+                .any(|cmd| matches!(cmd,openeq_ui::DrawCommand::Text{text,..} if text=="17"))
+        );
+        live.gameplay_event(GameplayEvent::ZoneTransition {
+            zone_id: 58,
+            instance_id: 0,
+        });
+        assert!(frame(&live).commands.is_empty());
     }
 
     #[test]
@@ -2052,6 +2312,9 @@ pub(crate) mod tests {
             target: Some(2),
             game: GameplayState::default(),
             doors: BTreeMap::new(),
+            zone_points: BTreeMap::new(),
+            combat_feedback: Default::default(),
+            zone_request: None,
             door_return_deadlines: BTreeMap::new(),
             pending_destination: None,
             rx: Mutex::new(events),

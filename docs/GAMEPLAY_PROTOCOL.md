@@ -150,9 +150,12 @@ and targeting return `ZoneError::Zoning` during that interval. A direct
 
 For a same-zone `ZoneChangeRequested`, apply its position and heading locally;
 no world handoff is needed. A zone rejection retains its server result code.
-Authored zone-line detection is a separate client concern. The protocol accepts
-`Command::ZoneChange`; GM `/say #zone ZONE` commands can exercise server-requested
-travel without pretending that all zone lines are implemented.
+Authored classic WLD reference volumes now drive natural border requests.
+They resolve a point number against `OP_SendZonepoints`; the destination
+coordinates in that packet are never used as source trigger locations. The
+latest player position is sent before the request, and the server chooses the
+arrival point and enforces access checks. See [zone travel](ZONE_TRAVEL_PROTOCOL.md).
+GM `/say #zone ZONE` remains useful for development and unsupported trigger formats.
 
 Door records are 100 bytes. Positions remain EQ XYZ, heading uses 512 units per
 turn, and size is percent. Door action 2 opens and 3 closes, reversed for inverted
@@ -237,7 +240,7 @@ successful command submission or spellbar unlock. All 35 net unit tests and
 
 Limitations: player trading/augmentation workflows, guild/raid membership
 management, UCS custom channels, item/AA casting, spell scroll scribing and authored
-zone-line triggers are separate work. Rendering spell particles and richer spell
+EQG and absolute-destination zone-line triggers remain separate work. Rendering spell particles and richer spell
 UI behavior are client concerns separate from these server-authoritative messages.
 
 ### Integrated client verification

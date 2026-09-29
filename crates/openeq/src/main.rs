@@ -68,6 +68,8 @@ struct Runtime {
     loading_job: Option<loading::Job<zone_loading::PreparedZone>>,
     loading_error: Option<String>,
     client_job: Option<loading::Job<zone_loading::ClientData>>,
+    zone_lines: openeq_assets::zone_lines::ZoneLines,
+    zone_travel: openeq::zone_travel::ZoneTravel,
     zone_map: Option<openeq::map::ZoneMap>,
     map_state: openeq::map::MapState,
     map_open: bool,
@@ -82,6 +84,7 @@ impl Runtime {
             && self.loading_job.is_none()
             && self.live.as_ref().is_none_or(|live| {
                 live.ready
+                    && !live.zone_request_pending()
                     && live.error.is_none()
                     && self.loaded_destination.as_ref().is_some_and(|destination| {
                         destination.generation == live.zone_generation
@@ -118,6 +121,8 @@ impl Runtime {
             loading_job: None,
             loading_error: None,
             client_job: None,
+            zone_lines: Default::default(),
+            zone_travel: Default::default(),
             zone_map: None,
             map_state: openeq::map::MapState::default(),
             map_open: false,
@@ -873,11 +878,30 @@ fn render_frame(
         if let Some(position) = live.initial_position.take() {
             runtime.camera.position = [position.x, position.y, position.z + 3.];
             runtime.camera.yaw = position.heading * std::f32::consts::TAU / 512.;
+            runtime
+                .zone_travel
+                .rebase([position.x, position.y, position.z]);
             runtime.ground_motion = movement::GroundMotion::default();
         }
     }
     if let Some(mut renderer) = runtime.renderer.take() {
         prepare_world(&mut runtime, &mut renderer, &options);
+        if runtime.world_ready() && runtime.live.is_some() {
+            let runtime = &mut *runtime;
+            let camera = runtime.camera;
+            let position = [
+                camera.position[0],
+                camera.position[1],
+                camera.position[2] - 3.,
+            ];
+            if let Some(line) = runtime.zone_travel.observe(&runtime.zone_lines, position) {
+                runtime
+                    .live
+                    .as_mut()
+                    .unwrap()
+                    .cross_zone_line(line.number, &camera);
+            }
+        }
         if !runtime.world_ready() {
             draw_loading_screen(
                 &mut runtime,
@@ -963,6 +987,20 @@ fn render_frame(
             let mut frame = hud.gameplay_frame(ui_size, &state, &game);
             if let Some(actors) = &runtime.actors {
                 add_nameplates(&mut frame, live, actors, &camera, ui_size);
+                let mut feedback = openeq_ui::UiFrame {
+                    bounds: frame.bounds,
+                    ..Default::default()
+                };
+                live.combat_feedback.append(
+                    &mut feedback,
+                    &camera,
+                    ui_size,
+                    actors.bounds(),
+                    live.own_id,
+                    std::time::Instant::now(),
+                );
+                feedback.commands.append(&mut frame.commands);
+                frame.commands = feedback.commands;
             }
             if runtime.map_open {
                 let mut map_state = runtime.map_state.clone();
@@ -991,6 +1029,12 @@ fn render_frame(
             renderer.set_ui_scaled(&frame, window.scale_factor());
             runtime.chat_link_hits = renderer.ui_link_hits().to_vec();
             runtime.ui_frame = frame;
+        } else {
+            // A refused border request resumes the same scene, so scene
+            // installation cannot clear this overlay for a missing XML skin.
+            runtime.ui_frame = openeq_ui::UiFrame::default();
+            runtime.chat_link_hits.clear();
+            renderer.set_ui(&runtime.ui_frame);
         }
         if let Some(scene) = runtime.scene.as_ref() {
             let mut actors = runtime
@@ -1149,6 +1193,12 @@ fn prepare_world(runtime: &mut Runtime, renderer: &mut Renderer, options: &Optio
             runtime.actors = prepared.actors;
             runtime.doors = prepared.doors;
             runtime.zone_map = prepared.map;
+            runtime.zone_lines = prepared.zone_lines;
+            runtime.zone_travel.reset([
+                runtime.camera.position[0],
+                runtime.camera.position[1],
+                runtime.camera.position[2] - 3.,
+            ]);
             runtime.map_state.waypoints.clear();
             runtime.map_state.center = None;
             runtime.map_open = false;

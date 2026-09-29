@@ -50,12 +50,19 @@ sudo /srv/eqemu/private/backup.sh
 ```
 
 `eqemu.target` is enabled at boot and owns login, world, chat/mail, static
-`poknowledge` and `anguish`, two dynamic zone workers, and the control-port
+`poknowledge` and `anguish`, six dynamic zone workers, and the control-port
 network guard. Each server restarts after failure. Configuration and credentials
 are under `/srv/eqemu`; binaries are in `bin/`, zone data in `maps/` and `quests/`,
 and logs in `logs/`. MariaDB stores the `peq` database in `/var/lib/mysql/peq`.
 Manual backups include the database and private configuration in
 `/srv/eqemu/backups`. Treat backups as sensitive.
+
+The dynamic pool was expanded from two to six on 2026-09-28 after natural border
+travel exhausted the two occupied workers (Greater Faydark and Arena). The
+additional `dynamic_03`–`dynamic_06` services are persistent Wants in
+`/etc/systemd/system/eqemu.target.d/capacity.conf`; the original service template
+and active zones were not restarted. Keep idle workers available: an empty
+recently visited zone can occupy a process until its shutdown timer expires.
 
 Zone services also restart after a successful exit: the override at
 `/etc/systemd/system/eqemu-zone@.service.d/restart.conf` sets `Restart=always`.
@@ -130,7 +137,7 @@ this host's libraries instead.
 - PoK boot loaded its collision/water/navmesh assets, 34 active movement grids
   with 1,139 waypoints, and 323 spawn groups/530 spawn entries. The unfiltered
   database has 535 PoK spawn points and 43 pathing spawn points.
-- PoK and Anguish static zones, both dynamic workers, world, login, and chat/mail
+- PoK and Anguish static zones, six dynamic workers, world, login, and chat/mail
   are active; the target is enabled on boot.
 
 One upstream log message says `Loaded [0] spawn2 entries` on a fresh boot: it

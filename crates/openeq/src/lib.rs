@@ -31,3 +31,6 @@ pub mod trade;
 mod trade_interaction;
 
 pub mod zone_loading;
+
+pub mod combat_feedback;
+pub mod zone_travel;

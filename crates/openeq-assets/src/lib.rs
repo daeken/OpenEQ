@@ -24,6 +24,7 @@ pub mod terrain;
 pub mod texture;
 pub mod wld;
 pub mod zone;
+pub mod zone_lines;
 
 pub use error::{Error, Result};
 pub use loader::{Instance, Light, Scene, SceneObject, load_zone};

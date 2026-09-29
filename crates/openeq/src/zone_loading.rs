@@ -35,6 +35,7 @@ pub struct PreparedZone {
     pub doors: Option<DoorRenderer>,
     pub map: Option<ZoneMap>,
     pub sky: Option<SkyAssets>,
+    pub zone_lines: openeq_assets::zone_lines::ZoneLines,
 }
 
 pub fn start(request: Request, upload: UploadContext) -> Job<PreparedZone> {
@@ -64,6 +65,11 @@ fn prepare(
     report.stage("Preparing the sky and map", Some(0.55))?;
     let sky = openeq_assets::environment::load_sky(&dir, &zone, time_of_day).ok();
     let map = ZoneMap::load(&dir, &zone).ok();
+    let zone_lines =
+        openeq_assets::zone_lines::ZoneLines::load(&dir, &zone).unwrap_or_else(|error| {
+            tracing::warn!(%zone, %error, "authored zone borders unavailable");
+            Default::default()
+        });
     report.stage("Loading characters", Some(0.60))?;
     let actors = if online {
         let mut actors = ActorRenderer::load(&dir, &zone)?;
@@ -109,6 +115,7 @@ fn prepare(
         doors,
         map,
         sky,
+        zone_lines,
     })
 }
 

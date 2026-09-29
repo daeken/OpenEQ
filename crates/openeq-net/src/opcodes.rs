@@ -98,6 +98,7 @@ pub enum ZoneOp {
     SendExpZonein = 0x5f8e,
     ClientReady = 0x345d,
     SpawnDoor = 0x7291,
+    SendZonepoints = 0x69a4,
     ClientUpdate = 0x7dfc,
     HpUpdate = 0x2828,
     SpawnAppearance = 0x0971,

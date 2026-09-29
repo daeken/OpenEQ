@@ -127,14 +127,17 @@ These are intentionally separate parity milestones:
 - [x] Merchant buying/selling and personal/shared banking ([milestone](COMMERCE_SOCIAL_TASKS.md)).
 - [x] Clickable quest saylinks and linked item inspection.
 - [x] Group membership, invitations, leadership and related window.
-- [ ] Player trading and augmentation workflows.
+- [x] Player trading ([milestone](TRADE_ITEM_USE_TASKS.md)).
+- [ ] Augmentation workflows.
 - [ ] Complete rich-text/STML rendering and quest journals.
 - [ ] Raid membership and management.
 - [ ] UCS custom chat channels and guild management.
 - [ ] Interactive login, character creation and selection screens.
-- [ ] Authored border zone-line detection and complete special door/lift behavior.
+- [x] Authored classic reference border detection ([milestone](EXPLORATION_COMBAT_TASKS.md)).
+- [ ] EQG/absolute-destination border triggers and complete special door/lift behavior.
 - [x] Kelethin button/lift cycles, animated collision and passenger carrying.
-- [ ] Spell particles/audio, item and AA casting, spell scroll scribing.
+- [x] Item casting and spell scroll scribing ([milestone](TRADE_ITEM_USE_TASKS.md)).
+- [ ] Spell particles/audio and AA casting.
 - [ ] Luclin replacements and modern modular armor/hair/equipment assemblies.
 - [ ] Full swimming, water rules and invisible collision-volume behavior.
 - [ ] Remaining XML widgets, saved window positions and movable stacking order.
