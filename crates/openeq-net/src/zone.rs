@@ -270,6 +270,16 @@ impl ZoneClient {
                     }));
             }
             match &event {
+                GameplayEvent::Death(death) => {
+                    tracing::info!(target: "openeq_net::recovery", id = death.id,
+                        corpse_id = death.corpse_id, "received entity death");
+                }
+                GameplayEvent::Recovery(crate::death::DeathEvent::ResurrectionOffer(offer)) => {
+                    tracing::info!(target: "openeq_net::recovery", spell_id = offer.spell_id(),
+                        zone_id = offer.zone_id(), instance_id = offer.instance_id(),
+                        caster = offer.caster(), corpse = offer.corpse(), position = ?offer.position(),
+                        "received resurrection offer");
+                }
                 GameplayEvent::Recovery(crate::death::DeathEvent::BindTransfer(destination)) => {
                     tracing::info!(target: "openeq_net::recovery", zone_id = destination.zone_id,
                         instance_id = destination.instance_id, "received bind transfer");
@@ -434,6 +444,8 @@ impl ZoneClient {
         self.stream
             .send(&AppPacket::new(ZoneOp::ClientUpdate as u16, data))
             .await?;
+        tracing::debug!(target: "openeq_net::movement", id, x = position.x, y = position.y,
+            z = position.z, "sent player position");
         Ok(())
     }
 
@@ -441,9 +453,25 @@ impl ZoneClient {
         if self.is_zoning() {
             return Err(ZoneError::Zoning);
         }
+        let recovery_answer = match &command {
+            Command::Death(crate::death::DeathCommand::AnswerResurrection { offer, accept }) => {
+                Some((
+                    offer.spell_id(),
+                    offer.zone_id(),
+                    offer.instance_id(),
+                    *accept,
+                ))
+            }
+            _ => None,
+        };
         self.stream
             .send(&gameplay::encode_command(command)?)
             .await?;
+        if let Some((spell_id, zone_id, instance_id, accept)) = recovery_answer {
+            tracing::info!(target: "openeq_net::recovery", spell_id,
+                zone_id, instance_id, accept,
+                "sent resurrection answer");
+        }
         Ok(())
     }
 

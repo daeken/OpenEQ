@@ -19,10 +19,13 @@ recovery and movement after a Plane of Knowledge arrival.
 2. [x] Death and recovery, first pass: own death, respawn choices/bind, corpse state,
    resurrection requests and disconnect cleanup. Live same-zone forced bind is
    verified; live hover/resurrection and item/XP recovery remain follow-up work.
-3. [ ] UI compatibility and persistence: focus/stacking, saved layouts, screen
-   bounds/scaling, missing usable original widgets and rich text.
-4. [ ] Authored audio: asset formats, zone emitters, bounded voice lifetimes,
-   combat/spell events and user volume controls.
+3. [x] UI compatibility and persistence, first pass: click-to-front, matching
+   hit/pixel order, saved stacking/positions, screen bounds/scaling. Missing
+   original widgets, rich text and movable inspection remain follow-ups.
+4. [x] Authored audio, first pass: original metadata and archive index, WAV
+   ambience/streamed MP3 music, bounded voices, zone cancellation and saved
+   volume commands. XMI synthesis, combat/spell events and graphical controls
+   remain follow-ups; listening/native acoustic comparison is still manual.
 5. [ ] Interactive account flow: connection/server/character selection with
    clear errors and private credential handling.
 6. [ ] Social parity: raid/guild state and usable controls, channel coverage.
@@ -106,24 +109,56 @@ Published to `master` as **7f3eab3**. This is the next continuation's baseline.
 - Follow-up research is in `UI_LAYOUT_PLAN.md` (click-to-front/persisted stacking)
   and `AUDIO_PLAN.md` (authored sound assets).
 
-## Active follow-up ownership after 7f3eab3
+## Second overnight batch (verified)
 
-- **xml_ui**: implement click-to-front/shared map window stacking. Owns
-  gameplay_ui/hud/openeq-ui layer metadata, main.rs input/composition hooks,
-  ui_layout.rs persistent order (version1 with serde defaults), tests/docs.
-  Preserve existing chat event ordering and death gates. No fixture login.
-- **eqemu_server**: live resurrection coverage with Reviver and a new disposable
-  caster: decline, fresh offer, accept, stale/double clicks, actual relocation,
-  corpse state and restoration. Owns live/net recovery code, smoke probe, docs.
-  Do not toggle global rules or reboot occupied zones; no existing-fixture use.
-- **npc_assets**: authored audio asset parser/index slice only, after research.
-  Owns openeq-assets audio module/lib/tests and AUDIO_PLAN.md. Classic84-byte EFF,
-  flexible EMT versions, correct sound/MP3 resolution; no playback or client
-  runtime/dependency changes yet. Installed EMTs have19–22fields, not only20.
-- Agents must not commit/push. Root reviews completed work, resolves integration,
-  runs appropriate checks, and publishes the next coherent batch. Read their
-  messages/status before starting overlapping work. Main/UI/prefs are now owned
-  by xml_ui until it hands them back.
+- UI windows and map now share stacking. Left/right click raises the original
+  hit owner before chat event consumption; whole-window pixels and hits move
+  together. Saved version-1 layouts accept optional order without losing older
+  positions. Original-skin normal/Retina GPU captures were inspected:
+  `/tmp/openeq-window-stack/window-stack-{before,after}-{1,2}x.png`.
+- Live resurrection proved real decline, fresh offer, accept, stale/double
+  suppression, server relocation, sickness756, saved resources and resumed
+  movement. Reviver and new disposable Rezzer restored/offline, no corpses.
+  `/tmp/openeq-resurrection-live-3.log`; no gameplay lifecycle fix was needed.
+- Cross-zone death used only Reviver's temporary bind. Arena death → North
+  Qeynos authenticated recovery → normal movement/save → Arena return with old
+  corpse retained. All five bind rows/pose/resources/invariants restored and
+  corpse cleaned; `/tmp/openeq-death-cross-zone-1.log`. Same-zone recovery also
+  reran successfully in `/tmp/openeq-death-live-4.log`.
+- Audio asset audit loads460 zones/48,017 emitters with bounded diagnostics.
+  Parser accepts installed EMT variants and the authored `sounds\\` prefix,
+  indexes archive-only PoK/GFay WAVs, and resolves MP3 IDs with correct one-based
+  numbering. Negative classic radii and legacy kinds2/3 remain unsupported.
+- Dedicated audio service plays confirmed classic ambience/MP3 and EMT WAV/MP3,
+  maintains32 effect/two music voices and64MiB effect cache, decodes off the
+  render/output threads, and rejects stale zone work. Same-track music regions
+  reuse playback; repeats never accumulate catch-up bursts. Volume settings
+  persist via `/audio`; `--no-audio` never opens a device. Headless build checked.
+- Fourteen runtime audio tests pass, including original decode/service tests,
+  scheduling boundaries, starvation regression, stereo underrun, offline mixer,
+  and device initialization with **only digital silence**. No original audio
+  was played over speakers. Asset tests add11 synthetic and5 original checks.
+  Usage, limits and unsupported semantics are in `AUDIO_RUNTIME.md`.
+- Combined verification: **466 workspace tests passed**, zero failures/ignored,
+  including original assets and GPU tests. Strict workspace Clippy, format and
+  client build pass; playback-disabled all-target build also passes. Log:
+  `/tmp/openeq-overnight-audio-ui-tests.log`.
+
+## Active follow-up ownership
+
+- **xml_ui**: first UI slice handed back. Read-only follow-up audit of highest
+  impact missing original XML widget/text behavior → `UI_WIDGET_FOLLOWUP.md`.
+- **eqemu_server**: recovery work handed back. No further live mutations this
+  batch. Read-only account/server/character API and skin plan →
+  `ACCOUNT_FLOW_PLAN.md`. Existing staged sockets must retain their Tokio runtime.
+- **npc_assets**: asset slice and runtime review handed back. Read-only XMI
+  sequence/timing and available synthesis-bank research → `XMI_PLAN.md`.
+  A macOS system DLS bank exists; no downloads or playback are authorized by
+  this research assignment, and it must not be redistributed.
+- Root owns all runtime integration again. Agents must not commit/push. Read
+  their latest messages before overlapping new work. Next primary milestone is
+  interactive account/server/character selection; incorporate bounded UI/audio
+  discoveries as appropriate.
 - Root should revisit native sky celestial orientation, thin liquid crossings,
-  NPC swimming projection, and complete live hover/rez scenarios later; do not
+  NPC swimming projection, hover/cross-zone resurrection and XP/item recovery; do not
   confuse first-pass completion with full original-client parity.

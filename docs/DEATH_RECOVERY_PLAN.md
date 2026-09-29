@@ -366,10 +366,148 @@ receives no inventory list, so this probe waits for profile/Ready and verifies
 empty inventory independently against the database.
 
 This establishes ordinary same-zone forced bind with a real corpse. Hover
-selection, live resurrection acceptance/decline, cross-zone death, corpse loot,
-and XP/item-loss restoration remain separate live scenarios. First-person and
+selection, corpse loot, and XP/item-loss restoration remain separate live
+scenarios. Living resurrection and cross-zone death are verified below. First-person and
 third-person corpse presentation have a portable regression: a dead own entity
 is visible at its server pose and never follows the living-player camera pose.
+
+## Separate live resurrection fixture
+
+`resurrection_smoke` uses Reviver plus **Rezzer** on the new
+`openeq_resurrector` account. Rezzer is an empty human level-50 cleric, GM flag
+off, in Arena 77/0 at server `[150,-1009,51]`. Account command status permits
+the fixture to invoke `#castspell 392` (Resurrection) against Reviver's observed
+corpse. This enters `Client::SpellFinished` and the ordinary resurrection effect,
+`Corpse::CastRezz`, world routing, and `Client::OPRezzAnswer`; it does not construct
+an offer on the client or directly mark the corpse resurrected in SQL. Both
+characters have no items, money, or XP to recover. No global rules or occupied
+zone processes are changed.
+
+The source-backed expectations are:
+
+- `Corpse::CastRezz` reads the corpse's current database state and sends its
+  position, spell, caster, owner, and corpse identity through world.
+- World allows only one pending offer. A normal decline clears pending state in
+  `Client::OPRezzAnswer`, so the caster can send a fresh identical offer.
+- Accepting spell 392 with this server's `UseResurrectionSickness=true` sets HP
+  to one fifth of maximum, mana to zero, casts sickness 756, marks the corpse
+  resurrected, and calls `MovePC` to the corpse. The client grants none of these
+  effects locally. The server sends `RezzComplete` through world itself.
+- A living player's same-zone resurrection relocates its existing entity without
+  another zone generation; the corpse remains independently present.
+
+The probe snapshots both fixtures before login and refuses preexisting items,
+corpses, or buffs. It checks decline, stale and duplicate actions, authoritative
+relocation/resources, corpse state, and saved post-recovery movement. Cleanup
+fades only the test's resurrection sickness through a targeted server command,
+deletes only the observed Reviver corpses, logs out, restores original
+pose/resources, and verifies both fixtures' level, XP, stats, items, cash, binds,
+spell books, spell gems, and buffs. Credentials live in private mode-0600 files;
+each run also creates a new mode-0600 restoration snapshot before logging in.
+
+```sh
+cargo run -p openeq --bin resurrection_smoke -- \
+  "$HOME/.config/openeq/storage2-recovery-credentials.json" \
+  "$HOME/.config/openeq/storage2-resurrector-credentials.json" \
+  /tmp/openeq-resurrection-next-run.log
+```
+
+Source: EQEmu `zone/gm_commands/castspell.cpp`, `zone/corpse.cpp::CastRezz`
+and `CompleteResurrection`, `zone/worldserver.cpp::ServerOP_RezzPlayer`,
+`zone/client_packet.cpp::Handle_OP_RezzAnswer`,
+`zone/client_process.cpp::OPRezzAnswer`, and
+`zone/gm_commands/nukebuffs.cpp`.
+
+### Live result, 2026-09-29
+
+`/tmp/openeq-resurrection-live-2.log` records the complete successful cycle:
+
+- Reviver entity 19 died and reentered at bind as living entity 21, generation 1.
+- At `06:30:11.050161Z`, a real spell-392 offer arrived from Rezzer for
+  `Reviver's corpse19`. The client sent one decline at `06:30:11.057352Z`.
+  Decline left the player at bind and the corpse unresurrected.
+- A fresh identical offer arrived at `06:30:12.507057Z`, with a new local action
+  revision. The old acceptance token and repeated decline/accept clicks were
+  rejected. Exactly one acceptance was sent, at `06:30:12.520246Z`.
+- Acceptance initially froze outgoing movement without changing position or
+  resources. The server then relocated living entity 21, still generation 1,
+  to server `[146,-1009,50.541245]`. This is the corpse's fixed ground Z from
+  `Corpse::CastRezz`, not the original center Z.
+- Authoritative resources changed from HP 36 / mana 0 / endurance 21 to
+  HP 7 / mana 0 / endurance 19. Server persistence independently read
+  `[7,0,19,146,-1009,50.5412]`; sickness 756 was present. The original corpse
+  remained, with `is_rezzed=1` and zero recoverable XP.
+- Ordinary post-resurrection movement persisted at `[146,-1001]`.
+- Targeted cleanup and logout succeeded. Both fixtures were confirmed offline,
+  their original pose/resources restored, invariants unchanged, and zero
+  corpses remained.
+
+The first exploratory run reached the same resurrection path but attempted
+`#save` before the first post-teleport movement heartbeat. EQEmu's same-zone
+`ZoneSolicited` records the destination in `m_ZoneSummonLocation` and sends it to
+the client without immediately changing `m_Position`. The probe now allows a
+normal movement heartbeat before checking saved coordinates. The exploratory
+run also cleaned and restored both fixtures successfully; it did not expose a
+client recovery failure.
+
+This verifies ordinary living same-zone acceptance and decline. Hover recovery,
+cross-zone resurrection, disconnect/reconnect around acceptance, XP recovery
+percentages, and item-bearing corpse loot remain unverified live scenarios.
+The empty level-1 fixture intentionally cannot establish XP or item recovery.
+
+The final guarded probe also passed at `/tmp/openeq-resurrection-live-3.log`
+(Reviver entity 23 → living entity 24), with the same measured resources and
+destination. That run asserted the diagnostic log contained exactly two real
+offers and exactly one decline followed by one acceptance; stale and repeated
+actions emitted no additional replies. Both fixtures were restored again.
+
+## Live cross-zone death and bind recovery
+
+`death_smoke --cross-zone` temporarily changes **only Reviver's** five bind
+slots to North Qeynos 2/0 at server `[-74,428,3]`, after saving their exact values
+alongside the existing private pose/resource restoration snapshot. It uses the
+same real death in Arena, verifies the different-zone authenticated handoff,
+then returns with normal `#zone arena` to inspect and remove the original corpse.
+It changes no global rules, restarts no occupied zone, and uses no other account.
+
+```sh
+cargo run -p openeq --bin death_smoke -- \
+  "$HOME/.config/openeq/storage2-recovery-credentials.json" \
+  /tmp/openeq-death-cross-zone-next-run.log --cross-zone
+```
+
+`/tmp/openeq-death-cross-zone-1.log` passed on 2026-09-29:
+
+- Arena living entity 25 died at `06:36:31.297923Z`; the bind packet identified
+  zone **2/0**, and authenticated handoff began at `06:36:31.381958Z` with
+  `forced_reentry=false`. The zero-zone same-zone special case was not involved.
+- The deliberately stale camera update supplied while dead emitted no player
+  movement. Diagnostic position logs showed no heartbeat after death until
+  fresh destination readiness. North Qeynos loaded 104 entities.
+- Generation advanced **0 → 1**, with fresh living entity **259** at server
+  `[-74,428,3.75]`. Reviver's Arena corpse was absent from the destination entity
+  set, and the database retained that corpse at the original Arena location.
+- Ordinary movement in North Qeynos persisted at `[-74,436,3.75]`.
+- Returning normally to Arena advanced generation **1 → 2**, with living entity
+  **26**. The original corpse remained visible at its unchanged source position
+  and was removed by targeting that corpse alone.
+- After logout, all five original Arena binds, original pose/resources, and
+  level/XP/stats/inventory/cash invariants matched the pre-login snapshot. The
+  fixture was offline with no remaining corpses. A separate read-only check
+  also confirmed Rezzer remained offline and unchanged.
+
+An entity number may legitimately be reused across different zones. The probe
+requires fresh generation and a living, correctly named own spawn; it does not
+assume globally unique entity numbers. Cross-zone resurrection and hover remain
+separate scenarios, as do item loss, corpse loot, and XP restoration.
+
+After adding cross-zone coverage, the default same-zone mode passed again at
+`/tmp/openeq-death-same-zone-4.log` (Arena entity 27 → 28), including the stronger
+assertion that no position heartbeat was sent between the wire death event and
+fresh destination readiness. Its fixture was also restored. Focused validation
+passed all 68 network library tests, strict Clippy for both smoke binaries,
+formatting, and diff checks. No additional recovery lifecycle changes were
+needed by these scenarios.
 
 ## Meaningful test plan
 
@@ -417,4 +555,5 @@ loot/inventory persistence after reconnect. Server-side read-only snapshots can
 verify XP and corpse resurrection flags that the client does not yet display.
 Include disconnects after Death, after selection submission, and after rez
 acceptance to establish that recovery is not replayed. Beyond the verified
-same-zone forced-bind case above, these broader live scenarios remain open.
+same-zone forced-bind, cross-zone bind, and living-resurrection cases above, these broader live
+scenarios remain open.

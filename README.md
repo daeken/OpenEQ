@@ -32,6 +32,14 @@ armor, hair, facial pieces and robes. Classic models remain the default; use
 to the available original models. This choice persists across zone travel for
 the current session.
 
+Authored WAV ambience and MP3 zone music play automatically. Use `/audio` for
+current levels, `/audio music 25` or `/audio ambience 50` to adjust a channel,
+and `/audio mute` or `/audio unmute`. `/audio master 0` silences all channels;
+`/audio environment off` disables environment-controlled emitters. Levels are
+saved in `~/.config/openeq/audio.json`. `--no-audio` prevents opening an output
+device, useful for unattended runs. Classic XMI music and combat/spell sounds
+are still pending. See the [audio notes](docs/AUDIO_RUNTIME.md) for coverage.
+
 Controls:
 
 | Input | Action |
@@ -70,7 +78,8 @@ Groups support `/invite [NAME]`, `/accept`, `/decline`, `/leavegroup` (or
 `/disband`) and `/makeleader NAME`, with invitation/member controls in the group
 window. `/group` sends to the current group.
 
-Dragged window positions and map position/zoom are saved per world and character
+Clicking a window brings it forward, including its blank background. Window
+positions, stacking order and map position/zoom are saved per world and character
 under `~/.config/openeq/layouts` (or `$XDG_CONFIG_HOME/openeq/layouts`). Windows
 stay within reach after resizing. Removing that character's layout file restores
 the default arrangement; original UI assets are never modified.
@@ -131,6 +140,7 @@ you up and automatically returns, following the default five-second cycle.
 - Authored classic liquid volumes, swimming, underwater fog and server-granted levitation.
 - Original XML artwork and layout definitions for gameplay windows, with sharp
   high-density text and correctly scaled mouse hit testing.
+- Original WAV ambience and streamed MP3 music, with saved volume controls.
 - Deferred sun and authored zone lights, stable shadows, server-dependent fog,
   original sky/cloud textures, animated textures and EQG water materials.
 - Classic WLD zones, binary EQGZ v1/v2 zones and EQTZP heightmap terrain.
@@ -138,7 +148,7 @@ you up and automatically returns, following the default five-second cycle.
 This is a playable development milestone, with substantial parity work remaining:
 NPC quest hand-ins, augmentation, raid and guild management, quest journals,
 interactive account/character creation, EQG/absolute-destination border
-triggers, audio, advanced XML widgets, EQG liquid volumes and environmental
+triggers, XMI music and event sounds, advanced XML widgets, EQG liquid volumes and environmental
 damage rules. Luclin hair/beard colors, Hero's Forge, animated equipment, weather,
 terrain ecosystem effects and water refraction remain incomplete. Door motion
 classes include approximations; ordinary door collision switches to the final

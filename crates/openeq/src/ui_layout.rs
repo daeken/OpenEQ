@@ -1,11 +1,14 @@
 //! Local presentation preferences, scoped to a world and character. No account
 //! credentials, inventory, open commerce sessions or world waypoints are saved.
-use crate::map::MapState;
+use crate::{
+    gameplay_ui::{MAX_SAVED_WINDOWS, WindowStack, valid_window_id},
+    map::MapState,
+};
 use anyhow::{Context, ensure};
 use openeq_net::session::ConnectionConfig;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -15,6 +18,8 @@ use std::{
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Layout {
     pub windows: BTreeMap<String, [f32; 2]>,
+    #[serde(default)]
+    pub window_order: Vec<String>,
     pub map_origin: [f32; 2],
     pub map_zoom: f32,
     pub map_labels: bool,
@@ -22,28 +27,49 @@ pub struct Layout {
 }
 impl Default for Layout {
     fn default() -> Self {
-        Self::capture(&BTreeMap::new(), &MapState::default())
+        Self::capture(&BTreeMap::new(), &[], &MapState::default())
     }
 }
 impl Layout {
-    pub fn capture(windows: &BTreeMap<String, [f32; 2]>, map: &MapState) -> Self {
+    pub fn capture(windows: &BTreeMap<String, [f32; 2]>, order: &[String], map: &MapState) -> Self {
         Self {
             windows: windows.clone(),
+            window_order: order.to_vec(),
             map_origin: [map.rect.x, map.rect.y],
             map_zoom: map.units_per_pixel,
             map_labels: map.show_labels,
             map_layers: map.layers,
         }
     }
-    pub fn apply(&self, windows: &mut BTreeMap<String, [f32; 2]>, map: &mut MapState) {
+    pub fn apply(
+        &self,
+        windows: &mut BTreeMap<String, [f32; 2]>,
+        stack: &mut WindowStack,
+        map: &mut MapState,
+    ) {
         *windows = self.windows.clone();
+        *stack = WindowStack::restored(&self.window_order);
         [map.rect.x, map.rect.y] = self.map_origin;
         map.units_per_pixel = self.map_zoom;
         map.show_labels = self.map_labels;
         map.layers = self.map_layers;
     }
     fn validate(&self) -> anyhow::Result<()> {
-        ensure!(self.windows.len() <= 256, "too many saved windows");
+        ensure!(
+            self.windows.len() <= MAX_SAVED_WINDOWS,
+            "too many saved windows"
+        );
+        ensure!(
+            self.window_order.len() <= MAX_SAVED_WINDOWS,
+            "too many ordered windows"
+        );
+        let mut unique = BTreeSet::new();
+        for id in &self.window_order {
+            ensure!(
+                valid_window_id(id) && unique.insert(id),
+                "invalid or duplicate window order ID"
+            );
+        }
         for (key, point) in &self.windows {
             ensure!(
                 !key.is_empty() && key.len() <= 128 && !key.chars().any(char::is_control),
@@ -240,6 +266,7 @@ mod tests {
         let mut store = LayoutStore::open_at(&temp.0, identity("a")).unwrap();
         let mut layout = Layout::default();
         layout.windows.insert("inventory".into(), [420., 210.]);
+        layout.window_order = vec!["chat".into(), "inventory".into(), "map".into()];
         layout.map_origin = [400., 100.];
         layout.map_zoom = 8.;
         assert!(store.update(layout.clone(), Instant::now(), true).unwrap());
@@ -257,8 +284,9 @@ mod tests {
         );
         let mut map = MapState::default();
         let mut windows = BTreeMap::new();
-        layout.apply(&mut windows, &mut map);
-        assert_eq!(Layout::capture(&windows, &map), layout);
+        let mut stack = WindowStack::default();
+        layout.apply(&mut windows, &mut stack, &mut map);
+        assert_eq!(Layout::capture(&windows, stack.order(), &map), layout);
         assert!(map.center.is_none() && map.waypoints.is_empty());
     }
     #[test]
@@ -286,6 +314,67 @@ mod tests {
                 .update(layout, now + Duration::from_secs(2), false)
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn position_only_version_one_loads_and_gains_order_without_losing_preferences() {
+        let temp = Temp::new();
+        fs::create_dir_all(&temp.0).unwrap();
+        let expected = identity("old-layout");
+        let document = Document {
+            version: 1,
+            identity: expected.clone(),
+            layout: Layout {
+                map_zoom: 4.,
+                ..Default::default()
+            },
+        };
+        let mut json = serde_json::to_value(&document).unwrap();
+        json["layout"]
+            .as_object_mut()
+            .unwrap()
+            .remove("window_order");
+        fs::write(
+            temp.0.join(expected.filename()),
+            serde_json::to_vec(&json).unwrap(),
+        )
+        .unwrap();
+        let mut store = LayoutStore::open_at(&temp.0, expected.clone()).unwrap();
+        assert!(store.layout().window_order.is_empty());
+        let mut layout = store.layout().clone();
+        layout.window_order = vec!["map".into(), "bag:23".into(), "inventory".into()];
+        assert!(store.update(layout.clone(), Instant::now(), true).unwrap());
+        assert_eq!(
+            LayoutStore::open_at(&temp.0, expected).unwrap().layout(),
+            &layout
+        );
+        assert_eq!(layout.map_zoom, 4.);
+    }
+
+    #[test]
+    fn invalid_order_does_not_replace_the_last_saved_layout() {
+        let temp = Temp::new();
+        let mut store = LayoutStore::open_at(&temp.0, identity("order")).unwrap();
+        let valid = Layout {
+            window_order: vec!["inventory".into()],
+            ..Default::default()
+        };
+        store.update(valid.clone(), Instant::now(), true).unwrap();
+        let before = fs::read(&store.path).unwrap();
+        for order in [
+            vec!["map".into(), "map".into()],
+            vec!["../file".into()],
+            vec!["bag:-1".into()],
+            vec!["bag:023".into()],
+            (0..=MAX_SAVED_WINDOWS)
+                .map(|id| format!("bag:{id}"))
+                .collect(),
+        ] {
+            let mut invalid = valid.clone();
+            invalid.window_order = order;
+            assert!(store.update(invalid, Instant::now(), true).is_err());
+            assert_eq!(fs::read(&store.path).unwrap(), before);
+        }
     }
     #[test]
     fn invalid_save_and_corrupted_load_preserve_existing_file() {

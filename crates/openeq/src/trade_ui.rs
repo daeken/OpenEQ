@@ -453,6 +453,7 @@ mod tests {
     #[test]
     fn offer_addresses_and_item_actions_stay_explicit() {
         let hit = |id: &str| HitTarget {
+            window_id: None,
             item: id.into(),
             screen_id: String::new(),
             kind: String::new(),

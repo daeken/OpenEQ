@@ -1,5 +1,5 @@
 //! Destructive only to the empty, disposable Reviver recovery fixture.
-//! Exercises a real own death and forced same-zone authenticated bind re-entry.
+//! Exercises real death and authenticated same-zone or cross-zone bind recovery.
 use anyhow::{Context, ensure};
 use openeq::{coordinates::scene_point_to_server, live::LiveWorld};
 use openeq_net::{
@@ -155,10 +155,25 @@ impl Probe {
                 .live
                 .environment
                 .as_ref()
-                .is_some_and(|e| e.zone_id == 77 && e.instance_id == 0)
+                .is_some_and(|e| e.instance_id == 0)
+    }
+    fn ready_in(&self, zone: u16) -> bool {
+        self.ready()
+            && self
+                .live
+                .environment
+                .as_ref()
+                .is_some_and(|e| e.zone_id == zone)
     }
     fn cleanup_corpses(&mut self) -> anyhow::Result<()> {
         self.wait("cleanup connection", 45, |p| p.ready())?;
+        if !self.ready_in(77) {
+            let generation = self.live.zone_generation;
+            self.say("#zone arena".into())?;
+            self.wait("return to source corpse zone", 60, |p| {
+                p.live.zone_generation > generation && p.ready_in(77)
+            })?;
+        }
         let ids: Vec<_> = self
             .live
             .entities
@@ -181,9 +196,15 @@ impl Probe {
     }
 }
 
-fn proof(probe: &mut Probe, log: &Path) -> anyhow::Result<()> {
+fn proof(probe: &mut Probe, log: &Path, cross_zone: bool) -> anyhow::Result<()> {
+    let target_zone = if cross_zone { 2 } else { 77 };
+    let target = if cross_zone {
+        [-74., 428., 3.]
+    } else {
+        [160., -1009., 51.]
+    };
     probe.wait("initial zone", 45, |p| {
-        p.ready() && p.live.game.profile.is_some()
+        p.ready_in(77) && p.live.game.profile.is_some()
     })?;
     ensure!(
         probe.live.game.profile.as_ref().unwrap().name == "Reviver",
@@ -200,43 +221,71 @@ fn proof(probe: &mut Probe, log: &Path) -> anyhow::Result<()> {
     probe.pump(0.3)?;
     probe.say(format!("#kill {old_id}"))?;
     probe.wait("own death freeze", 10, |p| !p.live.movement_allowed())?;
+    // Exercise the same stale camera source the frame loop could supply while
+    // dead. Neither foreground nor worker may send it after the death event.
+    let old_camera = probe.camera.position;
+    probe.camera.position[0] += 10_000.;
+    probe.live.camera_position(&probe.camera, false);
+    probe.camera.position = old_camera;
     ensure!(
         !probe.live.command(Command::AutoAttack(true)),
         "dead player accepted attack"
     );
-    probe.wait("same-zone bind re-entry", 60, |p| {
-        p.live.zone_generation == generation + 1 && p.ready() && p.arrivals > arrivals
+    probe.wait("authenticated bind recovery", 60, |p| {
+        p.live.zone_generation == generation + 1 && p.ready_in(target_zone) && p.arrivals > arrivals
     })?;
     let new_id = probe.live.own_id.context("revived player")?;
-    ensure!(new_id != old_id, "corpse ID reused as new living player");
+    ensure!(
+        probe
+            .live
+            .entities
+            .get(&new_id)
+            .is_some_and(|e| !e.spawn.is_corpse && !e.spawn.npc && e.spawn.name == "Reviver"),
+        "destination own identity is not a fresh living player"
+    );
+    if !cross_zone {
+        ensure!(new_id != old_id, "corpse ID reused as new living player");
+    }
     let actual = scene_point_to_server([
         probe.camera.position[0],
         probe.camera.position[1],
         probe.camera.position[2] - 3.,
     ]);
     ensure!(
-        (actual[0] - 160.).abs() < 0.2
-            && (actual[1] + 1009.).abs() < 0.2
-            && (actual[2] - 51.).abs() < 2.,
+        (actual[0] - target[0]).abs() < 0.2
+            && (actual[1] - target[1]).abs() < 0.2
+            && (actual[2] - target[2]).abs() < 2.,
         "bind arrival wrong: {actual:?}"
     );
-    probe.wait("old corpse in refreshed zone", 10, |p| {
-        p.live
-            .entities
-            .get(&old_id)
-            .is_some_and(|e| e.spawn.is_corpse && e.spawn.name.starts_with("Reviver"))
-    })?;
+    if !cross_zone {
+        probe.wait("old corpse in refreshed zone", 10, |p| {
+            p.live
+                .entities
+                .get(&old_id)
+                .is_some_and(|e| e.spawn.is_corpse && e.spawn.name.starts_with("Reviver"))
+        })?;
+    } else {
+        ensure!(
+            !probe
+                .live
+                .entities
+                .values()
+                .any(|e| e.spawn.is_corpse && e.spawn.name.starts_with("Reviver")),
+            "source corpse leaked into destination zone"
+        );
+    }
     let corpse = sql(&format!(
-        "SELECT x,y,z FROM character_corpses WHERE charid=(SELECT id FROM character_data WHERE {FIXTURE});"
+        "SELECT x,y,z,zone_id FROM character_corpses WHERE charid=(SELECT id FROM character_data WHERE {FIXTURE});"
     ))?;
     let fields: Vec<f32> = corpse
         .split_whitespace()
         .map(str::parse)
         .collect::<Result<_, _>>()?;
     ensure!(
-        fields.len() == 3
+        fields.len() == 4
             && (fields[0] - death_xy[0]).abs() < 0.2
-            && (fields[1] - death_xy[1]).abs() < 0.2,
+            && (fields[1] - death_xy[1]).abs() < 0.2
+            && fields[3] == 77.,
         "corpse moved or ambiguous: {fields:?}"
     );
     probe.camera.position[0] += 8.;
@@ -252,26 +301,72 @@ fn proof(probe: &mut Probe, log: &Path) -> anyhow::Result<()> {
         .map(str::parse)
         .collect::<Result<_, _>>()?;
     ensure!(
-        saved.len() == 3 && (saved[0] - 160.).abs() < 0.2 && (saved[1] + 1001.).abs() < 0.2,
+        saved.len() == 3
+            && (saved[0] - target[0]).abs() < 0.2
+            && (saved[1] - target[1] - 8.).abs() < 0.2,
         "post-recovery motion not saved: {saved:?}"
     );
     let trace = std::fs::read_to_string(log)?;
+    let bind_zone = if cross_zone {
+        "zone_id=2 "
+    } else {
+        "zone_id=0 "
+    };
     ensure!(
         trace
             .lines()
-            .any(|line| line.contains("received bind transfer") && line.contains("zone_id=0")),
-        "no actual forced-zero bind packet recorded"
+            .any(|line| line.contains("received bind transfer") && line.contains(bind_zone)),
+        "no actual expected bind packet recorded"
     );
+    let handoff_zone = format!("zone_id={target_zone} ");
+    let handoff_kind = if cross_zone {
+        "forced_reentry=false"
+    } else {
+        "forced_reentry=true"
+    };
     ensure!(
         trace
             .lines()
             .any(|line| line.contains("starting authenticated zone handoff")
-                && line.contains("forced_reentry=true")
-                && line.contains("zone_id=77")),
-        "no authenticated same-zone re-entry recorded"
+                && line.contains(&handoff_zone)
+                && line.contains(handoff_kind)),
+        "no authenticated handoff recorded"
     );
+    let own_death = format!("received entity death id={old_id} ");
+    let dead_index = trace
+        .find(&own_death)
+        .context("no wire own death recorded")?;
+    let after_death = &trace[dead_index..];
+    let ready_index = after_death
+        .find("live zone ready")
+        .context("no fresh readiness after death")?;
+    ensure!(
+        !after_death[..ready_index]
+            .lines()
+            .any(|line| line.contains("sent player position")),
+        "dead player heartbeat was sent before fresh zone readiness"
+    );
+    if cross_zone {
+        let generation = probe.live.zone_generation;
+        probe.say("#zone arena".into())?;
+        probe.wait("return to source zone", 60, |p| {
+            p.live.zone_generation == generation + 1 && p.ready_in(77)
+        })?;
+        probe.wait("original source corpse", 10, |p| {
+            p.live
+                .entities
+                .values()
+                .any(|e| e.spawn.is_corpse && e.spawn.name.starts_with("Reviver"))
+        })?;
+        ensure!(
+            sql(&format!(
+                "SELECT x,y,z,zone_id FROM character_corpses WHERE charid=(SELECT id FROM character_data WHERE {FIXTURE});"
+            ))? == corpse,
+            "original corpse position/zone changed during return"
+        );
+    }
     println!(
-        "PASS death_freeze=true bind_zone_zero=true authenticated_same_zone_reentry=true old_id={old_id} new_id={new_id} corpse_retained=true movement_saved={saved:?}"
+        "PASS death_freeze=true dead_heartbeat_blocked=true cross_zone={cross_zone} bind_zone={target_zone} authenticated_handoff=true old_id={old_id} new_id={new_id} corpse_retained_in_source=true movement_saved={saved:?}"
     );
     Ok(())
 }
@@ -279,13 +374,14 @@ fn proof(probe: &mut Probe, log: &Path) -> anyhow::Result<()> {
 fn main() -> anyhow::Result<()> {
     let config_path = std::env::args()
         .nth(1)
-        .context("usage: death_smoke CONFIG [LOG]")?;
+        .context("usage: death_smoke CONFIG [LOG] [--cross-zone|--cleanup-only]")?;
     let log = PathBuf::from(
         std::env::args()
             .nth(2)
             .unwrap_or_else(|| "/tmp/openeq-death-live-protocol.log".into()),
     );
     let config = ConnectionConfig::load(Path::new(&config_path))?;
+    let cross_zone = std::env::args().nth(3).as_deref() == Some("--cross-zone");
     ensure!(
         config.host == "storage2.daeken.dev"
             && config.username == "openeq_recovery"
@@ -308,6 +404,14 @@ fn main() -> anyhow::Result<()> {
         "requires forced-bind server mode"
     );
     ensure!(sql(&format!("SELECT COUNT(*) FROM inventory WHERE character_id=(SELECT id FROM character_data WHERE {FIXTURE}); SELECT COUNT(*) FROM character_corpses WHERE charid=(SELECT id FROM character_data WHERE {FIXTURE});"))?.split_whitespace().all(|s|s=="0"),"fixture must have no items or corpses");
+    ensure!(
+        sql(&format!(
+            "SELECT level,exp,gm FROM character_data WHERE {FIXTURE};"
+        ))?
+        .trim()
+            == "1\t0\t0",
+        "requires empty level-one non-GM fixture"
+    );
     let original = sql(&format!(
         "SELECT zone_id,zone_instance,x,y,z,heading,cur_hp,mana,endurance,hunger_level,thirst_level FROM character_data WHERE {FIXTURE};"
     ))?;
@@ -320,7 +424,7 @@ fn main() -> anyhow::Result<()> {
         "invalid fixture snapshot"
     );
     let before = invariant()?;
-    let restore = format!(
+    let mut restore = format!(
         "UPDATE character_data SET zone_id={},zone_instance={},x={},y={},z={},heading={},cur_hp={},mana={},endurance={},hunger_level={},thirst_level={} WHERE {FIXTURE} AND ingame=0;",
         values[0],
         values[1],
@@ -334,6 +438,24 @@ fn main() -> anyhow::Result<()> {
         values[9],
         values[10]
     );
+    if cross_zone {
+        let binds = sql(&format!(
+            "SELECT slot,zone_id,instance_id,x,y,z,heading FROM character_bind WHERE id=(SELECT id FROM character_data WHERE {FIXTURE}) ORDER BY slot;"
+        ))?;
+        let rows: Vec<_> = binds.lines().collect();
+        ensure!(rows.len() == 5, "requires five normalized bind slots");
+        for row in rows {
+            let v: Vec<f64> = row
+                .split_whitespace()
+                .map(str::parse)
+                .collect::<Result<_, _>>()?;
+            ensure!(
+                v.len() == 7 && v.iter().all(|v| v.is_finite()),
+                "invalid bind snapshot"
+            );
+            restore.push_str(&format!("\nUPDATE character_bind SET zone_id={},instance_id={},x={},y={},z={},heading={} WHERE id=(SELECT id FROM character_data WHERE {FIXTURE} AND ingame=0) AND slot={};",v[1],v[2],v[3],v[4],v[5],v[6],v[0]));
+        }
+    }
     let snapshot = log.with_extension("restore.sql");
     let mut backup = OpenOptions::new()
         .create_new(true)
@@ -350,11 +472,16 @@ fn main() -> anyhow::Result<()> {
         .open(&log)?;
     tracing_subscriber::fmt()
         .with_ansi(false)
-        .with_env_filter("openeq_net::recovery=info,openeq_net::zone=warn,openeq::live=info")
+        .with_env_filter("openeq_net::recovery=info,openeq_net::movement=debug,openeq_net::zone=warn,openeq::live=info")
         .with_writer(file)
         .init();
+    if cross_zone {
+        sql(&format!(
+            "UPDATE character_bind SET zone_id=2,instance_id=0,x=-74,y=428,z=3,heading=0 WHERE id=(SELECT id FROM character_data WHERE {FIXTURE} AND ingame=0);"
+        ))?;
+    }
     let mut probe = Probe::new(config.clone());
-    let result = proof(&mut probe, &log);
+    let result = proof(&mut probe, &log, cross_zone);
     if let Err(error) = &result {
         eprintln!("PROOF_FAILED {error:#}");
     }

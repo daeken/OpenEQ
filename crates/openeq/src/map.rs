@@ -310,8 +310,8 @@ impl ZoneMap {
         Some((min, max))
     }
 
-    /// Draws a standalone overlay; append it after the gameplay HUD so the map's
-    /// controls receive the same topmost hit-test order as its visible pixels.
+    /// Draws a standalone window. Pass it as the `map` layer to the gameplay
+    /// compositor so its pixels and controls share the ordinary window order.
     pub fn frame(&self, viewport: [u32; 2], state: &MapState) -> UiFrame {
         let screen = Rect::new(0., 0., viewport[0] as f32, viewport[1] as f32);
         let rect = state.rect;
@@ -716,6 +716,7 @@ fn hit(
     }
     let id = id.into();
     frame.hit_targets.push(HitTarget {
+        window_id: None,
         item: id.clone(),
         screen_id: id,
         kind: kind.to_owned(),

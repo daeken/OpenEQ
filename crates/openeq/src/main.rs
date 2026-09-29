@@ -39,6 +39,7 @@ struct Options {
     position: Option<[f32; 3]>,
     connection: Option<ConnectionConfig>,
     model_set: CharacterModelSet,
+    no_audio: bool,
 }
 
 /// Main-thread presentation, with destination assets prepared by a worker.
@@ -79,6 +80,7 @@ struct Runtime {
     third_person: bool,
     doors: Option<openeq_render::doors::DoorRenderer>,
     profiler: FrameProfiler,
+    audio: Option<openeq::audio::AudioService>,
 }
 
 impl Runtime {
@@ -136,6 +138,7 @@ impl Runtime {
             third_person: false,
             profiler: FrameProfiler::default(),
             doors: None,
+            audio: None,
         }
     }
 }
@@ -155,6 +158,10 @@ fn main() -> AppExit {
     };
 
     let mut runtime = Runtime::new(camera);
+    runtime.audio = Some(openeq::audio::AudioService::new(
+        options.dir.clone(),
+        !options.no_audio,
+    ));
     if let Some(config) = &options.connection {
         runtime.client_job = Some(zone_loading::start_client(options.dir.clone()));
         runtime.fly = false;
@@ -162,6 +169,7 @@ fn main() -> AppExit {
             Ok(store) => {
                 store.layout().apply(
                     &mut runtime.interaction.window_positions,
+                    &mut runtime.interaction.window_stack,
                     &mut runtime.map_state,
                 );
                 runtime.layout_store = Some(store);
@@ -198,8 +206,27 @@ fn main() -> AppExit {
             )
                 .chain(),
         )
-        .add_systems(Last, (render_frame, persist_ui_layout).chain())
+        .add_systems(
+            Last,
+            (render_frame, update_audio, persist_ui_layout).chain(),
+        )
         .run()
+}
+
+fn update_audio(runtime: Res<Runtime>) {
+    let Some(audio) = &runtime.audio else {
+        return;
+    };
+    let zone = runtime
+        .world_ready()
+        .then(|| runtime.loaded_destination.as_ref())
+        .flatten()
+        .map(|destination| (destination.generation, destination.zone.as_str()));
+    audio.update(
+        zone,
+        runtime.camera.position,
+        runtime.live.as_ref().map_or(12, |live| live.hour),
+    );
 }
 
 fn persist_ui_layout(
@@ -207,12 +234,15 @@ fn persist_ui_layout(
     mouse: Res<ButtonInput<MouseButton>>,
     mut exits: MessageReader<AppExit>,
 ) {
-    let flush = exits.read().next().is_some() || mouse.just_released(MouseButton::Left);
+    let flush = exits.read().next().is_some()
+        || mouse.just_released(MouseButton::Left)
+        || mouse.just_released(MouseButton::Right);
     if runtime.layout_store.is_none() {
         return;
     }
     let layout = openeq::ui_layout::Layout::capture(
         &runtime.interaction.window_positions,
+        runtime.interaction.window_stack.order(),
         &runtime.map_state,
     );
     if let Err(error) =
@@ -233,9 +263,11 @@ fn parse_args() -> anyhow::Result<Options> {
     let mut position = None;
     let mut connection = None;
     let mut model_set = CharacterModelSet::Classic;
+    let mut no_audio = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--no-audio" => no_audio = true,
             "--models" => {
                 model_set = match args.next().as_deref() {
                     Some("classic") => CharacterModelSet::Classic,
@@ -261,7 +293,7 @@ fn parse_args() -> anyhow::Result<Options> {
             }
             "-h" | "--help" => {
                 println!(
-                    "usage: openeq [zone] [--dir DIR] [--pos X,Y,Z] [--connect CONFIG] [--models classic|luclin]"
+                    "usage: openeq [zone] [--dir DIR] [--pos X,Y,Z] [--connect CONFIG] [--models classic|luclin] [--no-audio]"
                 );
                 std::process::exit(0);
             }
@@ -286,6 +318,7 @@ fn parse_args() -> anyhow::Result<Options> {
         position,
         connection,
         model_set,
+        no_audio,
     })
 }
 
@@ -615,6 +648,7 @@ fn handle_gameplay_input(
         map_state,
         map_open,
         third_person,
+        audio,
         ..
     } = &mut *runtime
     else {
@@ -633,6 +667,21 @@ fn handle_gameplay_input(
     }
     let mut chat_pointer_owned = false;
     for event in events.read() {
+        // Use the displayed frame's original hit. Raising only changes the
+        // next frame's order, so this press still activates the control seen.
+        // This precedes chat's early consumption of an edit-box click.
+        if matches!(event, WindowEvent::MouseButtonInput(event)
+            if event.window == window_id
+                && event.state == ButtonState::Pressed
+                && matches!(event.button, MouseButton::Left | MouseButton::Right))
+            && window.focused
+            && !is_captured(&cursor)
+            && let Some(hit) = interaction
+                .pointer
+                .and_then(|point| ui_frame.hit_test(point))
+        {
+            interaction.window_stack.raise_hit(hit);
+        }
         // Honor a chat click before any later text in this same event batch.
         // Clicking an active edit box keeps its draft and composition intact.
         match event {
@@ -679,10 +728,12 @@ fn handle_gameplay_input(
         if interaction.editor.active {
             release_cursor(&mut cursor);
         }
-        if let Some(text) = result.submitted
-            && interaction.submit(&text, live, camera_position)
-        {
-            exit.write(AppExit::Success);
+        if let Some(text) = result.submitted {
+            if let Some(response) = audio.as_ref().and_then(|audio| audio.command(&text)) {
+                live.game.notice(response);
+            } else if interaction.submit(&text, live, camera_position) {
+                exit.write(AppExit::Success);
+            }
         }
     }
     interaction.chat_input.suppress_captured_keys(&mut keys);
@@ -1134,6 +1185,7 @@ fn render_frame(
             renderer_doors.update(&renderer, &states, elapsed);
         }
         FrameSample::mark(&mut profile, "doors");
+        let runtime = &mut *runtime;
         if let (Some(hud), Some(live)) = (&runtime.hud, &runtime.live) {
             let player = live.own_id.and_then(|id| live.entities.get(&id));
             let target =
@@ -1161,30 +1213,12 @@ fn render_frame(
                 entities: live.entities.len(),
                 movement_updates: live.moves,
             };
-            let game = runtime.interaction.view(live);
-            let mut frame = hud.gameplay_frame(ui_size, &state, &game);
-            if let Some(actors) = &runtime.actors {
-                add_nameplates(&mut frame, live, actors, &camera, ui_size);
-                let mut feedback = openeq_ui::UiFrame {
-                    bounds: frame.bounds,
-                    ..Default::default()
-                };
-                live.combat_feedback.append(
-                    &mut feedback,
-                    &camera,
-                    ui_size,
-                    actors.bounds(),
-                    live.own_id,
-                    std::time::Instant::now(),
-                );
-                feedback.commands.append(&mut frame.commands);
-                frame.commands = feedback.commands;
-            }
             let mut recovery = hud.recovery_frame(
                 ui_size,
                 runtime.interaction.pointer,
                 &live.game.recovery.view(std::time::Instant::now()),
             );
+            let mut additional = Vec::new();
             if runtime.map_open {
                 let mut map_state = runtime.map_state.clone();
                 map_state.fit_viewport(ui_size);
@@ -1204,11 +1238,37 @@ fn render_frame(
                             color: [255, 120, 100, 255],
                         });
                 if let Some(map) = &runtime.zone_map {
-                    let mut overlay = map.frame(ui_size, &map_state);
-                    frame.commands.append(&mut overlay.commands);
-                    frame.hit_targets.append(&mut overlay.hit_targets);
+                    additional.push(("map".into(), map.frame(ui_size, &map_state)));
                 }
                 runtime.map_state = map_state;
+            }
+            let mut game = runtime.interaction.view(live);
+            game.hover_blocked = game
+                .pointer
+                .is_some_and(|point| recovery.hit_test(point).is_some());
+            let mut frame = hud.gameplay_frame_with_windows(
+                ui_size,
+                &state,
+                &game,
+                additional,
+                &mut runtime.interaction.window_stack,
+            );
+            if let Some(actors) = &runtime.actors {
+                add_nameplates(&mut frame, live, actors, &camera, ui_size);
+                let mut feedback = openeq_ui::UiFrame {
+                    bounds: frame.bounds,
+                    ..Default::default()
+                };
+                live.combat_feedback.append(
+                    &mut feedback,
+                    &camera,
+                    ui_size,
+                    actors.bounds(),
+                    live.own_id,
+                    std::time::Instant::now(),
+                );
+                feedback.commands.append(&mut frame.commands);
+                frame.commands = feedback.commands;
             }
             frame.commands.append(&mut recovery.commands);
             frame.hit_targets.append(&mut recovery.hit_targets);
@@ -1696,6 +1756,7 @@ mod loading_tests {
             position: Some([123., 456., 789.]),
             connection: None,
             model_set: CharacterModelSet::Classic,
+            no_audio: true,
         }
     }
 

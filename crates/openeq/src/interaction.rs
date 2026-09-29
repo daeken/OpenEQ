@@ -21,6 +21,7 @@ pub struct Interaction {
     pub chat_scroll: usize,
     pub pointer: Option<[f32; 2]>,
     pub window_positions: BTreeMap<String, [f32; 2]>,
+    pub window_stack: WindowStack,
     pub inspected_item: Option<UiItem>,
     /// Owned inventory identity, separate from linked/merchant/trade inspections.
     pub inspected_owned: Option<(InventorySlot, u32, u32)>,
@@ -195,6 +196,7 @@ impl Interaction {
             attack: live.game.attack,
             sitting: live.game.sitting,
             window_positions: self.window_positions.clone(),
+            window_order: self.window_stack.order().to_vec(),
             inspected_item: self
                 .inspected_item
                 .clone()

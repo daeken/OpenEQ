@@ -141,7 +141,8 @@ These are intentionally separate parity milestones:
 - [ ] Spell audio and AA casting.
 - [x] Luclin replacements and modern modular armor/hair/equipment assemblies ([notes](CHARACTER_RENDERING.md)).
 - [ ] Complete liquid formats, environmental damage and invisible collision-volume behavior.
-- [ ] Remaining XML widgets, saved window positions and movable stacking order.
+- [x] Saved window positions and click-to-front order, including map, with matching pixels/hits.
+- [ ] Remaining XML widgets and movable persistent item inspection.
 - [ ] Complete weather, ecosystem vegetation, terrain water and sky transitions.
 - [ ] Character/audio effects, combat feedback polish and broader compatibility.
 

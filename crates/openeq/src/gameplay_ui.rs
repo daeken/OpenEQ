@@ -9,7 +9,108 @@ pub use crate::trade_ui::{
 };
 pub use openeq_ui::TextLink as UiChatLink;
 use openeq_ui::{Color, DrawCommand, HitTarget, Rect, TextAlign, TextLine, UiBindings, UiFrame};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+pub const MAX_SAVED_WINDOWS: usize = 256;
+
+/// Logical presentation IDs, never skin widget names or packet addresses.
+pub fn valid_window_id(id: &str) -> bool {
+    matches!(
+        id,
+        "player"
+            | "target"
+            | "buffs"
+            | "spellbar"
+            | "group"
+            | "chat"
+            | "actions"
+            | "inventory"
+            | "loot"
+            | "spellbook"
+            | "merchant"
+            | "bank"
+            | "trade"
+            | "casting"
+            | "map"
+    ) || id.strip_prefix("bag:").is_some_and(|slot| {
+        slot.parse::<u32>()
+            .is_ok_and(|value| value <= i32::MAX as u32 && value.to_string() == slot)
+    })
+}
+
+/// Back-to-front window preferences plus transient visibility. Initial restore
+/// preserves saved order; subsequently opened windows come forward once.
+#[derive(Clone, Debug, Default)]
+pub struct WindowStack {
+    order: Vec<String>,
+    visible: BTreeSet<String>,
+    initialized: bool,
+}
+impl WindowStack {
+    pub fn restored(order: &[String]) -> Self {
+        let mut seen = BTreeSet::new();
+        Self {
+            order: order
+                .iter()
+                .filter(|id| valid_window_id(id) && seen.insert((*id).clone()))
+                .take(MAX_SAVED_WINDOWS)
+                .cloned()
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    pub fn order(&self) -> &[String] {
+        &self.order
+    }
+
+    pub fn raise_hit(&mut self, hit: &HitTarget) -> bool {
+        hit.window_id.as_deref().is_some_and(|id| self.raise(id))
+    }
+
+    pub fn raise(&mut self, id: &str) -> bool {
+        if !valid_window_id(id) || self.order.last().is_some_and(|last| last == id) {
+            return false;
+        }
+        self.order.retain(|old| old != id);
+        if self.order.len() == MAX_SAVED_WINDOWS {
+            let oldest_hidden = self
+                .order
+                .iter()
+                .position(|old| !self.visible.contains(old));
+            self.order.remove(oldest_hidden.unwrap_or(0));
+        }
+        self.order.push(id.into());
+        true
+    }
+
+    fn reconcile(&mut self, visible: &[String]) {
+        if self.initialized {
+            for id in visible {
+                if !self.visible.contains(id) {
+                    self.raise(id);
+                }
+            }
+        } else {
+            // Missing startup windows go behind restored windows. This keeps
+            // an old position-only file's default order, and preserves all
+            // saved relative ranks when a skin or character gains a window.
+            let mut initial: Vec<_> = visible
+                .iter()
+                .filter(|id| !self.order.contains(id))
+                .cloned()
+                .collect();
+            initial.append(&mut self.order);
+            self.order = initial;
+            while self.order.len() > MAX_SAVED_WINDOWS {
+                let oldest_hidden = self.order.iter().position(|id| !visible.contains(id));
+                self.order.remove(oldest_hidden.unwrap_or(0));
+            }
+            self.initialized = true;
+        }
+        self.visible = visible.iter().cloned().collect();
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct ChatLine {
@@ -132,6 +233,9 @@ pub struct GameHudState {
     pub cursor_item: Option<UiItem>,
     /// Cursor position in the same logical pixels as the frame viewport.
     pub pointer: Option<[f32; 2]>,
+    /// An interactive overlay owns the pointer; suppress underlying hover tips.
+    /// Cursor items and persistent inspection remain separate presentation.
+    pub hover_blocked: bool,
     pub selected_slot: Option<i32>,
     pub attack: bool,
     pub sitting: bool,
@@ -139,6 +243,8 @@ pub struct GameHudState {
     /// spellbar, spellbook, casting, buffs, merchant, bank, group, trade.
     /// All coordinates are logical pixels.
     pub window_positions: BTreeMap<String, [f32; 2]>,
+    /// Back-to-front logical IDs; used by standalone frame/capture callers.
+    pub window_order: Vec<String>,
     /// Optional persistent right-click inspection (hover inspection is automatic).
     pub inspected_item: Option<UiItem>,
 }
@@ -251,16 +357,23 @@ impl Hud {
         resources: &HudState,
         state: &GameHudState,
     ) -> UiFrame {
+        let mut stack = WindowStack::restored(&state.window_order);
+        self.gameplay_frame_with_windows(viewport, resources, state, Vec::new(), &mut stack)
+    }
+
+    /// Additional named windows (such as map) participate before hover lookup.
+    /// The stack retains visibility across frames so newly opened windows raise
+    /// once without disrupting the order restored on the initial frame.
+    pub fn gameplay_frame_with_windows(
+        &self,
+        viewport: [u32; 2],
+        resources: &HudState,
+        state: &GameHudState,
+        additional: Vec<(String, UiFrame)>,
+        stack: &mut WindowStack,
+    ) -> UiFrame {
         let screen = Rect::new(0., 0., viewport[0] as f32, viewport[1] as f32);
-        let mut draw = Painter {
-            hud: self,
-            screen,
-            pointer: state.pointer,
-            frame: UiFrame {
-                bounds: screen,
-                ..Default::default()
-            },
-        };
+        let mut draw = Painter::new(self, screen, state.pointer);
         let mut bindings = self.initial_bindings.clone();
         self.bind_resources(&mut bindings, resources);
         for (key, name, fallback) in [
@@ -268,6 +381,7 @@ impl Hud {
             ("target", "TargetWindow", Rect::new(264., 12., 260., 52.)),
         ] {
             let rect = position(state, key, fallback, screen);
+            draw.begin_window(key, rect);
             bindings.widget_mut(name).rect = Some(rect);
             draw.widget(name, &bindings);
             draw.hit(
@@ -556,8 +670,10 @@ impl Hud {
         if let Some(casting) = &state.casting {
             draw.casting(state, casting);
         }
+        draw.compose_windows(additional, stack);
         let hovered = state
             .pointer
+            .filter(|_| !state.hover_blocked)
             .and_then(|point| draw.frame.hit_test(point))
             .and_then(|hit| match UiAction::from_hit(hit) {
                 Some(UiAction::InventorySlot(id)) => state
@@ -636,6 +752,7 @@ impl Hud {
             }
         }
         if state.cursor_item.is_none()
+            && !state.hover_blocked
             && let Some(point) = state.pointer
             && let Some(hit) = draw.frame.hit_test(point)
         {
@@ -759,9 +876,64 @@ pub(crate) struct Painter<'a> {
     pub(crate) screen: Rect,
     pub(crate) pointer: Option<[f32; 2]>,
     pub(crate) frame: UiFrame,
+    active_window: Option<String>,
+    windows: Vec<(String, UiFrame)>,
 }
 
-impl Painter<'_> {
+impl<'a> Painter<'a> {
+    pub(crate) fn new(hud: &'a Hud, screen: Rect, pointer: Option<[f32; 2]>) -> Self {
+        Self {
+            hud,
+            screen,
+            pointer,
+            frame: UiFrame {
+                bounds: screen,
+                ..Default::default()
+            },
+            active_window: None,
+            windows: Vec::new(),
+        }
+    }
+
+    fn finish_window(&mut self) {
+        if let Some(id) = self.active_window.take() {
+            let frame = std::mem::replace(
+                &mut self.frame,
+                UiFrame {
+                    bounds: self.screen,
+                    ..Default::default()
+                },
+            );
+            self.windows.push((id, frame));
+        }
+    }
+
+    fn begin_window(&mut self, id: &str, rect: Rect) {
+        self.finish_window();
+        self.active_window = Some(id.to_owned());
+        self.hit(format!("game:window:{id}"), "WindowBody", rect, None);
+    }
+
+    fn compose_windows(&mut self, additional: Vec<(String, UiFrame)>, stack: &mut WindowStack) {
+        self.finish_window();
+        self.windows.extend(additional);
+        let mut seen = BTreeSet::new();
+        self.windows
+            .retain(|(id, _)| valid_window_id(id) && seen.insert(id.clone()));
+        let visible: Vec<_> = self.windows.iter().map(|(id, _)| id.clone()).collect();
+        stack.reconcile(&visible);
+        self.windows
+            .sort_by_key(|(id, _)| stack.order.iter().position(|old| old == id).unwrap_or(0));
+        for (id, mut frame) in self.windows.drain(..) {
+            for hit in &mut frame.hit_targets {
+                hit.window_id = Some(id.clone());
+            }
+            self.frame.commands.append(&mut frame.commands);
+            self.frame.hit_targets.append(&mut frame.hit_targets);
+            self.frame.warnings.append(&mut frame.warnings);
+        }
+    }
+
     pub(crate) fn widget(&mut self, name: &str, bindings: &UiBindings) {
         match self.hud.ui.window(name) {
             Ok(window) => {
@@ -782,6 +954,7 @@ impl Painter<'_> {
         title: &str,
         close: bool,
     ) {
+        self.begin_window(key, rect);
         let mut bindings = UiBindings::default();
         if let Some(root) = self.hud.ui.definition(template) {
             for child in root.values("Pieces").chain(root.values("Pages")) {
@@ -891,6 +1064,7 @@ impl Painter<'_> {
         }
         let id = id.into();
         self.frame.hit_targets.push(HitTarget {
+            window_id: None,
             screen_id: id.clone(),
             item: id,
             kind: kind.into(),
@@ -1328,6 +1502,7 @@ impl Painter<'_> {
         if !rect.is_empty() {
             let id = id.into();
             self.frame.hit_targets.push(HitTarget {
+                window_id: None,
                 screen_id: id.clone(),
                 item: id,
                 kind: kind.to_owned(),
@@ -1375,6 +1550,7 @@ mod tests {
     #[test]
     fn hit_actions_keep_server_slot_addresses() {
         let hit = |item: &str| HitTarget {
+            window_id: None,
             item: item.into(),
             screen_id: String::new(),
             kind: String::new(),
@@ -1436,6 +1612,216 @@ mod tests {
         assert_eq!(chat_edit_text("héllo", Some(999), 12), "héllo|");
     }
 
+    fn minimal_hud() -> Hud {
+        Hud {
+            ui: openeq_ui::UiDocument::default(),
+            initial_bindings: UiBindings::default(),
+        }
+    }
+
+    fn overlap_frame(hud: &Hud, stack: &mut WindowStack) -> UiFrame {
+        let mut draw = Painter::new(hud, Rect::new(0., 0., 240., 160.), None);
+        for (id, rect, color, slot) in [
+            (
+                "inventory",
+                Rect::new(0., 0., 140., 140.),
+                [200, 0, 0, 255],
+                23,
+            ),
+            (
+                "bag:23",
+                Rect::new(80., 0., 140., 140.),
+                [0, 200, 0, 255],
+                4010,
+            ),
+        ] {
+            draw.begin_window(id, rect);
+            draw.fill(rect, color);
+            draw.hit(format!("game:slot:{slot}"), "InvSlot", rect, None);
+        }
+        draw.compose_windows(Vec::new(), stack);
+        draw.frame
+    }
+
+    #[test]
+    fn window_stack_moves_pixels_hits_and_original_clicked_action_together() {
+        let hud = minimal_hud();
+        let mut stack = WindowStack::default();
+        let before = overlap_frame(&hud, &mut stack);
+        assert_eq!(
+            before.hit_test([100., 50.]).unwrap().window_id.as_deref(),
+            Some("bag:23")
+        );
+        assert!(matches!(
+            before.commands.last(),
+            Some(DrawCommand::Fill {
+                color: [0, 200, 0, 255],
+                ..
+            })
+        ));
+        // Click the visible part of the lower inventory; keep that exact hit.
+        let clicked = before.hit_test([20., 50.]).unwrap();
+        assert!(stack.raise_hit(clicked));
+        assert_eq!(
+            UiAction::from_hit(clicked),
+            Some(UiAction::InventorySlot(23))
+        );
+        assert!(!stack.raise_hit(clicked));
+        let after = overlap_frame(&hud, &mut stack);
+        assert_eq!(
+            after.hit_test([100., 50.]).unwrap().window_id.as_deref(),
+            Some("inventory")
+        );
+        assert!(matches!(
+            after.commands.last(),
+            Some(DrawCommand::Fill {
+                color: [200, 0, 0, 255],
+                ..
+            })
+        ));
+        assert_eq!(
+            after
+                .hit_targets
+                .iter()
+                .filter_map(|hit| hit.window_id.as_deref())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["inventory", "bag:23"])
+        );
+    }
+
+    #[test]
+    fn window_stack_preserves_restore_then_raises_reopened_windows_once() {
+        let ids = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect::<Vec<_>>()
+        };
+        let mut stack = WindowStack::restored(&ids(&["map", "inventory", "bag:23"]));
+        stack.reconcile(&ids(&["chat", "inventory", "map"]));
+        assert_eq!(stack.order(), ids(&["chat", "map", "inventory", "bag:23"]));
+        stack.raise("chat");
+        let saved = stack.order().to_vec();
+        stack.reconcile(&ids(&["chat", "inventory", "map"]));
+        assert_eq!(stack.order(), saved);
+        stack.reconcile(&ids(&["chat", "map"]));
+        stack.reconcile(&ids(&["chat", "inventory", "map"]));
+        assert_eq!(stack.order().last().unwrap(), "inventory");
+        assert!(
+            stack.order().contains(&"bag:23".into()),
+            "hidden preferences are retained"
+        );
+        let mut restored = WindowStack::restored(stack.order());
+        restored.reconcile(&ids(&["chat", "inventory", "map"]));
+        assert_eq!(restored.order(), stack.order());
+    }
+
+    #[test]
+    fn window_stack_rejects_invalid_ids_and_bounds_hidden_history() {
+        let order = [
+            "map",
+            "unknown",
+            "map",
+            "bag:23",
+            "bag:-1",
+            "bag:023",
+            "inventory",
+        ]
+        .map(str::to_owned);
+        let mut stack = WindowStack::restored(&order);
+        assert_eq!(stack.order(), ["map", "bag:23", "inventory"]);
+        stack.reconcile(&["map".into(), "inventory".into()]);
+        for id in 0..300 {
+            stack.raise(&format!("bag:{id}"));
+        }
+        assert_eq!(stack.order().len(), MAX_SAVED_WINDOWS);
+        assert!(stack.order().contains(&"map".into()));
+        assert!(stack.order().contains(&"inventory".into()));
+        assert!(!stack.raise("bag:../../file"));
+        let history: Vec<_> = (0..MAX_SAVED_WINDOWS)
+            .map(|id| format!("bag:{id}"))
+            .collect();
+        let mut restored = WindowStack::restored(&history);
+        restored.reconcile(&["chat".into(), "map".into()]);
+        assert_eq!(restored.order().len(), MAX_SAVED_WINDOWS);
+        assert!(restored.order().contains(&"map".into()));
+        assert!(restored.order().contains(&"chat".into()));
+    }
+
+    #[test]
+    fn window_body_and_native_hits_keep_ownership_without_replacing_screen_ids() {
+        let mut hud = minimal_hud();
+        hud.ui.definitions.insert(
+            "NativeButton".into(),
+            openeq_ui::Element {
+                kind: "Button".into(),
+                item: "NativeButton".into(),
+                ..Default::default()
+            },
+        );
+        let screen = Rect::new(0., 0., 240., 160.);
+        let mut draw = Painter::new(&hud, screen, None);
+        draw.shell(
+            "MissingSkin",
+            "bag:23",
+            Rect::new(10., 10., 100., 100.),
+            "Bag",
+            false,
+        );
+        draw.hit_enabled(
+            "disabled",
+            "Button",
+            Rect::new(20., 50., 30., 30.),
+            None,
+            false,
+        );
+        let mut bindings = UiBindings::default();
+        bindings.widget_mut("NativeButton").rect = Some(Rect::new(60., 50., 30., 30.));
+        draw.widget("NativeButton", &bindings);
+        draw.compose_windows(Vec::new(), &mut WindowStack::default());
+        let disabled = draw.frame.hit_test([25., 55.]).unwrap();
+        assert_eq!(disabled.item, "game:window:bag:23");
+        assert_eq!(disabled.window_id.as_deref(), Some("bag:23"));
+        assert!(UiAction::from_hit(disabled).is_none());
+        let native = draw.frame.hit_test([65., 55.]).unwrap();
+        assert_eq!(native.screen_id, "NativeButton");
+        assert_eq!(native.window_id.as_deref(), Some("bag:23"));
+    }
+
+    #[test]
+    fn window_stack_overlays_and_chat_preserve_input_ownership() {
+        let hud = minimal_hud();
+        let mut stack = WindowStack::default();
+        let mut frame = overlap_frame(&hud, &mut stack);
+        // An interactive overlay deliberately owns no ordinary window.
+        frame.hit_targets.push(HitTarget {
+            item: "recovery:panel".into(),
+            screen_id: "RecoveryDialog".into(),
+            window_id: None,
+            kind: "Screen".into(),
+            rect: Rect::new(0., 0., 240., 160.),
+            enabled: true,
+            tooltip: None,
+        });
+        let before = stack.order().to_vec();
+        assert!(!stack.raise_hit(frame.hit_test([100., 50.]).unwrap()));
+        assert_eq!(stack.order(), before);
+        let mut chat = Painter::new(&hud, frame.bounds, None);
+        chat.begin_window("chat", Rect::new(0., 0., 240., 160.));
+        chat.hit(
+            "game:chat_input",
+            "Editbox",
+            Rect::new(0., 0., 100., 20.),
+            None,
+        );
+        chat.compose_windows(Vec::new(), &mut stack);
+        stack.raise("inventory");
+        let clicked = chat.frame.hit_test([5., 5.]).unwrap();
+        stack.raise_hit(clicked);
+        assert_eq!(UiAction::from_hit(clicked), Some(UiAction::FocusChat));
+        assert_eq!(stack.order().last().unwrap(), "chat");
+    }
+
     fn fixture() -> GameHudState {
         let sword = UiItem {
             id: 1,
@@ -1486,6 +1872,179 @@ mod tests {
             .collect();
         state.window_positions.insert("loot".into(), [330., 160.]);
         state
+    }
+
+    #[test]
+    fn map_order_controls_hover_details_and_inspection_stays_above_windows() {
+        let hud = minimal_hud();
+        let mut state = fixture();
+        let resources = HudState::default();
+        let initial = hud.gameplay_frame([1280, 720], &resources, &state);
+        let slot = initial
+            .hit_targets
+            .iter()
+            .find(|hit| hit.item == "game:slot:13")
+            .unwrap();
+        let point = [slot.rect.x + 4., slot.rect.y + 4.];
+        state.pointer = Some(point);
+        let map = crate::map::ZoneMap::parse("test", "");
+        let map_state = crate::map::MapState {
+            rect: Rect::new(point[0] - 30., point[1] - 30., 250., 220.),
+            ..Default::default()
+        };
+        let mut stack = WindowStack::default();
+        let frame = |stack: &mut WindowStack, state: &GameHudState| {
+            hud.gameplay_frame_with_windows(
+                [1280, 720],
+                &resources,
+                state,
+                vec![("map".into(), map.frame([1280, 720], &map_state))],
+                stack,
+            )
+        };
+        let covered = frame(&mut stack, &state);
+        assert_eq!(
+            covered.hit_test(point).unwrap().window_id.as_deref(),
+            Some("map")
+        );
+        let has_details = |frame: &UiFrame| {
+            frame.commands.iter().any(|command| {
+                matches!(
+                    command, DrawCommand::Text { text, .. } if text == "Damage: 4   Delay: 25"
+                )
+            })
+        };
+        assert!(!has_details(&covered));
+        stack.raise("inventory");
+        let raised = frame(&mut stack, &state);
+        assert_eq!(raised.hit_test(point).unwrap().item, "game:slot:13");
+        assert!(has_details(&raised));
+        state.hover_blocked = true;
+        assert!(!has_details(&frame(&mut stack, &state)));
+        state.hover_blocked = false;
+        state.inspected_item = state.equipment.iter().find_map(|slot| slot.item.clone());
+        let inspected = frame(&mut stack, &state);
+        let close = inspected
+            .hit_targets
+            .iter()
+            .find(|hit| hit.item == "game:close:inspect")
+            .unwrap();
+        let hit = inspected
+            .hit_test([close.rect.x + 4., close.rect.y + 4.])
+            .unwrap();
+        assert!(hit.window_id.is_none());
+        assert!(!stack.raise_hit(hit));
+    }
+
+    #[test]
+    #[ignore = "requires original UI assets and GPU; optional OPENEQ_UI_CAPTURE_DIR"]
+    fn original_window_stack_pixels_and_hits_match_at_normal_and_retina_scale() {
+        let base = std::env::var_os("EQ_UI_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(std::env::var_os("HOME").unwrap()).join("EverQuest")
+            });
+        let hud = Hud::load(base).unwrap();
+        let mut state = fixture();
+        let resources = HudState {
+            character: "Adventurer".into(),
+            hp: 0.8,
+            mana: Some(0.7),
+            ..Default::default()
+        };
+        for (id, point) in [
+            ("inventory", [90., 70.]),
+            ("bag:23", [140., 130.]),
+            ("bag:24", [180., 170.]),
+            ("loot", [230., 200.]),
+        ] {
+            state.window_positions.insert(id.into(), point);
+        }
+        let mut second = state.bags[0].clone();
+        second.parent_slot = 24;
+        second.name = "Second backpack".into();
+        for slot in &mut second.slots {
+            slot.slot += 100;
+        }
+        state.bags.push(second);
+        let viewport = [900, 640];
+        let map = crate::map::ZoneMap::parse(
+            "Stacking test",
+            "L -200,0,0,200,0,0,200,200,200\nP 0,0,0,200,160,80,1,Center",
+        );
+        let map_state = crate::map::MapState {
+            rect: Rect::new(230., 190., 350., 320.),
+            ..Default::default()
+        };
+        let mut stack = WindowStack::default();
+        let before = hud.gameplay_frame_with_windows(
+            viewport,
+            &resources,
+            &state,
+            vec![("map".into(), map.frame(viewport, &map_state))],
+            &mut stack,
+        );
+        let overlap = [300., 240.];
+        assert_eq!(
+            before.hit_test(overlap).unwrap().window_id.as_deref(),
+            Some("map")
+        );
+        let clicked = before.hit_test([96., 76.]).unwrap();
+        assert_eq!(
+            UiAction::from_hit(clicked),
+            Some(UiAction::BeginWindowDrag("inventory".into()))
+        );
+        stack.raise_hit(clicked);
+        let after = hud.gameplay_frame_with_windows(
+            viewport,
+            &resources,
+            &state,
+            vec![("map".into(), map.frame(viewport, &map_state))],
+            &mut stack,
+        );
+        assert_eq!(
+            after.hit_test(overlap).unwrap().window_id.as_deref(),
+            Some("inventory")
+        );
+        for frame in [&before, &after] {
+            assert!(frame.warnings.is_empty(), "{:?}", frame.warnings);
+            for id in ["bag:23", "bag:24", "loot", "map", "inventory"] {
+                assert!(
+                    frame
+                        .hit_targets
+                        .iter()
+                        .any(|hit| hit.window_id.as_deref() == Some(id))
+                );
+            }
+        }
+        for scale in [1., 2.] {
+            let mut renderer = openeq_render::Renderer::new_headless(
+                (viewport[0] as f32 * scale) as u32,
+                (viewport[1] as f32 * scale) as u32,
+            )
+            .unwrap();
+            let mut samples = Vec::new();
+            for (name, frame) in [("before", &before), ("after", &after)] {
+                renderer.set_ui_scaled(frame, scale);
+                renderer.render_ui();
+                let (width, height, pixels) = renderer.read_rgba().unwrap();
+                let offset = (((overlap[1] * scale) as u32 * width + (overlap[0] * scale) as u32)
+                    * 4) as usize;
+                samples.push(pixels[offset..offset + 4].to_vec());
+                if let Some(directory) = std::env::var_os("OPENEQ_UI_CAPTURE_DIR") {
+                    std::fs::create_dir_all(&directory).unwrap();
+                    let path = std::path::PathBuf::from(directory)
+                        .join(format!("window-stack-{name}-{}x.png", scale as u32));
+                    image::save_buffer(&path, &pixels, width, height, image::ColorType::Rgba8)
+                        .unwrap();
+                    eprintln!("wrote {}", path.display());
+                }
+            }
+            assert_ne!(
+                samples[0], samples[1],
+                "visible overlap pixel must change with hit ownership"
+            );
+        }
     }
 
     #[test]

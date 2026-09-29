@@ -328,6 +328,7 @@ impl UiRenderer {
                             );
                             let item = format!("chat:link:{id}");
                             self.link_hits.push(HitTarget {
+                                window_id: None,
                                 screen_id: item.clone(),
                                 item,
                                 kind: "ChatLink".into(),

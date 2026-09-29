@@ -1,9 +1,11 @@
 # Movable window stacking and persistence
 
-Design audit: 2026-09-29. Implementation is held until the current death/recovery
-milestone is published. This document describes the next bounded UI slice.
+Design audit and implementation: 2026-09-29, following milestone `7f3eab3`.
+The shared stack, logical ownership, main hooks and order persistence are now
+implemented. The later sections retain the design constraints and acceptance
+criteria used for this slice.
 
-## Outcome and ownership
+## Implemented behavior
 
 Clicking a visible window brings the entire window forward while preserving the
 clicked control's action. Its pixels and hit targets use the same order. The
@@ -11,23 +13,39 @@ order survives restart for the same world/character, alongside the positions
 already saved by `ui_layout.rs`. Opening or raising windows never restores a
 merchant, trade, loot, or other server-owned session.
 
-- UI agent: logical window layers, composition and hit ownership in
-  `gameplay_ui.rs`/Painter, optional metadata in `openeq-ui::HitTarget`, focused
-  tests and original-skin overlap captures. Coordinate any helper changes in
-  commerce/social/trade drawing rather than inferring ownership from actions.
-- Root: `Interaction`/`GameHudState` order plumbing as agreed, persisted order in
-  `ui_layout.rs`, main input hooks, and map insertion into the shared order.
-- Recovery dialogs remain above ordinary windows. Their actions and lifecycle
-  do not change in this slice.
+`Painter` collects each logical window into a complete `UiFrame`, stamps its
+hits with `HitTarget::window_id`, and moves its commands/hits together in the
+requested order. `ScreenID` and action/slot identifiers retain their meanings.
+Missing templates and disabled controls fall back to an explicit body capture.
 
-## Current behavior and source pitfalls
+`Interaction::window_stack` stores a `WindowStack`: saved back-to-front order,
+transient visible IDs, and whether initial restoration has completed. Newly
+opened windows rise once after startup; hidden preferences remain within a
+256-ID bound. Invalid, noncanonical and duplicate saved IDs are rejected before
+replacing the existing layout file. Position-only version-1 files load through
+`#[serde(default)] window_order` without migration.
 
-`Hud::gameplay_frame` in `gameplay_ui.rs` emits a fixed order: player, target,
+`Hud::gameplay_frame_with_windows` accepts additional named frames and the live
+stack. Main passes the map through this path, then prepends nameplates/feedback
+and appends recovery. The existing `gameplay_frame` remains a compatibility
+wrapper using `GameHudState::window_order`. Ordinary hover lookup runs after
+sorting; a recovery-owned pointer suppresses underlying hover tips. Inspection
+and cursor presentation retain their separate overlay behavior.
+
+Main raises the displayed hit's owner on focused, uncaptured left/right presses
+before chat consumes an edit-box click. Raising changes the following frame's
+order without changing the original hit or its action. Title dragging retains
+its existing owner. Layout saves flush on either mouse-button release as well
+as clean shutdown. No visibility, inventory, service session or recovery state
+is persisted.
+
+## Original behavior and source pitfalls
+
+The original `Hud::gameplay_frame` emitted a fixed order: player, target,
 buffs, spellbar, group, chat, actions, inventory, bags, loot, spellbook,
 merchant/bank, trade and casting. `UiFrame::hit_test` scans enabled hits in
-reverse, so current control precedence follows emission order, not click order.
-Dragging only updates a position. An inventory window cannot be raised above a
-later loot window, for example.
+reverse, so control precedence followed emission order. Dragging only updated a
+position. An inventory window could not be raised above a later loot window.
 
 `Painter::shell(template, key, ...)` already receives stable logical keys for
 nearly every window. Player and target use `widget` plus a manual title hit and
@@ -48,7 +66,7 @@ window before its interactive controls. This also covers missing optional skin
 templates and disabled controls without allowing clicks through to lower UI or
 world targeting. Clip that hit to the window's visible rectangle and viewport.
 
-The map is currently appended in `main.rs` after all gameplay drawing, including
+The map was appended in `main.rs` after all gameplay drawing, including
 tooltips and cursor items. It must become an ordinary named layer before those
 overlays are assembled. Sorting only inside the HUD while leaving map appended
 would retain an unraiseable map and hide cursor items beneath it.
@@ -58,7 +76,7 @@ are drawn. Sorting after that lookup is incorrect: it can show details for a
 covered control. Sort ordinary windows, including the map, first; then derive
 hover presentation from that ordered hit list.
 
-Persistent item inspection currently has an interactive close/use panel but no
+Persistent item inspection has an interactive close/use panel but no
 saved position or drag title. Keep its present overlay behavior in this slice
 and give its hits no ordinary-window owner. Making it movable can be a separate
 change. Hover tips and cursor icons have no interactive hits. Nameplates and
@@ -160,3 +178,18 @@ Run relevant UI/persistence tests, strict Clippy, and an original-skin GPU
 capture with inventory, two bags, loot and map deliberately overlapping before
 and after a raise. Inspect ordinary and Retina captures. The render sequence and
 hit order must agree at a point that was visibly covered before the raise.
+
+The targeted GPU check is
+`original_window_stack_pixels_and_hits_match_at_normal_and_retina_scale` in
+`gameplay_ui::tests`. With `OPENEQ_UI_CAPTURE_DIR` set, it writes
+`window-stack-before-1x.png`, `window-stack-after-1x.png` and corresponding `2x`
+captures. It checks a changed overlap pixel as well as the changed hit owner.
+This test requires original UI assets; ordinary stack, hover and persistence
+tests use portable fixtures.
+
+Verification on 2026-09-29: eight portable gameplay UI tests, six persistence
+tests, nine generic XML layout tests, both original-client XML tests and both
+existing original gameplay-window tests passed.
+The stack GPU test passed at 1× and 2×, and all four before/after images were
+visually inspected with zero layout warnings. These checks cover composition
+and persistence without requiring a live server session.

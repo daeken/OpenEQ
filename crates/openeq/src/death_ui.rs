@@ -54,15 +54,7 @@ impl Hud {
         view: &RecoveryView,
     ) -> UiFrame {
         let screen = Rect::new(0., 0., viewport[0] as f32, viewport[1] as f32);
-        let mut draw = Painter {
-            hud: self,
-            screen,
-            pointer,
-            frame: UiFrame {
-                bounds: screen,
-                ..Default::default()
-            },
-        };
+        let mut draw = Painter::new(self, screen, pointer);
         if screen.is_empty() || (view.phase == RecoveryPhase::Alive && view.resurrection.is_none())
         {
             return draw.frame;
@@ -537,6 +529,7 @@ mod tests {
             "game:attack",
         ] {
             let hit = HitTarget {
+                window_id: None,
                 item: id.into(),
                 screen_id: String::new(),
                 kind: String::new(),

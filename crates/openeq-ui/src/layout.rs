@@ -120,6 +120,8 @@ pub struct TextLink {
 pub struct HitTarget {
     pub item: String,
     pub screen_id: String,
+    /// Optional application-owned logical window; independent of XML ScreenID.
+    pub window_id: Option<String>,
     pub kind: String,
     pub rect: Rect,
     pub enabled: bool,
@@ -261,6 +263,7 @@ impl UiWindow<'_> {
             )
         {
             output.hit_targets.push(HitTarget {
+                window_id: None,
                 item: element.item.clone(),
                 screen_id: element
                     .value("ScreenID")

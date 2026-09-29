@@ -615,6 +615,7 @@ mod tests {
             u64::from(u32::MAX) * 1000
         );
         let hit = |id: &str| HitTarget {
+            window_id: None,
             item: id.into(),
             screen_id: String::new(),
             kind: String::new(),
