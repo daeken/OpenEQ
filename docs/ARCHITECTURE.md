@@ -289,6 +289,14 @@ Networking always uses the player position.
 The camera sits six units above the player's feet; outgoing server positions
 use a center three units above the feet. Developer flight bypasses collision.
 
+Authoritative arrivals receive one bounded floor correction after the matching
+destination geometry loads. PoK's server safe point puts feet 0.25 units below
+the original floor after the protocol's zone-entry offset; ordinary collision
+correctly refuses to slide that embedded body. Arrival recovery can raise feet
+by at most two units to a center-supported floor, with full wall/ceiling clearance
+and unchanged XY. It never snaps airborne arrivals downward or adjusts ordinary
+walking frames. Original PoK regressions verify movement in all four directions.
+
 Walking queries the static and dynamic spatial indexes together: floor selection,
 step-up, sliding, and ceiling clearance share one solve, so terrain cannot snap
 a player back off a moving platform. Step-up and ground contact use the whole
@@ -324,6 +332,16 @@ physical density. Windows can be dragged; advanced XML widgets and STML remain
 incomplete.
 
 `chat.rs` owns Unicode-safe text editing and slash-command parsing.
+`input.rs` consumes keyboard, IME and focus events in window order, so an IME
+commit immediately followed by Enter is submitted intact. Enter autorepeat
+cannot reopen chat after submission or zone loading. Every primary-window focus
+loss resets held keys and mouse buttons, even if focus returns in the same frame
+(a case Bevy's native focus-loss helper skips); later fresh presses are replayed.
+This prevents stale macOS Command/Control state from suppressing all chat text.
+Chat clicks retain an active draft, outside clicks release it, and native IME
+enablement follows the final input owner after both keys and clicks.
+Keys pressed in chat remain unavailable to movement and hotkeys until released,
+including repeats arriving after submission; other freshly pressed keys work.
 `interaction.rs` translates UI intentions into typed network commands and builds
 presentation models. `game.rs` reduces server gameplay events into inventory,
 resources, chat, loot and spell state. Commerce and social interaction modules

@@ -16,13 +16,10 @@ use openeq_render::actors::{ActorRenderer, CharacterModelSet};
 use std::path::PathBuf;
 
 use bevy::ecs::system::NonSendMarker;
-use bevy::input::{
-    ButtonState,
-    keyboard::KeyboardInput,
-    mouse::{AccumulatedMouseMotion, MouseWheel},
-};
+use bevy::input::ButtonState;
+use bevy::input::mouse::{AccumulatedMouseMotion, MouseWheel};
 use bevy::prelude::*;
-use bevy::window::{CursorGrabMode, CursorOptions, Ime, PrimaryWindow, WindowFocused};
+use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowEvent, WindowFocused};
 use bevy::winit::{WINIT_WINDOWS, WinitSettings};
 use openeq_assets::loader;
 use openeq_render::Renderer;
@@ -63,6 +60,8 @@ struct Runtime {
     collision: Option<openeq_assets::collision::CollisionWorld>,
     fly: bool,
     ground_motion: movement::GroundMotion,
+    /// Resolve only an authoritative arrival, after its own zone assets load.
+    spawn_needs_recovery: bool,
     interaction: openeq::interaction::Interaction,
     loaded_zone: Option<String>,
     loaded_destination: Option<loading::Destination>,
@@ -117,6 +116,7 @@ impl Runtime {
             collision: None,
             fly: true,
             ground_motion: movement::GroundMotion::default(),
+            spawn_needs_recovery: false,
             interaction: openeq::interaction::Interaction::default(),
             loaded_zone: None,
             loaded_destination: None,
@@ -167,7 +167,11 @@ fn main() -> AppExit {
         .insert_resource(WinitSettings::game())
         .insert_resource(runtime)
         .insert_resource(options)
-        // Capture runs first so the camera sees this frame's grab state.
+        .add_systems(
+            PreUpdate,
+            recover_window_focus.after(bevy::input::InputSystems),
+        )
+        // Input ownership and capture run before camera movement.
         .add_systems(
             Update,
             (
@@ -253,7 +257,7 @@ fn update_camera(
     keys: Res<ButtonInput<KeyCode>>,
     motion: Res<AccumulatedMouseMotion>,
     time: Res<Time>,
-    cursors: Query<&CursorOptions, With<PrimaryWindow>>,
+    windows: Query<(&Window, &CursorOptions), With<PrimaryWindow>>,
     mut runtime: ResMut<Runtime>,
 ) {
     runtime.moving = false;
@@ -261,7 +265,9 @@ fn update_camera(
         return;
     }
     let online = runtime.live.is_some();
-    let controls = !runtime.interaction.editor.active
+    let focused = windows.single().is_ok_and(|(window, _)| window.focused);
+    let controls = focused
+        && !runtime.interaction.editor.active
         && !runtime.interaction.controls_blocked
         && runtime
             .live
@@ -273,7 +279,9 @@ fn update_camera(
     }
     let mut camera = runtime.camera;
 
-    let captured = cursors.single().map(is_captured).unwrap_or(false);
+    let captured = windows
+        .single()
+        .is_ok_and(|(_, cursor)| is_captured(cursor));
     let delta = if captured && controls {
         motion.delta
     } else {
@@ -405,6 +413,10 @@ fn handle_cursor_capture(
         }
     }
 
+    if !windows.single().is_ok_and(|window| window.focused) {
+        return;
+    }
+
     if runtime.interaction.editor.active || runtime.interaction.escape_handled {
         return;
     }
@@ -439,14 +451,24 @@ fn is_captured(options: &CursorOptions) -> bool {
     options.grab_mode != CursorGrabMode::None
 }
 
+fn recover_window_focus(
+    windows: Query<Entity, With<PrimaryWindow>>,
+    mut events: MessageReader<WindowEvent>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut mouse: ResMut<ButtonInput<MouseButton>>,
+) {
+    if let Ok(window) = windows.single() {
+        openeq::input::recover_focus_loss(window, events.read(), &mut keys, &mut mouse);
+    } else {
+        events.clear();
+    }
+}
+
 fn handle_gameplay_input(
-    keys: Res<ButtonInput<KeyCode>>,
-    mouse: Res<ButtonInput<MouseButton>>,
-    (mut keyboard, mut ime, mut wheel): (
-        MessageReader<KeyboardInput>,
-        MessageReader<Ime>,
-        MessageReader<MouseWheel>,
-    ),
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut mouse: ResMut<ButtonInput<MouseButton>>,
+    mut events: MessageReader<WindowEvent>,
+    mut wheel: MessageReader<MouseWheel>,
     mut windows: Query<(Entity, &mut Window, &mut CursorOptions), With<PrimaryWindow>>,
     mut runtime: ResMut<Runtime>,
     mut exit: MessageWriter<AppExit>,
@@ -457,15 +479,22 @@ fn handle_gameplay_input(
     if let Some(live) = runtime.live.as_mut() {
         live.poll();
     }
+    runtime.interaction.controls_blocked = runtime.interaction.editor.active;
+    runtime.interaction.escape_handled = false;
     if !runtime.world_ready() {
-        keyboard.clear();
-        ime.clear();
+        if keys.just_pressed(KeyCode::Escape) {
+            exit.write(AppExit::Success);
+        }
+        events.clear();
         wheel.clear();
+        keys.reset_all();
+        mouse.reset_all();
         window.ime_enabled = false;
         release_cursor(&mut cursor);
-        runtime.interaction.editor.cancel();
-        runtime.interaction.ime_composing = false;
-        runtime.interaction.escape_handled = false;
+        let interaction = &mut runtime.interaction;
+        interaction.chat_input.reset(&mut interaction.editor);
+        interaction.drag = None;
+        interaction.pointer = None;
         runtime.interaction.controls_blocked = true;
         return;
     }
@@ -482,8 +511,7 @@ fn handle_gameplay_input(
         ..
     } = &mut *runtime
     else {
-        keyboard.clear();
-        ime.clear();
+        events.clear();
         wheel.clear();
         return;
     };
@@ -493,94 +521,65 @@ fn handle_gameplay_input(
             window.title = title;
         }
     }
-    interaction.controls_blocked = interaction.editor.active;
-    interaction.escape_handled = false;
-    interaction.pointer = window.cursor_position().map(|p| [p.x, p.y]);
-    let command_modifier = keys.pressed(KeyCode::ControlLeft)
-        || keys.pressed(KeyCode::ControlRight)
-        || keys.pressed(KeyCode::SuperLeft)
-        || keys.pressed(KeyCode::SuperRight);
-    for event in keyboard
-        .read()
-        .filter(|event| event.window == window_id && event.state == ButtonState::Pressed)
-    {
-        if !interaction.editor.active {
-            if event.key_code == KeyCode::Enter || event.key_code == KeyCode::NumpadEnter {
-                interaction.editor.open("");
-            } else if event.text.as_deref() == Some("/") && !command_modifier {
-                interaction.editor.open("/");
-            } else {
-                continue;
-            }
-            release_cursor(&mut cursor);
-            interaction.controls_blocked = true;
-            continue;
-        }
-        interaction.controls_blocked = true;
-        match event.key_code {
-            KeyCode::Enter | KeyCode::NumpadEnter if !interaction.ime_composing => {
-                if let Some(text) = interaction.editor.submit()
-                    && interaction.submit(&text, live, camera_position)
-                {
-                    exit.write(AppExit::Success);
-                }
-            }
-            KeyCode::Escape => {
-                interaction.editor.cancel();
-                interaction.ime_composing = false;
-                interaction.escape_handled = true;
-            }
-            KeyCode::Backspace if !interaction.ime_composing => {
-                interaction.editor.backspace(command_modifier)
-            }
-            KeyCode::Delete if !interaction.ime_composing => interaction.editor.delete(),
-            KeyCode::ArrowLeft if !interaction.ime_composing => interaction.editor.left(),
-            KeyCode::ArrowRight if !interaction.ime_composing => interaction.editor.right(),
-            KeyCode::Home => interaction.editor.cursor = 0,
-            KeyCode::End => interaction.editor.cursor = interaction.editor.text.len(),
-            KeyCode::ArrowUp if !interaction.ime_composing => interaction.editor.history(true),
-            KeyCode::ArrowDown if !interaction.ime_composing => interaction.editor.history(false),
-            KeyCode::PageUp => {
-                interaction.chat_scroll = interaction.chat_scroll.saturating_add(8).min(5000)
-            }
-            KeyCode::PageDown => {
-                interaction.chat_scroll = interaction.chat_scroll.saturating_sub(8)
-            }
-            KeyCode::KeyU if command_modifier => {
-                interaction.editor.text.clear();
-                interaction.editor.cursor = 0;
-            }
-            _ if !command_modifier && !interaction.ime_composing => {
-                if let Some(text) = &event.text {
-                    interaction.editor.insert(text);
-                }
-            }
-            _ => {}
-        }
+    if interaction.pointer.is_none() {
+        interaction.pointer = window.cursor_position().map(|p| [p.x, p.y]);
     }
-    for event in ime.read() {
-        if !interaction.editor.active {
-            continue;
-        }
+    let mut chat_pointer_owned = false;
+    for event in events.read() {
+        // Honor a chat click before any later text in this same event batch.
+        // Clicking an active edit box keeps its draft and composition intact.
         match event {
-            Ime::Preedit { window, value, .. } if *window == window_id => {
-                interaction.editor.preedit.clone_from(value);
-                interaction.ime_composing = !value.is_empty();
+            WindowEvent::CursorMoved(event) if event.window == window_id => {
+                interaction.pointer = Some(event.position.to_array());
             }
-            Ime::Commit { window, value } if *window == window_id => {
-                interaction.editor.insert(value);
-                interaction.editor.preedit.clear();
-                interaction.ime_composing = false;
-            }
-            Ime::Disabled { window } if *window == window_id => {
-                interaction.editor.preedit.clear();
-                interaction.ime_composing = false;
+            WindowEvent::MouseButtonInput(event)
+                if event.window == window_id
+                    && event.state == ButtonState::Pressed
+                    && event.button == MouseButton::Left
+                    && !is_captured(&cursor) =>
+            {
+                let chat_hit = interaction
+                    .pointer
+                    .and_then(|point| ui_frame.hit_test(point))
+                    .is_some_and(|hit| hit.item == "game:chat_input");
+                if chat_hit {
+                    chat_pointer_owned = true;
+                    if !interaction.editor.active {
+                        interaction.editor.open("");
+                    }
+                    interaction.controls_blocked = true;
+                } else if !chat_hit && interaction.editor.active {
+                    interaction.editor.cancel();
+                    interaction.controls_blocked = true;
+                }
             }
             _ => {}
         }
+        let result = interaction
+            .chat_input
+            .event(&mut interaction.editor, window_id, event);
+        interaction.controls_blocked |= result.captured;
+        interaction.escape_handled |= result.escape_handled;
+        interaction.chat_scroll = interaction
+            .chat_scroll
+            .saturating_add_signed(result.scroll as isize)
+            .min(5000);
+        if matches!(event, WindowEvent::WindowFocused(event) if event.window == window_id && !event.focused)
+        {
+            interaction.drag = None;
+            release_cursor(&mut cursor);
+        }
+        if interaction.editor.active {
+            release_cursor(&mut cursor);
+        }
+        if let Some(text) = result.submitted
+            && interaction.submit(&text, live, camera_position)
+        {
+            exit.write(AppExit::Success);
+        }
     }
-    window.ime_enabled = interaction.editor.active;
-    if !interaction.controls_blocked && !interaction.editor.active {
+    interaction.chat_input.suppress_captured_keys(&mut keys);
+    if window.focused && !interaction.controls_blocked && !interaction.editor.active {
         if keys.just_pressed(KeyCode::KeyM) {
             if zone_map.is_some() {
                 *map_open = !*map_open;
@@ -708,7 +707,10 @@ fn handle_gameplay_input(
             }
         }
     }
-    if !is_captured(&cursor)
+    let ui_left_click = !chat_pointer_owned && mouse.just_pressed(MouseButton::Left);
+    let ui_right_click = !chat_pointer_owned && mouse.just_pressed(MouseButton::Right);
+    if window.focused
+        && !is_captured(&cursor)
         && let Some(point) = interaction.pointer
     {
         if mouse.pressed(MouseButton::Left)
@@ -732,7 +734,7 @@ fn handle_gameplay_input(
         }
         if let Some(hit) = ui_frame.hit_test(point) {
             if hit.item == "game:chat_log"
-                && mouse.just_pressed(MouseButton::Left)
+                && ui_left_click
                 && let Some(link) = chat_link_hits
                     .iter()
                     .rev()
@@ -756,7 +758,7 @@ fn handle_gameplay_input(
             }
             if let Some(action) = openeq::map::MapAction::from_hit(hit) {
                 use openeq::map::{MapAction, MapMarker};
-                if mouse.just_pressed(MouseButton::Left) {
+                if ui_left_click {
                     match action {
                         MapAction::Close => *map_open = false,
                         MapAction::ZoomIn => {
@@ -794,7 +796,7 @@ fn handle_gameplay_input(
                         }
                     }
                 }
-                if mouse.just_pressed(MouseButton::Right) {
+                if ui_right_click {
                     map_state.waypoints.clear();
                 }
                 for event in wheel.read() {
@@ -802,18 +804,18 @@ fn handle_gameplay_input(
                         (map_state.units_per_pixel * 1.2f32.powf(-event.y)).clamp(0.25, 128.);
                 }
             }
-            if (mouse.just_pressed(MouseButton::Left) || mouse.just_pressed(MouseButton::Right))
+            if (ui_left_click || ui_right_click)
                 && let Some(action) = hud::UiAction::from_hit(hit)
             {
                 if let hud::UiAction::BeginWindowDrag(name) = action {
-                    if mouse.just_pressed(MouseButton::Left) {
+                    if ui_left_click {
                         interaction.drag =
                             Some((name, [point[0] - hit.rect.x, point[1] - hit.rect.y]));
                     }
-                } else {
+                } else if !matches!(action, hud::UiAction::FocusChat) {
                     interaction.ui_action(
                         action,
-                        mouse.just_pressed(MouseButton::Right),
+                        ui_right_click,
                         keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight),
                         live,
                         camera_position,
@@ -832,6 +834,13 @@ fn handle_gameplay_input(
                 }
             }
         }
+    }
+    // Clicks can focus chat too: synchronize native text input only after
+    // both keyboard and pointer actions have chosen the final owner.
+    window.ime_enabled = window.focused && interaction.editor.active;
+    if interaction.editor.active {
+        interaction.controls_blocked = true;
+        release_cursor(&mut cursor);
     }
     wheel.clear();
     interaction.tick(live);
@@ -898,10 +907,12 @@ fn render_frame(
                 .zone_travel
                 .rebase([position.x, position.y, position.z]);
             runtime.ground_motion = movement::GroundMotion::default();
+            runtime.spawn_needs_recovery = true;
         }
     }
     if let Some(mut renderer) = runtime.renderer.take() {
         prepare_world(&mut runtime, &mut renderer, &options);
+        recover_arrival_floor(&mut runtime);
         if runtime.world_ready() && runtime.live.is_some() {
             let runtime = &mut *runtime;
             let camera = runtime.camera;
@@ -1268,6 +1279,18 @@ fn prepare_world(runtime: &mut Runtime, renderer: &mut Renderer, options: &Optio
     }
 }
 
+fn recover_arrival_floor(runtime: &mut Runtime) {
+    if !runtime.spawn_needs_recovery || !runtime.world_ready() {
+        return;
+    }
+    if let Some(world) = &runtime.collision {
+        let [x, y, z] = runtime.camera.position;
+        let feet = movement::recover_spawn(world, [x, y, z - 6.]);
+        runtime.camera.position = [feet[0], feet[1], feet[2] + 6.];
+    }
+    runtime.spawn_needs_recovery = false;
+}
+
 fn zone_environment(
     env: &openeq_net::zone::Environment,
 ) -> openeq_render::environment::EnvironmentSettings {
@@ -1458,6 +1481,9 @@ fn handle_targeting(
     let Ok((window, cursor)) = windows.single() else {
         return;
     };
+    if !window.focused {
+        return;
+    }
     let camera = view_camera(&runtime);
     let point = window.cursor_position().map(|p| [p.x, p.y]);
     let ui_hit = point.is_some_and(|p| runtime.ui_frame.hit_test(p).is_some());

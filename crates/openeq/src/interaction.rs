@@ -15,6 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Default)]
 pub struct Interaction {
     pub editor: ChatEditor,
+    pub chat_input: crate::input::ChatInput,
     pub inventory_open: bool,
     pub open_bags: BTreeSet<i32>,
     pub chat_scroll: usize,
@@ -27,7 +28,6 @@ pub struct Interaction {
     /// Captures the whole frame even when Enter/Escape closes the editor.
     pub controls_blocked: bool,
     pub escape_handled: bool,
-    pub ime_composing: bool,
     pub spellbook_open: bool,
     pub spellbook_page: usize,
     pub selected_gem: Option<u8>,
@@ -620,7 +620,11 @@ impl Interaction {
             UiAction::LootTarget => {
                 self.action(Action::Loot, live, position);
             }
-            UiAction::FocusChat => self.editor.open(""),
+            UiAction::FocusChat => {
+                if !self.editor.active {
+                    self.editor.open("");
+                }
+            }
             UiAction::CloseWindow(window) => self.close_window(&window, live),
             UiAction::BeginWindowDrag(_) => {}
         }

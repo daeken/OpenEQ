@@ -279,6 +279,45 @@ impl CollisionWorld {
             .supported(feet.truncate(), feet.z, radius, tolerance)
     }
 
+    /// Repairs a slightly embedded arrival by raising feet onto a nearby floor.
+    /// This is for an authoritative spawn/teleport only, never ordinary motion.
+    /// It does not lower an airborne body, cross a gap, move sideways, or accept
+    /// a position whose full upright body intersects a wall or ceiling.
+    pub fn recover_player_from_floor(
+        &self,
+        feet: [f32; 3],
+        radius: f32,
+        height: f32,
+        max_rise: f32,
+    ) -> Option<[f32; 3]> {
+        let feet = Vec3::from(feet);
+        if !feet.is_finite()
+            || ![radius, height, max_rise]
+                .iter()
+                .all(|value| value.is_finite())
+            || radius <= 0.
+            || height <= SKIN * 2.
+            || max_rise <= SKIN
+        {
+            return None;
+        }
+        // A recovery remains a small step, even for an accidental large input.
+        let max_rise = max_rise.min(height * 0.5);
+        let floor = self.ground_height(feet.x, feet.y, feet.z, max_rise, 0.)?;
+        if floor <= feet.z + SKIN || floor > feet.z + max_rise {
+            return None;
+        }
+        let raised = Vec3::new(feet.x, feet.y, floor);
+        let query = CollisionQuery {
+            world: self,
+            dynamic: None,
+        };
+        let clear = query.slide(raised, raised, radius, height)?;
+        // Clearance must hold at the supplied XY; accepting a slide here could
+        // silently move a character around a wall or through a narrow opening.
+        (clear.distance_squared(raised) <= 1e-8).then_some(raised.to_array())
+    }
+
     /// Slides an upright body through static geometry and follows reachable
     /// ground. `position` is the feet, `delta` is displacement (not velocity),
     /// all in EQ world units. Supply negative delta Z for gravity, positive for

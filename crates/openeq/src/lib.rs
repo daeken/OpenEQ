@@ -7,6 +7,7 @@ pub mod coordinates;
 pub mod game;
 pub mod group;
 pub mod hud;
+pub mod input;
 pub mod interaction;
 pub mod live;
 pub mod loading;

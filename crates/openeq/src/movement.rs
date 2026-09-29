@@ -13,6 +13,16 @@ const JUMP_SPEED: f32 = 32.0;
 const RADIUS: f32 = 1.0;
 const HEIGHT: f32 = 6.0;
 
+/// Corrects a small floor penetration once when installing an authoritative
+/// spawn. Some EQEmu safe points place the server center too low for our body
+/// height. Keep normal airborne arrivals unchanged, and require full clearance
+/// before raising feet by at most the ordinary two-unit step height.
+pub fn recover_spawn(world: &CollisionWorld, feet: [f32; 3]) -> [f32; 3] {
+    world
+        .recover_player_from_floor(feet, RADIUS, HEIGHT, 2.)
+        .unwrap_or(feet)
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct GroundMotion {
     pub velocity_z: f32,
