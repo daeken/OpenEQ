@@ -53,7 +53,7 @@ Binary EQGZ v2 is also supported. It adds a counted array of u32 values after ea
 
 This is a compatibility implementation, not a complete reproduction of the client's terrain shader:
 
-- Terrain material layers are composited to a 128×128 RGBA image per tile. This bounds memory for zones with thousands of tiles but loses close-up detail. A GPU terrain material should sample original detail maps and masks directly.
+- Terrain material layers are composited to a 128×128 RGBA image per tile. This bounds memory for zones with thousands of tiles but loses close-up detail. Baked materials clamp diffuse sampling at the actual GPU texture edges, preventing the repeating atlas sampler from mixing in a tile's opposite edge. Interior UVs, ordinary repeating materials and water sampling are unchanged. Authored layer discontinuities and the low-resolution bake remain visible; a GPU terrain material should sample original detail maps and masks directly.
 - ECO height/slope ranges and repeats are used, but coverage/blend maps and the client's exact soft blending rules remain unverified. The interpolation is an approximation.
 - The two terrain color arrays, MOD/LIT precomputed illumination, ecosystem normal maps, generated radial flora and particle effects are not rendered yet.
 - Finite sheets and supported indexed tile rectangles are drawn. Indexed surfaces use the native two-sided grid, quantized tile UVs, authored materials and ordinary depth occlusion. The current color/reflection/lighting model remains approximate; the native time provider and complete blend/depth states remain unverified. Newer liquid-volume transforms and swimming remain unsupported. See `HEIGHTMAP_WATER_SURFACES.md`.
@@ -62,3 +62,18 @@ This is a compatibility implementation, not a complete reproduction of the clien
 - DAT light/effect definitions currently use the first color/intensity frame as a static point light. Temporal effects and exact anchoring should be compared with the original client.
 
 Asset tests verify finite coordinates, valid indices, texture resolution, object counts, mesh topology and parser alignment. They do not claim pixel-identical rendering with the proprietary client.
+
+## Terrain edge regression
+
+The original Feerrott2 terrain-only view at scene `[-1544,744,60]` looking toward
+`[-1544,760,-30]` exposed thin colored tile-grid lines. A synthetic GPU fixture
+with different opposite edge colors failed before explicit material clamping.
+It now matches a solid-edge reference at all four edges in both opaque and
+blended passes; ordinary repeating materials still mix opposite edges. The
+alpha-shadow pass uses the same addressing rule.
+
+The original before/after comparison changes 3,932 of 518,400 pixels, leaving
+geometry and bounds unchanged. Captures are in `/tmp/openeq-terrain-addressing`.
+They deliberately omit object instances to reveal the terrain. This corrects
+opposite-edge filtering only; it does not claim seamless authored ecosystems
+or original-client terrain shader fidelity.

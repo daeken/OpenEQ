@@ -52,10 +52,14 @@ pub struct Material {
     pub transparent: bool,
     /// Unlit/emissive surface, e.g. fire.
     pub emissive: bool,
+    /// Clamp diffuse sampling to its edges (for nonperiodic baked terrain tiles).
+    pub clamp_uv: bool,
 }
 
+type MaterialKey = (u32, u32, String, bool, bool, bool, bool);
+
 impl Material {
-    fn key(&self) -> (u32, u32, String, bool, bool, bool) {
+    fn key(&self) -> MaterialKey {
         (
             self.flags,
             self.anim_speed,
@@ -63,6 +67,7 @@ impl Material {
             self.alpha_mask,
             self.transparent,
             self.emissive,
+            self.clamp_uv,
         )
     }
 }
@@ -371,7 +376,7 @@ where
     }
 
     let mut materials = Vec::new();
-    let mut material_index: HashMap<(u32, u32, String, bool, bool, bool), usize> = HashMap::new();
+    let mut material_index: HashMap<MaterialKey, usize> = HashMap::new();
     let mut geometries = Vec::new();
 
     // Stable ordering keeps output deterministic between runs.
@@ -411,6 +416,7 @@ where
             alpha_mask,
             transparent,
             emissive,
+            clamp_uv: false,
         };
         let index = *material_index.entry(material.key()).or_insert_with(|| {
             materials.push(material.clone());

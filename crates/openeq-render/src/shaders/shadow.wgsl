@@ -12,6 +12,7 @@ const EQ_TO_WORLD: mat4x4<f32> = mat4x4<f32>(
 );
 
 // Must match the flags the CPU packs into each vertex.
+const FLAG_CLAMP_UV: u32 = 16u;
 const FLAG_ALPHA_MASK: u32 = 1u;
 const FLAG_TRANSPARENT: u32 = 2u;
 const FLAG_WATER: u32 = 8u;
@@ -93,14 +94,19 @@ fn vs_main(vertex: Vertex, instance: Instance) -> Fragment {
 
 @fragment
 fn fs_main(in: Fragment) {
+    // Baked tiles are not periodic. Clamp after interpolation to preserve
+    // interior UVs and keep linear filtering away from the opposite edge.
+    let inset = vec2<f32>(0.5) / vec2<f32>(textureDimensions(atlas));
+    let uv = select(in.uv, clamp(in.uv, inset, vec2<f32>(1.0) - inset),
+        (in.flags & FLAG_CLAMP_UV) != 0u);
     // Partial alpha cannot cast an opaque shadow. Hair's fully opaque core
     // still casts, while tattoo decals never add solid shadow speckles.
     if ((in.flags & FLAG_TRANSPARENT) != 0u && (in.flags & FLAG_WATER) == 0u) {
-        let texel = textureSampleLevel(atlas, atlas_sampler, in.uv, i32(in.layer), 0.0);
+        let texel = textureSampleLevel(atlas, atlas_sampler, uv, i32(in.layer), 0.0);
         if (texel.a < 1.0) { discard; }
     }
     if ((in.flags & FLAG_ALPHA_MASK) != 0u) {
-        let texel = textureSampleLevel(atlas, atlas_sampler, in.uv, i32(in.layer), 0.0);
+        let texel = textureSampleLevel(atlas, atlas_sampler, uv, i32(in.layer), 0.0);
         if (texel.a < 0.5) {
             discard;
         }

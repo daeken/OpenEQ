@@ -21,6 +21,7 @@ fn wall(renderer: &Renderer, y: f32) -> GpuScene {
             alpha_mask: false,
             transparent: false,
             emissive: true,
+            clamp_uv: false,
         }],
         vec![Geometry {
             vertices: vec![

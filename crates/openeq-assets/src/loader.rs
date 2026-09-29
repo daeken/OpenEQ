@@ -647,6 +647,7 @@ fn append_eqg_object(scene: &mut Scene, object: &TerMod, object_name: &str, arch
             },
             transparent: false,
             emissive: false,
+            clamp_uv: false,
         });
         scene.meshes.push(Geometry {
             vertices,
@@ -1033,6 +1034,7 @@ fn load_heightmap(base: &Path, name: &str, archive: Archive, zon: &[u8]) -> Resu
                 alpha_mask: false,
                 transparent: false,
                 emissive: false,
+                clamp_uv: false,
             });
             scene.meshes.push(Geometry {
                 vertices,

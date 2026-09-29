@@ -18,6 +18,7 @@ fn wall(y: f32) -> Scene {
         alpha_mask: false,
         transparent: false,
         emissive: true,
+        clamp_uv: false,
     };
     let mut vertices = Vec::new();
     for [x, z] in [[-100., -100.], [100., -100.], [100., 100.], [-100., 100.]] {

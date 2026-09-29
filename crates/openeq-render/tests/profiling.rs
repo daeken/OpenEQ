@@ -38,6 +38,7 @@ fn plane(renderer: &Renderer, y: f32, transparent: bool) -> GpuScene {
             alpha_mask: transparent,
             transparent,
             emissive: true,
+            clamp_uv: false,
         }],
         vec![Geometry {
             vertices: vec![

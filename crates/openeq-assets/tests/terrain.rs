@@ -65,6 +65,16 @@ fn actual_heightmap_zones_bake_textured_terrain_and_objects() {
             .filter(|n| n.starts_with("__terrain_"))
             .collect::<Vec<_>>();
         assert!(terrain.len() > 300);
+        for material in &scene.materials {
+            assert_eq!(
+                material.clamp_uv,
+                material
+                    .textures
+                    .first()
+                    .is_some_and(|name| name.starts_with("__terrain_")),
+                "{zone}: only baked tile images should clamp their edges"
+            );
+        }
         for name in terrain.iter().step_by(37) {
             let texture = scene.texture(name).unwrap();
             let magenta = texture

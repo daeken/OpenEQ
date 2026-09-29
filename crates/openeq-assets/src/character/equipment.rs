@@ -145,6 +145,7 @@ impl CharacterLibrary {
                 alpha_mask: shader.starts_with("alpha") || shader.starts_with("chroma"),
                 transparent: shader.starts_with("addalpha"),
                 emissive: shader.starts_with("addalpha"),
+                clamp_uv: false,
             });
         }
         if meshes.is_empty() {

@@ -59,6 +59,7 @@ struct WaterParams {
 @group(2) @binding(3) var linear_atlas: texture_2d_array<f32>;
 
 // Material flags shared with the CPU side.
+const FLAG_CLAMP_UV: u32 = 16u;
 const FLAG_ALPHA_MASK: u32 = 1u;
 const FLAG_TRANSPARENT: u32 = 2u;
 const FLAG_EMISSIVE: u32 = 4u;
@@ -199,7 +200,12 @@ fn fs_main(in: Fragment) -> Targets {
         out.normal = vec4<f32>(normal * 0.5 + 0.5, f32(in.flags) / 255.0);
         return out;
     }
-    let texel = textureSampleLevel(atlas, atlas_sampler, in.uv, i32(in.layer), 0.0);
+    // Baked tiles are not periodic. Clamp after interpolation to preserve
+    // interior UVs and keep linear filtering away from the opposite edge.
+    let inset = vec2<f32>(0.5) / vec2<f32>(textureDimensions(atlas));
+    let uv = select(in.uv, clamp(in.uv, inset, vec2<f32>(1.0) - inset),
+        (in.flags & FLAG_CLAMP_UV) != 0u);
+    let texel = textureSampleLevel(atlas, atlas_sampler, uv, i32(in.layer), 0.0);
     // Preserve opaque interiors of alpha materials in the depth buffer. Their
     // fractional edges and decals are shaded later with true alpha blending.
     if ((in.flags & FLAG_TRANSPARENT) != 0u && texel.a < 1.0) {

@@ -61,6 +61,7 @@ fn invisible_wall_blocks_body_and_camera_without_changing_pixels_or_gpu_bounds()
             alpha_mask: false,
             transparent: false,
             emissive: true,
+            clamp_uv: false,
         }],
         vec![Geometry {
             vertices: vec![

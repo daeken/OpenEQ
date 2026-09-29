@@ -784,6 +784,7 @@ mod tests {
                 alpha_mask: false,
                 transparent: false,
                 emissive: false,
+                clamp_uv: false,
             }],
             vec![Geometry {
                 vertices: vec![

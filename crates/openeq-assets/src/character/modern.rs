@@ -146,6 +146,7 @@ fn materials(
             alpha_mask: shader.starts_with("chroma") || shader.starts_with("alpha"),
             transparent: shader.starts_with("alpha"),
             emissive: shader.contains("add"),
+            clamp_uv: false,
         });
     }
     Ok((result, names))

@@ -1,6 +1,7 @@
 // Weighted blended transparency; uses the same lighting and fog as the G-buffer.
 @group(2) @binding(0) var atlas: texture_2d_array<f32>;
 @group(2) @binding(1) var atlas_sampler: sampler;
+const FLAG_CLAMP_UV: u32 = 16u;
 const FLAG_EMISSIVE: u32 = 4u;
 
 struct Vertex {
@@ -61,7 +62,12 @@ struct Accumulation {
 
 @fragment
 fn fs_main(in: Fragment) -> Accumulation {
-    let texel = textureSampleLevel(atlas, atlas_sampler, in.uv, i32(in.layer), 0.0);
+    // Baked tiles are not periodic. Clamp after interpolation to preserve
+    // interior UVs and keep linear filtering away from the opposite edge.
+    let inset = vec2<f32>(0.5) / vec2<f32>(textureDimensions(atlas));
+    let uv = select(in.uv, clamp(in.uv, inset, vec2<f32>(1.0) - inset),
+        (in.flags & FLAG_CLAMP_UV) != 0u);
+    let texel = textureSampleLevel(atlas, atlas_sampler, uv, i32(in.layer), 0.0);
     let alpha = clamp(texel.a, 0.0, 1.0);
     // Fully opaque interiors already wrote the G-buffer and opaque depth.
     if (alpha <= 0.0 || alpha >= 1.0) { discard; }

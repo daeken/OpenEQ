@@ -100,6 +100,7 @@ fn water_scene(
             alpha_mask: false,
             transparent: false,
             emissive: false,
+            clamp_uv: false,
         }],
         vec![Geometry {
             vertices,

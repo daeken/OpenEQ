@@ -20,6 +20,7 @@ fn floor(z: f32, transparent: bool) -> Scene {
             alpha_mask: transparent,
             transparent,
             emissive: false,
+            clamp_uv: false,
         }],
         vec![Geometry {
             vertices: vec![

@@ -20,6 +20,7 @@ pub const FLAG_ALPHA_MASK: u32 = 1;
 pub const FLAG_TRANSPARENT: u32 = 2;
 pub const FLAG_EMISSIVE: u32 = 4;
 pub const FLAG_WATER: u32 = 8;
+pub const FLAG_CLAMP_UV: u32 = 16;
 
 /// Additional parameters for EQG water, indexed by the vertex's material ID.
 #[repr(C)]
@@ -262,6 +263,9 @@ impl GpuScene {
             }
             if material.emissive {
                 flags |= FLAG_EMISSIVE;
+            }
+            if material.clamp_uv {
+                flags |= FLAG_CLAMP_UV;
             }
             if material.water.is_some() {
                 flags |= FLAG_WATER;

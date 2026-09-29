@@ -138,6 +138,7 @@ where
             alpha_mask: false,
             transparent: false,
             emissive: false,
+            clamp_uv: true,
         });
         result.meshes.push(Geometry {
             vertices,
