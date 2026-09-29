@@ -86,8 +86,11 @@ and starting-zone rules. Verify creation and reconnect with a dedicated account.
 Interactive original-skinned login/world/character selection, cancellation,
 private-file compatibility and nonsecret selection preferences are implemented.
 Dedicated live tests verified idle selection, handoff and normal cleanup; native
-unauthenticated UI checks verified editing/masking. Character creation/deletion,
-3D previews and camp-to-roster remain open.
+unauthenticated UI checks verified editing/masking. Selected-character 3D
+appearance previews now support rotation, bounded cancellable loading and
+original Classic/Luclin/Drakkin models, with GPU checks at normal/Retina/compact
+sizes. Character creation/deletion, camp-to-roster, and the documented remaining
+appearance material/tint support remain open.
 
 ## 8. Social systems — raid and guild first passes
 

@@ -3,7 +3,7 @@
 `account_ui::AccountUi` loads the original default `EQLSUI.xml` login/server
 artwork and `EQUI.xml` character-select controls. Optional missing skin files use
 plain local controls. The main menu exposes Play, Connection settings, and Exit.
-The account flow exposes sign-in, selection, play, refresh, back/cancel, and exit;
+The account flow exposes sign-in, selection, appearance preview, play, refresh, back/cancel, and exit;
 create/delete, tutorial, upgrades, store, and chat controls are hidden. Character-select buttons retain their original frame art, replacing
 the baked label decals in memory so they do not overlap application labels.
 
@@ -41,6 +41,51 @@ release. The welcome page disables text input. `AccountInput::new` retains direc
 credentials behavior for existing callers. Network cancellation and roster back
 behavior are unchanged.
 
+## Selected-character appearance preview
+
+Select an enabled roster character and choose **Preview**. The local inspection
+screen shows a standing model, with Rotate left/right buttons and arrow keys;
+Back or Escape returns to the same roster selection. Tab/Enter also operate the
+controls. Opening, rotating and closing the preview emit no network command,
+enter no zone, persist no character change and initialize no audio. Character
+creation, appearance editing and camp-to-roster remain separate work.
+
+The appearance is decoded from the existing RoF2 SendCharInfo roster, using
+EQEmu `common/patches/rof2_structs.h::CharacterSelectEntry_Struct` and
+`rof2.cpp::ENCODE(OP_SendCharInfo)`, at source revision
+`4aceae18b94ffaafc08e2b17bc41cd72c77f795d`. After the variable name, the 274-byte
+tail contains Face at16; nine 24-byte equipment records at17; Drakkin tattoo and
+details at235/239; primary/secondary IDFile models at247/251; six hair/beard/eye
+bytes at255–260; and heritage at263. The existing Enabled flag remains at268.
+Equipment preserves material, unknown1, elite material, Hero's Forge, material2
+and packed tint separately. EQEmu `world/worlddb.cpp` writes each dedicated held
+model and its corresponding equipment material from the same item/ornament;
+the preview uses those explicit primary/secondary models.
+
+Rendering uses the configured `--models classic|luclin` preference and the
+existing character pipeline, including its fallback behavior. Supported local
+features include classic armor/tint/face/robes and rigid held models, Luclin
+modular armor/hair/beard/faces/eyes, and Drakkin modular appearance plus the
+verified customization palette. Models use a fixed standing pose and normalized
+inspection scale, not live character height. Camera framing includes equipment
+and all rotations, leaving the header and controls accessible on narrow views.
+
+Preserving a wire field does not imply rendering it: elite materials, Hero's
+Forge models, unknown1/material2, Luclin hair/beard tint palettes and animated
+held-item skeletons/effects remain unsupported. The preview states that some
+appearance details are unavailable; it makes no native-client fidelity claim.
+Missing character assets show a recoverable preview message and do not disable
+Enter world on the roster.
+
+`account_preview::Preview` owns at most one prepared appearance and one asset
+job. Cancellation invalidates publication immediately but retains the job until
+it exits, so rapid Back/reopen/selection changes cannot spawn parallel loaders.
+Worker results match the full account token, character data, model preference
+and asset directory. Changing the roster or session invalidates the old result;
+failure does not automatically retry every frame. A separate local input
+revision rejects stale preview frames and preserves held-key ownership until
+release, including Escape/Enter across the return to the roster.
+
 ## Integration contract
 
 - Feed `AccountInput::event` the combined native `WindowEvent` stream in order.
@@ -60,14 +105,26 @@ behavior are unchanged.
   Do not call `reset` at handoff: it clears ownership for cancellation/shutdown.
 - The UI opens no connection, persists no credentials, and initializes no audio.
 
-Fifteen pure tests exercise Unicode/IME secrecy, focus/modifier ordering, bounds,
+Nineteen UI tests exercise Unicode/IME secrecy, focus/modifier ordering, bounds,
 port validation, disabled/stale row handling, scrolling, key ownership across
 handoff, fallback frames, menu navigation, endpoint draft validation, and stale
-menu input.
+menu input, preview navigation/rotation, disabled selections and stale preview
+input. Four additional preview tests cover roster-to-model conversion, camera
+framing, bounded cancelled workers and terminal load failures; five world tests
+cover the roster parser, including all appearance offsets and truncated input.
 Ignored original-asset/GPU tests check login, world, character, and busy frames
 at 1x and 2x. The main-menu/settings test adds six captures at 1x, 2x and compact
 320×240. With `OPENEQ_UI_CAPTURE_DIR` set, these fourteen captures are written
 there. These tests perform no real login and no audio playback.
+
+The appearance test renders Classic, Luclin and Drakkin fixtures from decoded
+roster-shaped data, at 800×600 logical pixels with 1x/2x scale and at 320×240.
+Front/back views produce 18 images under `OPENEQ_PREVIEW_CAPTURE_DIR`; model
+visibility, missing-texture colors and changed rotation are checked. The actual
+Preview/Back hit targets are exercised without logging in. The targeted run
+passed, and ordinary, Retina and compact captures were visually inspected in
+`/tmp/openeq-account-preview`. This is local protocol/asset/UI verification, not
+a claim of live roster capture or native-client pixel parity.
 
 Native macOS keyboard QA also passed menu → settings → back → credentials,
 username/password typing and masking, credentials → menu → credentials with the
@@ -80,6 +137,8 @@ by the subsequent original-art GPU captures.
 cargo test -p openeq --lib account_ui --no-default-features
 OPENEQ_UI_CAPTURE_DIR=/tmp/openeq-account-ui \
   cargo test -p openeq --lib account_ui --no-default-features -- --include-ignored
+OPENEQ_PREVIEW_CAPTURE_DIR=/tmp/openeq-account-preview \
+  cargo test -p openeq --lib original_roster_previews --no-default-features -- --ignored
 ```
 
 The original-asset test uses `EQ_CLIENT_DIR` when set, otherwise

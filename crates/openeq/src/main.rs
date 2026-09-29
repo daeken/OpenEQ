@@ -90,6 +90,7 @@ struct Runtime {
     account_ui: Option<openeq::account_ui::AccountUi>,
     account_ui_job: Option<loading::Job<openeq::account_ui::AccountUi>>,
     account_preferences: Option<openeq::account::preferences::PreferenceStore>,
+    account_preview: openeq::account_preview::Preview,
     client_data: Option<zone_loading::ClientData>,
 }
 
@@ -156,6 +157,7 @@ impl Runtime {
             account_ui: None,
             account_ui_job: None,
             account_preferences: None,
+            account_preview: Default::default(),
             client_data: None,
         }
     }
@@ -1462,7 +1464,13 @@ fn render_frame(
         }
     }
     if let Some(mut renderer) = runtime.renderer.take() {
-        if present_account(&mut runtime, &mut renderer, ui_size, window.scale_factor()) {
+        if present_account(
+            &mut runtime,
+            &mut renderer,
+            ui_size,
+            window.scale_factor(),
+            &options,
+        ) {
             runtime.renderer = Some(renderer);
             return;
         }
@@ -1798,8 +1806,12 @@ fn present_account(
     renderer: &mut Renderer,
     viewport: [u32; 2],
     scale: f32,
+    options: &Options,
 ) -> bool {
     if runtime.account.is_none() {
+        // Drain cancelled work even after a handoff, so a late asset result
+        // cannot keep its character library/GPU buffers alive for the session.
+        runtime.account_preview.update(None, renderer);
         return false;
     }
     poll_client_assets(runtime);
@@ -1811,6 +1823,7 @@ fn present_account(
         }
     }
     if let Some(ready) = runtime.account.as_mut().and_then(|account| account.poll()) {
+        runtime.account_preview.update(None, renderer);
         runtime.account = None;
         if let Some(store) = &mut runtime.account_preferences
             && let Err(error) = store.save_session(&ready.identity)
@@ -1844,12 +1857,25 @@ fn present_account(
         return false;
     }
     let controller = runtime.account.as_ref().unwrap();
+    let preview_request = runtime
+        .account_input
+        .as_ref()
+        .and_then(|input| input.preview_character(&controller.view))
+        .map(|character| openeq::account_preview::Request {
+            token: controller.view.token,
+            character: character.clone(),
+            dir: options.dir.clone(),
+            model_set: options.model_set,
+        });
+    let showing_preview = preview_request.is_some();
+    runtime.account_preview.update(preview_request, renderer);
     let frame = if let (Some(ui), Some(input)) = (&runtime.account_ui, &runtime.account_input) {
-        ui.frame(
+        ui.frame_with_preview_status(
             viewport,
             &controller.view,
             input,
             runtime.started.elapsed().as_secs_f32(),
+            runtime.account_preview.status(),
         )
     } else {
         loading_ui::loading_frame(
@@ -1863,7 +1889,15 @@ fn present_account(
     };
     renderer.set_ui_scaled(&frame, scale);
     runtime.ui_frame = frame;
-    renderer.render_ui();
+    if !showing_preview
+        || !runtime.account_preview.render(
+            renderer,
+            viewport,
+            runtime.account_input.as_ref().unwrap().preview_heading(),
+        )
+    {
+        renderer.render_ui();
+    }
     true
 }
 

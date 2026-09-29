@@ -11,7 +11,9 @@ use openeq_ui::{Color, DrawCommand, HitTarget, Rect, TextAlign, UiBindings, UiDo
 use std::{collections::HashSet, path::Path};
 
 mod menu;
+mod preview;
 use menu::{Navigation, Page};
+use preview::PreviewChoice;
 
 const MAX_SERVERS: usize = 2048;
 const MAX_CHARACTERS: usize = 256;
@@ -43,6 +45,9 @@ enum Focus {
     Primary,
     Connection,
     Refresh,
+    Preview,
+    RotateLeft,
+    RotateRight,
     Back,
     Exit,
 }
@@ -68,7 +73,7 @@ const CREDENTIAL_FOCUS: &[Focus] = &[
     Focus::Exit,
 ];
 const WORLD_FOCUS: &[Focus] = &[Focus::List, Focus::Primary, Focus::Refresh, Focus::Back];
-const CHARACTER_FOCUS: &[Focus] = &[Focus::List, Focus::Primary, Focus::Back];
+const CHARACTER_FOCUS: &[Focus] = &[Focus::List, Focus::Preview, Focus::Primary, Focus::Back];
 
 // Intentionally no Debug/Display/Serialize on any editor state. Passwords never
 // enter UiBindings, draw commands, hit IDs, chat history, notices or diagnostics.
@@ -197,6 +202,9 @@ pub struct AccountInput {
     cancelled_composition: bool,
     composition_field: Option<usize>,
     navigation: Option<Navigation>,
+    preview: Option<PreviewChoice>,
+    preview_revision: u64,
+    preview_held: HashSet<KeyCode>,
 }
 impl AccountInput {
     pub fn new(endpoint: Endpoint) -> Self {
@@ -221,6 +229,9 @@ impl AccountInput {
             cancelled_composition: false,
             composition_field: None,
             navigation: None,
+            preview: None,
+            preview_revision: 0,
+            preview_held: HashSet::new(),
         }
     }
     /// Starts at the local main menu. The controller remains idle until the
@@ -255,6 +266,9 @@ impl AccountInput {
         self.modifiers.reset_all();
         self.captured.clear();
         self.handoff_replay.clear();
+        self.preview = None;
+        self.preview_revision = self.preview_revision.wrapping_add(1);
+        self.preview_held.clear();
         if let Some(navigation) = &mut self.navigation {
             navigation.held_keys.clear();
         }
@@ -325,6 +339,9 @@ impl AccountInput {
         }
     }
     fn sync(&mut self, view: &View) {
+        if self.preview.is_some() && self.preview_character(view).is_none() {
+            self.close_preview();
+        }
         if self.seen != Some((view.token, view.stage)) {
             self.cancel_composition();
             if view.stage != Stage::Credentials {
@@ -370,6 +387,7 @@ impl AccountInput {
                 if !event.focused {
                     self.modifiers.reset_all();
                     self.captured.clear();
+                    self.preview_held.clear();
                     if let Some(navigation) = &mut self.navigation {
                         navigation.held_keys.clear();
                     }
@@ -389,6 +407,7 @@ impl AccountInput {
                 if event.state == ButtonState::Released {
                     self.modifiers.release(event.key_code);
                     self.captured.remove(&event.key_code);
+                    self.preview_held.remove(&event.key_code);
                     if let Some(navigation) = &mut self.navigation {
                         navigation.held_keys.remove(&event.key_code);
                     }
@@ -399,10 +418,11 @@ impl AccountInput {
                     return None;
                 }
                 self.modifiers.press(event.key_code);
-                if self
-                    .navigation
-                    .as_ref()
-                    .is_some_and(|navigation| navigation.held_keys.contains(&event.key_code))
+                if self.preview_held.contains(&event.key_code)
+                    || self
+                        .navigation
+                        .as_ref()
+                        .is_some_and(|navigation| navigation.held_keys.contains(&event.key_code))
                 {
                     return None;
                 }
@@ -432,10 +452,18 @@ impl AccountInput {
                         // late password commit must never reach another field.
                         return None;
                     }
-                    let order = self.focus_order(view);
+                    let order = if self.preview_character(view).is_some() {
+                        &[Focus::Back, Focus::RotateLeft, Focus::RotateRight][..]
+                    } else {
+                        self.focus_order(view)
+                    };
                     let index = order.iter().position(|f| *f == self.focus).unwrap_or(0);
                     self.focus =
                         order[(index + if shift { order.len() - 1 } else { 1 }) % order.len()];
+                    return None;
+                }
+                if self.preview_character(view).is_some() {
+                    self.preview_key(event.key_code, event.repeat);
                     return None;
                 }
                 if let Some(index) = self.editable_field(view) {
@@ -486,6 +514,10 @@ impl AccountInput {
                                     Some(Intent::Refresh { token: view.token })
                                 }
                                 Focus::Back => self.back(view),
+                                Focus::Preview => {
+                                    self.open_preview(view);
+                                    None
+                                }
                                 Focus::Connection if self.page(view) == Page::Welcome => {
                                     self.navigate(Page::Connection);
                                     None
@@ -576,6 +608,10 @@ impl AccountInput {
                     && let Some(hit) = hit.filter(|h| h.item == pressed)
                 {
                     let action = action_suffix(view, self, &hit.item)?;
+                    if self.preview_character(view).is_some() {
+                        self.preview_action(action);
+                        return None;
+                    }
                     if let Some(index) = action
                         .strip_prefix("row:")
                         .and_then(|s| s.parse::<usize>().ok())
@@ -595,6 +631,10 @@ impl AccountInput {
                         "back" => {
                             self.focus = Focus::Back;
                             self.back(view)
+                        }
+                        "preview" => {
+                            self.open_preview(view);
+                            None
                         }
                         "connection" if self.page(view) == Page::Welcome => {
                             self.navigate(Page::Connection);
@@ -628,6 +668,9 @@ impl AccountInput {
         self.notice.is_none().then_some(Intent::SignIn)
     }
     fn primary(&mut self, view: &View) -> Option<Intent> {
+        if self.preview_character(view).is_some() {
+            return None;
+        }
         match view.stage {
             Stage::Credentials => match self.page(view) {
                 Page::Welcome => {
@@ -657,6 +700,10 @@ impl AccountInput {
         }
     }
     fn back(&mut self, view: &View) -> Option<Intent> {
+        if self.preview_character(view).is_some() {
+            self.close_preview();
+            return None;
+        }
         if view.stage == Stage::Credentials
             && self.navigation.is_some()
             && self.page(view) != Page::Welcome
@@ -673,6 +720,9 @@ impl AccountInput {
         })
     }
     fn scroll(&mut self, view: &View, amount: isize) {
+        if self.preview_character(view).is_some() {
+            return;
+        }
         self.first = self
             .first(view)
             .saturating_add_signed(amount)
@@ -788,7 +838,7 @@ fn row_intent(view: &View, index: usize) -> Option<Intent> {
 }
 fn prefix(view: &View, input: &AccountInput) -> String {
     format!(
-        "account:{}:{}:{}:{}:",
+        "account:{}:{}:{}:{}:{}:",
         view.token.attempt,
         view.token.revision,
         view.stage as u8,
@@ -796,6 +846,7 @@ fn prefix(view: &View, input: &AccountInput) -> String {
             .navigation
             .as_ref()
             .map_or(0, |navigation| navigation.revision),
+        input.preview_revision,
     )
 }
 fn action_suffix<'a>(view: &View, input: &AccountInput, id: &'a str) -> Option<&'a str> {
@@ -845,6 +896,17 @@ impl AccountUi {
         input: &AccountInput,
         elapsed: f32,
     ) -> UiFrame {
+        self.frame_with_preview_status(viewport, view, input, elapsed, None)
+    }
+
+    pub fn frame_with_preview_status(
+        &self,
+        viewport: [u32; 2],
+        view: &View,
+        input: &AccountInput,
+        elapsed: f32,
+        preview_status: Option<&str>,
+    ) -> UiFrame {
         let screen = Rect::new(0., 0., viewport[0] as f32, viewport[1] as f32);
         let mut paint = Paint {
             frame: UiFrame {
@@ -858,6 +920,10 @@ impl AccountUi {
         };
         paint.hit("frame", "AccountCapture", screen, true);
         if screen.is_empty() {
+            return paint.frame;
+        }
+        if let Some(character) = input.preview_character(view) {
+            paint.preview(character, input, preview_status);
             return paint.frame;
         }
         paint.fill(screen, [9, 13, 20, 255]);
@@ -1355,6 +1421,16 @@ impl Paint<'_> {
                 input.focus == Focus::Refresh,
                 input,
             );
+        } else {
+            self.button(
+                "CLW_Quit_Button",
+                "preview",
+                Rect::new(list.x + width * 0.25, y, width * 0.30, 32.),
+                "Preview",
+                playable(self.view),
+                input.focus == Focus::Preview,
+                input,
+            );
         }
         self.button(
             if characters {
@@ -1512,7 +1588,7 @@ mod tests {
             ..Default::default()
         }
     }
-    fn characters() -> View {
+    pub(super) fn characters() -> View {
         View {
             stage: Stage::Characters,
             token: Token {
@@ -1530,6 +1606,7 @@ mod tests {
                     zone: 54,
                     instance_id: 0,
                     enabled: id != 0,
+                    appearance: Default::default(),
                 })
                 .collect(),
             selected_character: Some("Adventurer1".into()),

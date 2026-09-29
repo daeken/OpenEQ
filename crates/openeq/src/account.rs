@@ -472,6 +472,7 @@ mod tests {
             zone: 77,
             instance_id: 0,
             enabled,
+            appearance: Default::default(),
         }
     }
     #[test]

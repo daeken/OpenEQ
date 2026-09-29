@@ -35,7 +35,7 @@ pub enum WorldError {
 }
 
 /// A character on the account, as shown at character select.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Character {
     pub name: String,
     pub level: u8,
@@ -46,6 +46,71 @@ pub struct Character {
     pub instance_id: u16,
     /// RoF2's Enabled byte, separate from the return-home/tutorial flags.
     pub enabled: bool,
+    pub appearance: CharacterAppearance,
+}
+
+/// RoF2 character-select appearance, independent of zone spawns and inventory.
+/// Unknown material fields are retained without assigning visual semantics.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CharacterEquipment {
+    pub material: u32,
+    pub unknown1: u32,
+    pub elite_material: u32,
+    pub hero_forge_model: u32,
+    pub material2: u32,
+    pub color: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CharacterAppearance {
+    pub face: u8,
+    /// Head, chest, arms, wrists, hands, legs, feet, primary, secondary.
+    pub equipment: [CharacterEquipment; 9],
+    pub drakkin_tattoo: u32,
+    pub drakkin_details: u32,
+    pub primary_model: u32,
+    pub secondary_model: u32,
+    pub hair_color: u8,
+    pub beard_color: u8,
+    pub eye_color_1: u8,
+    pub eye_color_2: u8,
+    pub hair_style: u8,
+    pub beard: u8,
+    pub drakkin_heritage: u32,
+}
+
+impl CharacterAppearance {
+    fn from_tail(tail: &[u8]) -> Self {
+        // common/patches/rof2_structs.h::CharacterSelectEntry_Struct:
+        // Face at 16, nine 24-byte CharSelectEquip records at 17, two unknown
+        // bytes at 233, then Drakkin/deity/held-model fields. The six cosmetic
+        // bytes start at 255; GoHome/Tutorial at 261/262 precede heritage.
+        Self {
+            face: tail[16],
+            equipment: std::array::from_fn(|index| {
+                let offset = 17 + index * 24;
+                CharacterEquipment {
+                    material: u32_at(tail, offset).unwrap(),
+                    unknown1: u32_at(tail, offset + 4).unwrap(),
+                    elite_material: u32_at(tail, offset + 8).unwrap(),
+                    hero_forge_model: u32_at(tail, offset + 12).unwrap(),
+                    material2: u32_at(tail, offset + 16).unwrap(),
+                    color: u32_at(tail, offset + 20).unwrap(),
+                }
+            }),
+            drakkin_tattoo: u32_at(tail, 235).unwrap(),
+            drakkin_details: u32_at(tail, 239).unwrap(),
+            primary_model: u32_at(tail, 247).unwrap(),
+            secondary_model: u32_at(tail, 251).unwrap(),
+            hair_color: tail[255],
+            beard_color: tail[256],
+            eye_color_1: tail[257],
+            eye_color_2: tail[258],
+            hair_style: tail[259],
+            beard: tail[260],
+            drakkin_heritage: u32_at(tail, 263).unwrap(),
+        }
+    }
 }
 
 /// A connected world-server session.
@@ -225,6 +290,7 @@ fn parse_characters(data: &[u8]) -> Result<Vec<Character>, WorldError> {
             instance_id: u16_at(tail, 13).unwrap(),
             gender: tail[15],
             enabled: tail[268] != 0,
+            appearance: CharacterAppearance::from_tail(tail),
         });
     }
     if !r.done() {
@@ -332,5 +398,78 @@ mod tests {
         let mut no_nul = 1u32.to_le_bytes().to_vec();
         no_nul.extend_from_slice(&[b'A'; 350]);
         assert!(parse_characters(&no_nul).is_err());
+    }
+
+    #[test]
+    fn roster_appearance_follows_packed_rof2_field_order() {
+        // Construct in C++ declaration order, with different sentinels in
+        // adjacent fields and every equipment record (including unknowns).
+        let mut data = 1u32.to_le_bytes().to_vec();
+        data.extend_from_slice(b"Appearance\0");
+        let mut tail = vec![1]; // Class
+        tail.extend_from_slice(&522u32.to_le_bytes());
+        tail.extend_from_slice(&[75, 2]); // Level, ShroudClass
+        tail.extend_from_slice(&1u32.to_le_bytes()); // ShroudRace
+        tail.extend_from_slice(&202u16.to_le_bytes());
+        tail.extend_from_slice(&4u16.to_le_bytes());
+        tail.extend_from_slice(&[1, 7]); // Gender, Face
+        for slot in 0..9u32 {
+            for field in 0..6u32 {
+                tail.extend_from_slice(&(0xa000_0000 + slot * 0x100 + field).to_le_bytes());
+            }
+        }
+        tail.extend_from_slice(&[0xff, 0xfe]);
+        for value in [3u32, 5, 396, 10001, 10002] {
+            tail.extend_from_slice(&value.to_le_bytes());
+        }
+        tail.extend_from_slice(&[11, 12, 13, 14, 15, 16, 1, 0]);
+        tail.extend_from_slice(&2u32.to_le_bytes());
+        tail.extend_from_slice(&[0xf9, 1]);
+        tail.extend_from_slice(&0x1234_5678u32.to_le_bytes());
+        tail.push(0xfa);
+        assert_eq!(tail.len(), CHARACTER_TAIL);
+        data.extend_from_slice(&tail);
+        let character = parse_characters(&data).unwrap().remove(0);
+        assert_eq!((character.race, character.gender), (522, 1));
+        let appearance = character.appearance;
+        assert_eq!(appearance.face, 7);
+        for (slot, piece) in appearance.equipment.iter().enumerate() {
+            let base = 0xa000_0000 + slot as u32 * 0x100;
+            assert_eq!(
+                *piece,
+                CharacterEquipment {
+                    material: base,
+                    unknown1: base + 1,
+                    elite_material: base + 2,
+                    hero_forge_model: base + 3,
+                    material2: base + 4,
+                    color: base + 5
+                }
+            );
+        }
+        assert_eq!(
+            (
+                appearance.drakkin_tattoo,
+                appearance.drakkin_details,
+                appearance.drakkin_heritage
+            ),
+            (3, 5, 2)
+        );
+        assert_eq!(
+            (appearance.primary_model, appearance.secondary_model),
+            (10001, 10002)
+        );
+        assert_eq!(
+            [
+                appearance.hair_color,
+                appearance.beard_color,
+                appearance.eye_color_1,
+                appearance.eye_color_2,
+                appearance.hair_style,
+                appearance.beard
+            ],
+            [11, 12, 13, 14, 15, 16]
+        );
+        assert!(character.enabled);
     }
 }
