@@ -152,8 +152,9 @@ avoid turning every high flag bit into a collision or transparency rule.
    concrete locations of failures instead of certifying an entire zone from a
    successful load or a single screenshot.
 
-The present deliverable is this plan and its metadata evidence. It does not
-claim these zones have passed rendering, movement, swimming or live-NPC tests.
+The initial deliverable was this plan and its metadata evidence. Completed
+follow-through is recorded below; a loader/capture check does not establish
+whole-zone movement, swimming or live-NPC compatibility.
 
 ## Timorous implementation follow-through
 
@@ -170,3 +171,16 @@ lift test also passes for support, wall collision, passenger carrying, removal o
 the old physical pose, sliding extent and complete removal. Final CPU/performance
 and combined verification are tracked in `OVERNIGHT_2026-09-29.md`. Feerrott2
 water and Bloodfields flag/LIT semantics remain research, not implemented fixes.
+
+## Feerrott2 loader follow-through
+
+The ordinary loader failed before reaching heightmap parsing because it required
+`feerrott2.zon`. It now keeps exact archive/loose-name precedence, then resolves
+an unambiguous archived EQTZP declaration whose DAT exists. Ambiguous alternatives
+and unreadable exact files fail explicitly; no filenames are fabricated.
+Five synthetic precedence/missing/ambiguity/dispatch/corruption tests pass.
+The original Feerrott2 fixture now loads 329 textured tiles, 10,901 instances
+and 211,245 source triangles
+with finite geometry and sampled texture checks. A full GPU upload/render passed;
+`/tmp/openeq-feerrott2-overview.png` was inspected. This does not establish correct
+indexed water, authored baked lighting, movement or NPC behavior in this zone.

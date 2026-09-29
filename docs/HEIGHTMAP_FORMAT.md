@@ -35,6 +35,16 @@ Tests parse these DAT streams through the final byte and reject truncation:
 
 `oldcommons.eqg` includes an `oldcommons.zon` declaration whose named DAT is absent, but also contains a complete `commonlands.zon`/`commonlands.dat` pair. The loader resolves the matching declaration rather than inventing a filename. Some Dead Hills TOG files referenced by DAT are absent from this client archive; those missing groups are reported and skipped.
 
+`feerrott2.eqg` contains only `feerrott.zon`/`feerrott.dat`. Exact archive and
+loose declarations retain precedence; when both are absent, the loader accepts
+an unambiguous archived heightmap declaration naming an existing DAT. Conflicting
+alternatives and unreadable candidate declarations fail explicitly. This fixes
+an earlier failure looking for `feerrott2.zon` before terrain loading began.
+The original fixture now loads 329 textured tiles, 10,901 object instances
+and 211,245 source triangles; an inspected
+GPU capture is `/tmp/openeq-feerrott2-overview.png`. Tile-defined water remains
+unrendered while its clipping semantics are unresolved.
+
 Binary EQGZ v2 is also supported. It adds a counted array of u32 values after each placement. The loader consumes that array, preserving following placements/regions/lights. Crescent Reach is the integration fixture.
 
 ## Rendering limits and remaining unknowns
@@ -44,7 +54,7 @@ This is a compatibility implementation, not a complete reproduction of the clien
 - Terrain material layers are composited to a 128×128 RGBA image per tile. This bounds memory for zones with thousands of tiles but loses close-up detail. A GPU terrain material should sample original detail maps and masks directly.
 - ECO height/slope ranges and repeats are used, but coverage/blend maps and the client's exact soft blending rules remain unverified. The interpolation is an approximation.
 - The two terrain color arrays, MOD/LIT precomputed illumination, ecosystem normal maps, generated radial flora and particle effects are not rendered yet.
-- Only finite water sheets are drawn. Per-tile/infinite water and the secondary DAT water record are parsed for stream alignment but their full rendering semantics are not implemented.
+- Only finite water sheets are drawn. Tile water records and indexed material definitions are preserved with exact raw fields and explicit missing/ambiguous lookup; their surface clipping and swimming semantics are not implemented. See `HEIGHTMAP_WATER_PLAN.md`.
 - Meanings of the three DAT header words, editor identifiers and quad bits other than bit 0 remain incompletely established. Header bit 1 adds a u32 to individual object records and is handled.
 - The binary EQGZ v2 per-placement array is consumed but its lighting interpretation is not yet applied.
 - DAT light/effect definitions currently use the first color/intensity frame as a static point light. Temporal effects and exact anchoring should be compared with the original client.

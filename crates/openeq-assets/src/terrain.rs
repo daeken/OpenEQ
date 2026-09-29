@@ -84,6 +84,35 @@ pub struct TerrainLayer {
     pub mask: Vec<u8>,
 }
 
+/// The part of a tile's water record following its base elevation.
+///
+/// The native DAT reader uses a version gate: version 21 and newer records
+/// contain an index and extension; version 20 contains a second float instead.
+/// The raw bits are retained in both cases. Earlier versions are not fixtures.
+#[derive(Debug, Clone, Default)]
+pub struct TerrainWaterMetadata {
+    pub word_bits: u32,
+    pub extension: Option<TerrainWaterExtension>,
+}
+
+impl TerrainWaterMetadata {
+    pub fn material_index(&self) -> Option<i32> {
+        self.extension.as_ref().map(|_| self.word_bits as i32)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TerrainWaterExtension {
+    /// Raw byte represented as i8, without normalizing it to a boolean. Any
+    /// nonzero value, including a negative i8 value, enables the quartet.
+    pub tag: i8,
+    /// Authored local [xmin, xmax, ymin, ymax] rectangle. The native indexed
+    /// mesh uses these extents; complete shoreline rendering is unverified.
+    pub bounds: Option<[f32; 4]>,
+    /// Meaning unknown. In particular, this is not a liquid bottom.
+    pub trailing_value: f32,
+}
+
 #[derive(Debug, Clone)]
 pub struct TerrainTile {
     /// Grid coordinates with the on-disk 100000 bias already removed.
@@ -94,6 +123,7 @@ pub struct TerrainTile {
     pub secondary_colors: Vec<u32>,
     pub quad_flags: Vec<u8>,
     pub water_level: f32,
+    pub water_metadata: TerrainWaterMetadata,
     pub layers: Vec<TerrainLayer>,
 }
 
@@ -178,6 +208,7 @@ impl Heightmap {
                 secondary_colors: Vec::with_capacity(vertices),
                 quad_flags: Vec::new(),
                 water_level: 0.0,
+                water_metadata: TerrainWaterMetadata::default(),
                 layers: Vec::new(),
             };
             for _ in 0..vertices {
@@ -195,14 +226,22 @@ impl Heightmap {
             }
             tile.quad_flags = reader.take(q * q)?.to_vec();
             tile.water_level = reader.f32()?;
-            // An optional water record follows positive (by signed bit
-            // pattern) secondary level values. Preserve alignment exactly.
-            let water_bits = reader.i32()?;
-            if water_bits > 0 {
-                if reader.i8()? > 0 {
-                    reader.skip(16)?;
-                }
-                reader.f32()?;
+            tile.water_metadata.word_bits = reader.u32()?;
+            // Native full DAT reader 0x10100f09..0x10101029 gates this by
+            // version, not index sign; its byte test is != 0. See the static
+            // evidence in docs/HEIGHTMAP_WATER_REVERSE_ENGINEERING.md.
+            if header[0] >= 21 {
+                let tag = reader.i8()?;
+                let bounds = if tag != 0 {
+                    Some([reader.f32()?, reader.f32()?, reader.f32()?, reader.f32()?])
+                } else {
+                    None
+                };
+                tile.water_metadata.extension = Some(TerrainWaterExtension {
+                    tag,
+                    bounds,
+                    trailing_value: reader.f32()?,
+                });
             }
             let layers = reader.bounded_count()?;
             for layer in 0..layers {
@@ -406,7 +445,7 @@ pub fn parse_object_group(data: &[u8]) -> Result<Vec<TerrainPlacement>> {
     Ok(instances)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WaterSheet {
     pub min: [f32; 2],
     pub max: [f32; 2],
@@ -416,7 +455,8 @@ pub struct WaterSheet {
     pub material: WaterMaterial,
 }
 
-/// Finite water sheets. Infinite tile sheets remain a documented limitation.
+/// Finite water sheets, retaining the existing rendering defaults. Use
+/// [`parse_water_data`] to also preserve indexed material definitions.
 pub fn parse_water(data: &[u8]) -> Result<Vec<WaterSheet>> {
     let text =
         std::str::from_utf8(data).map_err(|_| Error::Format("water DAT is not text".into()))?;
@@ -478,6 +518,169 @@ pub fn parse_water(data: &[u8]) -> Result<Vec<WaterSheet>> {
         }
     }
     Ok(sheets)
+}
+
+/// An authored field, including unknown fields and repeated occurrences.
+/// Whitespace is tokenized; keys, values and their order are retained exactly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WaterField {
+    pub key: String,
+    pub values: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexedWaterDefinition {
+    pub index: i32,
+    pub uv_scale: f32,
+    /// Authored path, without basename extraction or case normalization.
+    pub normal_map: String,
+    /// The environment map likewise retains its authored path. No rendering
+    /// or UV behavior is inferred by decoding these material parameters.
+    pub material: WaterMaterial,
+    pub fields: Vec<WaterField>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WaterData {
+    pub finite_sheets: Vec<WaterSheet>,
+    /// In file order, including repeated indices and identical duplicates.
+    pub indexed: Vec<IndexedWaterDefinition>,
+}
+
+#[derive(Debug)]
+pub enum IndexedWaterResolution<'a> {
+    Missing,
+    Unique {
+        definition: &'a IndexedWaterDefinition,
+        /// Identical authored definitions resolve together without removing
+        /// any records from [`WaterData::indexed`].
+        occurrences: usize,
+    },
+    Ambiguous {
+        definitions: Vec<&'a IndexedWaterDefinition>,
+    },
+}
+
+impl WaterData {
+    /// Resolves this exact index. Never substitutes index zero or the first
+    /// definition. Equality includes all authored fields, so unknown differing
+    /// values also prevent duplicate coalescing.
+    pub fn resolve_index(&self, index: i32) -> IndexedWaterResolution<'_> {
+        let definitions: Vec<_> = self
+            .indexed
+            .iter()
+            .filter(|definition| definition.index == index)
+            .collect();
+        let Some(&first) = definitions.first() else {
+            return IndexedWaterResolution::Missing;
+        };
+        if definitions.iter().all(|definition| *definition == first) {
+            IndexedWaterResolution::Unique {
+                definition: first,
+                occurrences: definitions.len(),
+            }
+        } else {
+            IndexedWaterResolution::Ambiguous { definitions }
+        }
+    }
+}
+
+/// Parses finite sheets and indexed definitions as separate record types.
+/// Indexed records have no implicit material defaults: missing, duplicate or
+/// malformed required fields are errors. Unknown fields remain available.
+pub fn parse_water_data(data: &[u8]) -> Result<WaterData> {
+    let text =
+        std::str::from_utf8(data).map_err(|_| Error::Format("water DAT is not text".into()))?;
+    let mut indexed = Vec::new();
+    let mut active = None::<Vec<WaterField>>;
+    let mut finite_active = false;
+    for line in text.lines() {
+        let mut words = line.split_whitespace();
+        let Some(key) = words.next() else {
+            continue;
+        };
+        match key {
+            "*WATERSHEETDATA" => {
+                if active.is_some() || finite_active {
+                    return Err(Error::Format("nested indexed water definition".into()));
+                }
+                active = Some(Vec::new());
+            }
+            "*ENDWATERSHEETDATA" => {
+                let fields = active.take().ok_or_else(|| {
+                    Error::Format("indexed water end without a definition".into())
+                })?;
+                indexed.push(parse_indexed_water_definition(fields)?);
+            }
+            "*BEGIN_WATERSHEETDATA" | "*END_WATERSHEETDATA" | "*WATERSHEET" | "*END_SHEET"
+                if active.is_some() =>
+            {
+                return Err(Error::Format(
+                    "unterminated indexed water definition".into(),
+                ));
+            }
+            "*WATERSHEET" => finite_active = true,
+            "*END_SHEET" => finite_active = false,
+            _ => {
+                if let Some(fields) = &mut active {
+                    fields.push(WaterField {
+                        key: key.to_owned(),
+                        values: words.map(str::to_owned).collect(),
+                    });
+                }
+            }
+        }
+    }
+    if active.is_some() {
+        return Err(Error::Format(
+            "unterminated indexed water definition".into(),
+        ));
+    }
+    Ok(WaterData {
+        finite_sheets: parse_water(data)?,
+        indexed,
+    })
+}
+
+fn parse_indexed_water_definition(fields: Vec<WaterField>) -> Result<IndexedWaterDefinition> {
+    let field = |key: &str, count: usize| {
+        let mut matches = fields.iter().filter(|field| field.key == key);
+        let field = matches
+            .next()
+            .ok_or_else(|| Error::Format(format!("missing indexed water field {key}")))?;
+        if matches.next().is_some() || field.values.len() != count {
+            return Err(Error::Format(format!("invalid indexed water field {key}")));
+        }
+        Ok(field.values.as_slice())
+    };
+    let scalar = |key| number(&field(key, 1)?[0]);
+    let color = |key| -> Result<[f32; 4]> {
+        let values = field(key, 4)?;
+        Ok([
+            number(&values[0])?,
+            number(&values[1])?,
+            number(&values[2])?,
+            number(&values[3])?,
+        ])
+    };
+    let definition = IndexedWaterDefinition {
+        index: field("*INDEX", 1)?[0]
+            .parse()
+            .map_err(|_| Error::Format("invalid indexed water index".into()))?,
+        uv_scale: scalar("*UVSCALE")?,
+        normal_map: field("*NORMALMAP", 1)?[0].clone(),
+        material: WaterMaterial {
+            color1: color("*WATERCOLOR1")?,
+            color2: color("*WATERCOLOR2")?,
+            reflection_color: color("*REFLECTIONCOLOR")?,
+            fresnel_bias: scalar("*FRESNELBIAS")?,
+            fresnel_power: scalar("*FRESNELPOWER")?,
+            reflection_amount: scalar("*REFLECTIONAMOUNT")?,
+            environment_map: Some(field("*ENVIRONMENTMAP", 1)?[0].clone()),
+        },
+        fields,
+    };
+    Ok(definition)
 }
 
 pub fn parse_light_color(data: &[u8]) -> Option<[f32; 3]> {

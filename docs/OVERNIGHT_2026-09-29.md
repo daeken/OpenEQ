@@ -31,8 +31,9 @@ recovery and movement after a Plane of Knowledge arrival.
 6. [x] Social parity, first pass: raid lifecycle/chat and receive-only guild
    roster/MOTD. Guild mutations/refresh, raid administration and UCS remain open.
 7. [ ] Quest interaction: safe NPC item/coin hand-ins and server outcomes.
-8. [ ] Progression: skills/training/experience feedback and configurable
-   hotbuttons, using server-confirmed values.
+8. [x] Progression, first pass: server-confirmed skills/languages/experience and
+   saved command hotbuttons. Trainer preview/purchases, AA allocation and ordinary
+   live level-gain gameplay remain follow-ups.
 9. [ ] Broad compatibility sweep: representative WLD, EQG and heightmap zones,
    missing-model/material reports, travel endpoints and collision seams.
 10. [ ] Performance/stability follow-up: long-run resource bounds, cancellation,
@@ -400,6 +401,8 @@ Published to `master` as **c4b8601**.
 
 ## Progression live follow-up (verified)
 
+Published as **535970e**.
+
 - Reviver's guarded same-XP0 and same-level1 proof passed real typed receipt
   through ZoneClient and production GameplayState::apply. Duplicate XP/level
   events left reducer revision2 unchanged. Command-free reconnect reproduced
@@ -416,21 +419,52 @@ Published to `master` as **c4b8601**.
   `/tmp/openeq-reviver-proof-1/`, mode0700 directory and0600 files. No runtime
   changes in this follow-up; original623-test checkpoint remains applicable.
 
+## Ninth overnight batch (verified)
+
+- Feerrott2 resolves its real internal terrain declaration with preserved exact
+  archive/loose precedence and explicit ambiguity/corruption failures. Five
+  synthetic tests and an original full-zone test pass. Full GPU upload/render
+  passed and `/tmp/openeq-feerrott2-overview.png` was inspected; water remains
+  unrendered in this metadata slice.
+- Heightmap tile water records and indexed material definitions retain raw
+  fields, duplicate/unknown text fields and authored texture paths. Lookup
+  distinguishes missing, identical and conflicting definitions. Six original
+  zones retain exact EOF/count/selector/rectangle evidence. Static inspection
+  of the installed graphics DLL corrected historic parser assumptions: modern
+  version>=21 always has selector+byte+tail, any nonzero byte has a quartet;
+  version20 has a legacy second float. Two independent reviews confirmed the
+  native branches. Text nesting that polluted finite-sheet fields was found
+  and rejected. No water surface or swimming behavior is inferred here.
+- Thin-liquid movement now accounts for wet time inside a fixed physics tick
+  on straight/flat-supported trajectories. Seven regressions plus all18 existing
+  movement tests pass, including original PoK pool and GPU Kelethin lifts.
+  Slides/stairs retain the previous complete-tick result; unresolvable bounds
+  and the16-transition cap are documented in `THIN_LIQUID_MOVEMENT.md`.
+  Local original dry/submerged endpoints match exactly; ordinary-path timing
+  differences are small, while the synthetic crossing costs about3.65 µs.
+- Combined verification: **643 workspace tests passed**, zero failures/ignored,
+  including original assets and GPU checks. Strict workspace Clippy, format,
+  client build and playback-disabled all-target check pass. Logs use the prefix
+  `/tmp/openeq-overnight-terrain-movement-`; captures are in the matching `ui`
+  directory. Native grammar documentation is complete. Independent movement
+  review exercised 528 box and 120 WLD BSP cases without a blocker.
+
 ## Active follow-up ownership
 
 - **eqemu_server**: Reviver proof/cleanup complete; no active live fixtures.
-  Read-only authoritative binary EQG collision-flag investigation for Bloodfields;
-  no runtime/server edits or inferred meanings from distributions alone.
-- **xml_ui**: hotbar presentation/GPU handed back. Prepared lossless heightmap
-  water data/parser slice in terrain.rs/tests/terrain.rs; begin after root's
-  hotbar publication. No rendering/liquid behavior assumptions.
-- **npc_assets**: hotbar/config/input handed back. Read-only thin-liquid crossing
-  and NPC swimming-projection investigation; source edits await checkpoint.
-- Root owns publication, then the confirmed Feerrott2 internal-name declaration
-  loader bug. Current load_eqg searches feerrott2.zon but the archive contains
-  feerrott.zon/feerrott.dat; preserve exact-name precedence and reject ambiguous
-  alternate declarations.
-- Later work: trainer preview and verified transactions,
-  lossless heightmap water parsing, native sky celestial orientation, thin liquid
-  crossings, NPC swimming projection, hover/cross-zone resurrection and XP/item
-  recovery. First-pass milestones are not full original-client parity.
+  `EQG_COLLISION_PLAN.md` establishes bit0-clear collision eligibility from
+  pinned EQEmu map producer/consumer code and concrete Bloodfields fixtures.
+  Next owns the bounded physical-geometry collector after this checkpoint.
+- **npc_assets**: movement and independent native-water review handed back.
+  Next owns separate EQG collision CPU/GPU test files, including a pre-change
+  drawable fingerprint and hidden-only door/lift ownership regression.
+- **xml_ui**: metadata parser and native grammar evidence handed back. Next
+  investigates indexed-water shader UV/clipping and the version-22 placement
+  field read-only; no rendering or liquid behavior until evidence is reviewed.
+- Root owns EQG loader integration, review, performance measurements and final
+  verification/publication. Preserve draw batches/pixels and existing water
+  exclusion. Do not infer physics from unresolved material IDs or high bits.
+- Later work: trainer preview and verified transactions, indexed-water surfaces,
+  native sky celestial orientation, collision-deflected thin liquid crossings,
+  NPC swimming projection, hover/cross-zone resurrection and XP/item recovery.
+  First-pass milestones are not full original-client parity.

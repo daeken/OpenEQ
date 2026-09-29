@@ -461,19 +461,13 @@ fn load_wld(base: &Path, name: &str) -> Result<Scene> {
 }
 
 fn load_eqg(base: &Path, name: &str, path: &Path) -> Result<Scene> {
-    let archive = Archive::open(path)?;
-    let zon_name = format!("{name}.zon");
-    let zon_data = if archive.contains(&zon_name) {
-        archive.read(&zon_name)?
-    } else {
-        let fallback = case_insensitive_file(base, &zon_name);
-        std::fs::read(&fallback).map_err(|source| Error::Io {
-            path: fallback,
-            source,
-        })?
-    };
+    load_eqg_archive(base, name, Archive::open(path)?)
+}
 
-    if zon_data.starts_with(b"EQTZP") {
+fn load_eqg_archive(base: &Path, name: &str, archive: Archive) -> Result<Scene> {
+    let zon_data = read_eqg_declaration(base, name, &archive)?;
+
+    if zon_data.trim_ascii_start().starts_with(b"EQTZP") {
         return load_heightmap(base, name, archive, &zon_data);
     }
 
@@ -527,6 +521,63 @@ fn load_eqg(base: &Path, name: &str, path: &Path) -> Result<Scene> {
     }
 
     Ok(scene)
+}
+
+/// Exact archive and loose declarations keep their existing precedence. Some
+/// heightmap archives use an older internal name (feerrott2 -> feerrott); accept
+/// that only when an actual, unambiguous declaration names an archived DAT.
+fn read_eqg_declaration(base: &Path, name: &str, archive: &Archive) -> Result<Vec<u8>> {
+    let zon_name = format!("{name}.zon");
+    if archive.contains(&zon_name) {
+        return archive.read(&zon_name);
+    }
+    let fallback = case_insensitive_file(base, &zon_name);
+    match std::fs::read(&fallback) {
+        Ok(data) => Ok(data),
+        Err(source) => {
+            if source.kind() == std::io::ErrorKind::NotFound
+                && let Some((data, _)) = unique_heightmap_declaration(archive)?
+            {
+                return Ok(data);
+            }
+            Err(Error::Io {
+                path: fallback,
+                source,
+            })
+        }
+    }
+}
+
+fn unique_heightmap_declaration(
+    archive: &Archive,
+) -> Result<Option<(Vec<u8>, terrain::TerrainOptions)>> {
+    let mut selected: Option<(Vec<u8>, terrain::TerrainOptions)> = None;
+    for filename in archive
+        .names()
+        .iter()
+        .filter(|name| name.to_ascii_lowercase().ends_with(".zon"))
+    {
+        // An unreadable candidate cannot be ruled out as a second valid
+        // declaration. Fail instead of making the choice depend on corruption.
+        let data = archive.read(filename)?;
+        let Ok(options) = terrain::TerrainOptions::parse(&data) else {
+            continue;
+        };
+        if !archive.contains(&format!("{}.dat", options.name)) {
+            continue;
+        }
+        if let Some((previous, _)) = &selected {
+            if previous != &data {
+                return Err(Error::Format(
+                    "multiple distinct archived heightmap declarations name available terrain data"
+                        .into(),
+                ));
+            }
+        } else {
+            selected = Some((data, options));
+        }
+    }
+    Ok(selected)
 }
 
 fn append_eqg_object(scene: &mut Scene, object: &TerMod, object_name: &str, archive_index: usize) {
@@ -825,15 +876,8 @@ fn load_heightmap(base: &Path, name: &str, archive: Archive, zon: &[u8]) -> Resu
     if !archive.contains(&format!("{}.dat", options.name)) {
         // oldcommons ships a renamed ZON alongside commonlands.zon/DAT.
         // Resolve an actual terrain declaration, rather than guessing a DAT.
-        for filename in archive.names().iter().filter(|name| name.ends_with(".zon")) {
-            if let Ok(candidate) = archive
-                .read(filename)
-                .and_then(|bytes| terrain::TerrainOptions::parse(&bytes))
-                && archive.contains(&format!("{}.dat", candidate.name))
-            {
-                options = candidate;
-                break;
-            }
+        if let Some((_, candidate)) = unique_heightmap_declaration(&archive)? {
+            options = candidate;
         }
     }
     let map = terrain::Heightmap::parse(
@@ -996,6 +1040,9 @@ fn load_heightmap(base: &Path, name: &str, archive: Archive, zon: &[u8]) -> Resu
     );
     Ok(scene)
 }
+
+#[cfg(test)]
+mod declaration_tests;
 
 #[cfg(test)]
 mod tests {

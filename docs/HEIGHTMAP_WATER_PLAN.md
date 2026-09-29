@@ -1,28 +1,38 @@
 # Indexed heightmap water: Feerrott2 investigation
 
-This is a read-only CPU investigation of the installed client on 2026-09-29.
-No runtime, server, GPU, or original asset changes were made. The result supports
-preserving and resolving indexed water records. It does **not** establish the
-original client's exact clipping, underwater rendering, or swimming behavior.
+This began as a read-only CPU investigation of the installed client on 2026-09-29.
+The investigation made no runtime, server, GPU, or original asset changes.
+It was followed by static analysis of the installed client's terrain reader and
+water constructors, recorded in
+[HEIGHTMAP_WATER_REVERSE_ENGINEERING.md](HEIGHTMAP_WATER_REVERSE_ENGINEERING.md).
+That analysis establishes the version-dependent binary fields and the indexed
+mesh's rectangular extent. Complete shoreline rendering, underwater rendering,
+and swimming behavior remain unverified.
+
+The lossless metadata/parser/lookup slice is now implemented; see the section
+below. It changes no surface geometry, rendering or liquid behavior.
 
 ## Findings and confidence
 
 - `*WATERSHEETDATA` is indexed material data, separate from finite
   `*WATERSHEET` rectangles. Feerrott2 has one indexed definition and no finite
-  sheet. The current parser ignores the indexed definition entirely.
-- The signed word after a tile's base water elevation is **not reliably a
-  secondary float elevation**. In the newer fixtures it is integer 1 or 2;
-  interpreting those bits as floats produces denormals. Multiple-material
-  fixtures support using positive values to look up `*INDEX` material keys.
+  sheet. The previous parser ignored the indexed definition entirely.
+- The word after a tile's base water elevation depends on the first DAT
+  header word, which the native loader passes as the format version. Version
+  20 stores a second float; versions 21/22 store a material selector followed
+  by a byte, an optional quartet, and a trailing float. The selector's sign
+  does not gate these fields. This supersedes the initial sample-only inference
+  of a signed-positive presence gate.
 - The following byte controls whether four more floats are present. Every
   quartet audited is an ordered, grid-aligned rectangle inside its tile.
   Coordinate order `[min_local_x, max_local_x, min_local_y, max_local_y]` agrees
   with the existing terrain axes, pond location, submerged terrain, and seams.
+  The native reader tests whether the byte is nonzero, including `0x80/0xff`.
 - The rectangle is **not exactly reconstructible from current heights**.
   Neither ignoring it nor replacing it with a calculated submerged-quad bound
-  is justified. Whether it is a hard draw clip, an editor/cache bound, or a
-  conservative runtime bound remains unverified by client code or matching
-  original-client captures.
+  is justified. Native constructors pass it to a two-sided subdivided planar
+  mesh; it is a geometric extent, not solely cache metadata. Later shader
+  effects and the complete final shoreline have not been verified.
 - The trailing float is -1000 in every extended record audited. Its purpose
   remains unknown. Do not turn it into a liquid bottom or a sentinel rule.
 
@@ -62,24 +72,31 @@ Its material values are:
 | Normal / environment map | `Resources\WaterSwap\water_n.dds` / `Resources\WaterSwap\water_e.dds` |
 
 These map names use the existing shared-texture lookup after path stripping.
-Their existence does not establish the indexed-water UV formula; reusing the
-finite-sheet UV formula is an explicit approximation until compared visually.
+The native indexed mesh uses tile-relative grid UVs, with `*UVSCALE` supplied
+separately as a shader parameter. Reusing the finite-sheet world-coordinate
+formula would be an approximation; see the static-analysis document for the
+decoded CPU mapping and unresolved shader operations.
 
 ## Binary record layout and cross-zone checks
 
-For the audited newer records, immediately after the quad-flag array:
+For version 21/22 water records, immediately after the quad-flag array:
 
 | Order | Storage | Feerrott2 contents |
 | --- | --- | --- |
 | 1 | f32 | Base water elevation: -1000 × 253, -30 × 73, -50 × 3 |
-| 2 | i32, preserve raw bits | 1 × 329; evidence supports material selector |
-| 3, only if signed word > 0 | i8 | 0 × 264, 1 × 65 |
-| 4, only if byte > 0 | four f32 | Ordered local rectangle, 65 records |
-| 5, only if signed word > 0 | f32 | -1000 × 329, meaning unresolved |
+| 2 | i32, preserve raw bits | 1 × 329; exact material-index lookup |
+| 3, unconditional | byte, preserved as i8 | 0 × 264, 1 × 65 |
+| 4, only if byte != 0 | four f32 | Ordered local rectangle, 65 records |
+| 5, unconditional | f32 | -1000 × 329, meaning unresolved |
 
-The current loader consumes this shape but discards everything after the base
-water elevation. Its comment calls the word a secondary level bit pattern;
-that is misleading for the positive integer records.
+Version 20 stores only the base elevation and second float. The native reader
+at `0x10100dd0` uses the version, not word sign, to distinguish these layouts.
+The earlier loader happened to consume all audited fixtures correctly with a
+signed-positive word gate, but would desynchronize for a modern zero/negative
+selector or legacy positive second float. Native versions below 12 omit these
+water fields; this does not establish OpenEQ support for those older complete
+DAT layouts. The other version-dependent record layouts, particularly version
+22 object placements, still require investigation.
 
 The following independent complete parses distinguish an index from a simple
 record count and guard against making Feerrott2-specific rules universal:
@@ -93,10 +110,10 @@ record count and guard against making Feerrott2-specific rules universal:
 | Old Commonlands | `[21,0,1]` | 6,948,252 | 1 × 1,552 | 0 | 83 identical definitions of index 0; one finite sheet |
 | Nektulos | `[20,0,10]` | 6,735,104 | `0xc47a0000` × 421 | no extension | No indexed definition; one finite sheet |
 
-Nektulos's word is float -1000 when reinterpreted, and its signed value is
-negative. Preserve the existing signed-presence behavior; do not reinterpret
-all versions as positive material indices or claim header 20/21 alone proves
-the complete version grammar.
+Nektulos's word is float -1000 when reinterpreted. Its version-20 record has no
+indexed extension, regardless of the second float's sign. The complete native
+water-field branch now resolves the ambiguity that these fixtures alone could
+not resolve; complete support for other DAT versions is a separate question.
 
 Loping Plains's 43 word-2 tiles still contain **one** extension each and parse
 through EOF. Buried Sea's 23 word-2 tiles do the same. A simple record-count
@@ -104,8 +121,8 @@ interpretation would lose alignment. Of the active rectangle records,
 Loping Plains uses selector 1 × 236 and 2 × 42; Buried Sea uses 1 × 878 and
 2 × 22. Buried Sea index 1 has Fresnel bias/power/reflection `0.28/6/0.6`,
 while index 2 has `0.15/8/0.3` and different gray water colors. This is strong
-asset evidence for the material selector; it is not a claim that the original
-client's material lookup was disassembled.
+asset evidence for the material selector. Subsequent static analysis also found
+the native exact-index lookup at `0x100fae00`.
 
 Old Commonlands supplies the necessary counterexample to default/fallback
 lookup: all records are byte 0, its DAT selector 1 has no definition, and
@@ -156,7 +173,7 @@ has equal base elevation. Pond tiles 109 and 84 meet at X=-768, with an overlap
 Y=-2944 through -2864 at Z=-50. These give a useful future fixed-camera seam
 fixture without requiring an inferred liquid volume.
 
-### Why clipping is still an open question
+### Why heights cannot replace the stored bounds
 
 A simple audit marks a terrain quad wet if any of its four vertices is strictly
 below the base water elevation, then takes the AABB of those quads. This finds
@@ -174,8 +191,9 @@ Two concrete counterexamples prevent overclaiming:
   Z is -50.60579299926758, and at `(64,240)` it is -43.34416198730469.
   A planar interpolation crosses Z=-50 beyond Y=224. The calculated wet-quad
   bound ends at Y=240 instead. A hard crop at the recorded bound removes this
-  narrow submerged edge; ignoring the bound preserves it. Neither outcome is
-  proven to match the original client's draw path.
+  narrow submerged edge; ignoring the bound preserves it. The native CPU mesh
+  uses the stored bound. Matching final shoreline appearance still requires
+  checking shader behavior and fixed original-client cameras.
 
 The flags also cannot select the water by themselves. Across Feerrott2 the
 flag histogram is `{0:52342,128:31855,1:25,4:1,132:1}`. Inside recorded
@@ -212,8 +230,10 @@ world Z, volume extents, bottom depth, immersion transitions, or swimming.
 Pinned source references were read directly:
 
 - [EQEmu zone-utilities DAT reader](https://github.com/EQEmu/zone-utilities/blob/b361e63dd067e8959f5bf2341579f481d2374fd5/src/common/eqg_v4_loader.cpp#L191)
-  reads the signed word, optional byte/quartet and trailing float, but discards
-  those fields. Its [water parser](https://github.com/EQEmu/zone-utilities/blob/b361e63dd067e8959f5bf2341579f481d2374fd5/src/common/eqg_v4_loader.cpp#L569)
+  reads the word, optional byte/quartet and trailing float using signed-positive
+  presence gates, but discards those fields. Those gates match the audited
+  assets accidentally; the native version/byte predicates supersede them.
+  Its [water parser](https://github.com/EQEmu/zone-utilities/blob/b361e63dd067e8959f5bf2341579f481d2374fd5/src/common/eqg_v4_loader.cpp#L569)
   distinguishes tile definitions and preserves `*INDEX`.
 - [EQEmu azone map generation](https://github.com/EQEmu/zone-utilities/blob/b361e63dd067e8959f5bf2341579f481d2374fd5/src/azone/map.cpp#L756)
   emits two noncollidable triangles per **entire tile per indexed definition**
@@ -226,7 +246,8 @@ Pinned source references were read directly:
   clipping or selector semantics.
 - [Quail's reader](https://github.com/xackery/quail/blob/776fc1acc7676c6984feb6fe0ff9353c4f9e566f/raw/datzon_read.go#L155)
   and writer preserve them as `Unk2`, `Unk3`, `Unk3Quad` and `Unk3Float`.
-  These confirm binary shape rather than resolving rendering behavior.
+  These provide comparison data rather than authority over the decoded native
+  version branches or rendering behavior.
 
 ## Smallest implementation sequence
 
@@ -236,31 +257,80 @@ Pinned source references were read directly:
    visible to the caller instead of selecting a default. Preserve raw regions
    in the same data-model work only if that is independently scoped; no liquid
    query or movement change is required for surface work.
-2. Add synthetic grammar tests for positive selectors 1 and 2, byte 0/1,
-   negative legacy word, truncated optional quartet/tail, duplicate definitions,
+2. Add synthetic grammar tests for version-21 selectors 1, 2, 0 and negative,
+   byte 0/1/127/128/255, positive/negative version-20 second floats,
+   truncated optional quartet/tail, duplicate definitions,
    and missing selectors. Add explicitly requested original fixtures for the
    full Feerrott2 alignment/counts, internal-name fallback, exact pond record,
    Loping/Buried selector 2 and Old Commonlands's inactive mismatch.
 3. A **candidate**, bounded surface experiment can emit one rectangle per
-   resolved byte-1 record at its base elevation: Feerrott2 would have 65
-   rectangles / 130 triangles, 54 partial and 11 full-tile. Use stored bounds,
-   retain existing terrain/depth rendering, and mark every surface noncollidable.
-   Keep world-continuous UVs across seams as an explicitly tested approximation.
+   resolved nonzero-byte record at its base elevation: Feerrott2 would have 65
+   rectangles, 54 partial and 11 full-tile. Use stored bounds, retain existing
+   terrain/depth rendering, and mark every surface noncollidable. A simple
+   two-triangle rectangle would approximate the native subdivided, two-sided
+   mesh. Decode the remaining UV shader operations before treating an alternate
+   mapping as compatible.
    Do not recompute bounds from height, flood full tiles, use the unknown final
    float as a bottom, or alter camera/player liquid state.
 4. Before promoting that candidate to compatibility, compare fixed original-
    client and OpenEQ cameras at pond tile 84's Y=224 edge, submerged-free tile
-   271 and the X=-768 pond seam. This must establish whether the stored bound
-   clips drawing or only bounds a runtime/cache operation. Separately verify
+   271 and the X=-768 pond seam. The CPU rectangle extent is established; these
+   comparisons must check final shoreline appearance and continuity. Separately verify
    the selector-2 material appearance in Buried Sea. Above/below screenshots
    should hold exposure, fog, time, camera and UV phase constant where possible.
 
-If original-client evidence or a decoded client path is unavailable, land only
-the lossless data/lookup slice and keep the rectangle rendering experiment
-explicitly unverified. No exact shoreline, swimming, or full-zone compatibility
-claim follows from successful DAT alignment or these metadata correlations.
+The current change remains the lossless data/lookup slice. Native mesh evidence
+now supports a follow-up surface experiment, but no exact shoreline, swimming,
+or full-zone compatibility claim follows from successful DAT alignment or
+these metadata correlations.
+
+## Implemented metadata slice
+
+`openeq-assets::terrain` now keeps the post-elevation record in
+`TerrainTile::water_metadata`: the original u32 word bits, optional signed tag,
+optional four floats and trailing float. Version 21 and newer records always
+retain the extension; any nonzero tag includes the quartet. Float bits are
+retained without arithmetic, clamping or a meaning being assigned to the
+trailing value. `material_index()` returns the signed word, including zero and
+negative values, only when an extension is present. Legacy second-float bits
+remain available in `word_bits` and do not become material selectors.
+
+`parse_water_data` adds ordered indexed definitions alongside finite sheets.
+Indexed records terminate with `*ENDWATERSHEETDATA` (no underscore), within the
+`*BEGIN_WATERSHEETDATA` / `*END_WATERSHEETDATA` section wrappers. The parser
+retains all field keys and value tokens in order, including unknown/repeated
+fields and original texture paths. Whitespace is tokenized, not retained.
+Known indexed material fields are decoded without defaults; malformed, missing
+or repeated required fields report errors. Finite/indexed blocks cannot nest
+inside each other. The existing `parse_water` API and
+its finite-sheet defaults/path handling remain unchanged.
+
+`WaterData::resolve_index` reports `Missing`, `Unique` (including the original
+occurrence count) or `Ambiguous`. Only definitions equal in all decoded and
+authored fields coalesce in the lookup result; the original records are never
+removed. No index-zero or first-definition fallback exists. This correctly
+keeps Old Commonlands's 83 index-zero records while reporting its tile selector
+1 as unresolved.
+
+Synthetic tests cover explicit version-20/21 records, all selector signs,
+positive/negative legacy floats, byte values 0/1/127/128/255, exact unusual
+float bits, optional-record truncation, text grammar and mixed-block nesting,
+unknown fields, duplicate/conflicting definitions and finite-sheet parity. The
+explicit original-data test requires every one of the six archives above:
+
+```sh
+cargo test -p openeq-assets --test terrain \
+  original_six_zones_preserve_indexed_water_metadata_and_lookup -- --ignored --nocapture
+```
+
+It verifies full DAT alignment, word/tag/rectangle distributions, indexed
+definition counts, the exact Feerrott pond record, selector-2 lookup in Loping
+Plains and Buried Sea, the Old Commonlands mismatch, and Nektulos's legacy
+record. It performs no surface generation or liquid query. Regions remain
+counted but otherwise unpreserved in this independently bounded slice.
 
 Temporary audit programs were `/tmp/heightwater-audit.py`,
 `/tmp/heightwater-bounds.py` and `/tmp/heightwater-survey.py`; they read original
 archives and wrote only temporary derived metadata. The repository deliverable
-is this document, with no original asset payloads or runtime patch.
+of the initial investigation was this document. No original asset payloads are
+included in the repository.

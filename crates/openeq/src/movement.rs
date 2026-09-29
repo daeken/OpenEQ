@@ -4,7 +4,7 @@
 
 use crate::movement_rules::PlayerGravity;
 use openeq_assets::collision::CollisionWorld;
-use openeq_assets::liquid_regions::LiquidRegions;
+use openeq_assets::liquid_regions::{LiquidRegions, LiquidSpan};
 
 const STEP: f64 = 1.0 / 120.0;
 // A roughly four-unit hop reaches its apex in a quarter second and lands in
@@ -16,6 +16,10 @@ const RADIUS: f32 = 1.0;
 const HEIGHT: f32 = 6.0;
 const SWIM_SPEED_SCALE: f32 = 0.6;
 const LEVITATION_FALL_SPEED: f32 = 2.;
+// Opposing swim/walk input at a surface can keep changing direction without
+// consuming representable time. Stop at the last safe point after this many
+// transitions; never skip the remaining boundaries to spend the tick's time.
+const MAX_MEDIUM_TRANSITIONS: usize = 16;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MotionMode {
@@ -66,6 +70,172 @@ impl MotionWorld<'_> {
             MotionMode::Ground
         }
     }
+
+    fn grounded(&self, feet: [f32; 3]) -> bool {
+        on_ground(self.collision, feet) || self.dynamic.is_some_and(|world| on_ground(world, feet))
+    }
+
+    fn move_velocity(
+        &self,
+        feet: [f32; 3],
+        velocity: [f32; 3],
+        dt: f32,
+        grounded: bool,
+        mode: MotionMode,
+    ) -> ResolvedMove {
+        let displacement = velocity.map(|value| value * dt);
+        // Stair following is a grounded behavior. Giving an airborne body
+        // a two-unit step range snaps the last two units of a fall/jump.
+        let step_height = if grounded
+            && velocity[2] <= 0.
+            && !matches!(mode, MotionMode::Flying | MotionMode::Floating)
+        {
+            2.
+        } else {
+            0.
+        };
+        let moved = self.collision.move_player_with_dynamic(
+            self.dynamic,
+            feet,
+            displacement,
+            RADIUS,
+            HEIGHT,
+            step_height,
+        );
+        let desired_z = feet[2] + displacement[2];
+        let straight = self
+            .liquids
+            .filter(|regions| !regions.is_empty())
+            .and_then(|_| unobstructed_position(feet, displacement))
+            .is_some_and(|expected| {
+                moved == expected
+                    || (grounded
+                        && velocity[2] <= 0.
+                        && moved[2] == feet[2]
+                        && moved[..2] == expected[..2])
+            });
+        ResolvedMove {
+            feet: moved,
+            velocity_z: if (moved[2] - desired_z).abs() > 0.001 {
+                0.
+            } else {
+                velocity[2]
+            },
+            straight,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ResolvedMove {
+    feet: [f32; 3],
+    velocity_z: f32,
+    // A slide or stair snap does not expose its actual path through this API.
+    // Only unchanged motion and the existing flat support clamp can be split.
+    straight: bool,
+}
+
+struct MediumBoundary {
+    fraction: f32,
+    next_end: f32,
+    wet: bool,
+}
+
+fn center(feet: [f32; 3]) -> [f32; 3] {
+    [feet[0], feet[1], feet[2] + HEIGHT * 0.5]
+}
+
+/// Match collision's unobstructed substeps exactly, including f32 rounding.
+/// A tolerance against a one-shot endpoint could misidentify a small slide as
+/// straight motion. Oversized capped moves have no constant-speed time mapping.
+fn unobstructed_position(feet: [f32; 3], delta: [f32; 3]) -> Option<[f32; 3]> {
+    let delta = glam::Vec3::from(delta);
+    let distance = delta.length();
+    let step_length = (RADIUS * 0.5).min(1.);
+    if !distance.is_finite() || distance > step_length * 256. {
+        return None;
+    }
+    if distance <= 1e-7 {
+        return Some(feet);
+    }
+    let steps = (distance / step_length).ceil().max(1.) as usize;
+    let motion = delta / steps as f32;
+    let mut position = glam::Vec3::from(feet);
+    for _ in 0..steps {
+        position += motion;
+    }
+    Some(position.to_array())
+}
+
+/// All supported liquids share the same movement response. A change of liquid
+/// kind at a touching boundary is not a dry interval.
+fn medium_boundary(spans: &[LiquidSpan], wet: bool) -> Option<MediumBoundary> {
+    let starts_wet = spans.first().is_some_and(|span| span.enter == 0.);
+    if starts_wet {
+        let mut exit = spans[0].exit;
+        let mut next = 1;
+        while next < spans.len() && spans[next].enter <= exit {
+            exit = exit.max(spans[next].exit);
+            next += 1;
+        }
+        if !wet {
+            return Some(MediumBoundary {
+                fraction: 0.,
+                next_end: exit,
+                wet: true,
+            });
+        }
+        (exit < 1.).then(|| MediumBoundary {
+            fraction: exit,
+            next_end: spans.get(next).map_or(1., |span| span.enter),
+            wet: false,
+        })
+    } else {
+        let enter = spans.first().map_or(1., |span| span.enter);
+        if wet {
+            Some(MediumBoundary {
+                fraction: 0.,
+                next_end: enter,
+                wet: false,
+            })
+        } else {
+            spans.first().map(|span| MediumBoundary {
+                fraction: span.enter,
+                next_end: span.exit,
+                wet: true,
+            })
+        }
+    }
+}
+
+/// Find a representable point on the outgoing side, not an arbitrary world
+/// epsilon. WLD planes themselves are dry, while box boundaries are inclusive.
+fn boundary_fraction(
+    regions: &LiquidRegions,
+    position: impl Fn(f32) -> [f32; 3],
+    boundary: &MediumBoundary,
+) -> Option<f32> {
+    let in_next_medium =
+        |fraction| regions.at(center(position(fraction))).is_some() == boundary.wet;
+    let mut low = boundary.fraction;
+    let mut high = low + (boundary.next_end - low) * 0.5;
+    if high <= low || !in_next_medium(high) {
+        return None;
+    }
+    // f32 positions need at most 24 significand bits. Bisection only queries
+    // metadata; the selected prefix still goes through normal body collision.
+    for _ in 0..24 {
+        let middle = low + (high - low) * 0.5;
+        if middle == low || middle == high {
+            break;
+        }
+        if in_next_medium(middle) {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    Some(high)
 }
 
 /// Corrects a small floor penetration once when installing an authoritative
@@ -168,8 +338,7 @@ impl GroundMotion {
         while self.accumulator + 1e-7 >= STEP {
             self.accumulator = (self.accumulator - STEP).max(0.0);
             self.mode = world.mode(feet, &input);
-            let grounded = on_ground(world.collision, feet)
-                || world.dynamic.is_some_and(|world| on_ground(world, feet));
+            let grounded = world.grounded(feet);
             if grounded && self.velocity_z < 0.0 {
                 self.velocity_z = 0.0;
             }
@@ -205,35 +374,97 @@ impl GroundMotion {
                     input.walk_velocity
                 }
             };
-            let displacement = [
-                velocity_xy[0] * dt,
-                velocity_xy[1] * dt,
-                self.velocity_z * dt,
-            ];
-            // Stair following is a grounded behavior. Giving an airborne body
-            // a two-unit step range snaps the last two units of a fall/jump.
-            let step_height = if grounded
-                && self.velocity_z <= 0.0
-                && !matches!(self.mode, MotionMode::Flying | MotionMode::Floating)
-            {
-                2.0
+            let velocity = [velocity_xy[0], velocity_xy[1], self.velocity_z];
+            let moved = world.move_velocity(feet, velocity, dt, grounded, self.mode);
+            if let Some((split, mode)) = self.cross_liquids(&world, feet, &input, velocity, moved) {
+                feet = split.feet;
+                self.velocity_z = split.velocity_z;
+                self.mode = mode;
             } else {
-                0.0
-            };
-            let moved = world.collision.move_player_with_dynamic(
-                world.dynamic,
-                feet,
-                displacement,
-                RADIUS,
-                HEIGHT,
-                step_height,
-            );
-            if (moved[2] - (feet[2] + displacement[2])).abs() > 0.001 {
-                self.velocity_z = 0.0;
+                feet = moved.feet;
+                self.velocity_z = moved.velocity_z;
             }
-            feet = moved;
         }
         feet
+    }
+
+    /// Split only a verified straight trajectory, including a flat supported
+    /// walk. Collision does not expose the route taken by stair/slide responses;
+    /// any such response keeps the original whole tick, not a guessed chord.
+    fn cross_liquids(
+        &self,
+        world: &MotionWorld<'_>,
+        mut feet: [f32; 3],
+        input: &MotionInput,
+        mut velocity: [f32; 3],
+        mut moved: ResolvedMove,
+    ) -> Option<(ResolvedMove, MotionMode)> {
+        let regions = world.liquids.filter(|regions| !regions.is_empty())?;
+        if matches!(self.mode, MotionMode::Flying | MotionMode::Floating) {
+            return None;
+        }
+        let mut mode = self.mode;
+        let mut remaining = STEP as f32;
+        for _ in 0..MAX_MEDIUM_TRANSITIONS {
+            if !moved.straight {
+                return None;
+            }
+            if moved.feet == feet {
+                return Some((moved, mode));
+            }
+            let spans = regions.segment(center(feet), center(moved.feet));
+            let Some(boundary) = medium_boundary(&spans, mode == MotionMode::Swimming) else {
+                return Some((moved, mode));
+            };
+            let flat = moved.feet[2] == feet[2] && velocity[2] <= 0.;
+            let fraction = boundary_fraction(
+                regions,
+                |fraction| {
+                    let dt = remaining * fraction;
+                    let mut desired = unobstructed_position(feet, velocity.map(|value| value * dt))
+                        .unwrap_or(feet);
+                    if flat {
+                        desired[2] = feet[2];
+                    }
+                    desired
+                },
+                &boundary,
+            )?;
+            let dt = remaining * fraction;
+            let prefix = world.move_velocity(feet, velocity, dt, world.grounded(feet), mode);
+            // Re-query the real collision result. A boundary candidate alone
+            // cannot authorize a mode switch on a blocked or snapped prefix.
+            if !prefix.straight || regions.at(center(prefix.feet)).is_some() != boundary.wet {
+                return None;
+            }
+            feet = prefix.feet;
+            remaining = (remaining - dt).max(0.);
+            mode = world.mode(feet, input);
+            velocity = if mode == MotionMode::Swimming {
+                input.volume_velocity.map(|value| value * SWIM_SPEED_SCALE)
+            } else {
+                // Gravity/jump impulses occur once per fixed tick, as before.
+                // Leaving water carries its vertical momentum until that next
+                // impulse; entering water immediately takes swim direction.
+                [
+                    input.walk_velocity[0],
+                    input.walk_velocity[1],
+                    prefix.velocity_z,
+                ]
+            };
+            if remaining == 0. {
+                return Some((prefix, mode));
+            }
+            moved = world.move_velocity(feet, velocity, remaining, world.grounded(feet), mode);
+        }
+        Some((
+            ResolvedMove {
+                feet,
+                velocity_z: 0.,
+                straight: true,
+            },
+            mode,
+        ))
     }
 }
 
@@ -361,6 +592,240 @@ mod tests {
         for feet in &results[1..] {
             near(feet[0], results[0][0]);
         }
+    }
+
+    #[test]
+    fn thin_water_between_dry_endpoints_consumes_swimming_time() {
+        let collision = flat();
+        let liquid = water([0.15, 0., 3.], [0.05, 10., 3.]);
+        let mut motion = GroundMotion::default();
+        let feet = advance(
+            &mut motion,
+            &collision,
+            &liquid,
+            [0.; 3],
+            input([40., 0., 0.], PlayerGravity::Grounded),
+            1. / 120.,
+        );
+        assert!(liquid.at([0., 0., 3.]).is_none());
+        assert!(liquid.at(center(feet)).is_none());
+        // .1 units at 40/s, .1 at 24/s, then the remaining time at 40/s.
+        let expected = 0.2 + 40. * (1. / 120. - 0.1 / 40. - 0.1 / 24.);
+        assert!((feet[0] - expected).abs() < 0.00001, "{feet:?}");
+        assert_eq!(feet[2], 0.);
+        assert_eq!(motion.mode, MotionMode::Ground);
+        let mut endpoints = Vec::new();
+        for fps in [10, 30, 60, 120, 240] {
+            let mut motion = GroundMotion::default();
+            let mut feet = [0.; 3];
+            for _ in 0..fps {
+                feet = advance(
+                    &mut motion,
+                    &collision,
+                    &liquid,
+                    feet,
+                    input([40., 0., 0.], PlayerGravity::Grounded),
+                    1. / fps as f32,
+                );
+            }
+            endpoints.push(feet);
+        }
+        for feet in endpoints {
+            near(feet[0], 40. - 40. * (0.1 / 24. - 0.1 / 40.));
+            assert_eq!(feet[2], 0.);
+        }
+    }
+
+    #[test]
+    fn entering_thin_water_uses_swim_direction_for_remaining_tick() {
+        let collision = flat();
+        let liquid = water([0.15, 0., 10.], [0.05, 10., 10.]);
+        let mut motion = GroundMotion::default();
+        let feet = advance(
+            &mut motion,
+            &collision,
+            &liquid,
+            [0., 0., 5.],
+            MotionInput {
+                walk_velocity: [40., 0.],
+                volume_velocity: [0., 20., 20.],
+                jump: false,
+                gravity: PlayerGravity::Grounded,
+            },
+            1. / 120.,
+        );
+        assert!((feet[0] - 0.1).abs() < 0.00001, "{feet:?}");
+        let dry_time = 0.1 / 40.;
+        let swim_time = 1. / 120. - dry_time;
+        assert!((feet[1] - 12. * swim_time).abs() < 0.00001);
+        let expected_z = 5. - GRAVITY / 120. * dry_time + 12. * swim_time;
+        assert!((feet[2] - expected_z).abs() < 0.00001, "{feet:?}");
+        assert_eq!(motion.mode, MotionMode::Swimming);
+        assert_eq!(motion.velocity_z, 12.);
+    }
+
+    #[test]
+    fn falling_through_a_thin_water_layer_stops_at_immersion() {
+        let collision = flat();
+        let liquid = water([0., 0., 12.45], [10., 10., 0.05]);
+        let mut motion = GroundMotion {
+            velocity_z: -80.,
+            ..Default::default()
+        };
+        let feet = advance(
+            &mut motion,
+            &collision,
+            &liquid,
+            [0., 0., 10.],
+            input([0.; 3], PlayerGravity::Grounded),
+            1. / 120.,
+        );
+        assert!((feet[2] - 9.5).abs() < 0.00001, "{feet:?}");
+        assert!(liquid.at(center(feet)).is_some());
+        assert_eq!(motion.mode, MotionMode::Swimming);
+        assert_eq!(motion.velocity_z, 0.);
+    }
+
+    #[test]
+    fn liquid_queries_preserve_dry_jumping_and_fully_submerged_motion() {
+        let collision = flat();
+        let far_water = water([100., 100., 10.], [1.; 3]);
+        let mut plain = GroundMotion::default();
+        let mut queried = GroundMotion::default();
+        let (mut a, mut b) = ([0.; 3], [0.; 3]);
+        for tick in 0..120 {
+            a = plain.step(&collision, a, [40., 0.], tick == 0, 1. / 120.);
+            let mut keys = input([40., 0., 0.], PlayerGravity::Grounded);
+            keys.jump = tick == 0;
+            b = advance(&mut queried, &collision, &far_water, b, keys, 1. / 120.);
+            assert_eq!(a, b);
+            assert_eq!(plain.velocity_z, queried.velocity_z);
+        }
+        let liquid = water([0., 0., 50.], [100.; 3]);
+        let start = [0., 0., 20.];
+        for velocity in [[40., 0., 0.], [20., 0., 20.], [0., 0., -40.]] {
+            let expected = collision.move_player(
+                start,
+                velocity.map(|value| value * SWIM_SPEED_SCALE * STEP as f32),
+                RADIUS,
+                HEIGHT,
+                0.,
+            );
+            let actual = advance(
+                &mut GroundMotion::default(),
+                &collision,
+                &liquid,
+                start,
+                input(velocity, PlayerGravity::Grounded),
+                STEP as f32,
+            );
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn deflected_liquid_crossings_keep_original_collision_result() {
+        let ramp = world(&[[
+            [-100., -100., -50.],
+            [100., -100., 50.],
+            [100., 100., 50.],
+            [-100., 100., -50.],
+        ]]);
+        let liquid = water([0.15, 0., 3.], [0.05, 10., 3.]);
+        let expected = GroundMotion::default().step(&ramp, [0.; 3], [40., 0.], false, STEP as f32);
+        let actual = advance(
+            &mut GroundMotion::default(),
+            &ramp,
+            &liquid,
+            [0.; 3],
+            input([40., 0., 0.], PlayerGravity::Grounded),
+            STEP as f32,
+        );
+        assert_eq!(actual, expected);
+        assert!(actual[2] > 0.1);
+        let floor = flat();
+        let wall = world(&[[
+            [1.1, -20., 0.],
+            [1.1, 20., 0.],
+            [1.1, 20., 20.],
+            [1.1, -20., 20.],
+        ]]);
+        // The body touches the wall at x=.1, before the liquid starts at .15.
+        let water_behind_wall = water([0.2, 0., 3.], [0.05, 10., 3.]);
+        for velocity in [[40., 0., 0.], [40., 40., 0.]] {
+            let expected = GroundMotion::default().step_with_dynamic(
+                &floor,
+                Some(&wall),
+                [0.; 3],
+                [velocity[0], velocity[1]],
+                false,
+                STEP as f32,
+            );
+            let mut motion = GroundMotion::default();
+            let actual = motion.step_in_world(
+                MotionWorld {
+                    collision: &floor,
+                    dynamic: Some(&wall),
+                    liquids: Some(&water_behind_wall),
+                },
+                [0.; 3],
+                input(velocity, PlayerGravity::Grounded),
+                STEP as f32,
+            );
+            assert_eq!(actual, expected);
+            assert!(actual[0] < 0.15);
+            assert_eq!(motion.mode, MotionMode::Ground);
+        }
+    }
+
+    #[test]
+    fn opposing_medium_directions_stop_at_boundary_with_bounded_work() {
+        let collision = flat();
+        let liquid = water([0.15, 0., 3.], [0.05, 10., 3.]);
+        let mut motion = GroundMotion::default();
+        let feet = advance(
+            &mut motion,
+            &collision,
+            &liquid,
+            [0.; 3],
+            MotionInput {
+                walk_velocity: [40., 0.],
+                volume_velocity: [-40., 0., 0.],
+                jump: false,
+                gravity: PlayerGravity::Grounded,
+            },
+            STEP as f32,
+        );
+        assert!((feet[0] - 0.1).abs() < 0.00001, "{feet:?}");
+        assert_eq!(motion.velocity_z, 0.);
+        assert!(motion.accumulator < 1e-7);
+    }
+
+    #[test]
+    fn too_many_thin_regions_stop_at_last_processed_boundary() {
+        use openeq_assets::liquid_regions::{LiquidBox, LiquidKind};
+        let collision = flat();
+        let liquids = LiquidRegions::from_boxes((0..20).map(|index| LiquidBox {
+            kind: LiquidKind::Water,
+            center: [0.0105 + index as f32 * 0.003, 0., 3.],
+            half_extents: [0.0005, 10., 3.],
+            rotation: [0., 0., 0., 1.],
+        }))
+        .unwrap();
+        let mut motion = GroundMotion::default();
+        let feet = advance(
+            &mut motion,
+            &collision,
+            &liquids,
+            [0.; 3],
+            input([40., 0., 0.], PlayerGravity::Grounded),
+            STEP as f32,
+        );
+        // Sixteen transitions traverse eight slabs, ending at x=.032. The
+        // unprocessed intervals must not be skipped to reach the dry endpoint.
+        assert!((feet[0] - 0.032).abs() < 0.00001, "{feet:?}");
+        assert_eq!(motion.mode, MotionMode::Ground);
+        assert!(motion.accumulator < 1e-7);
     }
 
     #[test]
