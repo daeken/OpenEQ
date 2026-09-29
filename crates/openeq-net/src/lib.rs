@@ -39,6 +39,7 @@ pub mod raid;
 pub mod session;
 pub mod social;
 pub mod trade;
+pub mod training;
 pub mod zone;
 
 pub mod gameplay;
