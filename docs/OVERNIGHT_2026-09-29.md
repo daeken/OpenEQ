@@ -421,6 +421,8 @@ Published as **535970e**.
 
 ## Ninth overnight batch (verified)
 
+Published as **8646dba**.
+
 - Feerrott2 resolves its real internal terrain declaration with preserved exact
   archive/loose precedence and explicit ambiguity/corruption failures. Five
   synthetic tests and an original full-zone test pass. Full GPU upload/render
@@ -449,22 +451,43 @@ Published as **535970e**.
   directory. Native grammar documentation is complete. Independent movement
   review exercised 528 box and 120 WLD BSP cases without a blocker.
 
+## Tenth batch (verified)
+
+The usage interruption paused work before the overnight cutoff. The user reset
+usage and explicitly requested continuation afterward; this checkpoint resumes
+that authorization. No live fixture was left connected during the interruption.
+
+- EQG collision now follows source-backed polygon flags independently of draw
+  materials. Bloodfields regains hidden walls while passable foliage stops
+  obstructing movement/camera. Draw fingerprints, bounds and every GPU A/B pixel
+  remain identical; the inspected captures are in `/tmp/openeq-bloodfields-collision`.
+- Physical ownership survives TER/MOD loading, heightmap props, instance scale,
+  object extraction and hidden-only dynamic doors/lifts. Review caught premature
+  local-area rejection of valid scaled triangles; focused regressions cover it.
+- Seven helper, five public-loader CPU and three serial GPU tests pass, with
+  independent source/test review. Strict scoped Clippy passes. An explicit
+  twelve-zone CPU load/build sweep passes; measured costs and caveats are in
+  `EQG_COLLISION_PLAN.md`. No protocol/server changes or Explorer involvement.
+- Combined verification: **658 workspace tests passed**, zero failures/ignored,
+  including original assets and GPU checks. Strict workspace Clippy, format,
+  client build and playback-disabled all-target check pass. Logs use the prefix
+  `/tmp/openeq-overnight-eqg-collision-`; UI captures use the matching `ui` directory.
+- Native water research traced indexed geometry through fixed-point UV upload
+  and all three original shader techniques. Rectangles remain planar, with no
+  terrain-depth clipping in those shaders. This supports a bounded subsequent
+  surface slice; rendering and liquid volumes are not implemented by this batch.
+
 ## Active follow-up ownership
 
-- **eqemu_server**: Reviver proof/cleanup complete; no active live fixtures.
-  `EQG_COLLISION_PLAN.md` establishes bit0-clear collision eligibility from
-  pinned EQEmu map producer/consumer code and concrete Bloodfields fixtures.
-  Next owns the bounded physical-geometry collector after this checkpoint.
-- **npc_assets**: movement and independent native-water review handed back.
-  Next owns separate EQG collision CPU/GPU test files, including a pre-change
-  drawable fingerprint and hidden-only door/lift ownership regression.
-- **xml_ui**: metadata parser and native grammar evidence handed back. Next
-  investigates indexed-water shader UV/clipping and the version-22 placement
-  field read-only; no rendering or liquid behavior until evidence is reviewed.
-- Root owns EQG loader integration, review, performance measurements and final
-  verification/publication. Preserve draw batches/pixels and existing water
-  exclusion. Do not infer physics from unresolved material IDs or high bits.
-- Later work: trainer preview and verified transactions, indexed-water surfaces,
-  native sky celestial orientation, collision-deflected thin liquid crossings,
-  NPC swimming projection, hover/cross-zone resurrection and XP/item recovery.
-  First-pass milestones are not full original-client parity.
+- EQG source/helper and independent test reviews are complete. All three agents
+  have handed back the collision slice and native-water documentation. No live
+  fixtures are connected; Explorer has not been involved.
+- Next bounded implementation: indexed heightmap water surfaces following
+  `HEIGHTMAP_WATER_SURFACES.md`. **xml_ui** owns native evidence and asset mesh
+  planning, **npc_assets** can own independent original CPU/GPU fixtures, root
+  owns renderer material-mode/loader integration, **eqemu_server** can review.
+  Preserve default EQG/finite water shading and do not create liquid volumes.
+- Later work: trainer preview and verified transactions, native sky celestial
+  orientation, collision-deflected thin liquid crossings, NPC swimming projection,
+  hover/cross-zone resurrection and XP/item recovery. First-pass milestones are
+  not full original-client parity.

@@ -1,8 +1,8 @@
 //! Conservative static-zone locomotion in EverQuest coordinates (Z is up).
 //!
-//! This uses visible collidable triangles and the separate authored invisible
-//! collision channel. Dynamic doors can be
-//! supplied through a separate world built with `add_geometry`. Dynamic actors
+//! This uses visible collidable triangles and the separate authored physical
+//! collision channel. Dynamic doors can be supplied through a separate world
+//! built from their drawable and physical meshes. Dynamic actors
 //! are not represented. It is therefore a useful walking aid, not authoritative EQ
 //! physics. Water is excluded. Callers supply gravity/jump displacement and send
 //! the resulting feet position to the server. The body is an upright cylinder

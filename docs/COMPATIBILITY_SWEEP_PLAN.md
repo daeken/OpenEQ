@@ -184,3 +184,16 @@ and 211,245 source triangles
 with finite geometry and sampled texture checks. A full GPU upload/render passed;
 `/tmp/openeq-feerrott2-overview.png` was inspected. This does not establish correct
 indexed water, authored baked lighting, movement or NPC behavior in this zone.
+
+
+## Bloodfields collision follow-through
+
+The current EQEmu map producer and consumer establish collision eligibility as
+bit 0 clear, independent of the other flags. The loader now keeps this physical
+channel separate from unchanged draw batches, retains exact material-MAX faces,
+and preserves existing water exclusion. Source, transform and scale regressions,
+original hidden-wall/passable-leaf queries, and identical-pixel GPU A/B pass.
+The same channel is used by heightmap-zone MOD props and dynamic doors/lifts.
+See [EQG_COLLISION_PLAN.md](EQG_COLLISION_PLAN.md) for pinned evidence, exact
+fixtures, wider load results and measured query costs. LIT/detail rendering,
+newer liquid volumes and whole-zone live traversal remain separate work.

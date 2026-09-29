@@ -2950,6 +2950,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytemuck",
+ "flate2",
  "font8x8",
  "fontdue",
  "glam 0.30.10",

@@ -1,10 +1,11 @@
 # Binary EQG collision: evidence and implementation plan
 
-Read-only investigation, 2026-09-29, for the Bloodfields item in
+Initial read-only investigation, 2026-09-29, for the Bloodfields item in
 [COMPATIBILITY_SWEEP_PLAN.md](COMPATIBILITY_SWEEP_PLAN.md). This work inspected
 public source and the installed archive, then exercised temporary CPU collision
-worlds. No runtime source, original assets or server state changed. No original
-client physics comparison, GPU capture or live route was performed.
+worlds. That investigation changed no runtime source, original assets or server
+state. Subsequent implementation review is recorded below. No original-client
+physics comparison or live route was performed for this investigation.
 
 ## Supported semantics and limits
 
@@ -213,10 +214,12 @@ counts/order; equipment also uses this grouping API. Reuse the separate
    unowned/direct. Preserve object definitions with no instances but do not
    let them collide at origin. Static instances, extracted object models and
    dynamic door/lift worlds must use the existing transform path exactly once.
-5. Validate index bounds, finite vertices and finite nondegenerate triangle area
-   before publishing physical bounds/geometry. Keep the existing winding from
+5. Validate index bounds, finite source vertices and exact nondegeneracy using
+   f64 triangle area before publishing physical geometry. Do not apply a
+   world-space area threshold before an instance transform. Keep the winding from
    `mesh::pack` (`a,b,c` for EQG); do not copy WLD's separate winding correction.
-   The `CollisionWorld` insertion checks remain the final guard.
+   `CollisionWorld` retains its f32 finite-area and `1e-10` minimum area-squared
+   checks after the transform. Bounds consumers retain their own validity checks.
 
 Do not change dynamic lighting, LIT decoding, shader detail blending, liquid
 regions, rendering flags or high-bit interpretation in this slice. It should
@@ -239,7 +242,10 @@ Required synthetic tests:
   Include mixed flags within one material to prove draw grouping stays intact.
 - Exact MAX material with bit 0 clear/set, an arbitrary missing material ID,
   resolved water, resolved ordinary material with a missing texture, invalid
-  indices, nonfinite positions, zero area and overflowing area.
+  indices, nonfinite positions and exactly zero source area. Verify tiny source
+  faces scaled up and large source faces scaled down against the original
+  transformed drawable-geometry collision path; invalid world area is still
+  rejected after placement.
 - Uninstanced physical-only MOD contributes no world triangles; two instances
   with translation/rotation/scale contribute at both intended positions and
   not the original local origin. Include negative/nonuniform instance scale,
@@ -273,3 +279,89 @@ Temporary audit source/output: `/tmp/openeq-bloodfields-flags.py`,
 `openeq-assets` development build; it changed only an in-memory scene. Public
 reference clones are under `/tmp/openeq-{zone-utilities,quail,eqsage}-collision`.
 Original proprietary payloads were not copied into the repository.
+
+## Implementation review: source area versus instance scale
+
+The initial helper used CollisionWorld's f32 area cutoff in model coordinates.
+Review reproduced two regressions before integration: a triangle with local
+edges `1e-4` scaled by 100 has source area-squared about `1e-16`, while one with
+edges `1e20` scaled by `1e-18` overflows f32 source area. Both produce one valid
+physical triangle through the previous post-transform collision path. Rejecting
+either in the collector would lose previously valid instanced geometry.
+
+The collector now uses finite source positions and finite, nonzero f64 area;
+the existing CollisionWorld insertion remains responsible for the numerical
+threshold and overflow checks in actual world coordinates. A focused regression
+compares the new physical channel with `add_geometry` for both scales, including
+their matching ground query. Invalid indices, nonfinite vertices and exact
+degeneracy remain excluded before physical vertices are published.
+
+Existing dynamic-door local support and hidden-only extent queries still use
+local f32 area thresholds. That preexisting scale limitation is not expanded
+into a door/support redesign here. Visible door bounds continue to come from
+their unchanged GPU geometry, and hidden-only bounds retain their current
+overflow protection. Static placed collision uses the instance transform and
+therefore benefits from the corrected collector validation.
+
+
+## Implemented and targeted verification
+
+The collector now supplies the separate physical channel for binary EQG terrain,
+placed MODs, object libraries, and heightmap-zone props. Every original drawable
+batch remains in the same order with unchanged attributes/materials; only its
+old physics flag is disabled to avoid duplicate collision. Exact MAX material
+is retained, bit 0 controls passability, and resolved water remains nonphysical.
+Missing arbitrary materials are diagnosed, not turned into hidden barriers.
+
+Seven helper tests, five public-loader integration tests (including installed
+Bloodfields), and three serial GPU tests pass. The loader fixtures cover mixed
+flags in one material, missing textures/materials, water, direct TER coordinates,
+unplaced hidden-only MODs, extraction, negative/nonuniform transforms and source
+scale extremes. The dynamic GPU fixture verifies hidden lift support, carrying,
+old-pose removal, sliding bounds and complete removal through DoorRenderer.
+
+Bloodfields retains the independently captured pre-change drawing fingerprints:
+geometry `788b0e681cba32fa`, materials `40ac2b6644e185fb`, draw ownership/transforms
+`8ac04774af24cb60`. It still draws 297,388 source triangles in 971 mesh/material
+batches, with 529 objects and 697 instances. The valid collision world changes
+from 320,817 to 324,800 triangles. Forward/reverse hidden-wall blocking, passable
+leaves and ordinary/high-bit controls pass at the named source locations above.
+
+GPU A/B includes the original lights and shadow pass with sky/texture animation
+frozen. Draw inventory, buffers, bounds and every rendered pixel are equal.
+Both inspected captures at `/tmp/openeq-bloodfields-collision/{before,after}.png`
+have SHA-256 `4b1331c2883c3636a9aa37452c78600f0f57b336162eda228d6d25cbcd8295a0`.
+Full workspace verification is tracked in `OVERNIGHT_2026-09-29.md`.
+
+## Measured cost and wider load sweep
+
+A temporary optimized CPU probe reconstructs the previous physics from unchanged
+drawable meshes, then compares it with the new physical channel. Medians contain
+seven batches: ten world builds, 1,000 movement queries or 10,000 camera queries
+per batch. These are local fixture measurements, not whole-zone frame times.
+
+| Bloodfields fixture | Before | After |
+| --- | ---: | ---: |
+| Collision-world build | 13.229 ms | 11.073 ms |
+| Supported hallway move `[0.08,0.05,0]` | 29.717 µs | 53.319 µs |
+| Ten-unit hallway wall crossing | 953.448 µs | 1366.446 µs |
+| Archway small move | 51.522 µs | 78.037 µs |
+| Leaf camera query | 4.332 µs | 6.849 µs |
+
+Grid cells increase 2,546→2,839, indexed references 440,869→448,147, and large
+triangles held outside the grid 0→16. The new hallway query does more work to
+block the authored wall. A temporary cell filter for large triangles gave no
+meaningful gain on this fixture and was not incorporated. No collision
+broadphase or movement policy changed in this slice.
+
+A separate explicit load/build sweep succeeded for all twelve installed zones:
+Anguish, Bloodfields, Crescent Reach, Ashengate, Crystallos, West Freeport,
+Feerrott2, Dead Hills, Loping Plains, Buried Sea, Old Commonlands and Nektulos.
+This exercises both binary terrain and heightmap prop collection. Examples of
+valid expanded physics counts are Feerrott2 3,138,384→824,400 and West Freeport
+786,767→399,069, largely from excluding authored passable props. Reduced counts
+are not proof of frame-time improvement, whole-zone traversal or NPC parity.
+
+Temporary probes and full outputs: `/tmp/openeq-eqg-collision-bench.rs`/`.txt`
+and `/tmp/openeq-eqg-compatibility-probe.rs`/`.txt`. They did not change original
+assets or any live fixture/server state.

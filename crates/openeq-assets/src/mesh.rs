@@ -80,7 +80,7 @@ impl Geometry {
     }
 }
 
-/// Additional physical geometry with no drawable material or texture.
+/// Physical geometry independent of drawable materials and textures.
 /// Positions are in the same local/scene space as the corresponding meshes.
 #[derive(Debug, Clone, Default)]
 pub struct CollisionGeometry {

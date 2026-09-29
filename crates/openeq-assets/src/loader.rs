@@ -60,7 +60,8 @@ pub struct Scene {
     pub name: String,
     pub materials: Vec<Material>,
     pub meshes: Vec<Geometry>,
-    /// Additional invisible collision geometry; never uploaded for drawing.
+    /// Physical geometry independent of drawable materials, never uploaded for
+    /// drawing. Includes hidden WLD faces and EQG's separate physical bake.
     pub collision_meshes: Vec<CollisionGeometry>,
     pub objects: Vec<SceneObject>,
     pub instances: Vec<Instance>,
@@ -581,6 +582,10 @@ fn unique_heightmap_declaration(
 }
 
 fn append_eqg_object(scene: &mut Scene, object: &TerMod, object_name: &str, archive_index: usize) {
+    let collision_start = scene.collision_meshes.len();
+    scene
+        .collision_meshes
+        .extend(eqg_collision::collect(object));
     let groups = object.mesh_groups();
     let mut keys: Vec<&u32> = groups.keys().collect();
     keys.sort();
@@ -647,7 +652,9 @@ fn append_eqg_object(scene: &mut Scene, object: &TerMod, object_name: &str, arch
             vertices,
             indices,
             material: id,
-            collidable: true,
+            // EQG polygon flags can differ within one drawable material batch.
+            // Keep draw grouping intact and use the separate physical bake.
+            collidable: false,
         });
         register_texture(scene, archive_index, &diffuse);
         if let Some(normal_map) = &normal_map {
@@ -660,10 +667,12 @@ fn append_eqg_object(scene: &mut Scene, object: &TerMod, object_name: &str, arch
         scene.objects.push(SceneObject {
             name: object_name.to_owned(),
             meshes: object_meshes,
-            collision_meshes: Vec::new(),
+            collision_meshes: (collision_start..scene.collision_meshes.len()).collect(),
         });
     }
 }
+
+mod eqg_collision;
 
 fn append_baked(
     scene: &mut Scene,

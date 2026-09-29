@@ -23,3 +23,6 @@ font8x8 = "0.3"
 [[bin]]
 name = "renderzone"
 path = "src/bin/renderzone.rs"
+
+[dev-dependencies]
+flate2.workspace = true
