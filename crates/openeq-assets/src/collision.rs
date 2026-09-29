@@ -1,7 +1,7 @@
 //! Conservative static-zone locomotion in EverQuest coordinates (Z is up).
 //!
-//! This uses the *rendered* scene's collidable triangles. Invisible collision
-//! surfaces discarded by mesh baking are unavailable. Dynamic doors can be
+//! This uses visible collidable triangles and the separate authored invisible
+//! collision channel. Dynamic doors can be
 //! supplied through a separate world built with `add_geometry`. Dynamic actors
 //! are not represented. It is therefore a useful walking aid, not authoritative EQ
 //! physics. Water is excluded. Callers supply gravity/jump displacement and send
@@ -10,7 +10,7 @@
 
 use crate::{
     Scene,
-    mesh::{Geometry, VERTEX_STRIDE},
+    mesh::{CollisionGeometry, Geometry, VERTEX_STRIDE},
 };
 use glam::{Mat4, Quat, Vec2, Vec3};
 use std::collections::HashMap;
@@ -34,7 +34,8 @@ impl Triangle {
             return None;
         }
         let cross = (points[1] - points[0]).cross(points[2] - points[0]);
-        if cross.length_squared() < 1e-10 {
+        let area_squared = cross.length_squared();
+        if !area_squared.is_finite() || area_squared < 1e-10 {
             return None;
         }
         Some(Self {
@@ -159,9 +160,15 @@ impl CollisionWorld {
     pub fn build(scene: &Scene) -> Self {
         let mut world = Self::default();
         let mut owners = vec![None; scene.meshes.len()];
+        let mut collision_owners = vec![None; scene.collision_meshes.len()];
         for (index, object) in scene.objects.iter().enumerate() {
             for &mesh in &object.meshes {
                 if let Some(owner) = owners.get_mut(mesh) {
+                    *owner = Some(index);
+                }
+            }
+            for &mesh in &object.collision_meshes {
+                if let Some(owner) = collision_owners.get_mut(mesh) {
                     *owner = Some(index);
                 }
             }
@@ -195,6 +202,15 @@ impl CollisionWorld {
                 }
             } else {
                 world.add_geometry(mesh, Mat4::IDENTITY);
+            }
+        }
+        for (index, mesh) in scene.collision_meshes.iter().enumerate() {
+            if let Some(owner) = collision_owners[index] {
+                for transform in &transforms[owner] {
+                    world.add_collision_geometry(mesh, *transform);
+                }
+            } else {
+                world.add_collision_geometry(mesh, Mat4::IDENTITY);
             }
         }
         world
@@ -612,22 +628,43 @@ impl CollisionWorld {
     /// Adds a prefiltered local mesh at a world transform. Useful for small
     /// dynamic-object worlds; callers decide which materials are collidable.
     pub fn add_geometry(&mut self, geometry: &Geometry, transform: Mat4) {
+        self.add_indexed_geometry(&geometry.indices, transform, |index| {
+            let offset = (index as usize).checked_mul(VERTEX_STRIDE)?;
+            let coords = geometry.vertices.get(offset..offset + 3)?;
+            Some(Vec3::new(coords[0], coords[1], coords[2]))
+        });
+    }
+
+    /// Adds material-free physical geometry using the same validity checks and
+    /// world transform as visible meshes, including moving doors and lifts.
+    pub fn add_collision_geometry(&mut self, geometry: &CollisionGeometry, transform: Mat4) {
+        self.add_indexed_geometry(&geometry.indices, transform, |index| {
+            geometry
+                .positions
+                .get(index as usize)
+                .copied()
+                .map(Vec3::from)
+        });
+    }
+
+    fn add_indexed_geometry(
+        &mut self,
+        indices: &[u32],
+        transform: Mat4,
+        position: impl Fn(u32) -> Option<Vec3>,
+    ) {
         if !transform.is_finite() {
             return;
         }
-        for indices in geometry.indices.chunks_exact(3) {
-            let points: Option<Vec<_>> = indices
-                .iter()
-                .map(|index| {
-                    let offset = (*index as usize).checked_mul(VERTEX_STRIDE)?;
-                    let coords = geometry.vertices.get(offset..offset + 3)?;
-                    Some(transform.transform_point3(Vec3::new(coords[0], coords[1], coords[2])))
-                })
-                .collect();
-            if let Some(points) =
-                points.and_then(|points| Triangle::new([points[0], points[1], points[2]]))
+        for indices in indices.chunks_exact(3) {
+            let [Some(a), Some(b), Some(c)] = [indices[0], indices[1], indices[2]].map(&position)
+            else {
+                continue;
+            };
+            if let Some(triangle) =
+                Triangle::new([a, b, c].map(|point| transform.transform_point3(point)))
             {
-                self.add_triangle(points);
+                self.add_triangle(triangle);
             }
         }
     }
@@ -1051,6 +1088,7 @@ mod tests {
         scene.objects.push(SceneObject {
             name: "deck".into(),
             meshes: vec![0],
+            collision_meshes: Vec::new(),
         });
         assert_eq!(CollisionWorld::build(&scene).triangle_count(), 0);
         scene.instances.push(Instance {

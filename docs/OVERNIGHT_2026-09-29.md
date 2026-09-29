@@ -193,6 +193,8 @@ Published to `master` as **08afb0d**. This is the current verified baseline.
 
 ## Fourth overnight batch (verified)
 
+Published to `master` as **b1979df**. This is the current verified baseline.
+
 - Source-backed raid events/commands, bounded incremental RaidState and original
   raid UI are integrated. `/raid`, `/raidinvite`, `/raidaccept`, `/raiddecline`,
   `/raidleave`, `/raidleader` and `/rsay` are wired. Decline is local; no guessed
@@ -244,18 +246,43 @@ Published to `master` as **08afb0d**. This is the current verified baseline.
   Bloodfields flags/LIT coverage. Original collision is the next priority if
   evidence supports a narrow verified fix.
 
+## Fifth overnight batch (verified)
+
+- Original hidden WLD collision is being preserved in a separate CPU geometry
+  channel. Drawable meshes/materials remain unchanged; missing materials do not
+  become fabricated barriers. Static object ownership and transforms, extracted
+  object models, dynamic doors/lifts and hidden-only model bounds are covered.
+- The Timorous dry barrier fixture and exact source evidence are documented in
+  `INVISIBLE_COLLISION_PLAN.md`. Asset tests verify invisible blocking versus
+  noncollidable polygons and placement behavior. GPU A/B checks cover invisible
+  geometry, unchanged draw/bounds/pixels, original Timorous and moving hidden lifts.
+  These targeted CPU/GPU tests pass, including unchanged-pixel original A/B
+  captures; independent review's one invalid-area bounds finding is fixed and
+  covered. Combined verification: **537 workspace tests passed**, zero failures
+  or ignored, including original assets and GPU. Strict Clippy, format, client
+  build and playback-disabled all-target check passed. Logs:
+  `/tmp/openeq-overnight-collision-{tests,clippy,build,headless}.log`.
+- Timorous retains 12,438 extra physical triangles with no oversized global-grid
+  fallbacks. Local median build 32.85→44.86 ms, small movement 0.497→1.035 µs,
+  10-unit crossing 11.73→30.19 µs. These are bounded fixture measurements, not a
+  guarantee for every zone. Details: `INVISIBLE_COLLISION_PLAN.md`.
+- Read-only NPC quest hand-in investigation identified cursor-queue and refund
+  prerequisites plus server transaction caveats. See `QUEST_HANDIN_PLAN.md`;
+  no quest hand-in mutation has been implemented or live-tested. The same
+  cursor overwrite affects multi-item player-trade refunds when inventory is full.
+  Serial reconciliation after stack splitting remains ambiguous; do not ship
+  guessed item-ID/serial deduplication or enable hand-ins before resolving it.
+
 ## Active follow-up ownership
 
-- **eqemu_server**: raid protocol/probe files handed back; root owns them. New
-  bounded read-only task: NPC quest hand-in source/client gap analysis and a
-  dedicated-fixture plan in `QUEST_HANDIN_PLAN.md`. No login or mutation.
-- **xml_ui**: raid presentation handed back; four pure tests +14 original GPU
-  captures passed. Idle; root owns integration files again.
-- **npc_assets**: Timorous read-only original hidden-wall audit found a dry
-  reproducible walking fixture. Finishing exact collision-channel design and
-  evidence in `COMPATIBILITY_SWEEP_PLAN.md`; runtime changes held for publication.
-- Root owns runtime integration, combined validation and publication. Agents
-  must not commit/push. Preserve in-progress work. Original collision is next.
+- **eqemu_server**: quest plan handed back; holding for receive-only guild
+  protocol/identity slice after collision publication. No live fixture active.
+- **xml_ui**: collision review complete. Receive-only guild view/action API
+  agreed; holding runtime edits until collision checkpoint.
+- **npc_assets**: collision source/tests handed back; read-only Feerrott2 water
+  semantics research in `HEIGHTMAP_WATER_PLAN.md`. No runtime/GPU/server changes.
+- Root owns `render/src/doors.rs`, `render/tests/invisible_collision.rs`, combined
+  validation, documentation and publication. Agents must not commit/push.
 - Root should revisit native sky celestial orientation, thin liquid crossings,
   NPC swimming projection, hover/cross-zone resurrection and XP/item recovery;
   do not confuse first-pass completion with full original-client parity.

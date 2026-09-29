@@ -209,3 +209,41 @@ separate handoff. No runtime implementation is authorized by this document;
 the root task will start that slice after the raid checkpoint. The temporary
 CPU audit source and detailed output remain in `/tmp/timorous-hidden-audit.rs`
 and `/tmp/timorous-hidden-fixture.txt` for local reproduction.
+
+## Implemented slice and validation
+
+The planned separate channel is now implemented in `mesh`, `loader` and
+`collision`, with renderer door/lift follow-through. Five synthetic asset tests
+cover independent render/collision flags, resolved-material requirements,
+malformed geometry, hidden floor/camera queries, object extraction/ownership,
+negative/nonuniform scale, rotation, fragment-center/quantization and archive
+loading. The explicit original Timorous test verifies the named material, dry
+visible-only starting support, forward/reverse blocking and tangential walking.
+
+Targeted checks also passed the 14 existing collision unit tests, PoK hidden
+material regression and placed-object orientation. Three GPU tests passed:
+synthetic invisible-wall pixel/bounds equality, original Timorous A/B equality,
+and hidden-only lift/slide support, passenger carrying and old-pose removal.
+A review caught invalid finite vertices overflowing triangle area in the hidden
+model extent calculation; the bounds path now matches CollisionWorld validation
+and its focused regression passes. The original Timorous capture was inspected.
+
+Temporary CPU performance audit (local optimized development profile, no timing
+assertions) alternated seven measured build rounds and seven rounds of 1,000
+queries per case. The 12,438 extra triangles add zero entries to the global
+oversized-triangle list; largest XY span is 64 grid cells (fallback threshold256).
+
+| Median | Visible-only | With hidden collision |
+| --- | ---: | ---: |
+| Collision build | 32.85 ms | 44.86 ms |
+| Short per-frame movement | 0.497 µs | 1.035 µs |
+| 10-unit barrier crossing | 11.73 µs | 30.19 µs |
+| Tangential movement | 7.53 µs | 16.33 µs |
+| Reverse crossing | 11.81 µs | 24.30 µs |
+
+These are fixture measurements, not a frame-rate guarantee for every zone.
+Audit source remains `/tmp/timorous-hidden-perf.rs`; GPU captures are under
+`/tmp/openeq-timorous-collision`. Combined release checks are recorded in the
+overnight log. No live route from Timorous arrival or native-client physics
+comparison was performed, and ordinary hinged doors retain their existing
+final-state collision policy while lifts use the animated pose.

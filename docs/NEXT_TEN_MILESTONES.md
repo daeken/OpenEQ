@@ -46,11 +46,13 @@ verify inventories, experience, corpse identity, and server-confirmed outcomes.
 Recovery packets, generation-bound choices, original XML dialogs, corpse-safe
 player identity and forced same-zone re-entry are integrated. Portable/GPU tests
 pass; a disposable character proved actual death, forced same-zone re-entry,
-new player identity, preserved corpse and post-recovery movement. Live hover,
-resurrection and item/XP recovery tests remain open. Unsupported cross-zone hover
+new player identity, preserved corpse and post-recovery movement. Dedicated
+live tests also proved same-zone resurrection (decline/fresh offer/accept, sickness
+and resumed movement) and cross-zone death/bind travel with corpse retention.
+Hover and item/XP recovery remain open. Unsupported cross-zone hover
 resurrection remains decline-only; see [recovery notes](DEATH_RECOVERY_PLAN.md).
 
-## 5. UI compatibility — in progress
+## 5. UI compatibility — first pass complete
 
 Expand original XML widgets and rich text, consistent focus/window stacking,
 saved window positions and layouts, and scaling on small and high-density
@@ -58,32 +60,59 @@ screens. Verify with actual client layouts and interactive controls.
 
 Window positions and map preferences now save per world/character using atomic
 replacement. Focused tests cover restart, corrupt-file preservation, character
-isolation and resizing without losing access to map controls. Movable stacking
-and broader widgets remain open.
+isolation and resizing without losing access to map controls. Windows and map
+now share saved click-to-front stacking with matching hit/pixel order. Original
+scrollable spell inspection and measured long-text views are implemented. Broader
+widgets and richer interactive markup remain open.
 
-## 6. Audio — queued
+## 6. Audio — first pass complete
 
 Read installed sounds and zone emitters; connect combat/spell sounds, footsteps,
 ambience, and music with volume controls and zone cleanup. Verify distance,
 looping, and missing-asset fallback without bundling original assets.
 
-## 7. Account flow — queued
+Authored WAV ambience and streamed MP3 music now use bounded voices/cache,
+zone cancellation and saved `/audio` settings. Original metadata/decode tests,
+offline mixing and silent output-device checks passed; no original audio was
+played over speakers. XMI selector mapping, combat/spell events and native
+listening comparison remain open; see [audio runtime](AUDIO_RUNTIME.md).
+
+## 7. Account flow — first pass complete
 
 Interactive login, server and character selection, and character creation with
 clear connection errors. Keep saved credentials private; use server race/class
 and starting-zone rules. Verify creation and reconnect with a dedicated account.
 
-## 8. Social systems — queued
+Interactive original-skinned login/world/character selection, cancellation,
+private-file compatibility and nonsecret selection preferences are implemented.
+Dedicated live tests verified idle selection, handoff and normal cleanup; native
+unauthenticated UI checks verified editing/masking. Character creation/deletion,
+3D previews and camp-to-roster remain open.
+
+## 8. Social systems — raid first pass complete; guild next
 
 Guild and raid state/controls and custom chat channels. Build on existing group
 and channel chat. Verify membership changes, invitations, permissions, and
 reconnect state with isolated fixtures.
+
+Raid invitations, local dismissal, rosters/MOTD, leadership transfer, self-leave
+and raid chat passed a dedicated two-client lifecycle including reconnect.
+Original raid UI has GPU coverage. Guild roster/identity/MOTD is the next planned
+receive-only slice; guild mutations, raid subgroup/loot administration and UCS
+channels remain open. See [protocol evidence](SOCIAL_PARITY_PLAN.md).
 
 ## 9. Quest interaction — queued
 
 NPC item/coin hand-ins and quest journal integration. Preserve server authority,
 returned items, cancellation, and uncertain outcomes. Verify a real PEQ quest
 with dedicated items and characters.
+
+[Hand-in research](QUEST_HANDIN_PLAN.md) identifies cursor-queue reconciliation
+as a prerequisite: multiple returned items can currently replace the visible
+cursor slot. The same gap can affect player-trade refunds when inventory is
+full. Stack-split serial refresh is ambiguous; no safe read-only serial request
+was found. Do not enable NPC hand-ins or guess item deduplication before resolving
+that state path and proving ordered refunds with dedicated fixtures.
 
 ## 10. Progression controls — queued
 
@@ -92,6 +121,18 @@ hotbuttons. Show server-confirmed gains and costs and persist user controls.
 Verify ordinary play and reconnect without altering the user's character.
 
 ## Discoveries
+
+- 2026-09-29, invisible WLD collision: the old drawable bake dropped physical
+  barriers with zero render method. A separate CPU-only geometry channel now
+  restores authored collision, including object/lift transforms, while original
+  Timorous GPU A/B images remain pixel-identical. A dry walking fixture proves
+  forward/reverse blocking and free tangential movement. Final verification is
+  tracked in [the overnight record](OVERNIGHT_2026-09-29.md).
+- 2026-09-29, raid protocol: zone-entry action10 is a136-byte passthrough record,
+  unlike ordinary140-byte raid events. Live tests exposed and verified the narrow
+  decoder correction. EQEmu also excludes the sender from raid chat broadcast;
+  local transcript display follows actual transmission, with remote delivery
+  verified independently.
 
 - 2026-09-29, PoK sky: native 32×32 color tables include auxiliary swatches
   outside the 31×30 dome data. Sampling the full DDS produced the rainbow wedge;

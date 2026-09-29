@@ -2,7 +2,12 @@
 //! opening updates only an instance transform around the authored hinge.
 use crate::{GpuActor, GpuScene, Renderer, scene::Instance, upload::UploadContext};
 use glam::{Mat4, Quat, Vec3};
-use openeq_assets::{Scene, collision::CollisionWorld, loader, mesh::Geometry};
+use openeq_assets::{
+    Scene,
+    collision::CollisionWorld,
+    loader,
+    mesh::{CollisionGeometry, Geometry},
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -24,6 +29,7 @@ struct Batch {
     actor: GpuActor,
     extent: Vec3,
     collision: Vec<Geometry>,
+    collision_only: Vec<CollisionGeometry>,
     local_collision: CollisionWorld,
 }
 struct PlatformPose {
@@ -124,17 +130,26 @@ impl DoorRenderer {
                     })
                     .cloned()
                     .collect();
+                let local_collision = CollisionWorld::build(&model);
                 GpuScene::build(upload.device(), upload.queue(), &model)
-                    .map(|scene| (scene, collision))
+                    .map(|scene| {
+                        let extent = if scene.draws.is_empty() {
+                            collision_extent(&model.collision_meshes)
+                        } else {
+                            scene.bounds_max - scene.bounds_min
+                        };
+                        (
+                            scene,
+                            extent,
+                            collision,
+                            model.collision_meshes,
+                            local_collision,
+                        )
+                    })
                     .map_err(|error| openeq_assets::Error::Format(error.to_string()))
             });
             match model {
-                Ok((scene, collision)) => {
-                    let extent = scene.bounds_max - scene.bounds_min;
-                    let mut local_collision = CollisionWorld::default();
-                    for mesh in &collision {
-                        local_collision.add_geometry(mesh, Mat4::IDENTITY);
-                    }
+                Ok((scene, extent, collision, collision_only, local_collision)) => {
                     tracing::info!(model=%name,"dynamic door model uploaded");
                     self.batches.insert(
                         name.clone(),
@@ -142,6 +157,7 @@ impl DoorRenderer {
                             actor: upload.prepare_actor(scene),
                             extent,
                             collision,
+                            collision_only,
                             local_collision,
                         },
                     );
@@ -222,7 +238,9 @@ impl DoorRenderer {
                     .scene
                     .update_instances(upload.device(), upload.queue(), &instances);
             }
-            self.rendered_instances += instances.len();
+            if !batch.actor.scene.draws.is_empty() {
+                self.rendered_instances += instances.len();
+            }
         }
         if states != self.collision_states || platforms_changed {
             let mut collision = CollisionWorld::default();
@@ -246,6 +264,9 @@ impl DoorRenderer {
                 );
                 for mesh in &batch.collision {
                     collision.add_geometry(mesh, matrix);
+                }
+                for mesh in &batch.collision_only {
+                    collision.add_collision_geometry(mesh, matrix);
                 }
             }
             self.collision = collision;
@@ -293,6 +314,36 @@ impl DoorRenderer {
             .map(|batch| &batch.actor)
             .collect()
     }
+}
+/// A hidden-only sliding door still needs its authored size to move. Keep GPU
+/// bounds based on drawable geometry; consult physical vertices only when the
+/// model has no draws. Invalid and unused vertices cannot enlarge the travel.
+fn collision_extent(meshes: &[CollisionGeometry]) -> Vec3 {
+    let mut bounds: Option<(Vec3, Vec3)> = None;
+    for mesh in meshes {
+        for indices in mesh.indices.chunks_exact(3) {
+            let points: Option<Vec<_>> = indices
+                .iter()
+                .map(|&index| mesh.positions.get(index as usize).copied().map(Vec3::from))
+                .collect();
+            let Some(points) = points else { continue };
+            let area_squared = (points[1] - points[0])
+                .cross(points[2] - points[0])
+                .length_squared();
+            if !points.iter().all(|point| point.is_finite())
+                || !area_squared.is_finite()
+                || area_squared < 1e-10
+            {
+                continue;
+            }
+            for point in points {
+                bounds = Some(bounds.map_or((point, point), |(min, max)| {
+                    (min.min(point), max.max(point))
+                }));
+            }
+        }
+    }
+    bounds.map_or(Vec3::ZERO, |(min, max)| max - min)
 }
 fn supports_feet(collision: &CollisionWorld, matrix: Mat4, feet: [f32; 3]) -> bool {
     let inverse = matrix.inverse();
@@ -375,6 +426,22 @@ fn transform(state: &DoorState, progress: f32, extent: Vec3, time: f32) -> Insta
 mod tests {
     use super::*;
     #[test]
+    fn hidden_door_extent_ignores_overflowing_triangles() {
+        let mesh = CollisionGeometry {
+            positions: vec![
+                [0., 0., 0.],
+                [10., 0., 0.],
+                [0., 5., 0.],
+                [1e20, 0., 0.],
+                [0., 1e20, 0.],
+                [0., 0., 1e20],
+            ],
+            indices: vec![0, 1, 2, 3, 4, 5],
+        };
+        assert_eq!(collision_extent(&[mesh]), Vec3::new(10., 5., 0.));
+    }
+
+    #[test]
     fn scene_heading_preserves_original_asymmetric_door_basis() {
         for (scene_heading, expected) in
             [(128., Vec3::new(2., -7., 0.)), (0., Vec3::new(7., 2., 0.))]
@@ -435,6 +502,126 @@ mod tests {
 #[cfg(test)]
 mod gpu_tests {
     use super::*;
+    #[test]
+    #[ignore = "requires GPU"]
+    fn hidden_only_lift_and_sliding_door_move_collision_without_draws() {
+        let renderer = Renderer::new_headless(64, 64).unwrap();
+        let mut library = Scene::from_geometry("hidden doors".into(), vec![], vec![], vec![]);
+        library.collision_meshes.push(CollisionGeometry {
+            positions: vec![
+                [-10., -3., 0.],
+                [10., -3., 0.],
+                [10., 3., 0.],
+                [-10., 3., 0.],
+                [0., -3., 0.],
+                [0., 3., 0.],
+                [0., 3., 10.],
+                [0., -3., 10.],
+                [10000.; 3],
+                [f32::NAN; 3],
+            ],
+            indices: vec![
+                0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7, 8, 8, 8, 0, 9, 1, 0, 1, 999,
+            ],
+        });
+        library.objects.push(loader::SceneObject {
+            name: "invisible".into(),
+            meshes: vec![],
+            collision_meshes: vec![0],
+        });
+        let mut doors = DoorRenderer {
+            library,
+            batches: BTreeMap::new(),
+            missing: BTreeSet::new(),
+            motion: BTreeMap::new(),
+            rendered_instances: 0,
+            collision: CollisionWorld::default(),
+            collision_states: vec![],
+            platform_poses: BTreeMap::new(),
+            platform_steps: vec![],
+        };
+        let mut state = DoorState {
+            id: 1,
+            name: "invisible".into(),
+            position: [30., 40., 50.],
+            heading: 128.,
+            size: 150,
+            open_type: 59,
+            parameter: 50,
+            ..Default::default()
+        };
+        doors.update(&renderer, &[state.clone()], 0.);
+        assert!(doors.draws().is_empty());
+        assert_eq!(doors.rendered_instances, 0);
+        assert_eq!(doors.batches["invisible"].extent, Vec3::new(20., 6., 10.));
+        assert_eq!(doors.collision_world().triangle_count(), 4);
+        assert_eq!(
+            doors
+                .collision_world()
+                .ground_height(36., 40., 50., 0.1, 0.1),
+            Some(50.)
+        );
+        let blocked =
+            doors
+                .collision_world()
+                .move_player([27., 40., 50.], [6., 0., 0.], 1., 6., 0.);
+        assert!(
+            blocked[0] < 30.,
+            "hidden lift wall did not block: {blocked:?}"
+        );
+
+        state.state = 1;
+        doors.update(&renderer, &[state.clone()], 1.);
+        doors.update(&renderer, &[state.clone()], 2.);
+        assert_eq!(
+            doors
+                .collision_world()
+                .ground_height(36., 40., 75., 0.1, 0.1),
+            Some(75.)
+        );
+        assert_eq!(
+            doors
+                .collision_world()
+                .ground_height(36., 40., 50., 0.1, 0.1),
+            None
+        );
+        assert_eq!(
+            doors.take_platform_displacement([36., 40., 50.], true),
+            [0., 0., 25.]
+        );
+        assert_eq!(
+            doors.take_platform_displacement([36., 40., 50.], true),
+            [0.; 3]
+        );
+        let below = doors
+            .collision_world()
+            .move_player([27., 40., 50.], [6., 0., 0.], 1., 6., 0.);
+        assert!(
+            (below[0] - 33.).abs() < 0.01,
+            "old collision pose survived: {below:?}"
+        );
+
+        // Existing sliding-door policy uses its final server pose. With no GPU
+        // vertices, the hidden physical extent must still provide full travel.
+        state.open_type = 25;
+        doors.update(&renderer, &[state], 4.);
+        assert_eq!(
+            doors
+                .collision_world()
+                .ground_height(156., 40., 50., 0.1, 0.1),
+            Some(50.)
+        );
+        assert_eq!(
+            doors
+                .collision_world()
+                .ground_height(36., 40., 50., 0.1, 0.1),
+            None
+        );
+        assert!(doors.draws().is_empty());
+        doors.update(&renderer, &[], 5.);
+        assert_eq!(doors.collision_world().triangle_count(), 0);
+    }
+
     #[test]
     #[ignore = "requires original assets and GPU; writes /tmp/openeq-doors.png"]
     fn original_doors_render_open_and_block_only_at_current_server_pose() {

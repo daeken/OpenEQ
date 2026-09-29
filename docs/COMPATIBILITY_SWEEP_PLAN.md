@@ -64,7 +64,7 @@ the named pond and river, walk their banks and cross adjacent tile seams.
 Acceptance requires bounded water surfaces, continuous shore geometry and no
 invented swimming support while region transforms remain unresolved.
 
-## 2. Timorous Deep (`timorous`): invisible collision geometry is discarded
+## 2. Timorous Deep (`timorous`): invisible collision geometry
 
 **Format:** classic S3D/WLD. This directly tests the distinction between hidden
 rendering surfaces and physical barriers.
@@ -76,15 +76,14 @@ render method and a collidable polygon flag**. Examples include material
 `R127_DMSPRITEDEF` (four) and `R128_DMSPRITEDEF` (six). The other observed render
 methods are `0x80000001` and `0x80000013`.
 
-`mesh::bake_wld_meshes` skips every zero-render material before producing geometry.
-`collision::CollisionWorld` is built from the rendered scene's collidable
-triangles and explicitly documents that these hidden surfaces are unavailable.
-Thus this installation loses all 12,438 of those source collision polygons
-from the static collision input. The metadata audit did not establish which
-ones form player-reachable barriers, so a specific walk-through location is
-still a hypothesis, not a visually reproduced failure.
+The initial audit found that `mesh::bake_wld_meshes` skipped every zero-render material before producing geometry.
+`collision::CollisionWorld` was then built only from drawable collidable
+triangles. This omitted all 12,438 source collision polygons from the static
+collision input. The later CPU investigation established a dry walking fixture near the Portik
+map label. Exact source and movement evidence are in
+[INVISIBLE_COLLISION_PLAN.md](INVISIBLE_COLLISION_PLAN.md).
 
-**Next verification:** first assert source polygon/material counts and show
+**Implementation acceptance:** first assert source polygon/material counts and show
 that representative hidden triangles never enter drawable meshes. Determine
 their world bounds, winding and reachable purpose before selecting a movement
 fixture. Then preserve physical triangles through a collision-only channel,
@@ -155,3 +154,19 @@ avoid turning every high flag bit into a collision or transparency rule.
 
 The present deliverable is this plan and its metadata evidence. It does not
 claim these zones have passed rendering, movement, swimming or live-NPC tests.
+
+## Timorous implementation follow-through
+
+The fifth overnight batch adds separate `Scene::collision_meshes` and object
+ownership, preserving only resolved invisible materials with collidable polygon
+flags. Static object instances and dynamic door/lift models use the existing
+scene transforms. No hidden material enters drawable geometry. Missing material
+references remain unavailable rather than becoming invented physical barriers.
+
+GPU A/B tests pass for a synthetic invisible wall and the original dry Timorous
+fixture: buffer sizes, draw inventory, GPU bounds and every rendered pixel are
+unchanged. Captures: `/tmp/openeq-timorous-collision/{before,after}.png`. A hidden-only
+lift test also passes for support, wall collision, passenger carrying, removal of
+the old physical pose, sliding extent and complete removal. Final CPU/performance
+and combined verification are tracked in `OVERNIGHT_2026-09-29.md`. Feerrott2
+water and Bloodfields flag/LIT semantics remain research, not implemented fixes.

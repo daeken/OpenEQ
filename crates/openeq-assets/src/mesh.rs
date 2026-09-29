@@ -80,6 +80,84 @@ impl Geometry {
     }
 }
 
+/// Additional physical geometry with no drawable material or texture.
+/// Positions are in the same local/scene space as the corresponding meshes.
+#[derive(Debug, Clone, Default)]
+pub struct CollisionGeometry {
+    pub positions: Vec<[f32; 3]>,
+    pub indices: Vec<u32>,
+}
+
+/// Collects authored invisible, collidable WLD polygons without changing the
+/// drawable bake. An unresolved material is not evidence of invisibility.
+pub fn bake_wld_collision_meshes<'a, I>(wld: &Wld, meshes: I) -> Vec<CollisionGeometry>
+where
+    I: IntoIterator<Item = &'a Mesh>,
+{
+    let mut geometries = Vec::new();
+    for mesh in meshes {
+        let Some(Fragment::MaterialList(list)) = wld.resolve(mesh.materials).map(|c| &c.fragment)
+        else {
+            continue;
+        };
+        let mut geometry = CollisionGeometry::default();
+        let mut vertices = HashMap::new();
+        let mut cursor = 0usize;
+        let mut invalid = false;
+        for &(count, slot) in &mesh.polygon_textures {
+            let end = cursor.saturating_add(count as usize);
+            let polygons = mesh.polygons.get(cursor..end);
+            cursor = end;
+            let Some(polygons) = polygons else {
+                invalid = true;
+                continue;
+            };
+            let material = list
+                .materials
+                .get(slot as usize)
+                .and_then(|reference| wld.resolve(*reference));
+            let Some(Fragment::Material(material)) = material.map(|c| &c.fragment) else {
+                invalid = true;
+                continue;
+            };
+            if material.flags != 0 {
+                continue;
+            }
+            for polygon in polygons.iter().filter(|polygon| polygon.collidable) {
+                // Match the drawable bake's winding. Parsed positions already
+                // contain the WLD fragment center and quantization scale.
+                let [Some(a), Some(b), Some(c)] = [polygon.a, polygon.c, polygon.b]
+                    .map(|index| mesh.vertices.get(index as usize).copied())
+                else {
+                    invalid = true;
+                    continue;
+                };
+                let points = [a, b, c];
+                if !points.iter().flatten().all(|value| value.is_finite()) {
+                    invalid = true;
+                    continue;
+                }
+                for point in points {
+                    let key = point.map(f32::to_bits);
+                    let next = geometry.positions.len() as u32;
+                    let index = *vertices.entry(key).or_insert_with(|| {
+                        geometry.positions.push(point);
+                        next
+                    });
+                    geometry.indices.push(index);
+                }
+            }
+        }
+        if invalid {
+            tracing::warn!(wld = %wld.filename, "skipped invalid invisible collision geometry");
+        }
+        if !geometry.indices.is_empty() {
+            geometries.push(geometry);
+        }
+    }
+    geometries
+}
+
 /// De-duplicates and interleaves vertices, preserving index order.
 pub fn pack(
     positions: &[[f32; 3]],

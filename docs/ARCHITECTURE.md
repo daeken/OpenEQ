@@ -79,8 +79,11 @@ A WLD material whose render method is zero is invisible, even when it references
 a texture such as `COLLIDE.DDS`. Its material-list slot is preserved during
 resolution, but its polygons are excluded from the drawable bake. This is
 independent of the polygon's collision flag: ordinary visible floors and walls
-are also collidable. The original WLD geometry retains the invisible polygons
-for future collision support.
+are also collidable. Resolved zero-render materials with collidable polygons
+also bake into a separate positions-only `CollisionGeometry` channel. Scene and
+object ownership keep that channel out of GPU meshes, materials and bounds while
+static placements and dynamic doors/lifts apply their existing transforms to it.
+Unresolved materials and invisible noncollidable polygons do not create barriers.
 
 Texture animation frames come from the references in a `0x04` fragment. Each
 referenced `0x03` bitmap can contain several texture layers: the diffuse image

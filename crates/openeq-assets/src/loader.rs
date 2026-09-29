@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::mesh::{self, Geometry, Material, WaterMaterial};
+use crate::mesh::{self, CollisionGeometry, Geometry, Material, WaterMaterial};
 use crate::pfs::Archive;
 use crate::terrain;
 use crate::texture::Texture;
@@ -51,6 +51,8 @@ pub struct SceneObject {
     pub name: String,
     /// Indices into [`Scene::meshes`].
     pub meshes: Vec<usize>,
+    /// Indices into [`Scene::collision_meshes`], owned by the same instances.
+    pub collision_meshes: Vec<usize>,
 }
 
 /// Everything needed to render a zone.
@@ -58,6 +60,8 @@ pub struct Scene {
     pub name: String,
     pub materials: Vec<Material>,
     pub meshes: Vec<Geometry>,
+    /// Additional invisible collision geometry; never uploaded for drawing.
+    pub collision_meshes: Vec<CollisionGeometry>,
     pub objects: Vec<SceneObject>,
     pub instances: Vec<Instance>,
     pub lights: Vec<Light>,
@@ -84,6 +88,7 @@ impl Scene {
             name,
             materials,
             meshes,
+            collision_meshes: Vec::new(),
             objects: Vec::new(),
             instances: Vec::new(),
             lights: Vec::new(),
@@ -160,15 +165,18 @@ impl Scene {
             mesh.material = material;
             meshes.push(mesh);
         }
-        if meshes.is_empty() {
-            return Err(Error::NotFound(format!("visible object {name}")));
+        let collision_meshes: Vec<_> = object
+            .collision_meshes
+            .iter()
+            .map(|index| self.collision_meshes[*index].clone())
+            .collect();
+        if meshes.is_empty() && collision_meshes.is_empty() {
+            return Err(Error::NotFound(format!("object geometry {name}")));
         }
-        Ok(Scene::from_geometry(
-            key,
-            materials,
-            meshes,
-            textures.into_values().collect(),
-        ))
+        let mut model =
+            Scene::from_geometry(key, materials, meshes, textures.into_values().collect());
+        model.collision_meshes = collision_meshes;
+        Ok(model)
     }
 
     /// All texture names referenced by the scene's materials.
@@ -232,6 +240,7 @@ pub fn load_object_library(base: impl AsRef<Path>, zone: &str) -> Result<Scene> 
         name: format!("{zone} object library"),
         materials: Vec::new(),
         meshes: Vec::new(),
+        collision_meshes: Vec::new(),
         objects: Vec::new(),
         instances: Vec::new(),
         lights: Vec::new(),
@@ -253,12 +262,17 @@ pub fn load_object_library(base: impl AsRef<Path>, zone: &str) -> Result<Scene> 
                 let wld = Wld::open(&scene.archives[index], &filename)?;
                 for (chunk, mesh) in wld.iter::<wld::Mesh>() {
                     let (materials, meshes) = mesh::bake_wld_meshes(&wld, [mesh]);
+                    let collision_start = scene.collision_meshes.len();
+                    scene
+                        .collision_meshes
+                        .extend(mesh::bake_wld_collision_meshes(&wld, [mesh]));
                     let start = scene.meshes.len();
                     append_baked(&mut scene, index, materials, meshes);
                     let end = scene.meshes.len();
                     scene.objects.push(SceneObject {
                         name: object_key(&chunk.name),
                         meshes: (start..end).collect(),
+                        collision_meshes: (collision_start..scene.collision_meshes.len()).collect(),
                     });
                 }
             } else if lower.ends_with(".mod") {
@@ -322,6 +336,7 @@ fn load_wld(base: &Path, name: &str) -> Result<Scene> {
         name: name.to_owned(),
         materials: Vec::new(),
         meshes: Vec::new(),
+        collision_meshes: Vec::new(),
         objects: Vec::new(),
         instances: Vec::new(),
         lights: Vec::new(),
@@ -361,6 +376,9 @@ fn load_wld(base: &Path, name: &str) -> Result<Scene> {
         .find(|(_, wld)| wld.filename.eq_ignore_ascii_case(&main_name))
     {
         let meshes: Vec<&wld::Mesh> = wld.iter::<wld::Mesh>().map(|(_, mesh)| mesh).collect();
+        scene
+            .collision_meshes
+            .extend(mesh::bake_wld_collision_meshes(wld, meshes.iter().copied()));
         let (materials, geometries) = mesh::bake_wld_meshes(wld, meshes);
         append_baked(&mut scene, *archive_index, materials, geometries);
     }
@@ -380,12 +398,17 @@ fn load_wld(base: &Path, name: &str) -> Result<Scene> {
                 continue;
             }
             let (materials, geometries) = mesh::bake_wld_meshes(wld, std::iter::once(object_mesh));
+            let collision_start = scene.collision_meshes.len();
+            scene
+                .collision_meshes
+                .extend(mesh::bake_wld_collision_meshes(wld, [object_mesh]));
             let start = scene.meshes.len();
             append_baked(&mut scene, *archive_index, materials, geometries);
             let end = scene.meshes.len();
             scene.objects.push(SceneObject {
                 name: object_name,
                 meshes: (start..end).collect(),
+                collision_meshes: (collision_start..scene.collision_meshes.len()).collect(),
             });
         }
     }
@@ -469,6 +492,7 @@ fn load_eqg(base: &Path, name: &str, path: &Path) -> Result<Scene> {
         name: name.to_owned(),
         materials: Vec::new(),
         meshes: Vec::new(),
+        collision_meshes: Vec::new(),
         objects: Vec::new(),
         instances: Vec::new(),
         lights: Vec::new(),
@@ -585,6 +609,7 @@ fn append_eqg_object(scene: &mut Scene, object: &TerMod, object_name: &str, arch
         scene.objects.push(SceneObject {
             name: object_name.to_owned(),
             meshes: object_meshes,
+            collision_meshes: Vec::new(),
         });
     }
 }

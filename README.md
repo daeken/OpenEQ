@@ -161,6 +161,8 @@ you up and automatically returns, following the default five-second cycle.
   Drakkin support modular clothing, armor, robes, hair, facial features and
   original heritage/color palettes, including softly blended tattoos.
 - Dynamic doors/portals, door collision, maps with waypoints, third-person camera.
+- Authored invisible WLD barriers and floors, including placed objects and lifts,
+  retained for collision without drawing collision textures.
 - Natural border travel through authored classic WLD reference volumes, including
   Greater Faydark's four exits; authenticated handoffs use server destination data.
 - Kelethin lift buttons, moving platform collision and passenger carrying.
