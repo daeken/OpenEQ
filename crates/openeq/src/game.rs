@@ -181,6 +181,9 @@ impl Inventory {
         if count > item.count {
             return Err("That stack does not contain enough items.".into());
         }
+        if count > 0 && item.stack_size <= 1 {
+            return Err("Only stackable items can be moved with a quantity.".into());
+        }
         if to.kind == 3 {
             if from != InventorySlot::CURSOR || to.bag.is_some() || count != 0 {
                 return Err(
@@ -205,15 +208,14 @@ impl Inventory {
         }
         self.validate_destination(item, to)?;
         if let Some(other) = self.items.get(&to) {
-            let stacking = item.stack_size > 1 && item.id == other.id;
-            if stacking {
+            if count > 0 {
+                if item.id != other.id || other.stack_size <= 1 {
+                    return Err("A stack move needs an empty slot or a matching stack.".into());
+                }
                 if other.count >= other.stack_size {
                     return Err("The destination stack is full.".into());
                 }
             } else {
-                if count > 0 && count < item.count {
-                    return Err("Split stacks need an empty slot or matching stack.".into());
-                }
                 self.validate_destination(other, from)?;
             }
         }
@@ -273,7 +275,10 @@ impl Inventory {
         } else {
             count.min(source.count)
         };
-        if let Some(destination) = self.items.get_mut(&to)
+        // EQEmu SwapItem uses a positive wire quantity for stacking. A zero
+        // quantity swaps complete instances, even when their item IDs match.
+        if count > 0
+            && let Some(destination) = self.items.get_mut(&to)
             && source.id == destination.id
             && source.stack_size > 1
         {
@@ -1328,6 +1333,65 @@ mod tests {
         assert!(!inventory.items.keys().any(|slot| slot.kind == 3));
     }
     #[test]
+    fn zero_count_wire_move_swaps_matching_stacks_including_a_full_destination() {
+        for destination_count in [7, 20] {
+            let mut inventory = Inventory::default();
+            let mut cursor = item(33, 13006, 3);
+            cursor.instance_id = 101;
+            let mut carried = item(23, 13006, destination_count);
+            carried.instance_id = 202;
+            inventory.replace(vec![cursor, carried]);
+            inventory
+                .move_item(InventorySlot::CURSOR, InventorySlot::possessions(23), 0)
+                .unwrap();
+            assert_eq!(
+                inventory.items[&InventorySlot::CURSOR].count,
+                destination_count
+            );
+            assert_eq!(inventory.items[&InventorySlot::CURSOR].instance_id, 202);
+            assert_eq!(inventory.items[&InventorySlot::possessions(23)].count, 3);
+            assert_eq!(
+                inventory.items[&InventorySlot::possessions(23)].instance_id,
+                101
+            );
+        }
+    }
+
+    #[test]
+    fn positive_count_wire_moves_require_a_stack_and_matching_destination() {
+        let mut inventory = Inventory::default();
+        let mut charged = item(23, 10, 1);
+        charged.stack_size = 1;
+        charged.charges = 5;
+        inventory.replace(vec![charged]);
+        assert!(
+            inventory
+                .validate_move(InventorySlot::possessions(23), InventorySlot::CURSOR, 1)
+                .is_err()
+        );
+        inventory.replace(vec![item(33, 13006, 3), item(23, 13005, 4)]);
+        for count in [1, 3] {
+            assert!(
+                inventory
+                    .validate_move(InventorySlot::CURSOR, InventorySlot::possessions(23), count)
+                    .is_err()
+            );
+        }
+        let mut target = item(23, 13006, 19);
+        target.instance_id = 500;
+        inventory.insert(target);
+        inventory
+            .move_item(InventorySlot::CURSOR, InventorySlot::possessions(23), 3)
+            .unwrap();
+        assert_eq!(inventory.items[&InventorySlot::CURSOR].count, 2);
+        assert_eq!(inventory.items[&InventorySlot::possessions(23)].count, 20);
+        assert_eq!(
+            inventory.items[&InventorySlot::possessions(23)].instance_id,
+            500
+        );
+    }
+
+    #[test]
     fn split_merge_and_swap_preserve_items() {
         let mut inventory = Inventory::default();
         inventory.replace(vec![item(23, 1, 10), item(24, 2, 1)]);
@@ -1337,7 +1401,7 @@ mod tests {
         assert_eq!(inventory.items[&InventorySlot::possessions(23)].count, 7);
         assert_eq!(inventory.items[&InventorySlot::CURSOR].count, 3);
         inventory
-            .move_item(InventorySlot::CURSOR, InventorySlot::possessions(23), 0)
+            .move_item(InventorySlot::CURSOR, InventorySlot::possessions(23), 3)
             .unwrap();
         assert_eq!(inventory.items[&InventorySlot::possessions(23)].count, 10);
         assert!(!inventory.items.contains_key(&InventorySlot::CURSOR));

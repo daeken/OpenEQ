@@ -369,8 +369,11 @@ pub(crate) fn scribe_plan(game: &GameplayState, identity: OwnedItem) -> Result<(
         if game.inventory.items.contains_key(&InventorySlot::CURSOR) {
             return Err("Empty your cursor before scribing.".into());
         }
-        game.inventory
-            .validate_move(identity.slot, InventorySlot::CURSOR, 1)?;
+        game.inventory.validate_move(
+            identity.slot,
+            InventorySlot::CURSOR,
+            u32::from(item.stack_size > 1),
+        )?;
     }
     Ok((spell_id, book_slot))
 }

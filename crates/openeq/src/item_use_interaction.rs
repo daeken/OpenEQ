@@ -175,11 +175,12 @@ impl Interaction {
                         return Err("Could not sit to scribe.".into());
                     }
                     let moving = identity.slot != InventorySlot::CURSOR;
+                    let move_count = u32::from(owned_item(&live.game, identity)?.stack_size > 1);
                     if moving
                         && !live.command(Command::MoveItem {
                             from: identity.slot,
                             to: InventorySlot::CURSOR,
-                            count: 1,
+                            count: move_count,
                         })
                     {
                         return Err("Could not move the scroll to your cursor.".into());
@@ -326,8 +327,8 @@ impl LiveWorld {
                     book_slot,
                     ..
                 },
-                Command::MoveItem { from, to, count: 1 },
-            ) if *from == pending.item.slot && *to == InventorySlot::CURSOR => {
+                Command::MoveItem { from, to, count },
+            ) if *from == pending.item.slot && *to == InventorySlot::CURSOR && *count <= 1 => {
                 let plan = scribe_plan(&self.game, pending.item.on_cursor());
                 if plan
                     .as_ref()
@@ -437,6 +438,62 @@ mod tests {
         item_use_state::tests::{fixture, identity, item},
         live::{NetworkCommand, tests::command_world},
     };
+
+    #[test]
+    fn nonstackable_scroll_moves_whole_then_waits_for_server_scribe_results() {
+        let (mut live, mut commands) = command_world(1, 10.);
+        live.game = fixture();
+        live.game.sitting = true;
+        let mut scroll = item(InventorySlot::possessions(23));
+        scroll.stack_size = 1;
+        scroll.count = 1;
+        let selected = identity(&scroll);
+        live.game.inventory.insert(scroll);
+        let mut ui = Interaction {
+            inspected_owned: Some((selected.slot, selected.id, selected.instance_id)),
+            ..Default::default()
+        };
+        assert!(ui.view(&live).item_use.unwrap().can_scribe);
+        ui.item_use_action(&mut live, ItemUseAction::Scribe);
+        let NetworkCommand::Gameplay(movement) = commands.try_recv().unwrap() else {
+            panic!("move command")
+        };
+        assert!(matches!(movement, Command::MoveItem { count: 0, .. }));
+        assert!(commands.try_recv().is_err());
+        live.command_sent(movement);
+        assert!(!live.game.inventory.items.contains_key(&selected.slot));
+        assert_eq!(
+            live.game.inventory.items[&InventorySlot::CURSOR].instance_id,
+            selected.instance_id
+        );
+        let NetworkCommand::Gameplay(scribe) = commands.try_recv().unwrap() else {
+            panic!("scribe command")
+        };
+        assert!(matches!(
+            scribe,
+            Command::ItemUse(ItemUseCommand::Scribe {
+                spell_id: 288,
+                book_slot: 0
+            })
+        ));
+        live.command_sent(scribe);
+        assert!(live.game.item_use.busy());
+        assert!(
+            live.game
+                .inventory
+                .items
+                .contains_key(&InventorySlot::CURSOR)
+        );
+        assert!(
+            !live
+                .game
+                .profile
+                .as_ref()
+                .unwrap()
+                .spell_book
+                .contains(&288)
+        );
+    }
 
     #[test]
     fn scroll_stack_moves_one_and_only_scribes_after_command_sent() {

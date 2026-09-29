@@ -240,16 +240,17 @@ async fn main() -> anyhow::Result<()> {
         posture: 1,
     })
     .await?;
+    let move_count = u32::from(probe.game.inventory.items[&scroll_slot].stack_size > 1);
     zone.command(Command::MoveItem {
         from: scroll_slot,
         to: InventorySlot::CURSOR,
-        count: 1,
+        count: move_count,
     })
     .await?;
     probe
         .game
         .inventory
-        .move_item(scroll_slot, InventorySlot::CURSOR, 1)
+        .move_item(scroll_slot, InventorySlot::CURSOR, move_count)
         .map_err(anyhow::Error::msg)?;
     let scribe_start = probe.events.len();
     zone.command(Command::ItemUse(ItemUseCommand::Scribe {

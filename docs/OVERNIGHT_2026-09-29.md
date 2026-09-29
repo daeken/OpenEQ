@@ -564,3 +564,29 @@ Runtime changes committed as **4e2acdd** (terrain edges) and **1b90a5c** (main m
   collision-deflected thin liquid crossings, NPC swimming projection,
   hover/cross-zone resurrection and XP/item recovery. First-pass milestones are
   not full original-client parity.
+
+## Deep parity continuation: inventory stack correctness
+
+The user approved all seven deeper projects in `DEEP_PARITY_ROADMAP.md`, with
+discoveries added along the way. This continuation is separate from the completed
+overnight cutoff.
+
+- Fixed ordinary stack drops showing a merge locally while the server swapped
+  the two stacks. Positive wire quantity now means split/merge; zero means a
+  complete-instance swap, including identical item IDs. Shift-click and scroll
+  scribing only send positive quantities for stackable items.
+- Five new regression tests cover source-confirmed wire semantics and production
+  UI/scribe callbacks. The stack failure was reproduced before the fix.
+- Live `inventory_stack_smoke` used only Barterer and compared foreground to SQL
+  through split/merge/swap/nonstackable actions and normal reconnect. Private
+  29-table snapshot, full invariant verification and guarded offline restoration
+  completed. A server-normalized Water Flask tint was specifically identified
+  and restored; normal GUID/login bookkeeping changes are recorded separately.
+  Evidence: `/tmp/openeq-inventory-stack-proof`. Explorer was not involved.
+- **692 workspace tests passed**, zero failures/ignored, including original
+  assets/GPU checks. Strict Clippy, format, build and playback-disabled all-target
+  check passed. Logs: `/tmp/openeq-inventory-stack-*`.
+- Cursor queue completeness is still unresolved: no stock append/refresh marker
+  or harmless snapshot request, some loot tails are silent, and split serials are
+  provisional. Hand-ins remain pending verified reconciliation. Native terrain
+  metadata and selected-character appearance preview are progressing separately.

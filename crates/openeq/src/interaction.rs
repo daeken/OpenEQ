@@ -641,16 +641,30 @@ impl Interaction {
                     .items
                     .contains_key(&InventorySlot::CURSOR)
                 {
+                    let cursor = &live.game.inventory.items[&InventorySlot::CURSOR];
+                    let matching_stack = live.game.inventory.items.get(&slot).is_some_and(|item| {
+                        cursor.id == item.id && cursor.stack_size > 1 && item.stack_size > 1
+                    });
                     live.command(Command::MoveItem {
                         from: InventorySlot::CURSOR,
                         to: slot,
-                        count: if split { 1 } else { 0 },
+                        count: if split && cursor.stack_size > 1 {
+                            1
+                        } else if matching_stack {
+                            cursor.count
+                        } else {
+                            0
+                        },
                     });
                 } else if live.game.inventory.items.contains_key(&slot) {
                     live.command(Command::MoveItem {
                         from: slot,
                         to: InventorySlot::CURSOR,
-                        count: if split { 1 } else { 0 },
+                        count: if split && live.game.inventory.items[&slot].stack_size > 1 {
+                            1
+                        } else {
+                            0
+                        },
                     });
                 }
             }
@@ -885,4 +899,123 @@ fn find_target(live: &LiveWorld, query: &str, position: [f32; 3]) -> Option<u32>
         })
         .min_by(|a, b| a.1.cmp(&b.1).then(a.2.total_cmp(&b.2)))
         .map(|entry| entry.0)
+}
+
+#[cfg(test)]
+mod inventory_move_tests {
+    use super::*;
+    use crate::live::{
+        NetworkCommand,
+        tests::{carried_item, command_world},
+    };
+
+    #[test]
+    fn ordinary_stack_drop_sends_a_merge_quantity_and_predicts_only_after_send() {
+        for target_count in [7, 19] {
+            let (mut live, mut wire) = command_world(1, 10.);
+            let mut cursor = carried_item(InventorySlot::CURSOR);
+            cursor.count = 3;
+            let mut target = cursor.clone();
+            target.slot = InventorySlot::possessions(23);
+            target.instance_id += 1;
+            target.count = target_count;
+            live.game.inventory.replace(vec![cursor, target]);
+            let mut ui = Interaction::default();
+            ui.ui_action(
+                UiAction::InventorySlot(23),
+                false,
+                false,
+                &mut live,
+                [0.; 3],
+            );
+            let NetworkCommand::Gameplay(command) = wire.try_recv().unwrap() else {
+                panic!("inventory command")
+            };
+            assert!(
+                matches!(command, Command::MoveItem { from: InventorySlot::CURSOR, to, count:3 } if to==InventorySlot::possessions(23))
+            );
+            assert_eq!(live.game.inventory.items[&InventorySlot::CURSOR].count, 3);
+            assert_eq!(
+                live.game.inventory.items[&InventorySlot::possessions(23)].count,
+                target_count
+            );
+            ui.ui_action(
+                UiAction::InventorySlot(23),
+                false,
+                false,
+                &mut live,
+                [0.; 3],
+            );
+            assert!(
+                wire.try_recv().is_err(),
+                "pending drop must not queue twice"
+            );
+            live.command_sent(command);
+            assert_eq!(
+                live.game.inventory.items[&InventorySlot::possessions(23)].count,
+                (target_count + 3).min(20)
+            );
+            assert_eq!(
+                live.game
+                    .inventory
+                    .items
+                    .get(&InventorySlot::CURSOR)
+                    .map_or(0, |item| item.count),
+                (target_count + 3).saturating_sub(20)
+            );
+        }
+    }
+
+    #[test]
+    fn shift_click_only_splits_actual_stacks_and_full_target_is_rejected() {
+        for on_cursor in [false, true] {
+            for stackable in [false, true] {
+                let (mut live, mut wire) = command_world(1, 10.);
+                let slot = if on_cursor {
+                    InventorySlot::CURSOR
+                } else {
+                    InventorySlot::possessions(23)
+                };
+                let mut item = carried_item(slot);
+                item.stack_size = if stackable { 20 } else { 1 };
+                item.count = if stackable { 5 } else { 1 };
+                item.charges = 5;
+                live.game.inventory.replace(vec![item]);
+                Interaction::default().ui_action(
+                    UiAction::InventorySlot(23),
+                    false,
+                    true,
+                    &mut live,
+                    [0.; 3],
+                );
+                let NetworkCommand::Gameplay(command) = wire.try_recv().unwrap() else {
+                    panic!("inventory command")
+                };
+                assert!(
+                    matches!(command,Command::MoveItem{count,..} if count==u32::from(stackable))
+                );
+                live.command_sent(command);
+                assert!(live.game.inventory.items.contains_key(&if on_cursor {
+                    InventorySlot::possessions(23)
+                } else {
+                    InventorySlot::CURSOR
+                }));
+            }
+        }
+        let (mut live, mut wire) = command_world(1, 10.);
+        let cursor = carried_item(InventorySlot::CURSOR);
+        let mut target = cursor.clone();
+        target.slot = InventorySlot::possessions(23);
+        target.count = target.stack_size;
+        live.game.inventory.replace(vec![cursor, target]);
+        Interaction::default().ui_action(
+            UiAction::InventorySlot(23),
+            false,
+            false,
+            &mut live,
+            [0.; 3],
+        );
+        assert!(wire.try_recv().is_err());
+        assert!(!live.game.inventory_command_pending);
+    }
 }
