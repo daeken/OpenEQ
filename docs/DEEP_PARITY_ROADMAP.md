@@ -19,7 +19,7 @@ assets/GPU, strict Clippy, format, normal build and playback-disabled checks.
    original finite/rotated/overlapping volumes, shores and NPC movement. Keep
    native-client versus generated-server-map differences visible. See
    `EQG_LIQUID_TRANSFORMS.md` and `HEIGHTMAP_FORMAT.md`.
-3. **GPU terrain materials.** Replace the compatibility tile bake with direct
+3. **GPU terrain materials — direct sampling and lazy fallback verified.** Replace the compatibility tile bake with direct
    detail/mask sampling, preserving a bounded fallback. Add evidenced normal and
    lighting data, retain water/holes, and measure memory plus CPU/GPU time across
    representative large zones. Do not claim native pixel fidelity for unknown
@@ -66,10 +66,10 @@ listed rather than being treated as complete.
   item move as a direct swap. OpenEQ incorrectly predicted a stack merge and
   sent zero on ordinary UI drops. Fixed the wire quantity and reducer semantics;
   the dedicated live proof below verifies real server persistence.
-- Native liquid research remains assigned to npc_assets; cursor/native protocol
-  investigation is complete and receiving independent design review. xml_ui now
-  owns selected-character appearance preview. Root owns inventory runtime,
-  fixture proof and final integration.
+- Current ownership: npc_assets handles the original-art trainer UI; xml_ui
+  handles standalone character-creation protocol and immutable draft state;
+  cursor_review handles trainer runtime/network integration. Root handles
+  interaction wiring, integrated verification and private fixture validation.
 
 ### Inventory stack and scribing prerequisite
 
@@ -165,3 +165,88 @@ listed rather than being treated as complete.
 - Direct GPU terrain material work is next. Existing source textures and masks
   are small enough to share across tiles; the CPU bake remains the fallback
   until bounded GPU validation and original-scene comparisons pass.
+
+### Direct terrain sampling checkpoint
+
+- `8039448` replaces uploaded baked tiles with shared original-resolution detail
+  textures and ordered filtered masks for supported heightmap scenes. Whole-set
+  admission checks material identity, source completeness, aggregate CPU/GPU
+  budgets and device limits; existing baked materials remain the fallback.
+- **265 assets/render tests passed**, all original/GPU cases enabled, plus the
+  final seven-test terrain suite after optimization; strict Clippy passed.
+  Source geometry/collision and existing water remain unchanged. Independent
+  negative controls prove the mip/height/tolerance tests detect broken shading.
+- Initial full-scene material GPU allocations fell from 548→33MiB in Old
+  Commonlands and 437→78MiB in Dead Hills. Preparation/upload fell from
+  about 3.5s→0.17s and 3.3s→0.43s respectively. CPU fallback painting still
+  dominates asset preparation; its lazy replacement is the next active slice.
+- Frame-time samples are noisy and detail sampling adds shader work. Subsequent
+  ABBA runs (180 measured frames each) overlap: Feerrott2 G-buffer medians
+  baked1.43–3.22ms/direct1.41–2.82ms, OldCommons baked2.73–3.25ms/
+  direct2.91–3.48ms. No universal frame-rate improvement is claimed.
+- Static native shader research proved coverage/blend/layering images feed CPU
+  preprocessing and identified the audited effect's detail-mask/normal-map
+  bindings. Full packing, basis and technique selection remain unresolved;
+  `GPU_TERRAIN_NATIVE_RESEARCH.md` prevents guessing those semantics.
+
+### Further transaction/lifecycle discoveries
+
+- `90e2b59` records three independently reproduced EQEmu cursor ownership bugs
+  with reviewable patches. The final actual utility suite passes93/93. None is
+  deployed: cursor persistence/publication and head-only synchronization still
+  require separate proof before enabling arbitrary queued hand-ins.
+- Trainer open is not universally nonmutating: stock EQEmu may reset invalid
+  specialization state. No authoritative harmless cost/eligibility quote exists.
+  A bounded normal purchase path is being designed around one pending request,
+  exact server confirmation, explicit assessed-cost/balance provenance, and no
+  blind retries. See `TRAINER_TRANSACTION_PLAN.md` when that audit lands.
+- Character name approval reserves a database row. Creation must handle it as
+  a transaction, not an innocuous availability query.
+- Camp uses a cancellable normal countdown, but GM Camp can cause an immediate
+  peer close. The implementation distinguishes that uncertain disconnect from
+  Logout confirmation before trying a fresh authenticated roster connection.
+
+### Lazy terrain loading verification
+
+- Fallback tile painting is deferred until requested; immutable recipes share
+  source images and each tile caches its pixels once. The public eager bake
+  API, exact fallback pixels and ordinary material fallback remain available.
+- Six new CPU tests include independent pre-refactor hashes and concurrent
+  cache requests. Complete original asset tests, strict assets Clippy and all
+  seven terrain GPU tests pass. Original Old Commonlands loads with 1,552
+  unpainted fallback caches.
+- Original full-scene asset preparation fell from about 5.6/5.9 seconds to
+  0.13/0.12 seconds in Dead Hills/Old Commonlands; their direct and forced-baked
+  screenshots match previous PNGs byte-for-byte. Direct GPU preparation remains
+  about 0.43/0.17 seconds. These are diagnostic samples, not windowed FPS or
+  complete interactive load times. See `GPU_TERRAIN_PLAN.md`.
+
+### Camp live proof and review discoveries
+
+- The production account controller passed normal-player cancel → full 30s
+  camp → fresh roster → same-character reentry with Reviver. Barterer passed
+  the stock GM early-peer-close path with an explicit uncertain-close notice,
+  fresh roster and reentry. Both dedicated fixtures are restored and offline;
+  private 29-table journals are under `/tmp/openeq-camp-{reviver,barterer}-proof`.
+- Independent review found and fixed queued interruption/start and deadline
+  races, held input leaking to the resumed roster, and catalogs consumed on
+  first entry. Production-selector regressions cover simultaneous authority,
+  cancellation and deadline, plus death/corpse/respawn authority agreement.
+- Final rebuilt Reviver proof passed again after revalidation: cancel,30,257ms
+  camp, fresh roster, reentry and full offline restoration. Race correctness is
+  established by targeted regressions, separately from the uncontested live
+  server proof.
+
+### Camp/lazy-terrain combined checkpoint
+
+- `957beca` defers fallback painting; `65b596e` completes the verified camp
+  lifecycle; `2ea21d5` adds standalone checked trainer wire/state prerequisites.
+- **789 workspace tests passed**, zero failures/ignored, with original assets
+  and GPU checks. Strict workspace/all-target Clippy, formatting, client build
+  and playback-disabled all-target check passed. Formatting initially found
+  only a module-order change, which was corrected before the build checks.
+- Verification prefix: `/tmp/openeq-camp-lazy-checkpoint-`; original UI captures
+  use the matching `ui` directory. No original audio was played.
+- Trainer runtime/UI integration and character creation are next. A read-only
+  private Barterer preflight passed for exactly two paid training operations;
+  no fixture seeding or training has occurred. See `TRAINER_LIVE_PROOF_PLAN.md`.

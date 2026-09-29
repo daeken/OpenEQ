@@ -44,6 +44,14 @@ The list sets priorities, not a promise to finish original-client parity in one
 night. Keep completed slices and remaining scope explicit. Add discoveries and
 smaller verified fixes under the appropriate item.
 
+Current daytime continuation checkpoint: see `DEEP_PARITY_ROADMAP.md` for the
+authorized seven-project order and detailed handoff. `957beca`, `65b596e` and
+`2ea21d5` add lazy terrain fallback painting, camp/roster reentry and standalone
+trainer transaction prerequisites. **789 original-asset-inclusive workspace
+tests pass**, with strict lint, formatting and both normal/playback-disabled
+build checks. Reviver and Barterer camp proofs are restored/offline. Trainer
+runtime/UI and character creation work continue; those are not yet completed.
+
 ## Working rules and verification
 
 - Do not log into or alter Explorer. Use the existing dedicated test fixtures;
