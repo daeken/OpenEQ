@@ -590,3 +590,22 @@ overnight cutoff.
   or harmless snapshot request, some loot tails are silent, and split serials are
   provisional. Hand-ins remain pending verified reconciliation. Native terrain
   metadata and selected-character appearance preview are progressing separately.
+
+## Deep parity continuation: recovery, roster preview and native liquids
+
+- `b67737f` retires old gameplay/target commands and callbacks across travel,
+  death and recovery. Independent commerce tests preserve sent merchant ACKs
+  while clearing only unsent work at recovery boundaries.
+- `1d3b5bc` adds asynchronous, cancellable character roster appearance preview
+  using original Classic/Luclin/Drakkin models, rotation and Back controls.
+- `4fc44ea` retains native DAT regions and enables supported heightmap liquids;
+  original Maiden's Grave swimming/finite boundaries pass. Unsupported groups,
+  binary EQGZ and unnamed numeric region types remain documented limitations.
+- **732 workspace tests passed**, zero failures/ignored, original assets and GPU
+  included. Strict Clippy, formatting, build and playback-disabled all-target
+  check passed. Logs: `/tmp/openeq-deep-parity-checkpoint-*`.
+- Second production inventory proof passed; Barterer's private 29-table baseline
+  was restored offline with exact guarded correction of the known server tint
+  normalization. Evidence: `/tmp/openeq-action-epoch-proof`. No Explorer use.
+- The next active slice is shared direct GPU terrain detail/mask sampling.
+  Remaining seven-project scope stays tracked in `DEEP_PARITY_ROADMAP.md`.

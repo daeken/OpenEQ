@@ -111,5 +111,57 @@ listed rather than being treated as complete.
   queue design; no hand-in commands have been enabled by this batch.
 - Independent source review found `InventoryProfile::DeleteItem` removes the
   next queued item when reinserting a partially consumed cursor head through
-  `_PutItem`. An isolated EQEmu source regression/fix is in progress; it has not
-  been deployed. Track this separately from client queue prediction.
+  `_PutItem`. An isolated EQEmu source regression reproduced two failures;
+  the fix passes all 84 utility tests. It has not been deployed. The reviewed
+  patch and remaining wire-level issues are in `CURSOR_RECONCILIATION.md`.
+
+### Action lifetime and selected-character preview (verified)
+
+- A reproduced delayed-response bug let a rejected move from the previous zone
+  release the new zone's pending inventory action. Gameplay/target commands and
+  their callbacks now carry an internal epoch that retires on zone transfer,
+  own death and bind/recovery reset. Worker checks stop old queued actions from
+  being sent; foreground checks stop old callbacks changing replacement state.
+  Ordinary camera corrections retain their valid actions. No wire changes.
+- Three regressions cover retired success/rejection callbacks, current callbacks,
+  worker death/bind/zone boundaries, permitted death-state chat, same-zone camera
+  corrections and target stamps. Targeted live-state tests pass.
+- Selected-character Preview decodes appearance from the existing RoF2 roster
+  and uses the configured Classic/Luclin models, including Drakkin support.
+  Rotation, Back, asynchronous cancellation, stale input, missing assets and
+  normal/Retina/compact framing are tested. Eighteen original-asset front/back
+  captures passed and were inspected. No login, character mutation or audio.
+- Creation, camp-to-roster, remaining appearance material/tint support and full
+  cursor reconciliation remain open; see `ACCOUNT_UI.md` for precise limits.
+
+### Native heightmap liquid integration (verified)
+
+- Retained all authored top-level region records and recovered startup height
+  anchoring, quantized yaw, registration order and first-containing precedence.
+  Unknown/dry winners suppress later water; APV is excluded from generic lookup.
+- Enabled the verified group-free DAT20/21 subset. Maiden's Grave passes actual
+  original-scene swimming, stationary depth, surfacing and finite side crossing
+  at 10/30/120 FPS. Unsupported groups/transforms and binary EQGZ stay explicit.
+- Rendering and liquid queries share the same archived/loose ZON/DAT selection.
+  This does not claim generated server-map parity or decode unnamed liquid types.
+
+### Combined checkpoint, 2026-09-29
+
+- Published slices: `b67737f` action epochs, `1d3b5bc` roster appearance preview,
+  and `4fc44ea` native region metadata/verified liquids.
+- **732 workspace tests passed**, zero failures/ignored, including original
+  assets and GPU checks. Strict Clippy, formatting, client build and
+  playback-disabled all-target check passed. Evidence prefix:
+  `/tmp/openeq-deep-parity-checkpoint-`; UI captures in matching `ui` directory.
+  An initial run found four capture-output-directory errors; creating that
+  directory resolved them, with no source change or suppressed tests.
+- The action-epoch live inventory proof again matched foreground and SQL through
+  split/merge/swap/nonstackable moves and reconnect. Barterer is offline and the
+  private 29-table baseline is restored: `/tmp/openeq-action-epoch-proof`.
+- Three additional commerce regressions cover 9 unsent-action retirement cases,
+  18 stale-callback cases and 6 dispatched merchant acknowledgment cases.
+  Dispatched merchant work remains available for authoritative reconciliation;
+  retired unsent work cannot leave coin/buy/sell controls permanently pending.
+- Direct GPU terrain material work is next. Existing source textures and masks
+  are small enough to share across tiles; the CPU bake remains the fallback
+  until bounded GPU validation and original-scene comparisons pass.
