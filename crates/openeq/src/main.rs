@@ -775,6 +775,8 @@ fn handle_gameplay_input(
         interaction.pointer = window.cursor_position().map(|p| [p.x, p.y]);
     }
     let mut chat_pointer_owned = false;
+    interaction.guild_window.visible_rows =
+        openeq::guild_ui::guild_visible_rows(window.height() as u32);
     interaction.raid_visible_rows = openeq::raid_ui::raid_visible_rows(
         window.height() as u32,
         live.game.raid.invitation.is_some(),
@@ -969,6 +971,9 @@ fn handle_gameplay_input(
             } else if interaction.raid_open {
                 interaction.raid_open = false;
                 interaction.escape_handled = true;
+            } else if interaction.guild_window.open {
+                interaction.guild_window.open = false;
+                interaction.escape_handled = true;
             } else if live.game.trade.session.is_some() {
                 interaction.close_window("trade", live);
                 interaction.escape_handled = true;
@@ -1033,6 +1038,11 @@ fn handle_gameplay_input(
             if hit.window_id.as_deref() == Some("raid") {
                 for event in wheel.read() {
                     interaction.raid_wheel(live, event.y);
+                }
+            }
+            if hit.window_id.as_deref() == Some("guild") {
+                for event in wheel.read() {
+                    interaction.guild_wheel(live, hit, event.y);
                 }
             }
             if hit.item == "game:chat_log"
@@ -1528,6 +1538,11 @@ fn render_frame(
                 runtime
                     .interaction
                     .raid_text_metrics(revision, renderer.ui_text_scroll_metrics());
+            }
+            if let Some(revision) = runtime.live.as_ref().map(|live| live.game.guild.revision) {
+                runtime
+                    .interaction
+                    .guild_text_metrics(revision, renderer.ui_text_scroll_metrics());
             }
             runtime.chat_link_hits = renderer.ui_link_hits().to_vec();
             runtime.ui_frame = frame;

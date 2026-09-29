@@ -2,6 +2,9 @@
 //! the protocol adapter; XML widget numbers are never treated as server slots.
 
 pub use crate::commerce_ui::{CommerceAction, UiBank, UiMerchant, UiMerchantStock, UiMoney};
+pub use crate::guild_ui::{
+    GuildAction, GuildActionKind, UiGuild, UiGuildMember, UiGuildMotd, UiGuildPage, UiGuildPresence,
+};
 use crate::hud::{Hud, HudState};
 pub use crate::raid_ui::{
     RaidAction, RaidActionKind, UiRaid, UiRaidInvitation, UiRaidMember, UiRaidPage,
@@ -28,6 +31,7 @@ pub fn valid_window_id(id: &str) -> bool {
             | "spellbar"
             | "group"
             | "raid"
+            | "guild"
             | "chat"
             | "actions"
             | "inventory"
@@ -214,6 +218,7 @@ pub struct GameHudState {
     pub item_use: Option<UiItemUse>,
     pub group: Option<UiGroup>,
     pub raid: Option<UiRaid>,
+    pub guild: Option<UiGuild>,
     pub money: Option<UiMoney>,
     pub merchant: Option<UiMerchant>,
     pub bank: Option<UiBank>,
@@ -250,7 +255,7 @@ pub struct GameHudState {
     pub attack: bool,
     pub sitting: bool,
     /// Keys: player, target, chat, actions, inventory, loot, bag:<parent_slot>,
-    /// spellbar, spellbook, spell_inspection, casting, buffs, merchant, bank, group, raid, trade.
+    /// spellbar, spellbook, spell_inspection, casting, buffs, merchant, bank, group, raid, guild, trade.
     /// All coordinates are logical pixels.
     pub window_positions: BTreeMap<String, [f32; 2]>,
     /// Back-to-front logical IDs; used by standalone frame/capture callers.
@@ -266,6 +271,7 @@ pub enum UiAction {
     ChatLink(u64),
     Social(SocialAction),
     Raid(RaidAction),
+    Guild(GuildAction),
     Commerce(CommerceAction),
     /// Only dispatch a removal for a right-click; left-click is inspection.
     RemoveBuff(u32),
@@ -307,6 +313,9 @@ impl UiAction {
         }
         if let Some(action) = RaidAction::from_hit(hit) {
             return Some(Self::Raid(action));
+        }
+        if let Some(action) = GuildAction::from_hit(hit) {
+            return Some(Self::Guild(action));
         }
         let item = hit.item.as_str();
         if let Some(rows) = item.strip_prefix("SDW_SpellDescription:scroll:") {
@@ -697,6 +706,9 @@ impl Hud {
         }
         if let Some(raid) = &state.raid {
             draw.raid(state, raid);
+        }
+        if let Some(guild) = &state.guild {
+            draw.guild(state, guild);
         }
         draw.compose_windows(additional, stack);
         let hovered = state

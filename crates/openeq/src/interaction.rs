@@ -42,6 +42,7 @@ pub struct Interaction {
     pub raid_visible_rows: usize,
     pub raid_seen_invitation: Option<u64>,
     pub raid_was_active: bool,
+    pub guild_window: crate::guild_interaction::GuildWindowState,
     pub merchant_stock: Option<u32>,
     pub merchant_sell: Option<InventorySlot>,
     pub merchant_quantity: u32,
@@ -237,6 +238,7 @@ impl Interaction {
         self.commerce_view(live, &mut view);
         self.social_view(live, &mut view);
         self.raid_view(live, &mut view);
+        self.guild_view(live, &mut view);
         self.trade_view(live, &mut view);
         self.item_use_view(live, &mut view);
         view
@@ -407,6 +409,7 @@ impl Interaction {
             Action::Bank => self.open_service(live, Some(crate::commerce::BANKER_CLASS)),
             Action::Invite(name) => self.invite(live, name),
             Action::Raid => self.raid_open = !self.raid_open,
+            Action::GuildWindow => self.guild_window.open = !self.guild_window.open,
             Action::RaidInvite(name) => self.raid_invite(live, name),
             Action::RaidAccept => self.raid_answer(live, true),
             Action::RaidDismiss => self.raid_answer(live, false),
@@ -501,6 +504,7 @@ impl Interaction {
             UiAction::Commerce(action) => self.commerce_action(action, live),
             UiAction::Social(action) => self.social_action(action, live),
             UiAction::Raid(action) => self.raid_action(action, live),
+            UiAction::Guild(action) => self.guild_action(action, live),
             UiAction::ChatLink(id) => {
                 if let Some(link) = live.game.chat_links.get(&id).cloned() {
                     self.inspected_item = None;
@@ -694,6 +698,8 @@ impl Interaction {
             self.spell_inspection.close();
         } else if window == "raid" {
             self.raid_open = false;
+        } else if window == "guild" {
+            self.guild_window.open = false;
         } else if window == "inventory" {
             self.inventory_open = false;
         } else if window == "loot" {
@@ -714,6 +720,7 @@ impl Interaction {
 
     pub fn tick(&mut self, live: &mut LiveWorld) {
         self.raid_tick(live);
+        self.guild_tick(live);
         live.trade_tick();
         self.item_use_tick(live);
         if live

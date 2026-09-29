@@ -28,7 +28,8 @@ recovery and movement after a Plane of Knowledge arrival.
    remain follow-ups; listening/native acoustic comparison is still manual.
 5. [x] Interactive account flow, first pass: connection/server/character selection with
    clear errors and private credential handling.
-6. [ ] Social parity: raid/guild state and usable controls, channel coverage.
+6. [x] Social parity, first pass: raid lifecycle/chat and receive-only guild
+   roster/MOTD. Guild mutations/refresh, raid administration and UCS remain open.
 7. [ ] Quest interaction: safe NPC item/coin hand-ins and server outcomes.
 8. [ ] Progression: skills/training/experience feedback and configurable
    hotbuttons, using server-confirmed values.
@@ -54,6 +55,10 @@ smaller verified fixes under the appropriate item.
 - After a cohesive slice, run targeted checks, then workspace tests including
   original assets/GPU, strict Clippy, format and client build before publishing.
   Avoid repeating broad tests on unchanged code without a new concern.
+  Reproducible full run: create the capture directory, then set `EQ_DIR` and
+  `EQ_CLIENT_DIR` to `~/EverQuest`, `OPENEQ_UI_CAPTURE_DIR` to that directory,
+  and run `cargo test --workspace -- --include-ignored --test-threads=1`. Leave
+  `EQ_UI_DIR` unset: individual test helpers have different directory conventions.
 - Commit coherent verified slices and push `master`. Keep this record and the
   existing milestone documentation current; report limitations candidly.
 
@@ -248,6 +253,8 @@ Published to `master` as **b1979df**. This is the current verified baseline.
 
 ## Fifth overnight batch (verified)
 
+Published to `master` as **13a354b**. This is the current verified baseline.
+
 - Original hidden WLD collision is being preserved in a separate CPU geometry
   channel. Drawable meshes/materials remain unchanged; missing materials do not
   become fabricated barriers. Static object ownership and transforms, extracted
@@ -273,16 +280,62 @@ Published to `master` as **b1979df**. This is the current verified baseline.
   Serial reconciliation after stack splitting remains ambiguous; do not ship
   guessed item-ID/serial deduplication or enable hand-ins before resolving it.
 
+## Sixth overnight batch (verified)
+
+- Receive-only guild directory, profile identity, roster, MOTD and scoped member
+  updates are integrated. `/guildwindow` opens the original GuildManagementWnd;
+  `/guild` and `/gu` remain chat commands. No guild mutation/refresh/target/UCS
+  request API is exposed. Roster reserved bytes never supply identity or logs.
+- Bounded reducers reject wrong-guild/stale updates; unknown presence stays
+  unknown. Travel preserves visibly stale data until fresh identity, duplicate
+  same-ID appearance preserves the current roster, partial additions retain
+  absent metadata, and unrelated rename traffic cannot expand the directory.
+- UI filters are local and retain unknown presence/alt state. Revision/name hits
+  guard selection and note scrolling; rows are cached with shared storage rather
+  than cloning a large roster every frame. Window position/stacking persists.
+  Six UI CPU tests and22 original-skin normal/Retina/narrow GPU captures passed
+  under `/tmp/openeq-guild-ui`; all13 guild CPU tests and strict app Clippy pass.
+- Network library95 tests and strict net Clippy pass. A review's possible join
+  ordering concern was retracted after tracing all callers: local own appearance
+  precedes the world callback's roster and duplicate appearance. Do not add
+  speculative roster staging. Dedicated live capture confirmed this order.
+- Dedicated `guild_smoke` passed supported isolated guild creation/assignment,
+  receive-only profile/directory/roster/MOTD proof against SQL, Companion reconnect
+  and supported deletion. Both fixtures are offline with original pose/resources
+  restored and inventory/currency/binds/spells/buffs/XP/stats/corpses/group/raid
+  invariants intact. All seven guild-related tables returned to their empty
+  baseline; no Explorer or movement packets. Evidence:
+  `/tmp/openeq-guild-foreground-2.log` plus private baseline/restore journals.
+- Run1 stopped because a supported rename rewrote its cached empty MOTD over
+  the fixture's SQL MOTD. Cleanup passed; run2 used the server's valid empty
+  message without SQL setup. Nonempty MOTD is portable/GPU-tested, not live-proven.
+  Creation also exposed an EQEmu bug: `_StoreGuildDB` inserts default tribute
+  metadata without assigning the new guild ID, leaving an empty guild0 sentinel.
+  Only that exact new row was removed under baseline/identity/offline guards.
+  No server patch or broad cleanup was applied. Temporary typed runtime traces
+  were removed after proof.
+- Combined verification: **562 workspace tests passed**, zero failures/ignored,
+  including original assets and GPU captures. Strict workspace Clippy, format,
+  client build and playback-disabled all-target check passed. Logs:
+  `/tmp/openeq-overnight-guild-{tests,clippy,build,headless}.log`; complete UI
+  captures in `/tmp/openeq-overnight-guild-ui`.
+- `HEIGHTMAP_WATER_PLAN.md` records lossless DAT water fields and indexed-material
+  evidence across six zones. Sixty-five Feerrott2 rectangles are understood as
+  stored data, but shoreline clipping has nine counterexamples; surface rendering
+  and swimming semantics remain unimplemented pending original-client evidence.
+
 ## Active follow-up ownership
 
-- **eqemu_server**: quest plan handed back; holding for receive-only guild
-  protocol/identity slice after collision publication. No live fixture active.
-- **xml_ui**: collision review complete. Receive-only guild view/action API
-  agreed; holding runtime edits until collision checkpoint.
-- **npc_assets**: collision source/tests handed back; read-only Feerrott2 water
-  semantics research in `HEIGHTMAP_WATER_PLAN.md`. No runtime/GPU/server changes.
-- Root owns `render/src/doors.rs`, `render/tests/invisible_collision.rs`, combined
-  validation, documentation and publication. Agents must not commit/push.
+- **eqemu_server**: guild live proof and cleanup complete; finalizes probe and
+  protocol evidence. Dedicated fixtures are free after root checkpoint.
+- **xml_ui**: guild UI handed back; progression UI research complete in
+  `PROGRESSION_UI_PLAN.md`.
+- **npc_assets**: heightmap water and guild review handed back; progression
+  protocol plan complete in `PROGRESSION_PROTOCOL_PLAN.md`, cursor reconciliation
+  follow-up read-only.
+- Root completed guild combined verification and owns publication.
+  Next supported implementation is receive-only
+  skills/languages/experience, with original skill names and inventory XP gauge.
 - Root should revisit native sky celestial orientation, thin liquid crossings,
   NPC swimming projection, hover/cross-zone resurrection and XP/item recovery;
   do not confuse first-pass completion with full original-client parity.

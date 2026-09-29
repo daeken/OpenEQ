@@ -1,7 +1,8 @@
 # Raid and guild UI: first usable slice
 
 Initial read-only audit, 2026-09-29. The raid presentation implementation is
-recorded below; the guild scope remains a plan.
+recorded below, followed by the receive-only guild checkpoint. The audit sections
+record the original proposal; checkpoint sections describe shipped scope.
 The XML observations below come from the installed default skin under
 `/Users/daeken/EverQuest/uifiles/default`. Protocol constraints were coordinated
 with the [parallel EQEmu protocol audit](SOCIAL_PARITY_PLAN.md); source verification is not a substitute
@@ -250,3 +251,28 @@ An original-asset GPU test covers Members, invitation, pending and MOTD top/bott
 at 1× and 2×, plus narrow views with long Unicode names. Captures are written
 when `OPENEQ_UI_CAPTURE_DIR` is supplied. These validate presentation only;
 the coordinated reducer, protocol and later live fixture establish behavior.
+
+
+## Guild presentation checkpoint
+
+`guild_ui.rs` and `guild_interaction.rs` implement the original
+`GuildManagementWnd` shell with Members and Information pages. `/guildwindow`
+toggles it; `/guild` and `/gu` remain chat. The received roster displays names,
+levels, classes, numeric ranks and source-qualified presence. A selected member's
+public note, last-seen age and alt/banker flags use a measured scrolling detail
+pane; unknown values remain unavailable. Received-empty MOTD and an absent MOTD
+are different states. No guild command API or refresh control is exposed.
+
+Local offline/alt filters retain unknown rows. Revision and member-name identities
+protect selection and note scrolling when the roster changes. The adapter caches
+transformed rows with shared storage; draw/hit output is bounded to visible rows.
+Window positions and stacking use existing character/world layout persistence.
+Closing, reading, selecting and filtering send no gameplay packets.
+
+Six presentation tests and 22 original-skin GPU captures cover normal/Retina/narrow
+views, filtering, long Unicode names, long notes and MOTDs at both ends, unknown
+membership, guildless state and empty rosters/messages. Reducer/adapter tests cover
+identity changes, travel, own departure, duplicate appearance, partial metadata
+and stale selection/scroll feedback. Captures: `/tmp/openeq-guild-ui`.
+Live fixture results and final combined checks are recorded in
+`SOCIAL_PARITY_PLAN.md` and `OVERNIGHT_2026-09-29.md`.

@@ -1,6 +1,6 @@
 # Raid and guild parity: protocol and fixture plan
 
-Source investigation, raid implementation, and dedicated live validation,
+Source investigation, raid/guild implementation, and dedicated live validation,
 2026-09-29. Research was read-only; subsequent fixture logins and guarded
 restoration are recorded below. EQEmu source revision:
 `4aceae18b94ffaafc08e2b17bc41cd72c77f795d`; OpenEQ base at investigation:
@@ -9,13 +9,21 @@ checkout `/Users/daeken/projects/EQEmu`. Wire opcode numbers come from
 `utils/patches/patch_RoF2.conf`; the live probe compares the deployed mapping
 before sending anything. Source evidence is distinct from live proof.
 
-The smallest useful slice is **raid membership and invitations, a usable raid
-roster, self-leave and raid chat, plus a receive-driven guild roster/MOTD with
-MOTD refresh**. Follow with guild invitations and self-leave after resolving the
-documented wire-size discrepancy through a dedicated fixture capture. Use
-`SOCIAL_UI_PLAN.md` for original XML controls and presentation constraints.
+Current implemented scope is **raid invitations, roster, self-leave, leadership
+transfer and raid chat; plus receive-only guild identity, directory, roster,
+MOTD and server-driven updates**. `/rsay` and the raid membership decoder/reducer
+are implemented. Guild profile identity and own appearance transitions now feed
+the guild decoder/reducer and original XML guild window. No outgoing guild
+protocol command is included, **not even MOTD refresh**. Existing guild chat is
+unchanged. Guild invitations, self-leave, rank/permission management and the
+source-known MOTD refresh remain later slices. Use `SOCIAL_UI_PLAN.md` for
+original XML controls and presentation constraints.
 
-## Existing coverage and reuse
+The original audit and proposed acceptance order below are historical research;
+the completed raid and guild validation sections record the shipped scope and
+its limits. Source-known capabilities are not claims that a command is enabled.
+
+## Original audit: existing coverage and reuse
 
 - `openeq-net/src/social.rs`, `openeq/src/group.rs`, and `SOCIAL_PROTOCOL.md`
   already cover six-member groups, invite/accept/decline, server-driven roster,
@@ -41,7 +49,7 @@ widgets, and normal `LiveWorld` transport. A sent command only changes pending
 UI state; server events change membership. Scope stale-choice tokens to session,
 zone generation where applicable, membership generation, and selected name.
 
-Implemented initial Rust contract (existing group types stay unchanged):
+Implemented raid Rust contract (existing group types stay unchanged):
 
 ```rust
 pub struct RaidMember {
@@ -93,8 +101,9 @@ for supported layouts, ignored opaque actions/reserved bytes, and outgoing
 direction/name/self-leave rules. Strict all-target network Clippy and formatting
 checks passed. The live zone-entry correction below adds one regression,
 bringing the network library total to **84 passed**. Foreground reducer/UI
-integration is documented by its owner; no guild codec or guild mutation was
-added in this slice.
+integration is documented by its owner. The subsequent receive-only guild
+implementation is recorded at the end of this document; no guild mutation API
+was added.
 
 ## Raid wire evidence
 
@@ -477,3 +486,104 @@ raid smoke passed; the probe was rebuilt before run4. UI/GPU validation and
 sender-echo presentation are separate checks. This proof does not cover raid
 subgroup moves, cross-zone invites, loot policy, leadership abilities, guild
 mutation, or UCS custom channels.
+
+## Completed receive-only guild slice and live proof
+
+`openeq-net/src/guild.rs` implements the directory, full roster, MOTD and requested
+MOTD response, member add/delete/rename/level/rank/flags/note/details, guild rename
+and guild deletion. `GameplayEvent::Guild` carries checked typed events; profile
+parsing now exposes `guild_id: Option<u32>` (only `0xffffffff` maps to `None`)
+and raw `guild_rank: u8`. The existing own `SpawnAppearance` types22/23 establish
+subsequent identity/rank changes. Zone entry already sends a directory for guilded
+clients (`zone/client_packet.cpp:892`), so no world/session persistence was added.
+
+Client safety limits are explicit and independent: directory50,000 entries and
+4MiB, roster16,384 members and8MiB, names/prefix63 bytes, public notes255 and
+MOTD511. These are client resource ceilings, not asserted server guild capacities.
+Numeric member level/class/rank remain u32. Duplicate directory IDs and ASCII
+case-insensitive member names, incomplete records, invalid names, and unexpected
+trailers fail decoding without producing a replacement empty roster.
+
+Neither the roster prefix nor its four uninitialized bytes is exposed, logged,
+or used to establish membership. Missing add-packet flags/notes remain unknown.
+Full-roster zone0 means offline snapshot; a nonzero zone is an online snapshot,
+without an invented instance. Shared `0x0b9c` ignores its final field entirely.
+Shared `0x69b9` exposes the common last-seen timestamp; mode0 leaves presence and
+location unknown, mode1 is unambiguously modern offline, and other modes remain
+opaque. Timestamp0 remains unknown. No `0x2958` URL/rank/permission variant is
+implemented, and no outgoing guild API exists.
+
+Portable validation passed **95 network library tests** and strict network
+Clippy. Ten new guild tests cover source-shaped records, every prefix/trailer,
+big-endian rosters, wide numeric values, name/note/count/byte limits, duplicate
+keys, ignored reserved bytes, shared-opcode uncertainty and both MOTD opcodes.
+An additional profile test varies language-array size and guild identity while
+verifying currency/resource alignment and truncation rejection. Nonempty MOTD
+and nonempty public-note decoding are portable-tested, not claimed as live proof.
+
+The bounded `crates/openeq/src/bin/guild_smoke.rs` foreground proof passed on
+2026-09-29, run2, exit0. It uses only Fellowship/Companion, existing dedicated
+GM accounts, no movement/items/combat/spells/currency, and no outgoing guild
+packet. Supported `#guild create`, `#guild set` and `#guild rename` commands
+provisioned isolated guild1 with Fellowship rank1 and Companion rank5. Setup
+name `OpenEQ Receive Setup` became `OpenEQ Receive Proof` to demonstrate the
+server-driven directory change. Both fresh foreground reducers then matched
+SQL identity/name, both level10/class1 member rows, rank, banker/alt flags and
+empty notes. Both received the server's valid empty MOTD and author. Companion
+logged out normally and reconnected, retaining server membership and rebuilding
+its full guild state while Fellowship remained connected.
+
+The sanitized trace established the real initial order:
+
+```text
+Profile guild identity → MOTD → full roster → MOTD → directory
+→ shared member-details update (presence unknown)
+```
+
+The GM membership assignment sent own GuildID/Rank before its roster; later
+duplicate appearance updates preserved that roster. The local source explains
+why: `ZoneGuildManager::SetGuild` sends appearance immediately after `MemberAdd`,
+before the world round trip later sends its directory/roster and duplicate
+appearance. No speculative staging or binding to reserved roster bytes was
+needed. The newly created leader initially received identity without a full
+roster in this run; the probe deliberately validated the complete fresh-login
+snapshot rather than inventing a complete membership view from incrementals.
+
+Guarded `#guild delete 1` sent guild deletion, guild-none appearance and empty
+directory events. Both reducers confirmed no membership. After normal logout,
+the probe restored exact saved pose/resources and independently compared
+inventory gameplay fields, currency, binds, spells, buffs, corpse counts,
+level/XP/stats, group/raid/guild membership. Inventory GUID is excluded from
+gameplay equality because EQEmu regenerates it during login; complete original
+rows are privately recorded. Independent post-run SQL confirmed both offline,
+Fellowship `(1005,-15,389)`, Companion `(-280,-148,-159)`, headings0, HP338,
+mana0, endurance225 and hunger/thirst6000, with all seven guild-related tables
+empty and no fixture group/raid memberships. No movement packet was sent.
+
+Private evidence is `/tmp/openeq-guild-foreground-2.log` and its `.baseline.txt`
+and `.restore.sql` siblings, all0600. It includes deployed opcode checks and
+world/zone binary hashes, initial full character/inventory rows, guild rows,
+sanitized typed events and foreground state. Temporary per-event runtime
+diagnostics were removed after the capture; the permanent probe logs its
+foreground guild state and never raw packet bytes.
+
+Two fixture-only findings from the first attempt are documented rather than
+hidden by the successful rerun:
+
+- Run1 failed only its nonempty-MOTD expectation. A guarded SQL MOTD update
+  followed by supported rename was overwritten by EQEmu's cached full-row
+  `UpdateDbRenameGuild` (`common/guild_base.cpp:606`). The decoder and identity
+  sequence were correct; the retry removed SQL MOTD setup and proves the valid
+  empty server message. No outbound setter/refresh was added to broaden scope.
+- EQEmu `_StoreGuildDB` (`common/guild_base.cpp:342–349`) constructs a zeroed
+  `GuildTributes` row but never sets `gt.guild_id` before `ReplaceOne`. Creating
+  the fixture guild consequently left an empty tribute sentinel under ID0,
+  outside the recorded guild1. Baseline absence was recorded, and cleanup removed
+  only the exact new row `(0,4294967295,0,4294967295,0,600000,0)`, after confirming
+  no guild0/members and both fixtures offline. The probe now guards and reconciles
+  that exact source-backed side effect. No global or live-guild deletion occurs.
+
+This live proof does not cover guild invitations, leaving through a client
+guild command, permission/rank configuration, guild bank/tribute, or UCS. Its
+administrative setup and deletion are fixture preparation, not a shipped player
+mutation interface.

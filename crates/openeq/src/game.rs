@@ -354,6 +354,7 @@ pub struct GameplayState {
     pub item_use: crate::item_use_state::ItemUseState,
     pub group: crate::group::GroupState,
     pub raid: crate::raid::RaidState,
+    pub guild: crate::guild::GuildState,
     pub chat: VecDeque<ChatLine>,
     pub chat_links: BTreeMap<u64, openeq_net::social::LinkPayload>,
     next_chat_link: u64,
@@ -466,6 +467,14 @@ impl GameplayState {
         name: impl Fn(u32) -> String,
     ) {
         match event {
+            GameplayEvent::Guild(event) => {
+                let own_name = self
+                    .profile
+                    .as_ref()
+                    .map(|profile| profile.name.clone())
+                    .unwrap_or_else(|| own.map(&name).unwrap_or_default());
+                self.guild.apply(event, &own_name);
+            }
             GameplayEvent::Raid(event) => {
                 let own_name = self
                     .profile
@@ -744,6 +753,8 @@ impl GameplayState {
                 self.line(self.strings.format(&message), message_color(message.color));
             }
             GameplayEvent::Profile(profile) => {
+                self.guild
+                    .identity(profile.guild_id, Some(u32::from(profile.guild_rank)));
                 // RoF2 profile resource fields can be placeholders in EQEmu.
                 // Only the live resource packets are used for gauge values.
                 self.currency = profile.currency;
@@ -880,6 +891,23 @@ impl GameplayState {
                     ));
                     self.attack = false;
                 }
+            }
+            GameplayEvent::SpawnAppearance {
+                id,
+                kind: 22,
+                parameter,
+            } if Some(id) == own => {
+                self.guild.identity(
+                    (parameter != openeq_net::guild::GUILD_NONE).then_some(parameter),
+                    None,
+                );
+            }
+            GameplayEvent::SpawnAppearance {
+                id,
+                kind: 23,
+                parameter,
+            } if Some(id) == own => {
+                self.guild.appearance_rank(parameter);
             }
             GameplayEvent::SpawnAppearance {
                 id,

@@ -437,6 +437,8 @@ pub(crate) mod tests {
         let mut game = GameplayState::default();
         game.inventory.received = true;
         game.profile = Some(PlayerProfile {
+            guild_id: None,
+            guild_rank: 0,
             name: "Player".into(),
             last_name: String::new(),
             race: 1,

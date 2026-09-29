@@ -164,6 +164,10 @@ pub struct Currency {
 pub struct PlayerProfile {
     pub name: String,
     pub last_name: String,
+    /// Independently establishes local membership; only GUILD_NONE maps to None.
+    pub guild_id: Option<u32>,
+    /// Server's modern rank value, not a permission grant.
+    pub guild_rank: u8,
     pub race: u32,
     pub class: u8,
     pub level: u8,
@@ -363,6 +367,7 @@ pub enum GameplayEvent {
     Recovery(crate::death::DeathEvent),
     Social(crate::social::SocialEvent),
     Raid(crate::raid::RaidEvent),
+    Guild(crate::guild::GuildEvent),
     Trade(crate::trade::TradeEvent),
     ItemUse(crate::item_use::ItemUseEvent),
     MerchantOpened {
@@ -840,6 +845,9 @@ pub fn parse_packet(opcode: u16, data: &[u8]) -> Option<Result<GameplayEvent, Zo
     }
     if let Some(event) = crate::raid::parse_packet(opcode, data) {
         return Some(event.map(GameplayEvent::Raid));
+    }
+    if let Some(event) = crate::guild::parse_packet(opcode, data) {
+        return Some(event.map(GameplayEvent::Guild));
     }
     if !matches!(
         opcode,
@@ -1784,12 +1792,18 @@ fn parse_profile(data: &[u8]) -> Option<PlayerProfile> {
     let last_name = Reader(r.array(1, 64)?).string(63)?;
     r.skip(24)?;
     r.array(1, 64)?; // languages
-    r.skip(4 + 16 + 8 + 10 + 8 + 1)?; // zone, position, flags, guild, experience, eye height
+    r.skip(4 + 16 + 4)?; // zone/instance, position, flags
+    let guild_id = r.u32()?;
+    let guild_id = (guild_id != crate::guild::GUILD_NONE).then_some(guild_id);
+    let guild_rank = r.u8()?;
+    r.skip(9 + 8 + 1)?; // unknown, experience, eye height
     let bank_currency = currency(&mut r)?;
     let shared_platinum = r.u32()?;
     Some(PlayerProfile {
         name,
         last_name,
+        guild_id,
+        guild_rank,
         race,
         class,
         level,
@@ -1812,6 +1826,111 @@ fn parse_profile(data: &[u8]) -> Option<PlayerProfile> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Compact variable-count profile fixture following RoF2's PlayerProfile
+    // writer. Distinct data on both sides of guild identity catches cursor drift
+    // without relying on a local client installation or private packet capture.
+    fn guild_profile_fixture(guild_id: u32, guild_rank: u8, language_count: usize) -> Vec<u8> {
+        fn zeros(out: &mut Vec<u8>, size: usize) {
+            out.resize(out.len() + size, 0);
+        }
+        fn array(out: &mut Vec<u8>, count: usize, stride: usize) {
+            out.extend_from_slice(&(count as u32).to_le_bytes());
+            zeros(out, count * stride);
+        }
+        let mut data = vec![0; 17];
+        data.extend_from_slice(&522u32.to_le_bytes());
+        data.extend_from_slice(&[12, 85, 0]);
+        array(&mut data, 1, 20); // bind points
+        zeros(&mut data, 8);
+        for stride in [4, 20, 20, 4, 4] {
+            array(&mut data, 1, stride);
+        }
+        zeros(&mut data, 11 + 12 + 5 + 16 + 8 + 4);
+        for value in [101u32, 102, 10, 11, 12, 13, 14, 15, 16] {
+            data.extend_from_slice(&value.to_le_bytes());
+        }
+        zeros(&mut data, 28);
+        array(&mut data, 1, 12); // AA
+        for _ in 0..9 {
+            // skills, disciplines, timers, spellbook, gems, refresh
+            array(&mut data, 1, 4);
+        }
+        zeros(&mut data, 1);
+        array(&mut data, 0, 80); // buffs
+        for value in [20u32, 21, 22, 23, 30, 31, 32, 33] {
+            data.extend_from_slice(&value.to_le_bytes());
+        }
+        zeros(&mut data, 12 + 8 + 4);
+        array(&mut data, 1, 4);
+        zeros(&mut data, 4 + 2);
+        data.extend_from_slice(&0u32.to_le_bytes()); // bandoliers
+        data.extend_from_slice(&0u32.to_le_bytes()); // potion belt
+        zeros(&mut data, 16 + 48 + 4 + 16);
+        data.extend_from_slice(&103u32.to_le_bytes());
+        zeros(&mut data, 8);
+        for value in [b"Fellowship\0".as_slice(), b"Example\0".as_slice()] {
+            data.extend_from_slice(&(value.len() as u32).to_le_bytes());
+            data.extend_from_slice(value);
+        }
+        zeros(&mut data, 24);
+        array(&mut data, language_count, 1);
+        data.extend_from_slice(&202u16.to_le_bytes());
+        data.extend_from_slice(&7u16.to_le_bytes());
+        zeros(&mut data, 16); // position
+        data.extend_from_slice(&[0, 1, 0, 0]); // flags
+        data.extend_from_slice(&guild_id.to_le_bytes());
+        data.push(guild_rank);
+        zeros(&mut data, 9);
+        data.extend_from_slice(&0x0123_4567_89ab_cdefu64.to_le_bytes());
+        data.push(5); // eye height
+        for value in [40u32, 41, 42, 43, 50] {
+            data.extend_from_slice(&value.to_le_bytes());
+        }
+        let encoded_size = (data.len() - 9) as u32;
+        data[4..8].copy_from_slice(&encoded_size.to_le_bytes());
+        data
+    }
+
+    #[test]
+    fn profile_guild_identity_preserves_variable_cursor_and_currency_alignment() {
+        for language_count in [0, 1, 32, 64] {
+            for (wire_id, expected_id, rank) in [
+                (crate::guild::GUILD_NONE, None, 0),
+                (0, Some(0), 8), // only the documented sentinel means unguilded
+                (70_001, Some(70_001), 255),
+            ] {
+                let data = guild_profile_fixture(wire_id, rank, language_count);
+                let GameplayEvent::Profile(profile) = parse_packet(0x6506, &data).unwrap().unwrap()
+                else {
+                    panic!()
+                };
+                assert_eq!(profile.name, "Fellowship");
+                assert_eq!((profile.guild_id, profile.guild_rank), (expected_id, rank));
+                assert_eq!(
+                    (profile.hp, profile.mana, profile.endurance),
+                    (102, 101, 103)
+                );
+                assert_eq!(
+                    (profile.currency.platinum, profile.cursor_currency.platinum),
+                    (20, 30)
+                );
+                assert_eq!(
+                    (
+                        profile.bank_currency.platinum,
+                        profile.bank_currency.gold,
+                        profile.bank_currency.silver,
+                        profile.bank_currency.copper,
+                        profile.shared_platinum
+                    ),
+                    (40, 41, 42, 43, 50)
+                );
+                for length in 0..data.len() {
+                    assert!(parse_packet(0x6506, &data[..length]).unwrap().is_err());
+                }
+            }
+        }
+    }
 
     #[test]
     fn illusion_uses_rof2_feature_offsets_and_preserves_wide_values() {

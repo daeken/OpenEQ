@@ -32,6 +32,7 @@ pub use packet::{AppPacket, crc16};
 pub use stream::{EqStream, StreamError};
 
 pub mod death;
+pub mod guild;
 pub mod item_use;
 pub mod raid;
 pub mod session;

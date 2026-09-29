@@ -425,3 +425,21 @@ Deferred: task journal UX, arbitrary quest completion prediction, mixed
 item/wrong-money server defect, NPC disappearance during escrow, multiquest,
 pet/bot equipment, attuned/evolving/bag hand-ins, augmentation and shared-task
 delivery. There is no live NPC hand-in proof from this research task.
+
+
+## Additional receive-only queue limitation
+
+A later source review found that `Client::PutLootInInventory`
+(`zone/inventory.cpp:1087–1108`) can append an item to an occupied cursor while
+**sending no item serialization for RoF+ tails**. This also affects the fallback
+from `zone/corpse.cpp:1692–1697` and recursively unpacked container contents
+(`inventory.cpp:1126–1138`). `ItemPacketSummonItem` and `ItemPacketLimbo` are both
+wire value `0x6a`; RoF2 copies the supplied type and adds no discriminator.
+
+A receiver cannot claim an authoritative complete mid-session tail list from
+these item packets alone. A stock-server solution must distinguish a known
+head/prefix from unresolved tail contents and identity, and avoid destructive
+operations whose outcomes cannot be reconciled. Alternatively, a separately
+reviewed negotiated server extension could supply an inventory revision, explicit
+snapshot/delta operations and request correlation. Neither approach is implemented;
+this finding does not authorize guessed deduplication or new hand-in commands.

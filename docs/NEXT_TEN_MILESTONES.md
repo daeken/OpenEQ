@@ -89,7 +89,7 @@ Dedicated live tests verified idle selection, handoff and normal cleanup; native
 unauthenticated UI checks verified editing/masking. Character creation/deletion,
 3D previews and camp-to-roster remain open.
 
-## 8. Social systems — raid first pass complete; guild next
+## 8. Social systems — raid and guild first passes
 
 Guild and raid state/controls and custom chat channels. Build on existing group
 and channel chat. Verify membership changes, invitations, permissions, and
@@ -97,9 +97,11 @@ reconnect state with isolated fixtures.
 
 Raid invitations, local dismissal, rosters/MOTD, leadership transfer, self-leave
 and raid chat passed a dedicated two-client lifecycle including reconnect.
-Original raid UI has GPU coverage. Guild roster/identity/MOTD is the next planned
-receive-only slice; guild mutations, raid subgroup/loot administration and UCS
-channels remain open. See [protocol evidence](SOCIAL_PARITY_PLAN.md).
+Original raid UI has GPU coverage. Receive-only guild identity, roster, member
+details and MOTD now have an original window with local filters and explicit
+unknown/stale states. Guild mutations/refresh, raid subgroup/loot administration
+and UCS channels remain open. See [protocol evidence](SOCIAL_PARITY_PLAN.md)
+and [current verification](OVERNIGHT_2026-09-29.md).
 
 ## 9. Quest interaction — queued
 
