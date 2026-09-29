@@ -74,6 +74,14 @@ Verify ordinary play and reconnect without altering the user's character.
 
 ## Discoveries
 
+- 2026-09-28, PoK profiling: the shared surface shader checked all 620 zone
+  lights for every shaded pixel. At the Mac's scaled maximized resolution
+  (3420×2074), lighting dominated a 107 ms GPU frame. A conservative spatial
+  lookup preserves the original lights and pixels, reducing that view to
+  6.2 ms GPU time. CPU pose sampling/uploads and draw submission are now the
+  next bottlenecks, especially with Luclin models. Reproduction and measurement
+  limits are recorded in [the performance notes](PERFORMANCE.md).
+
 - 2026-09-28, character models: installed male/female Drakkin base models use
   EQGM v3. Their archives contain 83/75 weighted modules plus the base body.
   These share model-space bind coordinates but have different bone indices and

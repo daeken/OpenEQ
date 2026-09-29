@@ -19,7 +19,8 @@ fn main() -> anyhow::Result<()> {
     let Some(zone) = args.next() else {
         eprintln!(
             "usage: renderzone <zone> [--dir DIR] [--out FILE] [--width N] [--height N] \
-             [--pos X,Y,Z] [--yaw DEG] [--pitch DEG]"
+             [--pos X,Y,Z] [--yaw DEG] [--pitch DEG] [--profile FRAMES] \
+             [--brute-lights] [--no-lights]"
         );
         std::process::exit(2);
     };
@@ -32,6 +33,9 @@ fn main() -> anyhow::Result<()> {
     let mut yaw = 0f32;
     let mut pitch = -10f32;
     let mut only_material = None;
+    let mut profile_frames = 0usize;
+    let mut no_lights = false;
+    let mut brute_lights = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -51,6 +55,18 @@ fn main() -> anyhow::Result<()> {
             "--yaw" => yaw = args.next().and_then(|v| v.parse().ok()).unwrap_or(yaw),
             "--pitch" => pitch = args.next().and_then(|v| v.parse().ok()).unwrap_or(pitch),
             "--only-material" => only_material = args.next(),
+            "--no-lights" => no_lights = true,
+            "--brute-lights" => brute_lights = true,
+            "--profile" => {
+                profile_frames = args
+                    .next()
+                    .context("--profile needs a frame count")?
+                    .parse()?;
+                anyhow::ensure!(
+                    (1..=10000).contains(&profile_frames),
+                    "profile count must be 1–10000"
+                );
+            }
             other => anyhow::bail!("unrecognised argument {other}"),
         }
     }
@@ -59,6 +75,9 @@ fn main() -> anyhow::Result<()> {
 
     println!("loading {} from {}", zone, dir.display());
     let mut scene = loader::load_zone(&dir, &zone)?;
+    if no_lights {
+        scene.lights.clear();
+    }
 
     // A debugging aid: keep only the surfaces whose material names contain a
     // substring, which makes a texture mix-up obvious at a glance.
@@ -104,6 +123,7 @@ fn main() -> anyhow::Result<()> {
     let sky = openeq_assets::environment::load_sky(&dir, &zone, 0.5).ok();
     renderer.set_environment(settings, sky.as_ref());
     let gpu_scene = GpuScene::build(renderer.device(), renderer.queue(), &scene)?;
+    gpu_scene.set_light_grid_enabled(renderer.queue(), !brute_lights);
     println!(
         "  uploaded {} draw calls, {} lights, bounds {:?}..{:?}",
         gpu_scene.draws.len(),
@@ -128,6 +148,93 @@ fn main() -> anyhow::Result<()> {
     println!("  camera at {:?} looking {:?}", eye, camera.forward());
 
     renderer.render(&gpu_scene, &camera);
+    if profile_frames > 0 {
+        println!(
+            "GPU timestamps supported: {}",
+            renderer.enable_profiling(true)
+        );
+        println!(
+            "Lights: spatial_grid={}, removed={}; GPU values attribute completion boundaries (overlapping raw pass intervals are not additive). CPU render/submit and completion wait are serialized diagnostic timings, not windowed FPS.",
+            !brute_lights, no_lights
+        );
+        let mut cpu = Vec::new();
+        let mut wait = Vec::new();
+        let mut timings = Vec::new();
+        let mut last_gpu_frame = None;
+        for frame in 0..profile_frames + 60 {
+            let begin = std::time::Instant::now();
+            renderer.render(&gpu_scene, &camera);
+            let submitted = std::time::Instant::now();
+            renderer
+                .device()
+                .poll(wgpu::PollType::wait_indefinitely())?;
+            let finished = std::time::Instant::now();
+            let gpu = renderer.latest_gpu_timings();
+            let gpu = gpu.filter(|gpu| {
+                if last_gpu_frame.is_none_or(|last| gpu.frame_id > last) {
+                    last_gpu_frame = Some(gpu.frame_id);
+                    true
+                } else {
+                    false
+                }
+            });
+            if frame >= 60 {
+                cpu.push((submitted - begin).as_secs_f64() * 1000.);
+                wait.push((finished - submitted).as_secs_f64() * 1000.);
+                if let Some(gpu) = gpu {
+                    timings.push(gpu);
+                }
+            }
+        }
+        let report = |name: &str, mut values: Vec<f64>| {
+            if values.is_empty() {
+                return;
+            }
+            values.sort_by(f64::total_cmp);
+            let p = |q: f64| values[(values.len() as f64 * q).ceil() as usize - 1];
+            println!(
+                "{name}: median={:.3}ms p95={:.3}ms samples={}",
+                p(0.5),
+                p(0.95),
+                values.len()
+            );
+        };
+        report("CPU render/submit", cpu);
+        report("GPU completion wait", wait);
+        for (i, name) in [
+            "GPU shadow",
+            "GPU gbuffer",
+            "GPU lighting",
+            "GPU transparency",
+            "GPU particles",
+            "GPU UI",
+            "GPU attributed total",
+            "GPU frame span",
+        ]
+        .iter()
+        .enumerate()
+        {
+            report(
+                name,
+                timings
+                    .iter()
+                    .map(|t| {
+                        [
+                            t.shadow_ms,
+                            t.gbuffer_ms,
+                            t.lighting_ms,
+                            t.transparency_ms,
+                            t.particles_ms,
+                            t.ui_ms,
+                            t.total_ms,
+                            t.frame_span_ms,
+                        ][i]
+                    })
+                    .collect(),
+            );
+        }
+        println!("Timestamp readbacks: {:?}", renderer.profiling_stats());
+    }
     let (width, height, pixels) = renderer
         .read_rgba()
         .context("headless renderer should support readback")?;

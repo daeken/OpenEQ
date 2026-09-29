@@ -202,7 +202,12 @@ impl Transparency {
         self.targets = BlendTargets::new(device, &self.resolve_layout, width, height);
     }
 
-    pub(super) fn render(&self, encoder: &mut wgpu::CommandEncoder, inputs: BlendInputs<'_>) {
+    pub(super) fn render(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        inputs: BlendInputs<'_>,
+        profile: Option<&profiling::GpuProfiler>,
+    ) {
         let BlendInputs {
             depth,
             output,
@@ -248,7 +253,8 @@ impl Transparency {
                     depth_ops: None,
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: profile
+                    .and_then(|p| p.timestamps(profiling::Pass::TransparencyAccumulate)),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -275,7 +281,8 @@ impl Transparency {
                     },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: profile
+                    .and_then(|p| p.timestamps(profiling::Pass::TransparencyResolve)),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });

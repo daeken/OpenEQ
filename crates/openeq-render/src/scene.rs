@@ -103,6 +103,8 @@ pub struct GpuScene {
     pub atlas_linear_view: wgpu::TextureView,
     pub water_materials: wgpu::Buffer,
     pub lights: wgpu::Buffer,
+    pub(crate) light_grid: wgpu::Buffer,
+    light_grid_dimensions: [u32; 2],
     pub light_count: u32,
     pub bounds_min: Vec3,
     pub bounds_max: Vec3,
@@ -110,6 +112,17 @@ pub struct GpuScene {
 }
 
 impl GpuScene {
+    /// Diagnostic A/B switch: disabling spatial lookup evaluates every zone
+    /// light, retaining the same lights and shading. No scene rebuild needed.
+    pub fn set_light_grid_enabled(&self, queue: &wgpu::Queue, enabled: bool) {
+        let dimensions = if enabled {
+            self.light_grid_dimensions
+        } else {
+            [0; 2]
+        };
+        queue.write_buffer(&self.light_grid, 16, bytemuck::cast_slice(&dimensions));
+    }
+
     /// Updates a fixed-topology pose without re-uploading textures or indices.
     pub fn update_geometry(
         &mut self,
@@ -320,6 +333,22 @@ impl GpuScene {
             })
             .collect();
         let light_count = lights.len() as u32;
+        let grid = crate::light_grid::LightGrid::build(&lights);
+        let light_grid_dimensions = grid.stats.dimensions;
+        if !lights.is_empty() {
+            tracing::info!(enabled=grid.stats.enabled, lights=grid.stats.light_count,
+                dimensions=?grid.stats.dimensions, cell_size=grid.stats.cell_size,
+                references=grid.stats.references, max_cell_lights=grid.stats.max_cell_lights,
+                mean_cell_lights=grid.stats.mean_cell_lights, fallback=grid.stats.fallback_reason,
+                "zone light grid built");
+        }
+        let light_grid = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("zone light spatial index"),
+            size: grid.bytes.len() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&light_grid, 0, &grid.bytes);
 
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("scene vertices"),
@@ -365,6 +394,8 @@ impl GpuScene {
             atlas_linear_view: atlas.linear_view,
             water_materials,
             lights: light_buffer,
+            light_grid,
+            light_grid_dimensions,
             light_count,
             bounds_min: if bounds_min.x == f32::MAX {
                 Vec3::ZERO

@@ -37,6 +37,20 @@ struct PointLight {
 @group(1) @binding(1) var shadow_sampler: sampler_comparison;
 @group(1) @binding(2) var<storage, read> point_lights: array<PointLight>;
 
+// Conservative horizontal cells contain every light whose radius can reach
+// the cell, in the original accumulation order. Vertical distance and the
+// exact spherical cutoff are still evaluated below. Zero dimensions select
+// the original full light loop (diagnostics or oversized/invalid grids).
+struct LightGrid {
+    origin: vec2<f32>,
+    cell_size: f32,
+    padding: f32,
+    dimensions: vec2<u32>,
+    padding2: vec2<u32>,
+    data: array<u32>,
+};
+@group(1) @binding(3) var<storage, read> light_grid: LightGrid;
+
 fn apply_fog(color: vec3<f32>, distance: f32) -> vec3<f32> {
     let env = globals.environment;
     let amount = clamp((distance - env.fog_params.x) / max(env.fog_params.y - env.fog_params.x, 0.001), 0.0, 1.0) * env.fog_color.w;
@@ -96,8 +110,21 @@ fn shade_surface(world: vec3<f32>, normal: vec3<f32>, albedo: vec3<f32>, emissiv
     }
 
     // Zone lights.
-    let count = u32(globals.params.y);
-    for (var i = 0u; i < count; i = i + 1u) {
+    var count = u32(globals.params.y);
+    var first = 0u;
+    let indexed = all(light_grid.dimensions > vec2<u32>(0u));
+    if (indexed) {
+        let cell = floor((vec2<f32>(world.x, -world.z) - light_grid.origin) / light_grid.cell_size);
+        count = 0u;
+        if (all(cell >= vec2<f32>(0.0)) && all(cell < vec2<f32>(light_grid.dimensions))) {
+            let index = (u32(cell.y) * light_grid.dimensions.x + u32(cell.x)) * 2u;
+            first = light_grid.data[index];
+            count = light_grid.data[index + 1u];
+        }
+    }
+    for (var j = 0u; j < count; j = j + 1u) {
+        var i = j;
+        if (indexed) { i = light_grid.data[first + j]; }
         let light = point_lights[i];
         let light_world = (EQ_TO_WORLD * vec4<f32>(light.position.xyz, 1.0)).xyz;
         let to_light = light_world - world;

@@ -319,6 +319,7 @@ impl ParticleRenderer {
         output: &wgpu::TextureView,
         depth: &wgpu::TextureView,
         globals: &wgpu::BindGroup,
+        profile: Option<&crate::profiling::GpuProfiler>,
     ) {
         let Some(atlas) = &self.atlas else {
             return;
@@ -342,7 +343,7 @@ impl ParticleRenderer {
                 depth_ops: None,
                 stencil_ops: None,
             }),
-            timestamp_writes: None,
+            timestamp_writes: profile.and_then(|p| p.timestamps(crate::profiling::Pass::Particles)),
             occlusion_query_set: None,
             multiview_mask: None,
         });

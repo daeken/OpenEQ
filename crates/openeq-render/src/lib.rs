@@ -12,7 +12,11 @@
 pub mod actors;
 pub mod doors;
 pub mod environment;
+mod light_grid;
+#[cfg(test)]
+mod light_grid_tests;
 pub mod particles;
+pub mod profiling;
 pub mod projectiles;
 pub mod scene;
 mod shadow;
@@ -141,6 +145,7 @@ pub struct Renderer {
     pipelines: Pipelines,
     transparency: transparency::Transparency,
     particles: particles::ParticleRenderer,
+    profiler: Option<profiling::GpuProfiler>,
     start: std::time::Instant,
     width: u32,
     height: u32,
@@ -161,7 +166,7 @@ impl Renderer {
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("openeq"),
-                required_features: wgpu::Features::empty(),
+                required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
                 required_limits: device_limits(&adapter),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: Default::default(),
@@ -219,7 +224,7 @@ impl Renderer {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("openeq"),
-                required_features: wgpu::Features::empty(),
+                required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
                 required_limits: device_limits(&adapter),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: Default::default(),
@@ -312,6 +317,16 @@ impl Renderer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -632,6 +647,7 @@ impl Renderer {
             },
             transparency,
             particles,
+            profiler: None,
             ui: None,
             environment: EnvironmentSettings::default(),
             sky,
@@ -657,6 +673,43 @@ impl Renderer {
     /// its atlas; missing/invalid textures are skipped without placeholders.
     pub fn set_particles(&mut self, frame: &particles::ParticleFrame) -> particles::ParticleStats {
         self.particles.set_frame(&self.device, &self.queue, frame)
+    }
+
+    /// Allocate optional timestamp/readback resources only while enabled.
+    /// Returns false when profiling is disabled or unsupported by the device.
+    pub fn enable_profiling(&mut self, enabled: bool) -> bool {
+        if !enabled
+            || !self
+                .device
+                .features()
+                .contains(wgpu::Features::TIMESTAMP_QUERY)
+        {
+            self.profiler = None;
+            return false;
+        }
+        if self.profiler.is_none() {
+            self.profiler = Some(profiling::GpuProfiler::new(&self.device, &self.queue));
+        }
+        true
+    }
+
+    /// Collect completed samples without waiting for the GPU. The latest
+    /// sample can be from an earlier frame; inspect its frame_id when averaging.
+    pub fn profiling_stats(&mut self) -> profiling::GpuProfileStats {
+        self.profiler.as_mut().map_or_else(
+            || profiling::GpuProfileStats {
+                supported: self
+                    .device
+                    .features()
+                    .contains(wgpu::Features::TIMESTAMP_QUERY),
+                ..Default::default()
+            },
+            |profiler| profiler.poll(&self.device, &self.queue),
+        )
+    }
+
+    pub fn latest_gpu_timings(&mut self) -> Option<profiling::GpuFrameTimings> {
+        self.profiling_stats().latest
     }
 
     /// Removes live billboards while retaining their bounded texture cache.
@@ -733,6 +786,10 @@ impl Renderer {
                     wgpu::BindGroupEntry {
                         binding: 2,
                         resource: scene.lights.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: scene.light_grid.as_entire_binding(),
                     },
                 ],
             })
@@ -947,6 +1004,10 @@ impl Renderer {
         let atlas_bind_group = self.atlas_bind_group.as_ref().unwrap();
         let lighting_bind_group = self.lighting_bind_group.as_ref().unwrap();
 
+        if let Some(profiler) = &mut self.profiler {
+            profiler.begin_frame(&self.device, &self.queue);
+        }
+
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -966,7 +1027,10 @@ impl Renderer {
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: self
+                    .profiler
+                    .as_ref()
+                    .and_then(|p| p.timestamps(profiling::Pass::Shadow)),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -1014,7 +1078,10 @@ impl Renderer {
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: self
+                    .profiler
+                    .as_ref()
+                    .and_then(|p| p.timestamps(profiling::Pass::Gbuffer)),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -1043,7 +1110,10 @@ impl Renderer {
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: self
+                    .profiler
+                    .as_ref()
+                    .and_then(|p| p.timestamps(profiling::Pass::Lighting)),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -1066,6 +1136,7 @@ impl Renderer {
                 zone: (scene, atlas_bind_group),
                 actors,
             },
+            self.profiler.as_ref(),
         );
 
         // 5. Emissive spell billboards use opaque depth and never write it.
@@ -1074,6 +1145,7 @@ impl Renderer {
             final_view,
             &self.targets.depth_view,
             &self.globals_bind_group,
+            self.profiler.as_ref(),
         );
 
         // 6. UI always stays above transparent geometry and particles.
@@ -1090,7 +1162,10 @@ impl Renderer {
                     },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: self
+                    .profiler
+                    .as_ref()
+                    .and_then(|p| p.timestamps(profiling::Pass::Ui)),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -1098,6 +1173,9 @@ impl Renderer {
         }
 
         self.queue.submit(Some(encoder.finish()));
+        if let Some(profiler) = &mut self.profiler {
+            profiler.after_submit(&self.queue);
+        }
         if let Some(frame) = frame {
             frame.present();
         }

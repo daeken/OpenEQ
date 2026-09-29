@@ -9,6 +9,7 @@
 //! openeq akanon --dir /path/to/EverQuest --pos 100,-200,20
 //! ```
 
+use openeq::profiling::{FrameProfiler, FrameSample};
 use openeq::{chat, hud, live, loading, loading_ui, movement, zone_loading};
 use openeq_net::session::ConnectionConfig;
 use openeq_render::actors::{ActorRenderer, CharacterModelSet};
@@ -76,6 +77,7 @@ struct Runtime {
     map_open: bool,
     third_person: bool,
     doors: Option<openeq_render::doors::DoorRenderer>,
+    profiler: FrameProfiler,
 }
 
 impl Runtime {
@@ -128,6 +130,7 @@ impl Runtime {
             map_state: openeq::map::MapState::default(),
             map_open: false,
             third_person: false,
+            profiler: FrameProfiler::default(),
             doors: None,
         }
     }
@@ -848,6 +851,7 @@ fn render_frame(
     // Accessing the window handle requires the thread that owns the event loop.
     _main_thread: NonSendMarker,
 ) {
+    let mut profile = runtime.profiler.begin();
     let Ok(window_entity) = windows.single() else {
         return;
     };
@@ -915,6 +919,7 @@ fn render_frame(
             }
         }
         if !runtime.world_ready() {
+            runtime.profiler.reset();
             draw_loading_screen(
                 &mut runtime,
                 &mut renderer,
@@ -946,6 +951,7 @@ fn render_frame(
                 runtime.atmosphere_zone = Some(desired);
             }
         }
+        FrameSample::mark(&mut profile, "setup");
         let states = runtime.live.as_ref().map(|live| {
             live.actor_states_with_terrain(
                 camera.position,
@@ -961,9 +967,11 @@ fn render_frame(
             )
         });
         let elapsed = runtime.started.elapsed().as_secs_f32();
+        FrameSample::mark(&mut profile, "terrain_states");
         if let (Some(actors), Some(states)) = (runtime.actors.as_mut(), states) {
             actors.update(&renderer, &states, elapsed);
         }
+        FrameSample::mark(&mut profile, "animation_upload");
         {
             let runtime = &mut *runtime;
             if let Some(live) = &mut runtime.live {
@@ -980,10 +988,12 @@ fn render_frame(
                 }
             }
         }
+        FrameSample::mark(&mut profile, "effects");
         let doors = runtime.live.as_ref().map(door_states);
         if let (Some(renderer_doors), Some(states)) = (runtime.doors.as_mut(), doors) {
             renderer_doors.update(&renderer, &states, elapsed);
         }
+        FrameSample::mark(&mut profile, "doors");
         if let (Some(hud), Some(live)) = (&runtime.hud, &runtime.live) {
             let player = live.own_id.and_then(|id| live.entities.get(&id));
             let target =
@@ -1054,6 +1064,7 @@ fn render_frame(
                 }
                 runtime.map_state = map_state;
             }
+            FrameSample::mark(&mut profile, "ui_build");
             renderer.set_ui_scaled(&frame, window.scale_factor());
             runtime.chat_link_hits = renderer.ui_link_hits().to_vec();
             runtime.ui_frame = frame;
@@ -1064,6 +1075,7 @@ fn render_frame(
             runtime.chat_link_hits.clear();
             renderer.set_ui(&runtime.ui_frame);
         }
+        FrameSample::mark(&mut profile, "ui_upload");
         if let Some(scene) = runtime.scene.as_ref() {
             let mut actors = runtime
                 .actors
@@ -1075,6 +1087,11 @@ fn render_frame(
             }
             renderer.render_with_actors(scene, &camera, &actors);
         }
+        FrameSample::mark(&mut profile, "render_submit");
+        let profile_size = runtime.size;
+        runtime
+            .profiler
+            .finish(profile, &mut renderer, profile_size);
         runtime.renderer = Some(renderer);
     }
 }
@@ -1107,7 +1124,12 @@ fn initialise(runtime: &mut Runtime, window_entity: Entity) -> anyhow::Result<()
     } else {
         (1280, 720)
     };
-    let renderer = pollster::block_on(Renderer::new_surface(&instance, surface, width, height))?;
+    let mut renderer =
+        pollster::block_on(Renderer::new_surface(&instance, surface, width, height))?;
+    if runtime.profiler.enabled() {
+        let gpu_timestamps = renderer.enable_profiling(true);
+        tracing::info!(gpu_timestamps, "frame profiling enabled (OPENEQ_PROFILE=1)");
+    }
     runtime.size = (width, height);
     runtime.instance = Some(instance);
     runtime.renderer = Some(renderer);

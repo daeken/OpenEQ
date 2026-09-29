@@ -146,6 +146,9 @@ The [next ten milestones](docs/NEXT_TEN_MILESTONES.md) are ordered hardest first
 with the active work, discoveries, and verification recorded as implementation
 progresses.
 
+The [rendering performance notes](docs/PERFORMANCE.md) record the PoK lighting
+profile, spatial light lookup, and opt-in CPU/GPU profiling commands.
+
 See the [exploration and combat checklist](docs/EXPLORATION_COMBAT_TASKS.md) and
 [zone travel protocol](docs/ZONE_TRAVEL_PROTOCOL.md) for supported border formats
 and reproducible verification.

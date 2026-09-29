@@ -12,6 +12,7 @@ pub mod live;
 pub mod loading;
 pub mod loading_ui;
 pub mod movement;
+pub mod profiling;
 mod social_interaction;
 pub mod spell_effects;
 pub mod spells;
