@@ -1,7 +1,10 @@
 //! Reproducible end-to-end NPC render probe against a configured EQEmu world.
 use openeq::{hud, live};
 use openeq_net::session::ConnectionConfig;
-use openeq_render::{Camera, GpuScene, Renderer, actors::ActorRenderer};
+use openeq_render::{
+    Camera, GpuScene, Renderer,
+    actors::{ActorRenderer, CharacterModelSet},
+};
 use std::{
     path::PathBuf,
     time::{Duration, Instant},
@@ -11,15 +14,21 @@ fn main() -> anyhow::Result<()> {
         .with_env_filter("openeq=info,openeq_net=info,openeq_render=info")
         .init();
     let mut args = std::env::args().skip(1);
-    let config = args
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("usage: live_smoke CONFIG OUTPUT.png [SECONDS]"))?;
+    let config = args.next().ok_or_else(|| {
+        anyhow::anyhow!("usage: live_smoke CONFIG OUTPUT.png [SECONDS] [classic|luclin]")
+    })?;
     let output = PathBuf::from(args.next().unwrap_or_else(|| "/tmp/openeq-live.png".into()));
     let seconds: u64 = args.next().map_or(Ok(40), |value| value.parse())?;
     anyhow::ensure!(
         (1..=180).contains(&seconds),
         "duration must be 1–180 seconds"
     );
+    let model_set = match args.next().as_deref() {
+        None | Some("classic") => CharacterModelSet::Classic,
+        Some("luclin") => CharacterModelSet::Luclin,
+        Some(value) => anyhow::bail!("unknown model family {value:?}: expected classic or luclin"),
+    };
+    anyhow::ensure!(args.next().is_none(), "unexpected extra argument");
     let mut live = live::LiveWorld::start(ConnectionConfig::load(std::path::Path::new(&config))?);
     let mut interaction = openeq::interaction::Interaction {
         inventory_open: true,
@@ -67,10 +76,18 @@ fn main() -> anyhow::Result<()> {
     let collision = openeq_assets::collision::CollisionWorld::build(&scene);
     let scene = GpuScene::build(renderer.device(), renderer.queue(), &scene)?;
     renderer.set_scene(&scene);
-    let mut actors = ActorRenderer::load(&base, zone)?;
+    let mut actors = ActorRenderer::load_with_model_set(&base, zone, model_set)?;
     let position = live.initial_position.take().unwrap();
-    let mut camera = Camera {
+    // LiveWorld already converted the server heading into scene coordinates.
+    // Keep the fixture's actual bearing independent from the diagnostic camera.
+    let player = Camera {
         position: [position.x, position.y, position.z + 3.],
+        yaw: position.heading * std::f32::consts::TAU / 512.,
+        ..Default::default()
+    };
+    let mut camera = Camera {
+        position: player.position,
+        yaw: player.yaw,
         ..Default::default()
     };
     // Consume spawns received while assets loaded. Prefer a walking NPC so the
@@ -87,7 +104,7 @@ fn main() -> anyhow::Result<()> {
                     + (e.spawn.position.y - position.y).powi(2)) as u64,
             )
         })
-        .unwrap();
+        .ok_or_else(|| anyhow::anyhow!("no humanoid NPC available in this fixture's zone"))?;
     let target = [
         nearest.spawn.position.x,
         nearest.spawn.position.y,
@@ -96,7 +113,10 @@ fn main() -> anyhow::Result<()> {
     camera.position = [target[0] - 14., target[1] - 22., target[2] + 4.];
     camera.yaw = (target[0] - camera.position[0]).atan2(target[1] - camera.position[1]);
     camera.pitch = -0.12;
-    println!("Framing {} at {:?}", nearest.spawn.name, target);
+    println!(
+        "Framing {} at {:?} with {model_set:?} models",
+        nearest.spawn.name, target
+    );
     live.set_target(Some(nearest.spawn.id));
     let frame_start = Instant::now();
     let mut previous_motion = std::collections::BTreeMap::new();
@@ -110,10 +130,6 @@ fn main() -> anyhow::Result<()> {
             live.error
         );
         // Heartbeat uses the actual character's location, not the diagnostic camera.
-        let player = Camera {
-            position: [position.x, position.y, position.z + 3.],
-            ..Default::default()
-        };
         live.camera_position(&player, false);
         if let Some(entity) = live.target.and_then(|id| live.entities.get(&id)) {
             let target = entity.position(Instant::now());

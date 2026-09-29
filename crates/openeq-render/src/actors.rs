@@ -3,10 +3,10 @@
 //! only when a batch needs more simultaneous poses. Zone geometry is untouched.
 use crate::{GpuActor, GpuScene, Renderer, scene::Instance, upload::UploadContext};
 use glam::{Mat4, Quat, Vec3};
-pub use openeq_assets::character::{CharacterAppearance, EquipmentAppearance};
+pub use openeq_assets::character::{CharacterAppearance, CharacterModelSet, EquipmentAppearance};
 use openeq_assets::{
     Scene,
-    character::{CharacterLibrary, CharacterModel},
+    character::{CharacterLibrary, CharacterModel, CharacterPose},
     mesh::Geometry,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -119,12 +119,78 @@ struct Timeline {
     action: ActorAction,
     sequence: u64,
     started: f32,
+    changed: bool,
+    appearance: Option<AppearanceKey>,
+    previous: Option<Pose>,
+    transition: Option<Transition>,
+    last_time: f32,
+}
+struct Transition {
+    from: Pose,
+    started: f32,
 }
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct Pose {
     clip: String,
     tick: u32,
     looping: bool,
+}
+impl Pose {
+    fn sample(&self) -> CharacterPose<'_> {
+        CharacterPose {
+            animation: &self.clip,
+            time_seconds: self.tick as f32 / 30.,
+            looping: self.looping,
+        }
+    }
+}
+
+// Five 30 Hz steps make transitions short enough to preserve combat response.
+// The key contains poses, never actor IDs: equal blends still share geometry.
+const TRANSITION_STEPS: u8 = 5;
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct DrawPose {
+    to: Pose,
+    from: Option<Pose>,
+    step: u8,
+}
+
+impl Timeline {
+    fn pose(&mut self, key: AppearanceKey, to: Pose, time: f32) -> DrawPose {
+        if self.appearance != Some(key) || time < self.last_time {
+            self.previous = None;
+            self.transition = None;
+        }
+        let switched = self
+            .previous
+            .as_ref()
+            .is_some_and(|old| self.changed || old.clip != to.clip || old.looping != to.looping);
+        if switched {
+            self.transition = self.previous.clone().map(|from| Transition {
+                from,
+                started: time,
+            });
+        }
+        self.changed = false;
+        self.last_time = time;
+        self.appearance = Some(key);
+        self.previous = Some(to.clone());
+        let mut result = DrawPose {
+            to,
+            from: None,
+            step: TRANSITION_STEPS,
+        };
+        if let Some(transition) = &self.transition {
+            let step = ((time - transition.started).max(0.) * 30.).round() as u8;
+            if step < TRANSITION_STEPS {
+                result.from = Some(transition.from.clone());
+                result.step = step;
+            } else {
+                self.transition = None;
+            }
+        }
+        result
+    }
 }
 
 pub struct ActorRenderer {
@@ -138,8 +204,16 @@ pub struct ActorRenderer {
 
 impl ActorRenderer {
     pub fn load(base: &Path, zone: &str) -> anyhow::Result<Self> {
+        Self::load_with_model_set(base, zone, CharacterModelSet::Classic)
+    }
+
+    pub fn load_with_model_set(
+        base: &Path,
+        zone: &str,
+        model_set: CharacterModelSet,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
-            library: CharacterLibrary::load(base, zone)?,
+            library: CharacterLibrary::load_with_model_set(base, zone, model_set)?,
             batches: BTreeMap::new(),
             unavailable: BTreeSet::new(),
             timelines: BTreeMap::new(),
@@ -178,22 +252,34 @@ impl ActorRenderer {
                 action: state.action,
                 sequence: state.action_sequence,
                 started: time,
+                changed: false,
+                appearance: None,
+                previous: None,
+                transition: None,
+                last_time: time,
             });
             if timeline.action != state.action
                 || timeline.sequence != state.action_sequence
                 || timeline.started > time
             {
-                *timeline = Timeline {
-                    action: state.action,
-                    sequence: state.action_sequence,
-                    started: time,
-                };
+                if timeline.started > time {
+                    timeline.previous = None;
+                    timeline.transition = None;
+                }
+                timeline.action = state.action;
+                timeline.sequence = state.action_sequence;
+                timeline.started = time;
+                timeline.changed = true;
             }
             groups
                 .entry((
                     state.race,
                     state.gender,
-                    self.library.normalize_appearance(state.appearance),
+                    self.library.normalize_race_appearance(
+                        state.race,
+                        state.gender,
+                        state.appearance,
+                    ),
                 ))
                 .or_default()
                 .push(state);
@@ -234,11 +320,16 @@ impl ActorRenderer {
                 continue;
             };
             batch.last_seen = time;
-            let mut poses: BTreeMap<Pose, Vec<&ActorState>> = BTreeMap::new();
+            let mut poses: BTreeMap<DrawPose, Vec<&ActorState>> = BTreeMap::new();
             for state in group {
-                let elapsed = time - self.timelines[&state.id].started;
+                let timeline = self
+                    .timelines
+                    .get_mut(&state.id)
+                    .expect("present actor timeline");
+                let elapsed = time - timeline.started;
+                let to = select_pose(&batch.model, state, time, elapsed);
                 poses
-                    .entry(select_pose(&batch.model, state, time, elapsed))
+                    .entry(timeline.pose(*key, to, time))
                     .or_default()
                     .push(state);
             }
@@ -261,12 +352,21 @@ impl ActorRenderer {
             for (slot, (pose, actors)) in poses.iter().enumerate() {
                 let start = instances.len() as u32;
                 let geometry = &mut batch.poses[slot * meshes..(slot + 1) * meshes];
-                batch.model.sample_into_mode(
-                    &pose.clip,
-                    pose.tick as f32 / 30.,
-                    pose.looping,
-                    geometry,
-                );
+                if let Some(from) = &pose.from {
+                    batch.model.sample_blended_into(
+                        from.sample(),
+                        pose.to.sample(),
+                        f32::from(pose.step) / f32::from(TRANSITION_STEPS),
+                        geometry,
+                    );
+                } else {
+                    batch.model.sample_into_mode(
+                        &pose.to.clip,
+                        pose.to.tick as f32 / 30.,
+                        pose.to.looping,
+                        geometry,
+                    );
+                }
                 let bounds = ActorBounds::from_geometry(geometry);
                 let height = (batch.model.bounds_max[2] - batch.model.bounds_min[2]).max(0.1);
                 for state in actors {
@@ -363,7 +463,7 @@ fn upload_actor(
     let names: BTreeSet<_> = model
         .materials
         .iter()
-        .flat_map(|m| m.textures.iter())
+        .flat_map(|m| m.textures.iter().chain(m.normal_map.iter()))
         .collect();
     let textures = names
         .into_iter()
@@ -454,6 +554,45 @@ fn animation_code(action: u8) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn transitions_cover_locomotion_repeated_actions_and_model_changes() {
+        let key = (1, 0, CharacterAppearance::default());
+        let mut timeline = Timeline {
+            action: ActorAction::Auto,
+            sequence: 0,
+            started: 0.,
+            changed: false,
+            appearance: None,
+            previous: None,
+            transition: None,
+            last_time: 0.,
+        };
+        let pose = |clip: &str, tick| Pose {
+            clip: clip.into(),
+            tick,
+            looping: true,
+        };
+        let idle = pose("P01", 0);
+        assert!(timeline.pose(key, idle.clone(), 0.).from.is_none());
+        let walking = pose("L01", 30);
+        let switch = timeline.pose(key, walking.clone(), 1.);
+        assert_eq!(switch.from.as_ref().unwrap().clip, "P01");
+        assert_eq!(switch.step, 0);
+        assert_eq!(timeline.pose(key, pose("L01", 32), 1.0667).step, 2);
+        assert!(timeline.pose(key, pose("L01", 36), 1.2).from.is_none());
+        // Consecutive actions with the same clip still restart and crossfade.
+        timeline.changed = true;
+        assert_eq!(timeline.pose(key, walking, 1.3).from.unwrap().tick, 36);
+        // Illusions/equipment have different topology: never reuse old poses.
+        assert!(
+            timeline
+                .pose((522, 1, key.2), idle.clone(), 1.4)
+                .from
+                .is_none()
+        );
+        assert!(timeline.pose((522, 1, key.2), idle, 0.1).from.is_none());
+    }
+
     #[test]
     fn original_animation_ids_include_combat_death_and_postures() {
         assert_eq!(animation_code(5), Some("C05"));

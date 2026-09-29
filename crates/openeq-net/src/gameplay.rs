@@ -191,7 +191,53 @@ pub struct CharacterAppearance {
     pub texture: u8,
     pub helm_texture: u8,
     pub face: u8,
+    pub hair_color: u8,
+    pub beard_color: u8,
+    pub eye_color_1: u8,
+    pub eye_color_2: u8,
+    pub hair_style: u8,
+    pub beard: u8,
+    pub drakkin_heritage: u32,
+    pub drakkin_tattoo: u32,
+    pub drakkin_details: u32,
     pub equipment: [EquipmentAppearance; 9],
+}
+/// RoF2 OP_Illusion. Eye colors are absent from this wire format and must
+/// remain unchanged, as must equipment until separate wear packets arrive.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Illusion {
+    pub id: u32,
+    pub race: u16,
+    pub gender: u8,
+    pub texture: u8,
+    pub helm_texture: u8,
+    /// The illusion field is wider than the spawn/face-update field. Retain
+    /// its full value rather than truncating an unsupported value or sentinel.
+    pub face: u32,
+    pub hair_style: u8,
+    pub hair_color: u8,
+    pub beard: u8,
+    pub beard_color: u8,
+    pub size: f32,
+    pub drakkin_heritage: u32,
+    pub drakkin_tattoo: u32,
+    pub drakkin_details: u32,
+}
+/// Server OP_SetFace (not the client OP_FaceChange request). Replaces facial
+/// features only; does not carry race, gender, size, texture, or equipment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FaceChange {
+    pub id: u32,
+    pub hair_color: u8,
+    pub beard_color: u8,
+    pub eye_color_1: u8,
+    pub eye_color_2: u8,
+    pub hair_style: u8,
+    pub beard: u8,
+    pub face: u8,
+    pub drakkin_heritage: u32,
+    pub drakkin_tattoo: u32,
+    pub drakkin_details: u32,
 }
 #[derive(Debug, Clone)]
 pub struct WearChange {
@@ -426,6 +472,8 @@ pub enum GameplayEvent {
         speed: u8,
     },
     WearChange(WearChange),
+    Illusion(Illusion),
+    FaceChange(FaceChange),
     SpawnAppearance {
         id: u32,
         kind: u16,
@@ -780,6 +828,8 @@ pub fn parse_packet(opcode: u16, data: &[u8]) -> Option<Result<GameplayEvent, Zo
             | 0x6517
             | 0x7177
             | 0x7994
+            | 0x312a
+            | 0x1af3
             | 0x0971
             | 0x5f44
             | 0x4dc9
@@ -1383,6 +1433,81 @@ fn parse_known(opcode: u16, data: &[u8]) -> Option<GameplayEvent> {
                 },
             })
         }
+        0x312a => {
+            // EQEmu common/patches/rof2.cpp ENCODE(OP_Illusion), 336 bytes.
+            // Drakkin features moved from common-struct offset 92 to RoF2 244.
+            let id = r.u32()?;
+            r.skip(64)?; // display name; the entity is identified by spawn ID
+            let race = r.u16()?;
+            r.skip(2)?;
+            let gender = r.u8()?;
+            let texture = r.u8()?;
+            r.skip(2)?;
+            let helm_texture = r.u8()?;
+            r.skip(3)?;
+            let face = r.u32()?;
+            let hair_style = r.u8()?;
+            let hair_color = r.u8()?;
+            let beard = r.u8()?;
+            let beard_color = r.u8()?;
+            let size = r.float()?;
+            r.skip(152)?;
+            let drakkin_heritage = r.u32()?;
+            let drakkin_tattoo = r.u32()?;
+            let drakkin_details = r.u32()?;
+            r.skip(80)?;
+            if !r.done() {
+                return None;
+            }
+            GameplayEvent::Illusion(Illusion {
+                id,
+                race,
+                gender,
+                texture,
+                helm_texture,
+                face,
+                hair_style,
+                hair_color,
+                beard,
+                beard_color,
+                size,
+                drakkin_heritage,
+                drakkin_tattoo,
+                drakkin_details,
+            })
+        }
+        0x1af3 => {
+            // Mob::SetFaceAppearance broadcasts the shared 24-byte struct as
+            // OP_SetFace; OP_FaceChange is the separate client request opcode.
+            let hair_color = r.u8()?;
+            let beard_color = r.u8()?;
+            let eye_color_1 = r.u8()?;
+            let eye_color_2 = r.u8()?;
+            let hair_style = r.u8()?;
+            let beard = r.u8()?;
+            let face = r.u8()?;
+            r.skip(1)?;
+            let drakkin_heritage = r.u32()?;
+            let drakkin_tattoo = r.u32()?;
+            let drakkin_details = r.u32()?;
+            let id = r.u32()?;
+            if !r.done() {
+                return None;
+            }
+            GameplayEvent::FaceChange(FaceChange {
+                id,
+                hair_color,
+                beard_color,
+                eye_color_1,
+                eye_color_2,
+                hair_style,
+                beard,
+                face,
+                drakkin_heritage,
+                drakkin_tattoo,
+                drakkin_details,
+            })
+        }
         0x0971 => {
             let id = r.u16()? as u32;
             let kind = r.u16()?;
@@ -1556,6 +1681,96 @@ fn parse_profile(data: &[u8]) -> Option<PlayerProfile> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn illusion_uses_rof2_feature_offsets_and_preserves_wide_values() {
+        let mut packet = vec![0xcc; 336];
+        packet[..4].copy_from_slice(&70001u32.to_le_bytes());
+        packet[4..68].fill(0);
+        packet[4..11].copy_from_slice(b"Drakkin");
+        packet[68..70].copy_from_slice(&522u16.to_le_bytes());
+        packet[72] = 1;
+        packet[73] = 0xff; // preserve the original texture sentinel
+        packet[76] = 9;
+        packet[80..84].copy_from_slice(&0x12345678u32.to_le_bytes());
+        packet[84..88].copy_from_slice(&[11, 22, 33, 44]);
+        packet[88..92].copy_from_slice(&6.5f32.to_le_bytes());
+        // Offset 92 is padding in RoF2, not the common struct's heritage.
+        packet[92..104].copy_from_slice(&[0xee; 12]);
+        packet[244..248].copy_from_slice(&0x11223344u32.to_le_bytes());
+        packet[248..252].copy_from_slice(&0x55667788u32.to_le_bytes());
+        packet[252..256].copy_from_slice(&0xaabbccddu32.to_le_bytes());
+        packet[316..320].copy_from_slice(&(-1i32).to_le_bytes());
+        let GameplayEvent::Illusion(illusion) = parse_packet(0x312a, &packet).unwrap().unwrap()
+        else {
+            panic!("illusion")
+        };
+        assert_eq!(
+            illusion,
+            Illusion {
+                id: 70001,
+                race: 522,
+                gender: 1,
+                texture: 255,
+                helm_texture: 9,
+                face: 0x12345678,
+                hair_style: 11,
+                hair_color: 22,
+                beard: 33,
+                beard_color: 44,
+                size: 6.5,
+                drakkin_heritage: 0x11223344,
+                drakkin_tattoo: 0x55667788,
+                drakkin_details: 0xaabbccdd,
+            }
+        );
+        for length in 0..packet.len() {
+            assert!(parse_packet(0x312a, &packet[..length]).unwrap().is_err());
+        }
+        packet.push(0);
+        assert!(parse_packet(0x312a, &packet).unwrap().is_err());
+        packet.pop();
+        for size in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            packet[88..92].copy_from_slice(&size.to_le_bytes());
+            assert!(parse_packet(0x312a, &packet).unwrap().is_err());
+        }
+    }
+
+    #[test]
+    fn server_set_face_keeps_both_eye_colors_and_full_drakkin_selections() {
+        let mut packet = vec![11, 22, 33, 44, 55, 66, 77, 0xab];
+        packet.extend_from_slice(&0x11223344u32.to_le_bytes());
+        packet.extend_from_slice(&0x55667788u32.to_le_bytes());
+        packet.extend_from_slice(&0xaabbccddu32.to_le_bytes());
+        packet.extend_from_slice(&70001u32.to_le_bytes());
+        let GameplayEvent::FaceChange(face) = parse_packet(0x1af3, &packet).unwrap().unwrap()
+        else {
+            panic!("face update")
+        };
+        assert_eq!(
+            face,
+            FaceChange {
+                id: 70001,
+                hair_color: 11,
+                beard_color: 22,
+                eye_color_1: 33,
+                eye_color_2: 44,
+                hair_style: 55,
+                beard: 66,
+                face: 77,
+                drakkin_heritage: 0x11223344,
+                drakkin_tattoo: 0x55667788,
+                drakkin_details: 0xaabbccdd,
+            }
+        );
+        for length in 0..packet.len() {
+            assert!(parse_packet(0x1af3, &packet[..length]).unwrap().is_err());
+        }
+        packet.push(0);
+        assert!(parse_packet(0x1af3, &packet).unwrap().is_err());
+        assert!(parse_packet(0x5578, &packet[..24]).is_none());
+    }
+
     #[test]
     fn commerce_packets_preserve_actual_slots_prices_and_rejections() {
         let open = encode_command(Command::MerchantOpen {

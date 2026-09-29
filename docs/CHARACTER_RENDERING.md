@@ -25,12 +25,38 @@ convention to the renderer and are conjugated for both bind poses and animation.
 EQG archives are opened on demand and their textures are cached. Gargoyle and
 male/female Drakkin race mappings use this path; classic races still prefer WLD.
 
+Drakkin body/module UVs invert V to match their DDS landmarks. Other weighted
+model families and rigid EQG items retain their own UV conventions. This is
+separate from the classic BMP row conversion above; no shared DDS decode rule
+is changed. Original nose/eyebrow vertices and the shield-tip texture provide
+regressions for the differing conventions.
+
+`--models luclin` selects replacement globals for the fourteen supported
+player-race families while retaining classic fallbacks. Their `chr2` track
+patches load before the base archives. Four-character A/B clips are kept and
+aliased to the ordinary action codes; classic tracks never substitute for a
+replacement skeleton. Body scale uses the naked standing pose, since Luclin
+rig construction poses extend their feet below the standing body.
+
+Luclin materials reference actual skin/clothing alpha layers, sometimes with
+texture numbers different from the requested material. The loader resolves the
+authored MDF variant and composites layers, tinting clothing rather than skin.
+Separate hair, beard, helm, tunic, robe and plate modules remap their bone
+bindings into the body skeleton. Faces, independent eye colors, Erudite glyphs
+and Barbarian tattoo selectors use their original definitions.
+
 `ActorState` carries race/gender, EQ position/heading/size, appearance, action and
 an action sequence number. The network layer increments the sequence for each
 new action, including consecutive attacks. The renderer keeps start times per
 actor, returns completed one-shots to locomotion, and holds death/crouch poses.
 Sitting uses P07 where available or reverses the original P02 sit-to-stand clip.
 Original OP_Animation numbers map to their C/D/L/O/P/S/T clips.
+
+Changes between locomotion, actions and completed one-shots blend for five
+30-Hz steps. Local bone translations/scales interpolate and rotations slerp
+before composing the hierarchy. Held items share those transforms. Repeated
+actions restart independently, and equal sampled blends still share geometry;
+model or appearance changes discard stale transition endpoints.
 
 Character fronts point along authored +X. Instance rotation maps that direction
 to the scene bearing `[sin(heading), cos(heading)]`; no extra half-turn is needed.
@@ -72,31 +98,66 @@ hands, legs, feet, primary and secondary. Supported classic appearance features:
 Actors sharing an appearance and current sampled pose are instanced. Each
 appearance has reusable pose slots, expanded only when additional concurrent
 poses are required; texture and index buffers are not recreated each frame.
-Unused appearance batches expire after 30 seconds. Ignored hero/elite fields,
-missing item requests and no-op tints are removed from appearance keys.
+Unused appearance batches expire after 30 seconds. Race-aware normalization
+removes unsupported fields, missing item requests and no-op tints without
+discarding supported modern appearance variants.
 
-Modern appearance currently selects the requested MDS body/head variant and
-available `_sNN_` diffuse texture variants. Drakkin base bodies and animations
-render, but their modular armor, hair/facial pieces and equipment attachments
-are not assembled. Classic equipment/tint fields do not affect modern actors.
-Unused source materials, including editor grid placeholders, are excluded.
+Modern appearance selects the requested MDS body/head variant and available
+`_sNN_` diffuse texture variants. Drakkin assemble their separate weighted armor,
+clothing, hair, facial features and tattoo modules. Module bone indices differ
+from the body: names and subtree context establish the mapping, and original
+bind matrices verify it. Face and both eyes select independent textures. Robe
+materials 10–16 share authored geometry with seven texture variants. Gear does
+not change the body's scale or center. Unused source materials, including editor
+grid placeholders, are excluded.
 
-Current limits: Luclin replacement character conventions, EQG equipment,
-animated item skeletons/particles and Hero's Forge geometry are not supported. Shield detection
+`Resources/playercustomization.txt` supplies Drakkin heritage base colors and
+gender-specific hair/beard shade lists. The reusable customization catalog keys
+records by race, heritage and gender. Module provenance distinguishes hair from
+facial detail even when their material names are identical; source skin, alpha
+and normal maps remain unchanged. Missing or invalid metadata retains original
+textures. Its modern human record is not a verified Luclin tint palette.
+
+Fractional-alpha character materials use weighted blended transparency after
+opaque lighting and before the UI. They share sun, zone lights, shadows and fog
+with opaque surfaces. Fully opaque texels still write depth and cast shadows;
+soft tattoo and hair edges blend without disappearing at the old cutout
+threshold. Overlapping transparent layers are approximate, with no translucent
+shadow transmission or refraction. The existing water path remains separate.
+
+Rigid WLD and static `itNNN.eqg` equipment can attach to classic, Luclin and
+Drakkin hands/shields. Socket lookup matches the actual socket name; suffix-only
+matching incorrectly treats Luclin `HAIR_POINT` as `R_POINT`. EQG item skeletons
+are rejected explicitly rather than rendering their unskinned bind geometry.
+
+RoF2 spawn, illusion and server face-change packets preserve hair/beard/eye
+features and Drakkin values through LiveWorld to rendering. Illusions preserve
+eyes, which RoF2 does not transmit in that packet, and keep armor when the wire
+value is 255. Separate wear changes remain authoritative for equipment.
+
+Current limits: Luclin hair/beard tint palettes, animated item
+skeletons/particles and Hero's Forge geometry are not supported. Shield detection
 from texture names is conservative; unusual unnamed shields may use the hand
 point. Alternate NPC mesh conventions beyond classic head/robe selection are
-incomplete. Action blending between separate clips is not implemented.
+incomplete. Remaining player/NPC grounding differences are tracked with movement
+work; the model gallery's synthetic anchor is not proof of server floor alignment.
 
 Verification:
 
 ```sh
 cargo test -p openeq-assets --test characters
+cargo test -p openeq-assets --test modern_characters
+cargo test -p openeq-assets --test luclin_characters
+cargo test -p openeq-assets --test drakkin_customization
+cargo test -p openeq-render --test character_appearances -- --ignored --nocapture
+cargo test -p openeq-render --test transparency -- --ignored --nocapture
 cargo test -p openeq-render actors::tests::render_equipment -- --ignored --nocapture
 cargo test -p openeq-render modern_gpu_tests -- --ignored --nocapture
 cargo test -p openeq-render authored_toes_face_the_rendered_heading -- --ignored --nocapture
 cargo test -p openeq --lib actual_kelethin_guard -- --ignored --nocapture
 cargo test -p openeq --test npc_presentation -- --ignored --nocapture
 cargo run -p openeq-assets --bin characterscan -- HUM
+cargo run -p openeq-assets --bin characterscan -- HUM --luclin
 cargo run -p openeq-assets --bin characterscan -- IT201
 ```
 

@@ -87,6 +87,8 @@ pub struct DrawCall {
     pub base_vertex: i32,
     pub instance_start: u32,
     pub instance_count: u32,
+    /// Non-water materials with fractional alpha need the forward blend pass.
+    pub transparent: bool,
 }
 
 /// GPU-resident scene: geometry, instances, draws, textures and lights.
@@ -297,6 +299,7 @@ impl GpuScene {
                 base_vertex,
                 instance_start,
                 instance_count,
+                transparent: material.transparent && material.water.is_none(),
             });
         }
 

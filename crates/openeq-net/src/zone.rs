@@ -424,7 +424,17 @@ pub fn parse_spawn(data: &[u8]) -> Option<Spawn> {
         }
     }
     let hp_percent = c.u8()?;
-    c.skip(6 + 12)?;
+    // RoF2 OP_ZoneSpawns encodes these before textures and size. The eye
+    // colors are independent and Drakkin selections are full 32-bit values.
+    let hair_color = c.u8()?;
+    let beard_color = c.u8()?;
+    let eye_color_1 = c.u8()?;
+    let eye_color_2 = c.u8()?;
+    let hair_style = c.u8()?;
+    let beard = c.u8()?;
+    let drakkin_heritage = c.u32()?;
+    let drakkin_tattoo = c.u32()?;
+    let drakkin_details = c.u32()?;
     let texture = c.u8()?;
     c.skip(2)?;
     let helm_texture = c.u8()?;
@@ -445,6 +455,15 @@ pub fn parse_spawn(data: &[u8]) -> Option<Spawn> {
         texture,
         helm_texture,
         face,
+        hair_color,
+        beard_color,
+        eye_color_1,
+        eye_color_2,
+        hair_style,
+        beard,
+        drakkin_heritage,
+        drakkin_tattoo,
+        drakkin_details,
         ..CharacterAppearance::default()
     };
     if !npc || race <= 12 || matches!(race, 128 | 130 | 330 | 522) {
@@ -573,7 +592,10 @@ mod tests {
         data.push(1); // character property count
         data.extend_from_slice(&1u32.to_le_bytes()); // body type
         data.push(100); // HP
-        data.extend_from_slice(&[0; 6 + 12]); // hair, eyes, Drakkin details
+        data.extend_from_slice(&[11, 22, 33, 44, 55, 66]); // hair/color, eyes, styles
+        data.extend_from_slice(&0x11223344u32.to_le_bytes()); // Drakkin heritage
+        data.extend_from_slice(&0x55667788u32.to_le_bytes()); // Drakkin tattoo
+        data.extend_from_slice(&0xaabbccddu32.to_le_bytes()); // Drakkin details
         data.extend_from_slice(&[3, 0, 0, 4]); // chest, material, variation, helm
         data.extend_from_slice(&5f32.to_le_bytes()); // size
         data.push(6); // face
@@ -594,6 +616,33 @@ mod tests {
         let position_words = [0u32, 0, 0, (77 * 8) << 10, 0];
         data.extend(position_words.into_iter().flat_map(u32::to_le_bytes));
         data
+    }
+
+    #[test]
+    fn spawn_preserves_all_facial_features_without_shifting_following_fields() {
+        for race in [4, 112, 522] {
+            let packet = spawn_packet(3, race);
+            let spawn = parse_spawn(&packet).unwrap();
+            let a = spawn.appearance;
+            assert_eq!(a.hair_color, 11);
+            assert_eq!(a.beard_color, 22);
+            assert_eq!(a.eye_color_1, 33);
+            assert_eq!(a.eye_color_2, 44);
+            assert_eq!(a.hair_style, 55);
+            assert_eq!(a.beard, 66);
+            assert_eq!(a.drakkin_heritage, 0x11223344);
+            assert_eq!(a.drakkin_tattoo, 0x55667788);
+            assert_eq!(a.drakkin_details, 0xaabbccdd);
+            assert_eq!((a.texture, a.helm_texture, a.face), (3, 4, 6));
+            assert_eq!(spawn.size, 5.);
+            assert_eq!(spawn.walk_speed, 0.5);
+            assert_eq!(spawn.run_speed, 1.25);
+            assert_eq!(spawn.race, race);
+            assert_eq!(spawn.position.z, 77.);
+            for length in 0..packet.len() {
+                assert!(parse_spawn(&packet[..length]).is_none());
+            }
+        }
     }
 
     #[test]

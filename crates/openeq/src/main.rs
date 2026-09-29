@@ -11,7 +11,7 @@
 
 use openeq::{chat, hud, live, loading, loading_ui, movement, zone_loading};
 use openeq_net::session::ConnectionConfig;
-use openeq_render::actors::ActorRenderer;
+use openeq_render::actors::{ActorRenderer, CharacterModelSet};
 use std::path::PathBuf;
 
 use bevy::ecs::system::NonSendMarker;
@@ -40,6 +40,7 @@ struct Options {
     dir: PathBuf,
     position: Option<[f32; 3]>,
     connection: Option<ConnectionConfig>,
+    model_set: CharacterModelSet,
 }
 
 /// Main-thread presentation, with destination assets prepared by a worker.
@@ -184,9 +185,17 @@ fn parse_args() -> anyhow::Result<Options> {
     let mut dir = None;
     let mut position = None;
     let mut connection = None;
+    let mut model_set = CharacterModelSet::Classic;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--models" => {
+                model_set = match args.next().as_deref() {
+                    Some("classic") => CharacterModelSet::Classic,
+                    Some("luclin") => CharacterModelSet::Luclin,
+                    _ => anyhow::bail!("--models requires classic or luclin"),
+                };
+            }
             "--connect" => {
                 let path = args
                     .next()
@@ -204,7 +213,9 @@ fn parse_args() -> anyhow::Result<Options> {
                 })
             }
             "-h" | "--help" => {
-                println!("usage: openeq [zone] [--dir DIR] [--pos X,Y,Z] [--connect CONFIG]");
+                println!(
+                    "usage: openeq [zone] [--dir DIR] [--pos X,Y,Z] [--connect CONFIG] [--models classic|luclin]"
+                );
                 std::process::exit(0);
             }
             other if zone.is_none() => zone = Some(other.to_string()),
@@ -215,7 +226,7 @@ fn parse_args() -> anyhow::Result<Options> {
     let zone = zone
         .or_else(|| connection.as_ref().map(|_| "poknowledge".to_string()))
         .unwrap_or_else(|| {
-            eprintln!("usage: openeq [zone] [--dir DIR] [--pos X,Y,Z] [--connect CONFIG]");
+            eprintln!("usage: openeq [zone] [--dir DIR] [--pos X,Y,Z] [--connect CONFIG] [--models classic|luclin]");
             std::process::exit(2);
         });
     let dir = match dir.or_else(loader::default_client_dir) {
@@ -227,6 +238,7 @@ fn parse_args() -> anyhow::Result<Options> {
         dir,
         position,
         connection,
+        model_set,
     })
 }
 
@@ -1152,6 +1164,7 @@ fn prepare_world(runtime: &mut Runtime, renderer: &mut Renderer, options: &Optio
                 dir: options.dir.clone(),
                 zone: destination.zone.clone(),
                 online: runtime.live.is_some(),
+                model_set: options.model_set,
                 time_of_day,
                 actors,
                 doors,
@@ -1470,6 +1483,7 @@ mod loading_tests {
             dir: loader::default_client_dir().unwrap(),
             position: Some([123., 456., 789.]),
             connection: None,
+            model_set: CharacterModelSet::Classic,
         }
     }
 
@@ -1511,6 +1525,7 @@ mod loading_tests {
                     dir: options.dir.clone(),
                     zone: zone.into(),
                     online: true,
+                    model_set: options.model_set,
                     time_of_day: 0.5,
                     actors: [112, 367, 34]
                         .into_iter()

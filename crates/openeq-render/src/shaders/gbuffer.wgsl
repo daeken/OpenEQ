@@ -60,6 +60,7 @@ struct WaterParams {
 
 // Material flags shared with the CPU side.
 const FLAG_ALPHA_MASK: u32 = 1u;
+const FLAG_TRANSPARENT: u32 = 2u;
 const FLAG_EMISSIVE: u32 = 4u;
 const FLAG_WATER: u32 = 8u;
 
@@ -180,6 +181,11 @@ fn fs_main(in: Fragment) -> Targets {
         return out;
     }
     let texel = textureSampleLevel(atlas, atlas_sampler, in.uv, i32(in.layer), 0.0);
+    // Preserve opaque interiors of alpha materials in the depth buffer. Their
+    // fractional edges and decals are shaded later with true alpha blending.
+    if ((in.flags & FLAG_TRANSPARENT) != 0u && texel.a < 1.0) {
+        discard;
+    }
     if ((in.flags & FLAG_ALPHA_MASK) != 0u && texel.a < 0.5) {
         discard;
     }

@@ -4,6 +4,46 @@
 use openeq_assets::character::CharacterLibrary;
 
 #[test]
+fn original_eqg_items_attach_without_changing_body_scale() {
+    use openeq_assets::character::CharacterAppearance;
+    let Some(base) = openeq_assets::loader::default_client_dir() else {
+        return;
+    };
+    if !base.join("it13911.eqg").is_file() || !base.join("it100044.eqg").is_file() {
+        return;
+    }
+    let library = CharacterLibrary::load(&base, "poknowledge").unwrap();
+    let mut appearance = CharacterAppearance::default();
+    appearance.equipment[7].material = 100044; // Authored Ram Sword.
+    appearance.equipment[8].material = 13911; // Authored Shield of Fear surface.
+    assert_eq!(
+        library.normalize_race_appearance(1, 0, appearance),
+        appearance
+    );
+    let bare = library.load_race(1, 0).unwrap();
+    let equipped = library
+        .load_race_with_appearance(1, 0, &appearance)
+        .unwrap();
+    assert!(equipped.meshes.len() >= bare.meshes.len() + 2);
+    assert_eq!(bare.bounds_min, equipped.bounds_min);
+    assert_eq!(bare.bounds_max, equipped.bounds_max);
+    for material in &equipped.materials {
+        for name in &material.textures {
+            assert!(library.texture(name).is_some(), "missing {name}");
+        }
+    }
+    let a = equipped.sample("C05", 0.1);
+    let b = equipped.sample("C05", 0.3);
+    assert!(
+        a[bare.meshes.len()..]
+            .iter()
+            .zip(&b[bare.meshes.len()..])
+            .all(|(a, b)| a.vertices != b.vertices)
+    );
+    assert!(b.iter().flat_map(|m| &m.vertices).all(|v| v.is_finite()));
+}
+
+#[test]
 fn greater_faydark_decaying_skeleton_uses_its_global_ldon_model() {
     let Some(base) = openeq_assets::loader::default_client_dir() else {
         return;

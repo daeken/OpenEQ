@@ -17,6 +17,7 @@ pub struct Request {
     pub dir: PathBuf,
     pub zone: String,
     pub online: bool,
+    pub model_set: openeq_assets::character::CharacterModelSet,
     pub time_of_day: f32,
     pub actors: Vec<ActorState>,
     pub doors: Vec<DoorState>,
@@ -51,6 +52,7 @@ fn prepare(
         dir,
         zone,
         online,
+        model_set,
         time_of_day,
         actors: actor_states,
         doors: door_states,
@@ -72,7 +74,7 @@ fn prepare(
         });
     report.stage("Loading characters", Some(0.60))?;
     let actors = if online {
-        let mut actors = ActorRenderer::load(&dir, &zone)?;
+        let mut actors = ActorRenderer::load_with_model_set(&dir, &zone, model_set)?;
         anyhow::ensure!(
             actors.preload_with_progress(&upload, &actor_states, 0., |done, total| {
                 report

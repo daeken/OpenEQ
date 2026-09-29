@@ -1,6 +1,6 @@
-//! Inspect classic character bones, textures and equipment geometry.
+//! Inspect character bones, textures and equipment geometry.
 use openeq_assets::{
-    character::CharacterLibrary,
+    character::{CharacterLibrary, CharacterModelSet},
     loader,
     pfs::Archive,
     wld::{Fragment, Wld},
@@ -59,7 +59,12 @@ fn main() -> anyhow::Result<()> {
             }
         }
     } else {
-        let library = CharacterLibrary::load(base, "poknowledge")?;
+        let model_set = if std::env::args().any(|arg| arg == "--luclin") {
+            CharacterModelSet::Luclin
+        } else {
+            CharacterModelSet::Classic
+        };
+        let library = CharacterLibrary::load_with_model_set(base, "poknowledge", model_set)?;
         let model = library.load_model(&code)?;
         println!(
             "{code}: {} meshes, bounds {:?}..{:?}",

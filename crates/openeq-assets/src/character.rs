@@ -8,6 +8,9 @@
 //! Modern EQGS/EQGM models use inverse bind matrices and timed EQGA tracks.
 
 mod appearance;
+pub mod customization;
+mod equipment;
+mod luclin;
 mod modern;
 pub use appearance::{CharacterAppearance, EquipmentAppearance};
 
@@ -23,6 +26,14 @@ use crate::texture::Texture;
 use crate::wld::{Fragment, Frame, Mesh, PieceTrackRef, Ref, Skeleton, Wld};
 use crate::{Error, Result};
 
+/// Preferred player model family. Missing replacements retain classic assets.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CharacterModelSet {
+    #[default]
+    Classic,
+    Luclin,
+}
+
 /// Client character assets available to a zone. Share this between NPCs and
 /// cache loaded models by race/gender; archives and animations need only load once.
 pub struct CharacterLibrary {
@@ -37,6 +48,8 @@ pub struct CharacterLibrary {
     modern_archives: Mutex<HashMap<String, Arc<Archive>>>,
     base_models: Mutex<HashMap<String, CharacterModel>>,
     decoded_textures: Mutex<HashMap<String, Texture>>,
+    luclin_codes: BTreeSet<String>,
+    customization: customization::CustomizationCatalog,
 }
 
 /// An authored animation. WLD skeletal tracks are normally sampled at 10 Hz;
@@ -46,6 +59,14 @@ pub struct CharacterAnimation {
     pub frame_time_ms: u32,
     pub frame_count: usize,
     tracks: Vec<Vec<Frame>>,
+}
+
+/// A single animation sample, usable as either endpoint of a transition.
+#[derive(Debug, Clone, Copy)]
+pub struct CharacterPose<'a> {
+    pub animation: &'a str,
+    pub time_seconds: f32,
+    pub looping: bool,
 }
 
 impl CharacterAnimation {
@@ -85,6 +106,14 @@ pub struct CharacterModel {
 
 impl CharacterLibrary {
     pub fn load(base: impl AsRef<Path>, zone: &str) -> Result<Self> {
+        Self::load_with_model_set(base, zone, CharacterModelSet::Classic)
+    }
+
+    pub fn load_with_model_set(
+        base: impl AsRef<Path>,
+        zone: &str,
+        model_set: CharacterModelSet,
+    ) -> Result<Self> {
         let base = base.as_ref();
         let mut files = BTreeMap::new();
         for entry in std::fs::read_dir(base).map_err(|source| Error::Io {
@@ -97,9 +126,37 @@ impl CharacterLibrary {
                 entry.path(),
             );
         }
-        // Prefer the original global models over their Luclin replacements:
-        // the latter use different asset and material conventions.
-        let mut wanted = vec!["global_chr.s3d".to_owned()];
+        let mut wanted = Vec::new();
+        let mut luclin_archives = BTreeSet::new();
+        if model_set == CharacterModelSet::Luclin {
+            // Load complete replacement families first. chr2 contains track
+            // corrections; its entries take precedence over the base archive.
+            for race in (1..=12).chain([128, 130]) {
+                for gender in [0, 1] {
+                    let code = race_model_code(race, gender)
+                        .expect("player race")
+                        .to_ascii_lowercase();
+                    let archive = format!("global{code}_chr.s3d");
+                    if files.contains_key(&archive) {
+                        let patch = format!("global{code}_chr2.s3d");
+                        luclin_archives.insert(archive.clone());
+                        luclin_archives.insert(patch.clone());
+                        wanted.extend([patch, archive]);
+                    }
+                }
+            }
+            wanted.extend(
+                [
+                    "lgequip2.s3d",
+                    "lgequip.s3d",
+                    "lgequip_amr2.s3d",
+                    "lgequip_amr.s3d",
+                ]
+                .map(str::to_owned),
+            );
+            wanted.extend((17..=23).map(|i| format!("global{i}_amr.s3d")));
+        }
+        wanted.push("global_chr.s3d".to_owned());
         wanted.extend((2..=7).map(|i| format!("global{i}_chr.s3d")));
         wanted.extend([
             "globalfroglok_chr.s3d".to_owned(),
@@ -154,6 +211,13 @@ impl CharacterLibrary {
             modern_archives: Mutex::new(HashMap::new()),
             base_models: Mutex::new(HashMap::new()),
             decoded_textures: Mutex::new(HashMap::new()),
+            luclin_codes: BTreeSet::new(),
+            customization: customization::CustomizationCatalog::load(base)
+                .unwrap_or_else(|error| {
+                    tracing::warn!(%error, "character customization metadata unavailable");
+                    None
+                })
+                .unwrap_or_default(),
         };
         let mut seen = BTreeSet::new();
         for name in wanted {
@@ -173,6 +237,9 @@ impl CharacterLibrary {
                         match &chunk.fragment {
                             Fragment::ActorDef(_) => {
                                 if let Some(code) = chunk.name.strip_suffix("_ACTORDEF") {
+                                    if luclin_archives.contains(&name) {
+                                        library.luclin_codes.insert(code.to_ascii_uppercase());
+                                    }
                                     let actors = if name.starts_with("gequip") {
                                         &mut library.equipment
                                     } else {
@@ -215,6 +282,10 @@ impl CharacterLibrary {
 
     pub fn model_codes(&self) -> impl Iterator<Item = &str> {
         self.actors.keys().map(String::as_str)
+    }
+
+    pub fn customization(&self) -> &customization::CustomizationCatalog {
+        &self.customization
     }
 
     pub fn texture(&self, name: &str) -> Option<Texture> {
@@ -435,18 +506,27 @@ impl CharacterLibrary {
         let mut prefixes = BTreeSet::from([String::new()]);
         // Some clips omit the root track because its transform never changes.
         // Inspect every bone, rather than requiring the root to be animated.
-        for name in names.iter().chain(donor_names.iter().flatten()) {
-            if name.is_empty() {
-                continue;
-            }
-            for track_name in self.tracks.keys() {
-                if let Some(prefix) = track_name.strip_suffix(name)
-                    && prefix.len() == 3
-                    && prefix.as_bytes()[0].is_ascii_alphabetic()
-                    && prefix.as_bytes()[1..].iter().all(u8::is_ascii_digit)
-                {
-                    prefixes.insert(prefix.to_owned());
-                }
+        // Index bone names once rather than rescanning all zone/global tracks
+        // for every bone of every Luclin model (hundreds of millions of tests).
+        let track_bones: BTreeSet<_> = names
+            .iter()
+            .chain(donor_names.iter().flatten())
+            .map(String::as_str)
+            .filter(|name| !name.is_empty())
+            .collect();
+        let prefix_len = if self.luclin_codes.contains(&model.code) {
+            4
+        } else {
+            3
+        };
+        for track_name in self.tracks.keys() {
+            if let Some((prefix, bone)) = track_name.split_at_checked(prefix_len)
+                && track_bones.contains(bone)
+                && prefix.as_bytes()[0].is_ascii_alphabetic()
+                && prefix.as_bytes()[1..3].iter().all(u8::is_ascii_digit)
+                && (prefix_len == 3 || prefix.as_bytes()[3].is_ascii_alphabetic())
+            {
+                prefixes.insert(prefix.to_owned());
             }
         }
         for prefix in prefixes {
@@ -502,11 +582,22 @@ impl CharacterLibrary {
                 },
             );
         }
+        if self.luclin_codes.contains(&model.code) {
+            luclin::install_animation_aliases(&mut model);
+        }
         model.meshes = model.sample("", 0.0);
         // Instance size describes the body, not the selected helmet/robe.
-        // Measure the original naked bind meshes so gear changes cannot resize
-        // an actor, and keep weapons outside these normalization bounds.
-        let transforms = model.bone_transforms("", 0., false).expect("bind pose");
+        // Luclin's rig bind pose extends the feet well below its standing pose;
+        // using that height makes a standing human too short and raised. Size
+        // replacements from their naked standing body, before attaching parts.
+        let sizing_pose = if self.luclin_codes.contains(&model.code) {
+            model.idle_animation()
+        } else {
+            ""
+        };
+        let transforms = model
+            .bone_transforms(sizing_pose, 0., false)
+            .expect("body sizing pose");
         for mesh in original_meshes {
             let bones: Vec<_> = mesh
                 .vertex_pieces
@@ -577,6 +668,48 @@ impl CharacterModel {
         if let Some(modern) = &self.modern {
             return modern.sample_into(animation, time_seconds, looping, meshes);
         }
+        let Some(transforms) = self.bone_transforms(animation, time_seconds, looping) else {
+            return false;
+        };
+        self.skin_transforms(&transforms, meshes)
+    }
+
+    /// Blend local bone translations, rotations and scales before composing
+    /// the hierarchy. Geometry and held items keep their original bindings;
+    /// interpolation of world-space vertices would shorten bent limbs.
+    pub fn sample_blended_into(
+        &self,
+        from: CharacterPose<'_>,
+        to: CharacterPose<'_>,
+        blend: f32,
+        meshes: &mut [Geometry],
+    ) -> bool {
+        let blend = if blend.is_finite() {
+            blend.clamp(0., 1.)
+        } else {
+            1.
+        };
+        if blend == 0. {
+            return self.sample_into_mode(from.animation, from.time_seconds, from.looping, meshes);
+        }
+        if blend == 1. {
+            return self.sample_into_mode(to.animation, to.time_seconds, to.looping, meshes);
+        }
+        if let Some(modern) = &self.modern {
+            return modern.sample_blended_into(from, to, blend, meshes);
+        }
+        let (Some(a), Some(b)) = (self.local_frames(from), self.local_frames(to)) else {
+            return false;
+        };
+        let frames: Vec<_> = a
+            .into_iter()
+            .zip(b)
+            .map(|(a, b)| blend_frame(a, b, blend))
+            .collect();
+        self.skin_transforms(&self.compose_frames(&frames), meshes)
+    }
+
+    fn skin_transforms(&self, transforms: &[Mat4], meshes: &mut [Geometry]) -> bool {
         if meshes.len() != self.bindings.len()
             || meshes
                 .iter()
@@ -585,9 +718,6 @@ impl CharacterModel {
         {
             return false;
         }
-        let Some(transforms) = self.bone_transforms(animation, time_seconds, looping) else {
-            return false;
-        };
         for (mesh, bindings) in meshes.iter_mut().zip(&self.bindings) {
             for (vertex, binding) in mesh.vertices.chunks_exact_mut(8).zip(bindings) {
                 let transform = transforms[binding.bone];
@@ -614,6 +744,20 @@ impl CharacterModel {
         if let Some(modern) = &self.modern {
             return Some(modern.bone_transforms(animation, time_seconds, looping));
         }
+        let frames = self.local_frames(CharacterPose {
+            animation,
+            time_seconds,
+            looping,
+        })?;
+        Some(self.compose_frames(&frames))
+    }
+
+    fn local_frames(&self, pose: CharacterPose<'_>) -> Option<Vec<Frame>> {
+        let CharacterPose {
+            animation,
+            time_seconds,
+            looping,
+        } = pose;
         let clip = self
             .animations
             .get(animation)
@@ -631,28 +775,50 @@ impl CharacterModel {
         };
         let frame = phase.floor() as usize;
         let blend = phase.fract();
+        Some(
+            clip.tracks
+                .iter()
+                .map(|frames| {
+                    let index = |frame: usize| {
+                        if looping {
+                            frame % frames.len()
+                        } else {
+                            frame.min(frames.len() - 1)
+                        }
+                    };
+                    let a = frames[index(frame)];
+                    let b = frames[index(frame + 1)];
+                    blend_frame(a, b, blend)
+                })
+                .collect(),
+        )
+    }
+
+    fn compose_frames(&self, frames: &[Frame]) -> Vec<Mat4> {
         let mut transforms = vec![Mat4::IDENTITY; self.parents.len()];
         for &bone in &self.bone_order {
-            let frames = &clip.tracks[bone];
-            let index = |frame: usize| {
-                if looping {
-                    frame % frames.len()
-                } else {
-                    frame.min(frames.len() - 1)
-                }
-            };
-            let a = frames[index(frame)];
-            let b = frames[index(frame + 1)];
-            let rotation = rotation(a.rotation).slerp(rotation(b.rotation), blend);
-            let translation =
-                Vec3::from_array(a.translation).lerp(Vec3::from_array(b.translation), blend);
-            let scale = a.scale + (b.scale - a.scale) * blend;
-            let local =
-                Mat4::from_scale_rotation_translation(Vec3::splat(scale), rotation, translation);
+            let frame = frames[bone];
+            let local = Mat4::from_scale_rotation_translation(
+                Vec3::splat(frame.scale),
+                rotation(frame.rotation),
+                Vec3::from_array(frame.translation),
+            );
             transforms[bone] =
                 self.parents[bone].map_or(local, |parent| transforms[parent] * local);
         }
-        Some(transforms)
+        transforms
+    }
+}
+
+fn blend_frame(a: Frame, b: Frame, blend: f32) -> Frame {
+    Frame {
+        rotation: rotation(a.rotation)
+            .slerp(rotation(b.rotation), blend)
+            .to_array(),
+        translation: Vec3::from_array(a.translation)
+            .lerp(Vec3::from_array(b.translation), blend)
+            .to_array(),
+        scale: a.scale + (b.scale - a.scale) * blend,
     }
 }
 
@@ -1231,7 +1397,7 @@ mod tests {
                 ],
             ],
         };
-        let model = CharacterModel {
+        let mut model = CharacterModel {
             code: "TEST".into(),
             materials: vec![],
             material_slots: vec![],
@@ -1266,6 +1432,40 @@ mod tests {
             model.sample("L01", 0.0)[0].vertices,
             model.sample("L01", 0.2)[0].vertices
         );
+        // Separate clips must interpolate the skeleton just like authored
+        // frames. A vertex crossfade would shrink this rotating hand's radius.
+        let clip = model.animations["L01"].clone();
+        let mut start = clip.clone();
+        let mut end = clip;
+        start.frame_count = 1;
+        end.frame_count = 1;
+        start.tracks[1] = vec![start.tracks[1][0]];
+        end.tracks[1] = vec![end.tracks[1][1]];
+        Arc::make_mut(&mut model.animations).insert("P01".into(), start);
+        Arc::make_mut(&mut model.animations).insert("C01".into(), end);
+        let a = CharacterPose {
+            animation: "P01",
+            time_seconds: 0.,
+            looping: true,
+        };
+        let b = CharacterPose {
+            animation: "C01",
+            time_seconds: 0.,
+            looping: false,
+        };
+        let mut blended = model.meshes.clone();
+        assert!(model.sample_blended_into(a, b, 0.5, &mut blended));
+        for (actual, expected) in blended[0].vertices.iter().zip(&pose[0].vertices) {
+            assert!((actual - expected).abs() < 1e-5);
+        }
+        assert!(model.sample_blended_into(a, b, 0., &mut blended));
+        assert_eq!(blended[0].vertices, model.sample("P01", 0.)[0].vertices);
+        assert!(model.sample_blended_into(a, b, 1., &mut blended));
+        assert_eq!(blended[0].vertices, model.sample("C01", 0.)[0].vertices);
+        blended[0].vertices.push(42.);
+        let unchanged = blended[0].vertices.clone();
+        assert!(!model.sample_blended_into(a, b, 0.5, &mut blended));
+        assert_eq!(blended[0].vertices, unchanged);
     }
 
     #[test]

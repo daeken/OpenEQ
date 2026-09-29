@@ -1,9 +1,10 @@
 //! A custom `wgpu` renderer for EverQuest geometry.
 //!
-//! The pipeline is deferred: geometry is rendered once into a G-buffer
+//! Opaque geometry is rendered into a G-buffer
 //! (albedo + normal + depth), then a fullscreen pass reconstructs world
 //! positions and shades everything with a shadow-mapped directional sun plus
-//! the zone's point lights.
+//! the zone's point lights. Fractional-alpha surfaces use the same lighting in
+//! a forward weighted-blend pass, composited against opaque depth before UI.
 //!
 //! The same core renders to a window surface or to an offscreen texture, so the
 //! whole pipeline can be exercised headlessly by tests and tools.
@@ -15,6 +16,7 @@ pub mod scene;
 mod shadow;
 #[cfg(test)]
 mod tests;
+mod transparency;
 pub mod ui;
 pub mod upload;
 
@@ -135,6 +137,7 @@ pub struct Renderer {
     gbuffer_layout: wgpu::BindGroupLayout,
     lighting_bind_group: Option<wgpu::BindGroup>,
     pipelines: Pipelines,
+    transparency: transparency::Transparency,
     start: std::time::Instant,
     width: u32,
     height: u32,
@@ -475,7 +478,14 @@ impl Renderer {
         });
         let lighting_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("lighting"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/lighting.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}",
+                    include_str!("shaders/surface_lighting.wgsl"),
+                    include_str!("shaders/lighting.wgsl")
+                )
+                .into(),
+            ),
         });
 
         let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -586,6 +596,13 @@ impl Renderer {
             cache: None,
         });
 
+        let transparency = transparency::Transparency::new(
+            &device,
+            &pipeline_geometry,
+            config.format,
+            width,
+            height,
+        );
         Self {
             device: device.clone(),
             queue,
@@ -609,6 +626,7 @@ impl Renderer {
                 geometry: geometry_pipeline,
                 lighting: lighting_pipeline,
             },
+            transparency,
             ui: None,
             environment: EnvironmentSettings::default(),
             sky,
@@ -778,6 +796,7 @@ impl Renderer {
             }
         }
         self.targets = Targets::new(&self.device, width, height);
+        self.transparency.resize(&self.device, width, height);
         self.lighting_bind_group = None;
         self.scene_bind_group = None;
         self.scene_bind_group_plain = None;
@@ -1013,9 +1032,40 @@ impl Renderer {
             pass.set_bind_group(2, lighting_bind_group, &[]);
             pass.set_bind_group(3, &self.sky.group, &[]);
             pass.draw(0..3, 0..1);
-            if let Some(ui) = &self.ui {
-                ui.render(&mut pass);
-            }
+        }
+
+        // 4. Fractional-alpha surfaces, shaded against opaque world depth.
+        self.transparency.render(
+            &mut encoder,
+            transparency::BlendInputs {
+                depth: &self.targets.depth_view,
+                output: final_view,
+                globals: &self.globals_bind_group,
+                lighting: scene_bind_group,
+                zone: (scene, atlas_bind_group),
+                actors,
+            },
+        );
+
+        // 5. UI always stays above transparent geometry.
+        if let Some(ui) = &self.ui {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("world UI"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: final_view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            ui.render(&mut pass);
         }
 
         self.queue.submit(Some(encoder.finish()));

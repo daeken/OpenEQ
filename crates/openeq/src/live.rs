@@ -951,6 +951,50 @@ impl LiveWorld {
                     *slot = change.appearance;
                 }
             }
+            GameplayEvent::Illusion(change) => {
+                if let Some(entity) = self.entities.get_mut(&change.id) {
+                    entity.spawn.race = u32::from(change.race);
+                    entity.spawn.gender = change.gender;
+                    if change.size > 0. {
+                        entity.spawn.size = change.size;
+                    }
+                    let appearance = &mut entity.spawn.appearance;
+                    // Player illusions use 255 to retain existing armor;
+                    // subsequent wear packets carry equipment replacements.
+                    if change.texture != u8::MAX {
+                        appearance.texture = change.texture;
+                    }
+                    if change.helm_texture != u8::MAX {
+                        appearance.helm_texture = change.helm_texture;
+                    }
+                    if let Ok(face) = u8::try_from(change.face) {
+                        appearance.face = face;
+                    }
+                    appearance.hair_color = change.hair_color;
+                    appearance.beard_color = change.beard_color;
+                    appearance.hair_style = change.hair_style;
+                    appearance.beard = change.beard;
+                    appearance.drakkin_heritage = change.drakkin_heritage;
+                    appearance.drakkin_tattoo = change.drakkin_tattoo;
+                    appearance.drakkin_details = change.drakkin_details;
+                    // RoF2's illusion encoder omits eye colors entirely.
+                }
+            }
+            GameplayEvent::FaceChange(change) => {
+                if let Some(entity) = self.entities.get_mut(&change.id) {
+                    let appearance = &mut entity.spawn.appearance;
+                    appearance.face = change.face;
+                    appearance.hair_color = change.hair_color;
+                    appearance.beard_color = change.beard_color;
+                    appearance.eye_color_1 = change.eye_color_1;
+                    appearance.eye_color_2 = change.eye_color_2;
+                    appearance.hair_style = change.hair_style;
+                    appearance.beard = change.beard;
+                    appearance.drakkin_heritage = change.drakkin_heritage;
+                    appearance.drakkin_tattoo = change.drakkin_tattoo;
+                    appearance.drakkin_details = change.drakkin_details;
+                }
+            }
             GameplayEvent::SpawnAppearance {
                 id,
                 kind,
@@ -1090,6 +1134,15 @@ impl LiveWorld {
                         texture: e.spawn.appearance.texture,
                         helm_texture: e.spawn.appearance.helm_texture,
                         face: e.spawn.appearance.face,
+                        hair_color: e.spawn.appearance.hair_color,
+                        beard_color: e.spawn.appearance.beard_color,
+                        eye_color_1: e.spawn.appearance.eye_color_1,
+                        eye_color_2: e.spawn.appearance.eye_color_2,
+                        hair_style: e.spawn.appearance.hair_style,
+                        beard: e.spawn.appearance.beard,
+                        drakkin_heritage: e.spawn.appearance.drakkin_heritage,
+                        drakkin_tattoo: e.spawn.appearance.drakkin_tattoo,
+                        drakkin_details: e.spawn.appearance.drakkin_details,
                         equipment: std::array::from_fn(|i| {
                             let value = e.spawn.appearance.equipment[i];
                             EquipmentAppearance {
@@ -2092,6 +2145,60 @@ pub(crate) mod tests {
             },
             now,
         )
+    }
+
+    #[test]
+    fn facial_updates_reach_rendering_and_illusions_preserve_omitted_fields() {
+        use openeq_net::gameplay::{FaceChange, Illusion};
+        let (mut live, _) = command_world(1, 10.);
+        let old = &mut live.entities.get_mut(&2).unwrap().spawn.appearance;
+        old.texture = 3;
+        old.helm_texture = 2;
+        old.equipment[7].material = 1;
+        live.gameplay_event(GameplayEvent::FaceChange(FaceChange {
+            id: 2,
+            face: 6,
+            hair_color: 1,
+            beard_color: 2,
+            eye_color_1: 3,
+            eye_color_2: 4,
+            hair_style: 5,
+            beard: 6,
+            drakkin_heritage: 4,
+            drakkin_tattoo: 7,
+            drakkin_details: 3,
+        }));
+        live.gameplay_event(GameplayEvent::Illusion(Illusion {
+            id: 2,
+            race: 522,
+            gender: 1,
+            size: 7.,
+            texture: 255,
+            helm_texture: 255,
+            face: u32::MAX,
+            hair_style: 2,
+            hair_color: 8,
+            beard: 1,
+            beard_color: 9,
+            drakkin_heritage: 2,
+            drakkin_tattoo: 5,
+            drakkin_details: 6,
+        }));
+        let states = live.actor_states([0.; 3], None);
+        let state = states.iter().find(|s| s.id == 2).unwrap();
+        assert_eq!((state.race, state.gender, state.size), (522, 1, 7.));
+        let a = state.appearance;
+        assert_eq!((a.face, a.texture, a.helm_texture), (6, 3, 2));
+        assert_eq!((a.eye_color_1, a.eye_color_2), (3, 4));
+        assert_eq!(
+            (a.hair_style, a.hair_color, a.beard, a.beard_color),
+            (2, 8, 1, 9)
+        );
+        assert_eq!(
+            (a.drakkin_heritage, a.drakkin_tattoo, a.drakkin_details),
+            (2, 5, 6)
+        );
+        assert_eq!(a.equipment[7].material, 1);
     }
     fn close(actual: f32, expected: f32) {
         assert!((actual - expected).abs() < 0.001, "{actual} != {expected}");

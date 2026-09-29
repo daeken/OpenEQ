@@ -26,6 +26,12 @@ and interface assets load in the background. The window remains responsive;
 movement resumes once the destination is ready. Loading or connection errors
 stay visible, and Escape exits the loading screen and client.
 
+Add `--models luclin` to use the Luclin player models, including their layered
+armor, hair, facial pieces and robes. Classic models remain the default; use
+`--models classic` to select them explicitly. Missing replacements fall back
+to the available original models. This choice persists across zone travel for
+the current session.
+
 Controls:
 
 | Input | Action |
@@ -104,8 +110,10 @@ you up and automatically returns, following the default five-second cycle.
   consumption, buffs and dismissal. Effects remain authoritative on EQEmu.
 - Scroll scribing and item effects, with owned-item validation, finite charges,
   consumable stacks, interrupted casts and shared reuse timers.
-- Classic armor/skins/tints and held equipment; independent attack/hit/sit/death
-  animation. Weighted modern EQG characters include gargoyles and Drakkin.
+- Classic and optional Luclin armor/skins/tints and held equipment, including
+  static EQG weapons/shields; independent actions with short skeletal blends.
+  Drakkin support modular clothing, armor, robes, hair, facial features and
+  original heritage/color palettes, including softly blended tattoos.
 - Dynamic doors/portals, door collision, maps with waypoints, third-person camera.
 - Natural border travel through authored classic WLD reference volumes, including
   Greater Faydark's four exits; authenticated handoffs use server destination data.
@@ -120,12 +128,16 @@ This is a playable development milestone, with substantial parity work remaining
 NPC quest hand-ins, augmentation, raid and guild management, quest journals,
 interactive account/character creation, EQG/absolute-destination border
 triggers, spell particles/audio, advanced XML widgets and full swimming/movement
-rules. Modern Drakkin modular armor/hair/equipment, Luclin replacements, weather,
+rules. Luclin hair/beard colors, Hero's Forge, animated equipment, weather,
 terrain ecosystem effects and water refraction remain incomplete. Door motion
 classes include approximations; ordinary door collision switches to the final
 pose, while lifts collide throughout their motion. Lift timing is approximate.
 Some skins/layouts need more work at small window sizes. No original assets are
 redistributed.
+
+The [next ten milestones](docs/NEXT_TEN_MILESTONES.md) are ordered hardest first,
+with the active work, discoveries, and verification recorded as implementation
+progresses.
 
 See the [exploration and combat checklist](docs/EXPLORATION_COMBAT_TASKS.md) and
 [zone travel protocol](docs/ZONE_TRAVEL_PROTOCOL.md) for supported border formats

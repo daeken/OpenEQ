@@ -3,6 +3,9 @@
 use super::*;
 use crate::read::Reader;
 
+#[path = "modern_drakkin.rs"]
+mod drakkin;
+
 #[derive(Debug, Clone, Copy)]
 struct Transform {
     position: Vec3,
@@ -82,9 +85,14 @@ pub(super) struct ModernModel {
     inverse_bind: Vec<Mat4>,
     pieces: Vec<Piece>,
     materials: Vec<Material>,
+    material_names: Vec<String>,
     clips: BTreeMap<String, Clip>,
     /// Baked mesh -> original vertices, so material splitting preserves weights.
     bindings: Vec<Vec<Vertex>>,
+    baked_materials: Vec<usize>,
+    baked_slots: Vec<Option<usize>>,
+    /// Keep source modules distinct even when their shader labels match.
+    baked_pieces: Vec<usize>,
     center_z: f32,
 }
 fn name(strings: &[u8], offset: u32) -> Result<String> {
@@ -97,11 +105,16 @@ fn name(strings: &[u8], offset: u32) -> Result<String> {
         .ok_or_else(|| Error::Format("unterminated EQG name".into()))?;
     Ok(String::from_utf8_lossy(&tail[..end]).into_owned())
 }
-fn materials(reader: &mut Reader<'_>, strings: &[u8], count: usize) -> Result<Vec<Material>> {
+fn materials(
+    reader: &mut Reader<'_>,
+    strings: &[u8],
+    count: usize,
+) -> Result<(Vec<Material>, Vec<String>)> {
     let mut result = Vec::new();
+    let mut names = Vec::new();
     for _ in 0..count {
         let id = reader.bounded_count()?;
-        let _name = name(strings, reader.u32()?)?;
+        names.push(name(strings, reader.u32()?)?);
         let shader = name(strings, reader.u32()?)?.to_ascii_lowercase();
         let properties = reader.bounded_count()?;
         let mut texture = None;
@@ -135,7 +148,7 @@ fn materials(reader: &mut Reader<'_>, strings: &[u8], count: usize) -> Result<Ve
             emissive: shader.contains("add"),
         });
     }
-    Ok(result)
+    Ok((result, names))
 }
 fn bones(reader: &mut Reader<'_>, strings: &[u8], count: usize) -> Result<Vec<Bone>> {
     let mut bones = Vec::with_capacity(count);
@@ -257,8 +270,8 @@ impl ModernModel {
             ));
         }
         let strings = r.take(ns)?;
-        let materials = materials(&mut r, strings, nm)?;
-        let (bones, pieces) = if mds {
+        let (materials, material_names) = materials(&mut r, strings, nm)?;
+        let (bones, mut pieces) = if mds {
             let bones = bones(&mut r, strings, nb)?;
             let mut pieces = Vec::new();
             for _ in 0..np {
@@ -291,6 +304,14 @@ impl ModernModel {
                 }],
             )
         };
+        if drakkin::is_drakkin(code.split('_').next().unwrap_or(code)) {
+            // Drakkin MOD UVs use bottom-origin V, while decoded DDS rows use
+            // top-origin V. This includes every modular garment and face part.
+            // The authored nose is at V=.606, matching DDS row 1-.606, not .606.
+            for vertex in pieces.iter_mut().flat_map(|piece| &mut piece.vertices) {
+                vertex.uv[1] = 1. - vertex.uv[1];
+            }
+        }
         if r.remaining() > 4 {
             return Err(Error::Format(format!(
                 "{} unparsed EQG character bytes",
@@ -343,8 +364,12 @@ impl ModernModel {
             inverse_bind,
             pieces,
             materials,
+            material_names,
             clips: BTreeMap::new(),
             bindings: Vec::new(),
+            baked_materials: Vec::new(),
+            baked_slots: Vec::new(),
+            baked_pieces: Vec::new(),
             center_z: 0.,
         })
     }
@@ -389,7 +414,7 @@ impl ModernModel {
         }
         Ok(Clip { tracks, duration })
     }
-    pub(super) fn bone_transforms(&self, animation: &str, time: f32, looping: bool) -> Vec<Mat4> {
+    fn local_transforms(&self, animation: &str, time: f32, looping: bool) -> Vec<Transform> {
         let clip = self.clips.get(animation);
         let time = if time.is_finite() { time.max(0.) } else { 0. };
         let time = clip.map_or(0., |clip| {
@@ -399,8 +424,8 @@ impl ModernModel {
                 time.min(clip.duration)
             }
         });
-        let mut result = vec![Mat4::IDENTITY; self.bones.len()];
-        for &index in &self.order {
+        let mut result = Vec::with_capacity(self.bones.len());
+        for index in 0..self.bones.len() {
             let mut transform = self.bones[index].bind;
             if let Some(track) = clip
                 .map(|c| &c.tracks[index])
@@ -419,10 +444,42 @@ impl ModernModel {
                         .blend(b.transform, (time - a.time) / (b.time - a.time).max(1e-8));
                 }
             }
-            let local = transform.matrix();
+            result.push(transform);
+        }
+        result
+    }
+    fn global_transforms(&self, transforms: &[Transform]) -> Vec<Mat4> {
+        let mut result = vec![Mat4::IDENTITY; self.bones.len()];
+        for &index in &self.order {
+            let local = transforms[index].matrix();
             result[index] = self.parents[index].map_or(local, |parent| result[parent] * local);
         }
         result
+    }
+    pub(super) fn bone_transforms(&self, animation: &str, time: f32, looping: bool) -> Vec<Mat4> {
+        self.global_transforms(&self.local_transforms(animation, time, looping))
+    }
+    pub(super) fn sample_blended_into(
+        &self,
+        from: CharacterPose<'_>,
+        to: CharacterPose<'_>,
+        blend: f32,
+        meshes: &mut [Geometry],
+    ) -> bool {
+        if blend <= 0. {
+            return self.sample_into(from.animation, from.time_seconds, from.looping, meshes);
+        }
+        if blend >= 1. {
+            return self.sample_into(to.animation, to.time_seconds, to.looping, meshes);
+        }
+        let from = self.local_transforms(from.animation, from.time_seconds, from.looping);
+        let to = self.local_transforms(to.animation, to.time_seconds, to.looping);
+        let local: Vec<_> = from
+            .into_iter()
+            .zip(to)
+            .map(|(a, b)| a.blend(b, blend))
+            .collect();
+        self.skin_into(&self.global_transforms(&local), meshes)
     }
     pub(super) fn sample_into(
         &self,
@@ -431,6 +488,9 @@ impl ModernModel {
         looping: bool,
         meshes: &mut [Geometry],
     ) -> bool {
+        self.skin_into(&self.bone_transforms(animation, time, looping), meshes)
+    }
+    fn skin_into(&self, transforms: &[Mat4], meshes: &mut [Geometry]) -> bool {
         if meshes.len() != self.bindings.len()
             || meshes
                 .iter()
@@ -439,7 +499,6 @@ impl ModernModel {
         {
             return false;
         }
-        let transforms = self.bone_transforms(animation, time, looping);
         let skin: Vec<_> = transforms
             .iter()
             .zip(&self.inverse_bind)
@@ -496,9 +555,19 @@ impl ModernModel {
         }) {
             selected.push(head);
         }
+        let selected = if drakkin::is_drakkin(code) {
+            drakkin::select(self, code, appearance)
+        } else {
+            selected.into_iter().map(|index| (index, None)).collect()
+        };
         self.bindings.clear();
+        self.baked_materials.clear();
+        self.baked_slots.clear();
+        self.baked_pieces.clear();
         let mut meshes = Vec::new();
-        for index in selected {
+        let mut mesh_slots = Vec::new();
+        let mut mesh_pieces = Vec::new();
+        for (index, slot) in selected {
             let piece = &self.pieces[index];
             let mut groups: BTreeMap<usize, Vec<u32>> = BTreeMap::new();
             for (indices, material) in &piece.triangles {
@@ -533,18 +602,25 @@ impl ModernModel {
                     collidable: false,
                 });
                 self.bindings.push(bindings);
+                mesh_slots.push(slot);
+                mesh_pieces.push(index);
             }
         }
         // MOD/MDS material tables can contain unused editor placeholders (for
         // example grid_standard.dds in Drakkin). Keep only rendered materials.
         let mut materials = Vec::new();
         let mut material_map = HashMap::new();
-        for mesh in &mut meshes {
-            mesh.material = *material_map.entry(mesh.material).or_insert_with(|| {
-                let index = materials.len();
-                materials.push(self.materials[mesh.material].clone());
-                index
-            });
+        for ((mesh, slot), piece) in meshes.iter_mut().zip(mesh_slots).zip(mesh_pieces) {
+            mesh.material = *material_map
+                .entry((mesh.material, slot, piece))
+                .or_insert_with(|| {
+                    let index = materials.len();
+                    materials.push(self.materials[mesh.material].clone());
+                    self.baked_materials.push(mesh.material);
+                    self.baked_slots.push(slot);
+                    self.baked_pieces.push(piece);
+                    index
+                });
         }
         (meshes, materials)
     }
@@ -570,6 +646,152 @@ fn clip_code(prefix: &str) -> Option<&'static str> {
     })
 }
 impl CharacterLibrary {
+    pub(super) fn normalize_modern_appearance(
+        &self,
+        code: &str,
+        mut value: CharacterAppearance,
+    ) -> CharacterAppearance {
+        let drakkin = drakkin::is_drakkin(code);
+        let valid_armor = |value: u32| value <= 4 || (10..=16).contains(&value);
+        if value.texture > 99 || (drakkin && !valid_armor(u32::from(value.texture))) {
+            value.texture = 0;
+        }
+        if value.helm_texture > if drakkin { 4 } else { 99 } {
+            value.helm_texture = 0;
+        }
+        if drakkin {
+            let male = code.eq_ignore_ascii_case("DKM");
+            let gender = u8::from(!male);
+            if self
+                .customization
+                .get(522, value.drakkin_heritage, gender)
+                .is_none()
+            {
+                value.drakkin_heritage = 0;
+            }
+            let metadata = self.customization.get(522, value.drakkin_heritage, gender);
+            let count = |select: fn(&customization::FeatureCounts) -> u32, fallback| {
+                metadata.map_or(fallback, |entry| select(&entry.features).min(fallback))
+            };
+            let colors = metadata.map_or(0, |entry| entry.colors.len());
+            if usize::from(value.hair_color) >= colors {
+                value.hair_color = 0;
+            }
+            if usize::from(value.beard_color) >= colors {
+                value.beard_color = 0;
+            }
+            if u32::from(value.face) >= count(|f| f.faces, 7) {
+                value.face = 0;
+            }
+            if u32::from(value.eye_color_1) >= count(|f| f.eyes, 12) {
+                value.eye_color_1 = 0;
+            }
+            if u32::from(value.eye_color_2) >= count(|f| f.eyes, 12) {
+                value.eye_color_2 = 0;
+            }
+            if u32::from(value.hair_style) >= count(|f| f.hair_styles, if male { 9 } else { 8 }) {
+                value.hair_style = 0;
+            }
+            if u32::from(value.beard) >= count(|f| f.beards, if male { 12 } else { 4 }) {
+                value.beard = 0;
+            }
+            if value.drakkin_tattoo >= count(|f| f.tattoos, 8) {
+                value.drakkin_tattoo = 0;
+            }
+            if value.drakkin_details >= count(|f| f.facial_attachments, 8) {
+                value.drakkin_details = 0;
+            }
+        } else {
+            value.hair_color = 0;
+            value.beard_color = 0;
+            value.drakkin_heritage = 0;
+            value.face = 0;
+            value.eye_color_1 = 0;
+            value.eye_color_2 = 0;
+            value.hair_style = 0;
+            value.beard = 0;
+            value.drakkin_tattoo = 0;
+            value.drakkin_details = 0;
+        }
+        for (index, slot) in value.equipment.iter_mut().enumerate() {
+            slot.elite_material = 0;
+            slot.hero_forge_model = 0;
+            if slot.color >> 24 == 0 || slot.color & 0x00ff_ffff == 0x00ff_ffff {
+                slot.color = 0;
+            }
+            if index < 7 {
+                if !drakkin || index == 3 {
+                    *slot = EquipmentAppearance::default();
+                } else if (index == 0 && slot.material > 4) || !valid_armor(slot.material) {
+                    slot.material = 0;
+                }
+            } else if !self.has_equipment(slot.material) {
+                *slot = EquipmentAppearance::default();
+            }
+        }
+        value
+    }
+
+    fn attach_modern_equipment(
+        &self,
+        modern: &mut ModernModel,
+        meshes: &mut Vec<Geometry>,
+        materials: &mut Vec<Material>,
+        equipment: EquipmentAppearance,
+        secondary: bool,
+    ) -> Result<()> {
+        let (mut item_materials, mut item_meshes) = self.equipment_geometry(equipment.material)?;
+        let shield = secondary
+            && item_materials
+                .iter()
+                .flat_map(|m| &m.textures)
+                .any(|name| name.to_ascii_lowercase().contains("shield"));
+        let attachment = if shield {
+            "ARML_SHLD"
+        } else if secondary {
+            "ARML_WEAP"
+        } else {
+            "ARMR_WEAP"
+        };
+        let bone = modern
+            .bones
+            .iter()
+            .position(|b| b.name.eq_ignore_ascii_case(attachment))
+            .ok_or_else(|| Error::NotFound(format!("EQG attachment {attachment}")))?;
+        let bind = modern.inverse_bind[bone].inverse();
+        for material in &mut item_materials {
+            for name in &mut material.textures {
+                if material.alpha_mask {
+                    *name = format!("{name}#masked");
+                }
+                if equipment.color >> 24 != 0 {
+                    *name = format!("{name}#tint={:08x}", equipment.color);
+                }
+            }
+        }
+        for mesh in &mut item_meshes {
+            mesh.material += materials.len();
+            mesh.collidable = false;
+            modern.bindings.push(
+                mesh.vertices
+                    .chunks_exact(8)
+                    .map(|v| Vertex {
+                        // IT mesh origin is its grip point. Convert to the character
+                        // bind space once; the shared skin pass handles animation and
+                        // transitions exactly as it does for weighted body geometry.
+                        position: bind.transform_point3(Vec3::new(v[0], v[1], v[2])),
+                        normal: bind.transform_vector3(Vec3::new(v[3], v[4], v[5])),
+                        uv: [v[6], v[7]],
+                        weights: vec![Weight { bone, weight: 1. }],
+                    })
+                    .collect(),
+            );
+        }
+        materials.extend(item_materials);
+        meshes.extend(item_meshes);
+        Ok(())
+    }
+
     pub(super) fn load_modern_model(&self, code: &str) -> Result<CharacterModel> {
         let path = self
             .eqg_files
@@ -622,7 +844,9 @@ impl CharacterLibrary {
                 }
             }
         }
-        let (mut meshes, materials) = modern.bake(code, &CharacterAppearance::default());
+        // Body bounds define actor scale and feet placement. Clothing, hair,
+        // horns, and held equipment must never change that reference frame.
+        let (meshes, _) = modern.bake(code, &CharacterAppearance::default());
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
         for v in meshes.iter().flat_map(|m| m.vertices.chunks_exact(8)) {
@@ -633,6 +857,20 @@ impl CharacterLibrary {
         modern.center_z = (min.z + max.z) * 0.5;
         min.z -= modern.center_z;
         max.z -= modern.center_z;
+        if drakkin::is_drakkin(code) {
+            drakkin::load_modules(&mut modern, &archive, code)?;
+        }
+        let (mut meshes, mut materials) = modern.bake(code, &CharacterAppearance::default());
+        if drakkin::is_drakkin(code) {
+            drakkin::apply_materials(
+                &modern,
+                &mut materials,
+                &CharacterAppearance::default(),
+                &archive,
+                self.customization
+                    .get(522, 0, u8::from(code.eq_ignore_ascii_case("DKF"))),
+            );
+        }
         modern.sample_into("", 0., false, &mut meshes);
         let model = CharacterModel {
             code: code.to_owned(),
@@ -659,12 +897,25 @@ impl CharacterLibrary {
         model: &mut CharacterModel,
         appearance: &CharacterAppearance,
     ) {
+        let normalized = self.normalize_modern_appearance(&model.code, *appearance);
+        let appearance = &normalized;
         let mut modern = (**model.modern.as_ref().unwrap()).clone();
         let (mut meshes, mut materials) = modern.bake(&model.code, appearance);
-        modern.sample_into("", 0., false, &mut meshes);
         let archives = self.modern_archives.lock().unwrap();
         let archive = &archives[&model.code];
-        if appearance.texture > 0 && appearance.texture < 100 {
+        if drakkin::is_drakkin(&model.code) {
+            drakkin::apply_materials(
+                &modern,
+                &mut materials,
+                appearance,
+                archive,
+                self.customization.get(
+                    522,
+                    appearance.drakkin_heritage,
+                    u8::from(model.code.eq_ignore_ascii_case("DKF")),
+                ),
+            );
+        } else if appearance.texture > 0 && appearance.texture < 100 {
             for material in &mut materials {
                 for name in &mut material.textures {
                     let lower = name.to_ascii_lowercase();
@@ -684,8 +935,25 @@ impl CharacterLibrary {
                 }
             }
         }
+        drop(archives);
+        for slot in [7, 8] {
+            let equipment = appearance.equipment[slot];
+            if equipment.material != 0
+                && let Err(error) = self.attach_modern_equipment(
+                    &mut modern,
+                    &mut meshes,
+                    &mut materials,
+                    equipment,
+                    slot == 8,
+                )
+            {
+                tracing::debug!(model = %model.code, item = equipment.material, %error, "modern equipment unavailable");
+            }
+        }
+        modern.sample_into("", 0., false, &mut meshes);
         model.meshes = meshes;
         model.materials = materials;
+        model.material_slots = vec![None; model.materials.len()];
         model.modern = Some(Arc::new(modern));
     }
 }
@@ -693,6 +961,106 @@ impl CharacterLibrary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pose_blending_rotates_local_bones_without_shrinking_the_chain() {
+        let identity = Transform {
+            position: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        };
+        let child = Transform {
+            position: Vec3::X,
+            ..identity
+        };
+        let model = ModernModel {
+            bones: vec![
+                Bone {
+                    name: "root".into(),
+                    next: -1,
+                    children: 1,
+                    child: 1,
+                    bind: identity,
+                },
+                Bone {
+                    name: "child".into(),
+                    next: -1,
+                    children: 0,
+                    child: -1,
+                    bind: child,
+                },
+            ],
+            parents: vec![None, Some(0)],
+            order: vec![0, 1],
+            inverse_bind: vec![Mat4::IDENTITY, child.matrix().inverse()],
+            pieces: Vec::new(),
+            materials: Vec::new(),
+            material_names: Vec::new(),
+            clips: BTreeMap::from([(
+                "turn".into(),
+                Clip {
+                    tracks: vec![
+                        vec![Key {
+                            time: 0.,
+                            transform: Transform {
+                                rotation: Quat::from_rotation_z(std::f32::consts::PI),
+                                ..identity
+                            },
+                        }],
+                        Vec::new(),
+                    ],
+                    duration: 0.,
+                },
+            )]),
+            bindings: vec![vec![Vertex {
+                position: Vec3::X,
+                normal: Vec3::Z,
+                uv: [0., 0.],
+                weights: vec![Weight {
+                    bone: 1,
+                    weight: 1.,
+                }],
+            }]],
+            baked_materials: Vec::new(),
+            baked_slots: Vec::new(),
+            baked_pieces: Vec::new(),
+            center_z: 0.,
+        };
+        let mut meshes = vec![Geometry {
+            vertices: vec![0.; 8],
+            indices: Vec::new(),
+            material: 0,
+            collidable: false,
+        }];
+        let from = CharacterPose {
+            animation: "",
+            time_seconds: 0.,
+            looping: false,
+        };
+        let to = CharacterPose {
+            animation: "turn",
+            ..from
+        };
+        assert!(model.sample_blended_into(from, to, 0.5, &mut meshes));
+        let position = Vec3::from_slice(&meshes[0].vertices[..3]);
+        assert!(
+            (position.length() - 1.).abs() < 1e-6,
+            "bone shortened: {position}"
+        );
+        assert!(position.x.abs() < 1e-6);
+        assert!((position.y.abs() - 1.).abs() < 1e-6);
+        let mut endpoint = meshes.clone();
+        for (blend, pose) in [(0., from), (1., to)] {
+            assert!(model.sample_blended_into(from, to, blend, &mut meshes));
+            assert!(model.sample_into(
+                pose.animation,
+                pose.time_seconds,
+                pose.looping,
+                &mut endpoint
+            ));
+            assert_eq!(meshes[0].vertices, endpoint[0].vertices);
+        }
+    }
 
     #[test]
     fn eqg_rotation_uses_inverse_quaternion_convention() {

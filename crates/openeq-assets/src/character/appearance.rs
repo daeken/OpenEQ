@@ -16,6 +16,15 @@ pub struct CharacterAppearance {
     pub texture: u8,
     pub helm_texture: u8,
     pub face: u8,
+    pub hair_color: u8,
+    pub beard_color: u8,
+    pub eye_color_1: u8,
+    pub eye_color_2: u8,
+    pub hair_style: u8,
+    pub beard: u8,
+    pub drakkin_heritage: u32,
+    pub drakkin_tattoo: u32,
+    pub drakkin_details: u32,
     pub equipment: [EquipmentAppearance; 9],
 }
 
@@ -38,10 +47,38 @@ impl CharacterAppearance {
 }
 
 impl CharacterLibrary {
+    /// Canonicalize only fields that the selected model family ignores.
+    /// Modern faces and armor variants must not pass through classic limits.
+    pub fn normalize_race_appearance(
+        &self,
+        race: u32,
+        gender: u8,
+        appearance: CharacterAppearance,
+    ) -> CharacterAppearance {
+        if let Some(code) = race_model_code(race, gender) {
+            if !self.actors.contains_key(code) {
+                return self.normalize_modern_appearance(code, appearance);
+            }
+            if self.luclin_codes.contains(code) {
+                return self.normalize_luclin_appearance(code, appearance);
+            }
+        }
+        self.normalize_appearance(appearance)
+    }
+
     /// Drop protocol fields that have no visual effect in the current asset
     /// path before constructing an appearance cache key.
     pub fn normalize_appearance(&self, appearance: CharacterAppearance) -> CharacterAppearance {
         let mut value = appearance;
+        value.hair_color = 0;
+        value.beard_color = 0;
+        value.eye_color_1 = 0;
+        value.eye_color_2 = 0;
+        value.hair_style = 0;
+        value.beard = 0;
+        value.drakkin_heritage = 0;
+        value.drakkin_tattoo = 0;
+        value.drakkin_details = 0;
         if value.texture == 255 {
             value.texture = 0;
         }
@@ -59,7 +96,7 @@ impl CharacterLibrary {
             }
             if (index == 0 && slot.material > 3)
                 || (index < 7 && slot.material > 99)
-                || (index >= 7 && !self.equipment.contains_key(&format!("IT{}", slot.material)))
+                || (index >= 7 && !self.has_equipment(slot.material))
             {
                 slot.material = 0;
             }
@@ -140,6 +177,9 @@ impl CharacterLibrary {
         code: &str,
         appearance: &CharacterAppearance,
     ) -> &'a Mesh {
+        if self.luclin_codes.contains(code) {
+            return mesh;
+        }
         let Some(name) = wld.resolve(reference).map(|chunk| chunk.name.as_str()) else {
             return mesh;
         };
@@ -172,86 +212,89 @@ impl CharacterLibrary {
         model: &mut CharacterModel,
         appearance: &CharacterAppearance,
     ) {
-        for (index, material) in model.materials.iter_mut().enumerate() {
-            for name in &mut material.textures {
-                let original = name.to_ascii_lowercase();
-                let Some((stem, extension)) = original.rsplit_once('.') else {
-                    continue;
-                };
-                if !stem.is_ascii() {
-                    continue;
-                }
-                let mut slot = model.material_slots[index];
-                let mut skin = None;
-                let mut replacement = original.clone();
-                if stem.len() == 9 && stem[5..].bytes().all(|c| c.is_ascii_digit()) {
-                    slot = match &stem[3..5] {
-                        "he" => Some(0),
-                        "ch" => Some(1),
-                        "ua" => Some(2),
-                        "fa" => Some(3),
-                        "hn" => Some(4),
-                        "lg" => Some(5),
-                        "ft" => Some(6),
-                        _ => slot,
+        if !self.apply_luclin_appearance(model, appearance) {
+            for (index, material) in model.materials.iter_mut().enumerate() {
+                for name in &mut material.textures {
+                    let original = name.to_ascii_lowercase();
+                    let Some((stem, extension)) = original.rsplit_once('.') else {
+                        continue;
                     };
-                    skin = stem[5..7].parse::<u32>().ok();
-                    let armor = slot
-                        .map(|i| appearance.armor(i))
-                        .unwrap_or(u32::from(appearance.texture));
-                    if slot == Some(0) {
-                        // Faces occupy the tens digit of the final pair and
-                        // may remain visible through an open helm.
-                        if appearance.face < 10 {
-                            let candidate = format!(
-                                "{}{}{}.{}",
-                                &stem[..7],
-                                appearance.face,
-                                &stem[8..],
-                                extension
-                            );
+                    if !stem.is_ascii() {
+                        continue;
+                    }
+                    let mut slot = model.material_slots[index];
+                    let mut skin = None;
+                    let mut replacement = original.clone();
+                    if stem.len() == 9 && stem[5..].bytes().all(|c| c.is_ascii_digit()) {
+                        slot = match &stem[3..5] {
+                            "he" => Some(0),
+                            "ch" => Some(1),
+                            "ua" => Some(2),
+                            "fa" => Some(3),
+                            "hn" => Some(4),
+                            "lg" => Some(5),
+                            "ft" => Some(6),
+                            _ => slot,
+                        };
+                        skin = stem[5..7].parse::<u32>().ok();
+                        let armor = slot
+                            .map(|i| appearance.armor(i))
+                            .unwrap_or(u32::from(appearance.texture));
+                        if slot == Some(0) {
+                            // Faces occupy the tens digit of the final pair and
+                            // may remain visible through an open helm.
+                            if appearance.face < 10 {
+                                let candidate = format!(
+                                    "{}{}{}.{}",
+                                    &stem[..7],
+                                    appearance.face,
+                                    &stem[8..],
+                                    extension
+                                );
+                                if self.has_texture(&candidate) {
+                                    replacement = candidate;
+                                }
+                            }
+                        } else if armor > 0 && armor < 100 {
+                            let texture = if (10..=16).contains(&armor) {
+                                armor - 6
+                            } else {
+                                armor
+                            };
+                            let candidate =
+                                format!("{}{:02}{}.{}", &stem[..5], texture, &stem[7..], extension);
                             if self.has_texture(&candidate) {
                                 replacement = candidate;
                             }
                         }
-                    } else if armor > 0 && armor < 100 {
-                        let texture = if (10..=16).contains(&armor) {
-                            armor - 6
+                    } else if stem.starts_with("clk") && stem.len() == 7 {
+                        // Classic robes use shared CLK0401..CLK1004 textures;
+                        // visible material ids 10..16 select those seven skins.
+                        slot = Some(1);
+                        let armor = appearance.armor(1);
+                        if (10..=16).contains(&armor) {
+                            let candidate =
+                                format!("clk{:02}{}.{}", armor - 6, &stem[5..], extension);
+                            if self.has_texture(&candidate) {
+                                replacement = candidate;
+                            }
+                        }
+                    }
+                    if let Some(slot) = slot {
+                        // Non-face head materials (helm/chain/leather) tint too.
+                        // HE00 is exposed skin, regardless of the helmet id.
+                        let tintable = if slot == 0 {
+                            skin != Some(0)
                         } else {
-                            armor
+                            appearance.armor(slot) > 0
                         };
-                        let candidate =
-                            format!("{}{:02}{}.{}", &stem[..5], texture, &stem[7..], extension);
-                        if self.has_texture(&candidate) {
-                            replacement = candidate;
+                        let color = appearance.equipment[slot].color;
+                        if tintable && color >> 24 != 0 {
+                            replacement = format!("{replacement}#tint={color:08x}");
                         }
                     }
-                } else if stem.starts_with("clk") && stem.len() == 7 {
-                    // Classic robes use shared CLK0401..CLK1004 textures;
-                    // visible material ids 10..16 select those seven skins.
-                    slot = Some(1);
-                    let armor = appearance.armor(1);
-                    if (10..=16).contains(&armor) {
-                        let candidate = format!("clk{:02}{}.{}", armor - 6, &stem[5..], extension);
-                        if self.has_texture(&candidate) {
-                            replacement = candidate;
-                        }
-                    }
+                    *name = replacement;
                 }
-                if let Some(slot) = slot {
-                    // Non-face head materials (helm/chain/leather) tint too.
-                    // HE00 is exposed skin, regardless of the helmet id.
-                    let tintable = if slot == 0 {
-                        skin != Some(0)
-                    } else {
-                        appearance.armor(slot) > 0
-                    };
-                    let color = appearance.equipment[slot].color;
-                    if tintable && color >> 24 != 0 {
-                        replacement = format!("{replacement}#tint={color:08x}");
-                    }
-                }
-                *name = replacement;
             }
         }
         for slot in [7, 8] {
@@ -294,26 +337,7 @@ impl CharacterLibrary {
         secondary: bool,
         color: u32,
     ) -> Result<()> {
-        let code = format!("IT{material}");
-        let &(wld_index, actor_index) = self
-            .equipment
-            .get(&code)
-            .ok_or_else(|| Error::NotFound(format!("equipment {code}")))?;
-        let wld = &self.wlds[wld_index];
-        let Fragment::ActorDef(actor) = &wld.chunks()[actor_index].fragment else {
-            unreachable!()
-        };
-        let sources: Vec<_> = actor
-            .references
-            .iter()
-            .filter_map(|reference| resolve_mesh(wld, *reference).map(|(_, mesh)| mesh))
-            .collect();
-        if sources.is_empty() {
-            return Err(Error::Format(format!(
-                "{code}: animated equipment not supported"
-            )));
-        }
-        let (mut materials, mut meshes) = mesh::bake_wld_meshes(wld, sources);
+        let (mut materials, mut meshes) = self.equipment_geometry(material)?;
         // The spawn packet has no item type. Explicit shield surface names
         // identify authored shields; generic offhand bags/orbs stay in hand.
         let shield = secondary
@@ -336,7 +360,15 @@ impl CharacterLibrary {
         let bone = model
             .bone_names
             .iter()
-            .position(|name| name.ends_with(suffix))
+            .position(|name| name == &format!("{}{suffix}", model.code))
+            // A borrowed skeleton can retain its donor's three-letter code.
+            // Suffix-only matching also matches HAIR_POINT as R_POINT!
+            .or_else(|| {
+                model.bone_names.iter().position(|name| {
+                    name.strip_suffix(suffix)
+                        .is_some_and(|prefix| prefix.len() == 3)
+                })
+            })
             .ok_or_else(|| Error::NotFound(format!("{} attachment {suffix}", model.code)))?;
         let offset = model.materials.len();
         if color >> 24 != 0 {
@@ -366,5 +398,39 @@ impl CharacterLibrary {
         model.materials.extend(materials);
         model.meshes.extend(meshes);
         Ok(())
+    }
+
+    pub(super) fn has_equipment(&self, material: u32) -> bool {
+        self.equipment.contains_key(&format!("IT{material}"))
+            || self.eqg_files.contains_key(&format!("it{material}"))
+    }
+
+    pub(super) fn equipment_geometry(
+        &self,
+        material: u32,
+    ) -> Result<(Vec<Material>, Vec<Geometry>)> {
+        let code = format!("IT{material}");
+        if !self.equipment.contains_key(&code) {
+            return self.eqg_equipment_geometry(&code);
+        }
+        let &(wld_index, actor_index) = self
+            .equipment
+            .get(&code)
+            .ok_or_else(|| Error::NotFound(format!("equipment {code}")))?;
+        let wld = &self.wlds[wld_index];
+        let Fragment::ActorDef(actor) = &wld.chunks()[actor_index].fragment else {
+            unreachable!()
+        };
+        let sources: Vec<_> = actor
+            .references
+            .iter()
+            .filter_map(|reference| resolve_mesh(wld, *reference).map(|(_, mesh)| mesh))
+            .collect();
+        if sources.is_empty() {
+            return Err(Error::Format(format!(
+                "{code}: animated equipment not supported"
+            )));
+        }
+        Ok(mesh::bake_wld_meshes(wld, sources))
     }
 }

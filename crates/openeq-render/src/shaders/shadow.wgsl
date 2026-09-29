@@ -13,6 +13,8 @@ const EQ_TO_WORLD: mat4x4<f32> = mat4x4<f32>(
 
 // Must match the flags the CPU packs into each vertex.
 const FLAG_ALPHA_MASK: u32 = 1u;
+const FLAG_TRANSPARENT: u32 = 2u;
+const FLAG_WATER: u32 = 8u;
 
 struct Environment {
     fog_color: vec4<f32>, // linear RGB, w = enabled
@@ -91,6 +93,12 @@ fn vs_main(vertex: Vertex, instance: Instance) -> Fragment {
 
 @fragment
 fn fs_main(in: Fragment) {
+    // Partial alpha cannot cast an opaque shadow. Hair's fully opaque core
+    // still casts, while tattoo decals never add solid shadow speckles.
+    if ((in.flags & FLAG_TRANSPARENT) != 0u && (in.flags & FLAG_WATER) == 0u) {
+        let texel = textureSampleLevel(atlas, atlas_sampler, in.uv, i32(in.layer), 0.0);
+        if (texel.a < 1.0) { discard; }
+    }
     if ((in.flags & FLAG_ALPHA_MASK) != 0u) {
         let texel = textureSampleLevel(atlas, atlas_sampler, in.uv, i32(in.layer), 0.0);
         if (texel.a < 0.5) {
