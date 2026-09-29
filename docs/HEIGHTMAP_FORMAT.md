@@ -41,9 +41,11 @@ an unambiguous archived heightmap declaration naming an existing DAT. Conflictin
 alternatives and unreadable candidate declarations fail explicitly. This fixes
 an earlier failure looking for `feerrott2.zon` before terrain loading began.
 The original fixture now loads 329 textured tiles, 10,901 object instances
-and 211,245 source triangles; an inspected
-GPU capture is `/tmp/openeq-feerrott2-overview.png`. Tile-defined water remains
-unrendered while its clipping semantics are unresolved.
+and 211,245 terrain/prop source triangles. Indexed water adds 65 authored
+rectangles and 34,132 two-sided triangles. Diagnostic pond-edge/seam/occlusion
+captures are in `/tmp/openeq-indexed-water`; their object instances are omitted
+to expose the original terrain and water. The earlier full-zone overview is
+`/tmp/openeq-feerrott2-overview.png`.
 
 Binary EQGZ v2 is also supported. It adds a counted array of u32 values after each placement. The loader consumes that array, preserving following placements/regions/lights. Crescent Reach is the integration fixture.
 
@@ -54,8 +56,8 @@ This is a compatibility implementation, not a complete reproduction of the clien
 - Terrain material layers are composited to a 128×128 RGBA image per tile. This bounds memory for zones with thousands of tiles but loses close-up detail. A GPU terrain material should sample original detail maps and masks directly.
 - ECO height/slope ranges and repeats are used, but coverage/blend maps and the client's exact soft blending rules remain unverified. The interpolation is an approximation.
 - The two terrain color arrays, MOD/LIT precomputed illumination, ecosystem normal maps, generated radial flora and particle effects are not rendered yet.
-- Only finite water sheets are drawn. Tile water records and indexed material definitions are preserved with exact raw fields and explicit missing/ambiguous lookup; their surface clipping and swimming semantics are not implemented. See `HEIGHTMAP_WATER_PLAN.md`.
-- Meanings of the three DAT header words, editor identifiers and quad bits other than bit 0 remain incompletely established. Header bit 1 adds a u32 to individual object records and is handled.
+- Finite sheets and supported indexed tile rectangles are drawn. Indexed surfaces use the native two-sided grid, quantized tile UVs, authored materials and ordinary depth occlusion. The current color/reflection/lighting model remains approximate; the native time provider and complete blend/depth states remain unverified. Newer liquid-volume transforms and swimming remain unsupported. See `HEIGHTMAP_WATER_SURFACES.md`.
+- Native inspection identifies the first DAT header word as the version. The other header words, editor identifiers and quad bits other than bit 0 remain incompletely established. The version-22 object word uses a native `>=22` gate; the current parser's bit test agrees for the audited 20/21/22 layouts, but broader version support needs separate validation.
 - The binary EQGZ v2 per-placement array is consumed but its lighting interpretation is not yet applied.
 - DAT light/effect definitions currently use the first color/intensity frame as a static point light. Temporal effects and exact anchoring should be compared with the original client.
 

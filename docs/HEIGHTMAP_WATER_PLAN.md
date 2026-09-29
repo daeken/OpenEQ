@@ -10,7 +10,10 @@ mesh's rectangular extent. Complete shoreline rendering, underwater rendering,
 and swimming behavior remain unverified.
 
 The lossless metadata/parser/lookup slice is now implemented; see the section
-below. It changes no surface geometry, rendering or liquid behavior.
+below. That first slice changed no surface geometry, rendering or liquid behavior.
+The subsequent bounded surface implementation and its original CPU/GPU checks
+are recorded in [HEIGHTMAP_WATER_SURFACES.md](HEIGHTMAP_WATER_SURFACES.md); newer
+liquid volumes and swimming remain unsupported.
 
 ## Findings and confidence
 

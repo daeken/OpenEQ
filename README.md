@@ -196,7 +196,8 @@ you up and automatically returns, following the default five-second cycle.
 - Original WAV ambience and streamed MP3 music, with saved volume controls.
 - Deferred sun and authored zone lights, stable shadows, server-dependent fog,
   original sky/cloud textures, animated textures and EQG water materials.
-- Classic WLD zones, binary EQGZ v1/v2 zones and EQTZP heightmap terrain.
+- Classic WLD zones, binary EQGZ v1/v2 zones and EQTZP heightmap terrain,
+  including authored indexed river/pond surfaces with tile-based animated water.
 
 This is a playable development milestone, with substantial parity work remaining:
 NPC quest hand-ins, augmentation, raid subgroup/loot administration, guild

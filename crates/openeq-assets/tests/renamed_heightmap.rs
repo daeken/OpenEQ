@@ -41,12 +41,12 @@ fn feerrott2_loads_its_authored_internal_terrain_without_renaming_assets() {
         .iter()
         .flat_map(|mesh| mesh.vertices.chunks_exact(VERTEX_STRIDE));
     assert!(positions.count() > 10_000);
-    // Indexed tile water is retained as metadata in a separate slice. It must
-    // not become invented finite-sheet geometry or swimming volumes here.
-    assert!(
-        !scene
-            .materials
-            .iter()
-            .any(|material| material.water.is_some())
-    );
+    // Only the authored indexed material is added by the later surface slice.
+    let water: Vec<_> = scene
+        .materials
+        .iter()
+        .filter_map(|m| m.water.as_ref())
+        .collect();
+    assert_eq!(water.len(), 1);
+    assert_eq!(water[0].indexed_uv_scale, Some(1.0));
 }

@@ -1,7 +1,7 @@
 # Bounded indexed heightmap water surfaces
 
-This is an implementation contract for the next surface slice, not a claim
-that it is already implemented. Native evidence and exact addresses are in
+The bounded surface slice described here is implemented. Verification and
+remaining limitations are recorded below. Native evidence and exact addresses are in
 [HEIGHTMAP_WATER_REVERSE_ENGINEERING.md](HEIGHTMAP_WATER_REVERSE_ENGINEERING.md);
 the original six-zone audit is in [HEIGHTMAP_WATER_PLAN.md](HEIGHTMAP_WATER_PLAN.md).
 This slice adds visible, textured surfaces from authored records. It does not
@@ -209,7 +209,7 @@ Feerrott2's original records give exact acceptance anchors:
 | Tile 84 `(-3,-12)` | Bounds `[-768,-672,-2960,-2848]`, Z=-50; `nx=6`, `ny=7`; 112 two-sided vertices and 504 indices. |
 | Tile 84 UV bounds | U=`0..0.375`, V=`0.4375..0.875`, before authored scale and scrolling. |
 | Tile 11 `(1,2)` | No indexed surface despite base elevation -30; tag is zero. |
-| Tile 271 `(-7,2)` | Native 16×16 rectangle remains even though all terrain is above it; ordinary depth occlusion decides visibility. |
+| Tile 271 `(-7,2)` | Native 16×16-unit rectangle remains even though all terrain is above it; ordinary depth occlusion decides visibility. |
 | Tiles 109/84 seam | Matching Z=-50 and repeated UV phase at world X=-768, Y=-2944..-2864. |
 
 Verify that all new materials/textures resolve without magenta fallbacks and
@@ -217,3 +217,65 @@ inspect fixed headless captures at the pond edge, seam, and tile 271. Buried
 Sea selector 2 must use its own gray material values, while Old Commonlands must
 gain no indexed surfaces. These checks validate the bounded surface slice;
 matching the original client's complete appearance remains a later comparison.
+
+
+## Implementation and verification
+
+The pure asset baker produces native-style two-sided grids with opposing normals,
+per-vertex fixed-256 quantization and unwrapped 0/1 tile endpoints. Twelve
+synthetic tests cover actual extents/winding, q14/16/24 interpolation, tags and
+selectors, malformed metadata, exact duplicate/conflicting materials, all bounds
+and precision failures, finite scales, diagnostic caps and transactional budgets.
+There are at most 128 detailed rejected-record diagnostics, plus an omitted count.
+
+The loader shares materials by selector. Authored texture paths remain intact in
+metadata; rendering resolves basenames only through existing archives/known client
+texture directories. Unresolvable or undecodable maps omit that selector's
+surfaces with a diagnostic. Invalid indexed metadata or an excessive whole-zone
+budget preserves existing terrain and finite sheets. Three loader regressions
+cover malformed metadata, budget failure and missing original-resolver maps.
+
+An explicit optional material mode selects asset UVs in the GPU shader. Existing
+EQG/finite-sheet materials retain the prior world-coordinate path. The indexed
+phase reduces elapsed milliseconds modulo 100,000 before dividing by 1,000,
+avoiding a rounding discontinuity at exact 100-second periods. Elapsed seconds
+remain OpenEQ's convention, not a verified native time-provider measurement.
+`Renderer::render_at` exposes the same render path at a fixed animation time for
+reproducible captures and GPU comparisons; interactive rendering uses its clock.
+
+Four independent CPU integration tests verify original Feerrott2's full 65
+rectangles/34,132 triangles, pond bounds and tile seams, Buried Sea's 900 sheets
+and separate gray selector2, Old Commonlands's lack of active indexed surfaces,
+and existing Anguish/finite water mode. Expanded physical triangle counts are
+unchanged: Feerrott2 824,400; Buried Sea 1,567,093; Old Commonlands 841,729.
+
+Two GPU tests validate actual patterned normal-map sampling and original terrain
+captures. Integer UV repeats, positive/negative world translations, fractional
+scale, phase 100 periodicity and the independent coupled shift `du=2/7,dt=100/7`
+exercise both normal layers and scroll rates. Legacy water ignores asset UVs as
+before. Full pond/seam terrain captures change when their indexed water is
+removed. Removing the submerged tile 271 rectangle leaves every pixel identical.
+
+Inspected diagnostic captures are `/tmp/openeq-indexed-water/pond-edge.png`,
+`seam.png`, and `occluded-tile 271.png`, with corresponding dry comparisons.
+These isolate original terrain/water by omitting static object instances; they
+are not whole-zone screenshots or a native-client visual comparison. The existing
+Anguish water animation/no-magenta check passes with the new shader. Full
+workspace verification is recorded in `OVERNIGHT_2026-09-29.md`.
+
+
+An explicit six-zone bake/load sweep also completed with no indexed diagnostics:
+
+| Zone | Indexed surfaces | Vertices | Two-sided triangles | Materials |
+| --- | ---: | ---: | ---: | ---: |
+| Feerrott2 | 65 | 19,932 | 34,132 | 1 |
+| Dead Hills | 204 | 22,526 | 34,128 | 1 |
+| Loping Plains | 278 | 122,244 | 213,688 | 2 |
+| Buried Sea | 900 | 485,304 | 856,856 | 2 |
+| Old Commonlands | 0 | 0 | 0 | 0 |
+| Nektulos | 0 | 0 | 0 | 0 |
+
+Nektulos retains its existing finite sheets. The sweep asserts that every baked
+surface reaches the ordinary loader; its temporary program/output are
+`/tmp/openeq-indexed-water-sweep.rs` and `.txt`. It does not establish native
+visual parity or gameplay swimming.

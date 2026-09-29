@@ -143,25 +143,44 @@ fn fs_main(in: Fragment) -> Targets {
     // the ripples at distance prevents sparkling along the water's horizon.
     let water_dx = dpdx(in.world.xz / 80.0);
     let water_dy = dpdy(in.world.xz / 80.0);
+    let asset_dx = dpdx(in.uv);
+    let asset_dy = dpdy(in.uv);
     if ((in.flags & FLAG_WATER) != 0u) {
         let water = water_materials[in.material];
         let seconds = globals.params.x * 0.001;
         // Two crossing ripples keep large water planes from visibly sliding as
         // one sheet. World coordinates also keep adjacent pieces continuous.
         let uv = in.world.xz / 80.0;
-        let uv1 = uv + seconds * vec2<f32>(0.012, 0.007);
-        let uv2 = uv * 1.37 + seconds * vec2<f32>(-0.008, 0.011);
+        var uv1 = uv + seconds * vec2<f32>(0.012, 0.007);
+        var uv2 = uv * 1.37 + seconds * vec2<f32>(-0.008, 0.011);
+        var dx = water_dx;
+        var dy = water_dy;
+        var second_scale = 1.37;
+        if (water.layers.z != 0u) {
+            // Native indexed sheets store quantized tile UVs. The asset bake
+            // unpacks SHORT2/256; use the authored scale and two native layers.
+            // OpenEQ elapsed seconds are our animation-time convention.
+            // Reduce in the uniform's millisecond units before conversion so
+            // exact 100-second periods return exactly to their starting UVs.
+            let phase = (globals.params.x % 100000.0) / 1000.0;
+            let indexed_uv = in.uv * water.params.w;
+            uv1 = indexed_uv - phase * vec2<f32>(0.02);
+            uv2 = indexed_uv * 2.0 + phase * vec2<f32>(0.03);
+            dx = asset_dx * water.params.w;
+            dy = asset_dy * water.params.w;
+            second_scale = 2.0;
+        }
         var ripple = vec2<f32>(0.0);
         if (water.layers.x != 0xffffffffu) {
-            let a = textureSampleGrad(linear_atlas, atlas_sampler, uv1, i32(water.layers.x), water_dx, water_dy);
-            let b = textureSampleGrad(linear_atlas, atlas_sampler, uv2, i32(water.layers.x), water_dx * 1.37, water_dy * 1.37);
+            let a = textureSampleGrad(linear_atlas, atlas_sampler, uv1, i32(water.layers.x), dx, dy);
+            let b = textureSampleGrad(linear_atlas, atlas_sampler, uv2, i32(water.layers.x), dx * second_scale, dy * second_scale);
             ripple = (a.xy + b.xy - vec2<f32>(1.0)) * 0.35;
         }
         let normal = normalize(in.normal + vec3<f32>(ripple.x, 0.0, ripple.y));
         let view = normalize(globals.camera_pos.xyz - in.world);
         let fresnel = water.params.x + (1.0 - water.params.x)
             * pow(1.0 - max(dot(normal, view), 0.0), water.params.y);
-        let blend = textureSampleGrad(atlas, atlas_sampler, uv1, i32(in.layer), water_dx, water_dy).r;
+        let blend = textureSampleGrad(atlas, atlas_sampler, uv1, i32(in.layer), dx, dy).r;
         let base = mix(water.color1.rgb, water.color2.rgb, blend);
         let reflected = reflect(-view, normal);
         var environment = mix(vec3<f32>(0.42, 0.50, 0.62), vec3<f32>(0.09, 0.16, 0.32),

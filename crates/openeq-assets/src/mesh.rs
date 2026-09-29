@@ -22,6 +22,9 @@ pub const VERTEX_STRIDE: usize = 8;
 /// Parameters of an EQG `Opaque_MaxWater.fx` surface.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WaterMaterial {
+    /// Indexed heightmap surfaces use native tile UVs and this authored scale.
+    /// None retains the existing world-coordinate EQG/finite-sheet shading.
+    pub indexed_uv_scale: Option<f32>,
     pub color1: [f32; 4],
     pub color2: [f32; 4],
     pub reflection_color: [f32; 4],

@@ -673,6 +673,7 @@ fn append_eqg_object(scene: &mut Scene, object: &TerMod, object_name: &str, arch
 }
 
 mod eqg_collision;
+mod indexed_water;
 
 fn append_baked(
     scene: &mut Scene,
@@ -777,6 +778,7 @@ fn water_material(material: &TerMaterial) -> Option<WaterMaterial> {
         [16, 8, 0, 24].map(|shift| ((argb >> shift) & 255) as f32 / 255.0)
     };
     Some(WaterMaterial {
+        indexed_uv_scale: None,
         color1: color("e_fWaterColor1", 0xFF000A1C),
         color2: color("e_fWaterColor2", 0xFF003B2B),
         reflection_color: color("e_fReflectionColor", 0xFFFFFFFF),
@@ -1039,6 +1041,7 @@ fn load_heightmap(base: &Path, name: &str, archive: Archive, zon: &[u8]) -> Resu
                 collidable: false,
             });
         }
+        indexed_water::append(&mut scene, &map, &data);
     }
     tracing::info!(
         zone = name,

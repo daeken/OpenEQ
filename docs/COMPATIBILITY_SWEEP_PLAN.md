@@ -197,3 +197,16 @@ The same channel is used by heightmap-zone MOD props and dynamic doors/lifts.
 See [EQG_COLLISION_PLAN.md](EQG_COLLISION_PLAN.md) for pinned evidence, exact
 fixtures, wider load results and measured query costs. LIT/detail rendering,
 newer liquid volumes and whole-zone live traversal remain separate work.
+
+
+## Indexed water surface follow-through
+
+Native graphics/shader inspection now establishes the authored rectangle/grid
+and fixed-point UV contract. The loader renders supported exact-selector sheets
+without adding collision or liquid volumes. Feerrott2's65 rectangles and Buried
+Sea's900 rectangles are verified against original records, including separate
+materials, tile seams and ordinary terrain occlusion. Unknown selectors,
+conflicting materials and unresolved textures remain diagnosed omissions.
+`HEIGHTMAP_WATER_SURFACES.md` records tests, captures and appearance limits.
+Newer swimming-volume transforms, complete native water shading and whole-zone
+live traversal remain follow-up work.

@@ -28,9 +28,9 @@ struct WaterParams {
     color1: [f32; 4],
     color2: [f32; 4],
     reflection_color: [f32; 4],
-    /// Fresnel bias, Fresnel power, reflection amount, reserved.
+    /// Fresnel bias, Fresnel power, reflection amount, indexed UV scale.
     params: [f32; 4],
-    /// Normal map layer, environment map layer, reserved, reserved.
+    /// Normal map layer, environment map layer, indexed UV mode, reserved.
     layers: [u32; 4],
 }
 
@@ -194,7 +194,7 @@ impl GpuScene {
                         water.fresnel_bias,
                         water.fresnel_power,
                         water.reflection_amount,
-                        0.0,
+                        water.indexed_uv_scale.unwrap_or(0.0),
                     ],
                     layers: [
                         layer(material.normal_map.as_ref()),
@@ -205,7 +205,7 @@ impl GpuScene {
                                 atlas.environments.get(&name.to_ascii_lowercase()).copied()
                             })
                             .unwrap_or(u32::MAX),
-                        0,
+                        u32::from(water.indexed_uv_scale.is_some()),
                         0,
                     ],
                 }

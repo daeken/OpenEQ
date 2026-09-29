@@ -896,6 +896,12 @@ impl Renderer {
         self.render_with_actors(scene, camera, &[]);
     }
 
+    /// Renders a reproducible scene frame at a chosen animation time. Ordinary
+    /// interactive rendering continues to use the renderer's elapsed clock.
+    pub fn render_at(&mut self, scene: &GpuScene, camera: &Camera, elapsed: std::time::Duration) {
+        self.render_with_actors_at(scene, camera, &[], elapsed);
+    }
+
     /// Present UI before a world exists, or while a replacement loads.
     pub fn render_ui(&mut self) {
         let frame = match &self.target {
@@ -949,6 +955,16 @@ impl Renderer {
     }
 
     pub fn render_with_actors(&mut self, scene: &GpuScene, camera: &Camera, actors: &[&GpuActor]) {
+        self.render_with_actors_at(scene, camera, actors, self.start.elapsed());
+    }
+
+    fn render_with_actors_at(
+        &mut self,
+        scene: &GpuScene,
+        camera: &Camera,
+        actors: &[&GpuActor],
+        elapsed: std::time::Duration,
+    ) {
         if self.scene_bind_group.is_none() || self.lighting_bind_group.is_none() {
             self.set_scene(scene);
         }
@@ -987,7 +1003,7 @@ impl Renderer {
         let focus = Camera::to_world(camera.position) + camera.forward() * 150.0;
         let light_view_projection = shadow::view_projection(focus, sun, SHADOW_SIZE);
 
-        let elapsed = self.start.elapsed().as_secs_f32() * 1000.0;
+        let elapsed = elapsed.as_secs_f32() * 1000.0;
         // Shadow-map texel size, used for the receiver offset and the PCF taps.
         let shadow_texel_world = (2.0 * shadow::RADIUS) / SHADOW_SIZE as f32;
         let shadow_texel_uv = 1.0 / SHADOW_SIZE as f32;

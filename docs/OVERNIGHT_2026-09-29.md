@@ -453,6 +453,8 @@ Published as **8646dba**.
 
 ## Tenth batch (verified)
 
+Published as **be83471**, with native-water research in **2ccbd8b**.
+
 The usage interruption paused work before the overnight cutoff. The user reset
 usage and explicitly requested continuation afterward; this checkpoint resumes
 that authorization. No live fixture was left connected during the interruption.
@@ -477,17 +479,41 @@ that authorization. No live fixture was left connected during the interruption.
   terrain-depth clipping in those shaders. This supports a bounded subsequent
   surface slice; rendering and liquid volumes are not implemented by this batch.
 
+## Eleventh batch (verified)
+
+- Indexed heightmap water now draws authored bounded rectangles with native
+  grid topology, two sides and quantized tile UVs. Feerrott2's 65 rectangles and
+  Buried Sea's 900 use their correct distinct materials; Old Commonlands gains
+  none. No water surfaces enter collision or create swimming volumes.
+- Twelve baker tests and three loader-failure tests cover bounds, flags/selectors,
+  duplicate ambiguity, invalid/overflowing coordinates, material values, texture
+  failures, diagnostic caps and transactional allocation budgets. Four original
+  CPU integration tests and two GPU tests pass. Independent runtime/test reviews
+  found no blockers. Existing Anguish water also passes its animation check.
+- GPU comparisons verify indexed repeats/scales/scroll rates, tile seams and
+  hidden-beneath-terrain surfaces. Original terrain-only diagnostic captures were
+  inspected in `/tmp/openeq-indexed-water`; instances are omitted to reveal the
+  test surfaces. `Renderer::render_at` enables reproducible animation times.
+- Native color/reflection/blend fidelity and exact time-provider units remain
+  limits. Existing EQG/finite water shader behavior stays on the previous mode.
+- A six-zone original bake/load sweep produced no indexed diagnostics: 65
+  Feerrott2, 204 Dead Hills, 278 Loping Plains and 900 Buried Sea rectangles;
+  Old Commonlands and legacy Nektulos correctly gain none.
+- Combined verification: **679 workspace tests passed**, zero failures/ignored,
+  including original assets and GPU checks. Strict workspace Clippy, formatting,
+  client build and playback-disabled all-target check pass. Logs use prefix
+  `/tmp/openeq-indexed-water-final-` and matching `ui` capture directory.
+
 ## Active follow-up ownership
 
-- EQG source/helper and independent test reviews are complete. All three agents
-  have handed back the collision slice and native-water documentation. No live
-  fixtures are connected; Explorer has not been involved.
-- Next bounded implementation: indexed heightmap water surfaces following
-  `HEIGHTMAP_WATER_SURFACES.md`. **xml_ui** owns native evidence and asset mesh
-  planning, **npc_assets** can own independent original CPU/GPU fixtures, root
-  owns renderer material-mode/loader integration, **eqemu_server** can review.
-  Preserve default EQG/finite water shading and do not create liquid volumes.
-- Later work: trainer preview and verified transactions, native sky celestial
-  orientation, collision-deflected thin liquid crossings, NPC swimming projection,
+- All agents have handed back the indexed-water runtime/test slice. Final
+  verification, documentation and review are complete. No live fixtures are
+  connected, and Explorer has not been involved.
+- Next priorities: newer liquid-volume transforms and swimming, native water
+  time/blend fidelity, direct GPU terrain materials (current tile textures lose
+  detail), terrain texture-edge seams, and a broader live travel/NPC sweep.
+- Other remaining milestones: trainer preview and verified transactions, quest
+  hand-in cursor/refund reconciliation, native sky celestial orientation,
+  collision-deflected thin liquid crossings, NPC swimming projection,
   hover/cross-zone resurrection and XP/item recovery. First-pass milestones are
   not full original-client parity.

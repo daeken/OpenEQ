@@ -16,6 +16,7 @@ use crate::{Error, Result};
 
 mod bake;
 pub use bake::{BakedTerrain, bake};
+pub mod indexed_water;
 
 #[derive(Debug, Clone)]
 pub struct TerrainOptions {
@@ -503,6 +504,7 @@ pub fn parse_water(data: &[u8]) -> Result<Vec<WaterSheet>> {
                 uv_scale: scalar("*UVSCALE", 1.0),
                 normal_map: filename("*NORMALMAP").unwrap_or("water_n.dds".into()),
                 material: WaterMaterial {
+                    indexed_uv_scale: None,
                     color1: color("*WATERCOLOR1", [0.1, 0.2, 0.2, 1.0]),
                     color2: color("*WATERCOLOR2", [0.2, 0.3, 0.3, 1.0]),
                     reflection_color: color("*REFLECTIONCOLOR", [0.5, 0.6, 0.6, 1.0]),
@@ -670,6 +672,7 @@ fn parse_indexed_water_definition(fields: Vec<WaterField>) -> Result<IndexedWate
         uv_scale: scalar("*UVSCALE")?,
         normal_map: field("*NORMALMAP", 1)?[0].clone(),
         material: WaterMaterial {
+            indexed_uv_scale: None,
             color1: color("*WATERCOLOR1")?,
             color2: color("*WATERCOLOR2")?,
             reflection_color: color("*REFLECTIONCOLOR")?,
