@@ -1,8 +1,9 @@
-//! CPU compatibility path for EQG terrain splatting. It keeps the renderer's
-//! existing single-diffuse material interface; a future GPU terrain material can
-//! consume the preserved heightfield, ECO layers and masks at full resolution.
+//! CPU compatibility path for EQG terrain splatting. Direct terrain rendering
+//! consumes native sources and preserved recipes; ordinary diffuse materials
+//! can request the same compatibility tile paint lazily or through eager bake.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, OnceLock};
 
 use glam::Vec3;
 
@@ -10,7 +11,9 @@ use crate::Result;
 use crate::mesh::{Geometry, Material};
 use crate::texture::Texture;
 
-use super::{EcoLayer, Ecosystems, Heightmap, MaterialLayer, TerrainMaterial, TerrainTile};
+use super::{
+    EcoLayer, Ecosystems, Heightmap, MaterialLayer, TerrainMaterial, TerrainOptions, TerrainTile,
+};
 
 /// Keep per-zone memory bounded: oldcommons has over 1,500 tiles. This is a
 /// compatibility bake, not a reproduction of the client's detail shader.
@@ -23,7 +26,107 @@ pub struct BakedTerrain {
     pub terrain_materials: BTreeMap<usize, TerrainMaterial>,
 }
 
-pub fn bake<F>(map: &Heightmap, ecosystems: &Ecosystems, mut texture: F) -> Result<BakedTerrain>
+/// Geometry and native sources are ready immediately. Compatibility tile
+/// images are retained as recipes until a renderer actually requests them.
+pub(crate) struct PreparedTerrain {
+    pub materials: Vec<Material>,
+    pub meshes: Vec<Geometry>,
+    pub textures: Vec<Arc<Texture>>,
+    pub terrain_materials: BTreeMap<usize, TerrainMaterial>,
+    pub deferred_textures: Vec<DeferredTexture>,
+}
+
+struct PaintContext {
+    options: TerrainOptions,
+    base_texture: String,
+    ecosystems: Ecosystems,
+    textures: HashMap<String, Arc<Texture>>,
+}
+
+/// An immutable snapshot of the existing painter's inputs. Source images and
+/// ecosystem definitions are shared across tiles; only the requested tile's
+/// pixels are initialized, once, even when callers race.
+pub(crate) struct DeferredTexture {
+    pub name: String,
+    tile: TerrainTile,
+    normals: Vec<Vec3>,
+    context: Arc<PaintContext>,
+    cached: OnceLock<Texture>,
+}
+
+impl DeferredTexture {
+    #[cfg(test)]
+    pub(crate) fn is_cached(&self) -> bool {
+        self.cached.get().is_some()
+    }
+
+    pub(crate) fn texture(&self) -> &Texture {
+        self.cached.get_or_init(|| Texture {
+            name: self.name.clone(),
+            width: TILE_TEXTURE_SIZE as u32,
+            height: TILE_TEXTURE_SIZE as u32,
+            rgba: paint_tile(
+                &self.context.options,
+                &self.context.base_texture,
+                &self.tile,
+                &self.normals,
+                &self.context.ecosystems,
+                &self.context.textures,
+            ),
+        })
+    }
+
+    fn into_texture(self) -> Texture {
+        let Self {
+            name,
+            tile,
+            normals,
+            context,
+            cached,
+        } = self;
+        cached.into_inner().unwrap_or_else(|| Texture {
+            name,
+            width: TILE_TEXTURE_SIZE as u32,
+            height: TILE_TEXTURE_SIZE as u32,
+            rgba: paint_tile(
+                &context.options,
+                &context.base_texture,
+                &tile,
+                &normals,
+                &context.ecosystems,
+                &context.textures,
+            ),
+        })
+    }
+}
+
+/// The public compatibility API remains eager and preserves texture ordering.
+pub fn bake<F>(map: &Heightmap, ecosystems: &Ecosystems, texture: F) -> Result<BakedTerrain>
+where
+    F: FnMut(&str) -> Option<Texture>,
+{
+    let prepared = prepare(map, ecosystems, texture)?;
+    let textures = prepared
+        .deferred_textures
+        .into_iter()
+        .map(DeferredTexture::into_texture)
+        // All per-tile contexts have been dropped before the shared sources
+        // are consumed, so the eager path can recover their owned buffers.
+        .chain(prepared.textures.into_iter().map(Arc::unwrap_or_clone))
+        .collect();
+    Ok(BakedTerrain {
+        materials: prepared.materials,
+        meshes: prepared.meshes,
+        textures,
+        terrain_materials: prepared.terrain_materials,
+    })
+}
+
+pub(crate) fn prepare<F>(
+    map: &Heightmap,
+    ecosystems: &Ecosystems,
+    mut texture: F,
+) -> Result<PreparedTerrain>
 where
     F: FnMut(&str) -> Option<Texture>,
 {
@@ -39,9 +142,16 @@ where
     for name in names {
         if let Some(mut value) = texture(&name) {
             value.name.clone_from(&name);
-            source_textures.insert(name, value);
+            source_textures.insert(name, Arc::new(value));
         }
     }
+    let context = Arc::new(PaintContext {
+        options: map.options.clone(),
+        base_texture: map.base_texture.clone(),
+        ecosystems: ecosystems.clone(),
+        textures: source_textures,
+    });
+    let source_textures = &context.textures;
     let q = map.options.quads_per_tile;
     let step = map.options.units_per_vertex;
     // Neighbor-aware derivatives avoid normal seams at tile boundaries.
@@ -59,11 +169,12 @@ where
             }
         }
     }
-    let mut result = BakedTerrain {
+    let mut result = PreparedTerrain {
         materials: Vec::new(),
         meshes: Vec::new(),
         textures: Vec::new(),
         terrain_materials: BTreeMap::new(),
+        deferred_textures: Vec::new(),
     };
     for (tile_id, tile) in map.tiles.iter().enumerate() {
         // Client files sometimes retain unpainted editor tiles without any
@@ -125,12 +236,12 @@ where
             map.options.name.to_ascii_lowercase(),
             tile_id
         );
-        let rgba = paint_tile(map, tile, &normals, ecosystems, &source_textures);
-        result.textures.push(Texture {
+        result.deferred_textures.push(DeferredTexture {
             name: name.clone(),
-            width: TILE_TEXTURE_SIZE as u32,
-            height: TILE_TEXTURE_SIZE as u32,
-            rgba,
+            tile: tile.clone(),
+            normals,
+            context: Arc::clone(&context),
+            cached: OnceLock::new(),
         });
         let material = result.materials.len();
         result.terrain_materials.insert(
@@ -172,33 +283,29 @@ where
             collidable: true,
         });
     }
-    // Move each successfully decoded native source into Scene once. Keeping
-    // the baked tile images alongside them lets the renderer decline a recipe
-    // without decoding another source or manufacturing a placeholder image.
-    let mut sources: Vec<_> = source_textures.into_values().collect();
+    // Share each successfully decoded source with Scene once, without copying
+    // its pixels per tile or decoding it again when a fallback is requested.
+    let mut sources: Vec<_> = source_textures.values().cloned().collect();
     sources.sort_by(|a, b| a.name.cmp(&b.name));
     result.textures.extend(sources);
     Ok(result)
 }
 
 fn paint_tile(
-    map: &Heightmap,
+    options: &TerrainOptions,
+    base_texture: &str,
     tile: &TerrainTile,
     normals: &[Vec3],
     ecosystems: &Ecosystems,
-    textures: &HashMap<String, Texture>,
+    textures: &HashMap<String, Arc<Texture>>,
 ) -> Vec<u8> {
     let mut rgba = Vec::with_capacity(TILE_TEXTURE_SIZE * TILE_TEXTURE_SIZE * 4);
-    let q = map.options.quads_per_tile;
+    let q = options.quads_per_tile;
     for y in 0..TILE_TEXTURE_SIZE {
         for x in 0..TILE_TEXTURE_SIZE {
             let u = (x as f32 + 0.5) / TILE_TEXTURE_SIZE as f32;
             let v = (y as f32 + 0.5) / TILE_TEXTURE_SIZE as f32;
-            let height = tile.height_at(
-                &map.options,
-                u * map.options.tile_size(),
-                v * map.options.tile_size(),
-            );
+            let height = tile.height_at(options, u * options.tile_size(), v * options.tile_size());
             let col = (u * q as f32).round() as usize;
             let row = (v * q as f32).round() as usize;
             let slope = normals[row * (q + 1) + col]
@@ -207,7 +314,7 @@ fn paint_tile(
                 .acos()
                 .to_degrees();
             let mut color = textures
-                .get(&map.base_texture.to_ascii_lowercase())
+                .get(&base_texture.to_ascii_lowercase())
                 .map(|t| sample_texture(t, u * 8.0, v * 8.0))
                 .unwrap_or([1.0, 0.0, 1.0, 1.0]);
             for (index, layer) in tile.layers.iter().enumerate() {

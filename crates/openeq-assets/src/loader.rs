@@ -17,6 +17,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::mesh::{self, CollisionGeometry, Geometry, Material, WaterMaterial};
 use crate::pfs::Archive;
@@ -78,7 +79,8 @@ pub struct Scene {
 enum TextureSource {
     Archive(usize, String),
     File(PathBuf),
-    Decoded(Texture),
+    Decoded(Arc<Texture>),
+    DeferredTerrain(Box<terrain::DeferredTexture>),
 }
 
 impl Scene {
@@ -102,16 +104,44 @@ impl Scene {
             loose_textures: HashMap::new(),
             textures: textures
                 .into_iter()
-                .map(|t| (t.name.to_ascii_lowercase(), TextureSource::Decoded(t)))
+                .map(|t| {
+                    (
+                        t.name.to_ascii_lowercase(),
+                        TextureSource::Decoded(Arc::new(t)),
+                    )
+                })
                 .collect(),
         }
     }
 
-    /// Decodes a texture by name, if the zone references one.
+    fn from_prepared_terrain(name: String, prepared: terrain::PreparedTerrain) -> Self {
+        let mut scene = Self::from_geometry(name, prepared.materials, prepared.meshes, Vec::new());
+        scene.terrain_materials = prepared.terrain_materials;
+        // Preserve the eager API's registration order if an unusual native
+        // source happens to share a generated fallback name.
+        for texture in prepared.deferred_textures {
+            scene.textures.insert(
+                texture.name.clone(),
+                TextureSource::DeferredTerrain(Box::new(texture)),
+            );
+        }
+        for texture in prepared.textures {
+            scene
+                .textures
+                .insert(texture.name.clone(), TextureSource::Decoded(texture));
+        }
+        scene
+    }
+
+    /// Decodes a texture by name, if the zone references one. Terrain fallback
+    /// images are painted on first access and cached for subsequent requests.
     pub fn texture(&self, name: &str) -> Option<Texture> {
-        if let Some(TextureSource::Decoded(texture)) = self.textures.get(&name.to_ascii_lowercase())
-        {
-            return Some(texture.clone());
+        match self.textures.get(&name.to_ascii_lowercase()) {
+            Some(TextureSource::Decoded(texture)) => return Some((**texture).clone()),
+            Some(TextureSource::DeferredTerrain(texture)) => {
+                return Some(texture.texture().clone());
+            }
+            _ => {}
         }
         Some(Texture::decode_or_placeholder(
             name,
@@ -128,7 +158,7 @@ impl Scene {
         match self.textures.get(&name.to_ascii_lowercase())? {
             TextureSource::Archive(archive, entry) => self.archives.get(*archive)?.read(entry).ok(),
             TextureSource::File(path) => std::fs::read(path).ok(),
-            TextureSource::Decoded(_) => None,
+            TextureSource::Decoded(_) | TextureSource::DeferredTerrain(_) => None,
         }
     }
 
@@ -920,7 +950,7 @@ fn load_heightmap(base: &Path, name: &str, archive: Archive, zon: &[u8]) -> Resu
         }
     }
     let loose = loose_textures(base);
-    let baked = terrain::bake(&map, &ecosystems, |texture_name| {
+    let prepared = terrain::prepare(&map, &ecosystems, |texture_name| {
         let bytes = archive.read(texture_name).ok().or_else(|| {
             loose
                 .get(&texture_name.to_ascii_lowercase())
@@ -928,13 +958,7 @@ fn load_heightmap(base: &Path, name: &str, archive: Archive, zon: &[u8]) -> Resu
         })?;
         Texture::decode(texture_name, &bytes).ok()
     })?;
-    let mut scene = Scene::from_geometry(
-        name.to_owned(),
-        baked.materials,
-        baked.meshes,
-        baked.textures,
-    );
-    scene.terrain_materials = baked.terrain_materials;
+    let mut scene = Scene::from_prepared_terrain(name.to_owned(), prepared);
     scene.archives.push(archive);
     scene.loose_textures = loose;
     let mut placements = map.placements.clone();
@@ -1070,6 +1094,9 @@ fn load_heightmap(base: &Path, name: &str, archive: Archive, zon: &[u8]) -> Resu
 
 #[cfg(test)]
 mod declaration_tests;
+
+#[cfg(test)]
+mod deferred_terrain_tests;
 
 #[cfg(test)]
 mod tests {

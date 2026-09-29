@@ -217,8 +217,8 @@ unchanged collision/topology fingerprints.
 The renderer now defaults to direct sampling for admitted heightmap scenes.
 `GpuScene::build_with_terrain(..., TerrainMode::Baked)` and the diagnostic
 `renderzone --baked-terrain` option retain explicit A/B comparison. The source
-bake is still prepared on CPU in this checkpoint; lazy materialization is the
-next separate slice.
+bake was still prepared on CPU in that checkpoint; the lazy materialization
+follow-up below removes it from admitted direct loading.
 
 - Each scene shares a detail array at its largest source dimension (bounded at
   2048), retaining the 1024px Dead Hills detail. Encoded color is filtered/blended
@@ -270,3 +270,41 @@ G-buffer completion intervals increased from 1.49→2.43ms, 0.26→0.49ms and
 GPU pass intervals limit comparisons. Asset preparation still took about
 1.35/5.64/5.90 seconds; removing its eager fallback paint remains separate work.
 Logs and captures use `/tmp/openeq-gpu-terrain/*-profile.*`.
+
+The post-optimization ABBA follow-up used180 measured frames per run. Feerrott2
+median G-buffer intervals ranged1.43–3.22ms for baked and1.41–2.82ms for direct;
+OldCommons ranged2.73–3.25ms and2.91–3.48ms respectively. The substantial
+within-mode variation is evidence against a precise frame-rate claim from these
+shared-machine runs. Logs: `*-optimized-*.log` in the same capture directory.
+
+## Lazy compatibility images
+
+Normal zone loading now prepares geometry, shared native sources and immutable
+paint recipes. Compatibility tile pixels are painted only when `Scene::texture`
+requests them, cached once per tile with `OnceLock`, and returned as owned values.
+Source images and paint context are shared across tiles; the public eager `bake`
+API and source-name collision ordering remain compatible.
+
+Six new asset tests cover pre-refactor synthetic hashes, 18 independent original
+Old Commonlands hashes, missing/malformed sources, name collisions, input
+lifetime, object extraction, and concurrent requests. The original loader leaves
+all 1,552 Old Commonlands tile caches empty initially. The complete original
+asset suite, strict assets Clippy, and all seven terrain GPU tests pass.
+
+Same-machine full-scene checks at 960×540, with direct rendering:
+
+| Zone | Previous asset preparation | Lazy asset preparation | Direct GPU preparation/upload |
+| --- | ---: | ---: | ---: |
+| Feerrott2 | 1,351ms | 191ms | 100ms |
+| Dead Hills | 5,638ms | 130ms | 429ms |
+| Old Commonlands | 5,902ms | 120ms | 175ms |
+
+These are individual diagnostic samples, not a benchmark distribution or total
+interactive loading time. Forced baked rendering still pays the painting cost,
+now during GPU preparation. The Dead Hills and Old Commonlands direct and baked
+PNG captures are byte-identical to their pre-refactor counterparts. Feerrott2's
+full-scene captures include elapsed-time animation and are not byte-identical;
+the original-zone terrain GPU tests use a fixed clock. Allocation, topology,
+material counts and bounds remain unchanged. Logs/captures:
+`/tmp/openeq-lazy-terrain`; GPU test log:
+`/tmp/openeq-lazy-terrain-gpu-tests.log`.

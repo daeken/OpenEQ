@@ -16,6 +16,7 @@ use crate::{Error, Result};
 
 mod bake;
 pub use bake::{BakedTerrain, bake};
+pub(crate) use bake::{DeferredTexture, PreparedTerrain, prepare};
 pub mod indexed_water;
 pub mod regions;
 pub use regions::TerrainRegion;
