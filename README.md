@@ -106,6 +106,11 @@ only hide known matches. Presence reflects the latest server report and may be
 unknown. `/guild MESSAGE` (or `/gu`) still sends guild chat. Membership management
 and manual roster/message refresh are not implemented.
 
+Use `/skills` or **Skills** in inventory to view your base skills and languages
+with their original names. The inventory also shows level and normal experience
+progress when the server supplies it. Skill changes appear in chat; unavailable
+values stay unknown. Trainer purchases and configurable hotbuttons are pending.
+
 Clicking a window brings it forward, including its blank background. Window
 positions, stacking order and map position/zoom are saved per world and character
 under `~/.config/openeq/layouts` (or `$XDG_CONFIG_HOME/openeq/layouts`). Windows
@@ -154,6 +159,8 @@ you up and automatically returns, following the default five-second cycle.
   raid chat, with the original raid window and MOTD view.
 - Guild identity, received roster/MOTD, member details and local filters in the
   original guild window, with explicit stale/unknown states during travel.
+- Server-driven base skills/languages, level changes and normal experience
+  progress, with the original Skills window and inventory XP gauge.
 - Target/assist/consider, autoattack, damage, deaths, corpse loot and Loot All.
 - Floating combat feedback: gold outgoing hits, red incoming hits, misses and
   named avoidance outcomes, with short lifetimes and bounded stacking.

@@ -6,6 +6,9 @@ pub use crate::guild_ui::{
     GuildAction, GuildActionKind, UiGuild, UiGuildMember, UiGuildMotd, UiGuildPage, UiGuildPresence,
 };
 use crate::hud::{Hud, HudState};
+pub use crate::progression_ui::{
+    ProgressionAction, ProgressionActionKind, UiProgression, UiProgressionPage, UiProgressionRow,
+};
 pub use crate::raid_ui::{
     RaidAction, RaidActionKind, UiRaid, UiRaidInvitation, UiRaidMember, UiRaidPage,
 };
@@ -32,6 +35,7 @@ pub fn valid_window_id(id: &str) -> bool {
             | "group"
             | "raid"
             | "guild"
+            | "skills"
             | "chat"
             | "actions"
             | "inventory"
@@ -219,6 +223,7 @@ pub struct GameHudState {
     pub group: Option<UiGroup>,
     pub raid: Option<UiRaid>,
     pub guild: Option<UiGuild>,
+    pub progression: Option<UiProgression>,
     pub money: Option<UiMoney>,
     pub merchant: Option<UiMerchant>,
     pub bank: Option<UiBank>,
@@ -255,7 +260,7 @@ pub struct GameHudState {
     pub attack: bool,
     pub sitting: bool,
     /// Keys: player, target, chat, actions, inventory, loot, bag:<parent_slot>,
-    /// spellbar, spellbook, spell_inspection, casting, buffs, merchant, bank, group, raid, guild, trade.
+    /// spellbar, spellbook, spell_inspection, casting, buffs, merchant, bank, group, raid, guild, skills, trade.
     /// All coordinates are logical pixels.
     pub window_positions: BTreeMap<String, [f32; 2]>,
     /// Back-to-front logical IDs; used by standalone frame/capture callers.
@@ -272,6 +277,8 @@ pub enum UiAction {
     Social(SocialAction),
     Raid(RaidAction),
     Guild(GuildAction),
+    Progression(ProgressionAction),
+    OpenSkills,
     Commerce(CommerceAction),
     /// Only dispatch a removal for a right-click; left-click is inspection.
     RemoveBuff(u32),
@@ -316,6 +323,9 @@ impl UiAction {
         }
         if let Some(action) = GuildAction::from_hit(hit) {
             return Some(Self::Guild(action));
+        }
+        if let Some(action) = ProgressionAction::from_hit(hit) {
+            return Some(Self::Progression(action));
         }
         let item = hit.item.as_str();
         if let Some(rows) = item.strip_prefix("SDW_SpellDescription:scroll:") {
@@ -364,6 +374,9 @@ impl UiAction {
         match item {
             "game:spellbook" => Some(Self::ToggleSpellbook),
             "game:inventory" => Some(Self::ToggleInventory),
+            "game:skills" if hit.enabled && hit.window_id.as_deref() == Some("inventory") => {
+                Some(Self::OpenSkills)
+            }
             "game:attack" => Some(Self::ToggleAttack),
             "game:sit" => Some(Self::ToggleSit),
             "game:hail" => Some(Self::Hail),
@@ -552,7 +565,7 @@ impl Hud {
             let rect = position(
                 state,
                 "inventory",
-                Rect::new(screen.width - 350., 12., 338., 434.),
+                Rect::new(screen.width - 350., 12., 338., 498.),
                 screen,
             );
             draw.shell(
@@ -574,11 +587,17 @@ impl Hud {
                 GOLD,
                 false,
             );
+            let mut clipped_slots = false;
             for slot in &state.equipment {
                 if let Some((xml_slot, x, y)) = equipment_position(slot.slot) {
+                    let bounds = Rect::new(rect.x + x, rect.y + y, 42., 42.);
+                    if bounds.bottom() > rect.bottom() - 94. {
+                        clipped_slots = true;
+                        continue;
+                    }
                     draw.slot(
                         &format!("InvSlot{xml_slot}"),
-                        Rect::new(rect.x + x, rect.y + y, 42., 42.),
+                        bounds,
                         slot,
                         state.selected_slot == Some(slot.slot),
                     );
@@ -591,18 +610,25 @@ impl Hud {
                     42.,
                     42.,
                 );
-                if bounds.bottom() <= rect.bottom() - 28. {
+                if bounds.bottom() <= rect.bottom() - 94. {
                     draw.slot(
                         "Container_Slot",
                         bounds,
                         slot,
                         state.selected_slot == Some(slot.slot),
                     );
+                } else {
+                    clipped_slots = true;
                 }
             }
+            draw.inventory_progression(rect, state.progression.as_ref());
             draw.text(
                 Rect::new(rect.x + 13., rect.bottom() - 24., rect.width - 26., 17.),
-                "Click to pick up/place · Right-click to inspect or open",
+                if clipped_slots {
+                    "Enlarge the game window to see all slots."
+                } else {
+                    "Click to pick up/place · Right-click to inspect or open"
+                },
                 MUTED,
                 false,
             );
@@ -709,6 +735,9 @@ impl Hud {
         }
         if let Some(guild) = &state.guild {
             draw.guild(state, guild);
+        }
+        if let Some(progression) = &state.progression {
+            draw.progression(state, progression);
         }
         draw.compose_windows(additional, stack);
         let hovered = state

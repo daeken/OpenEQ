@@ -1,9 +1,9 @@
 # Skills, experience and command hotbuttons
 
-Read-only investigation of the installed client XML and current OpenEQ code,
-2026-09-29. This document proposes milestone 8; it does not implement UI,
-send gameplay commands, or establish training support. Packet semantics belong
-to the companion `PROGRESSION_PROTOCOL_PLAN.md`.
+Original read-only investigation, followed by implementation on 2026-09-29.
+The receive-only Skills/Languages window and inventory level/normal-XP strip
+are implemented; the command bar/editor and trainer sections remain proposals.
+Packet semantics and dedicated live proof belong to `PROGRESSION_PROTOCOL_PLAN.md`.
 
 ## Smallest useful slice
 
@@ -322,3 +322,31 @@ window must handle server rejection and refresh its authoritative state.
 - Live acceptance then verifies a real profile, a received skill/XP change,
   reconnect freshness, and an explicitly activated existing command. Trainer
   packets and unimplemented skill actions remain outside this milestone.
+
+
+## Receive-only implementation checkpoint
+
+`progression_ui.rs` supplies the original SkillsWindow with Skills/Languages
+pages, bounded visible rows, stable numeric IDs, local scrolling and Done/close.
+`progression_interaction.rs` supplies cached shared rows from current progression
+state; stale hits cannot scroll a replacement snapshot. `/skills` toggles the
+window and inventory's Skills button opens it. Neither action sends a packet.
+Window position/stacking uses existing character/world persistence.
+
+The inventory layout now explicitly includes level, normal experience percentage
+and the original gold gauge. A confirmed zero is different from missing/stale or
+out-of-range data. No AA/vitality gauge, skill cap, skill rank or trainer action is
+invented. Short windows keep progression controls reachable, hide equipment slots
+that would overlap them, and explain that enlarging the window reveals all slots;
+full inventory scrolling is a later usability improvement.
+
+Six CPU presentation tests cover local action ownership, ratio/currentness states,
+row budgets and bottom pages, inventory controls, window order, and the short-view
+warning. Twenty original-art captures cover normal/Retina, skills/languages
+top/bottom, unknown/stale data, XP0/50/100 and narrow windows. Original tests also
+validate all78 skill names and27 named languages using the production lookup
+against installed eqstr entries; language27 retains its numeric fallback.
+Captures `/tmp/openeq-progression-ui` were inspected by the UI agent and root.
+Root's six reducer/adapter/live-pipeline tests and the live Fellowship fixture
+complete separate state/network coverage. Final combined validation is recorded
+in `OVERNIGHT_2026-09-29.md`.

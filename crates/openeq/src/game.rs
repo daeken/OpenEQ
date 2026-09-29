@@ -32,6 +32,9 @@ impl ResourceValue {
 #[derive(Default)]
 pub struct StringTable(BTreeMap<u32, String>);
 impl StringTable {
+    pub fn get(&self, id: u32) -> Option<&str> {
+        self.0.get(&id).map(String::as_str)
+    }
     pub fn load(base: &Path) -> Self {
         let path = ["eqstr_us.txt", "eqstr_en.txt"]
             .into_iter()
@@ -355,6 +358,7 @@ pub struct GameplayState {
     pub group: crate::group::GroupState,
     pub raid: crate::raid::RaidState,
     pub guild: crate::guild::GuildState,
+    pub progression: crate::progression::ProgressionState,
     pub chat: VecDeque<ChatLine>,
     pub chat_links: BTreeMap<u64, openeq_net::social::LinkPayload>,
     next_chat_link: u64,
@@ -467,6 +471,24 @@ impl GameplayState {
         name: impl Fn(u32) -> String,
     ) {
         match event {
+            GameplayEvent::Progression(event) => {
+                if self.progression.confirmed {
+                    if let openeq_net::progression::ProgressionEvent::Level { level, .. } = &event
+                        && let Ok(level) = u8::try_from(*level)
+                        && let Some(profile) = &mut self.profile
+                    {
+                        profile.level = level;
+                    }
+                    if let Some(change) = self.progression.apply(event) {
+                        self.notice(format!(
+                            "Your base {} skill changed from {} to {}.",
+                            crate::progression::skill_name(&self.strings, change.id),
+                            change.old,
+                            change.value
+                        ));
+                    }
+                }
+            }
             GameplayEvent::Guild(event) => {
                 let own_name = self
                     .profile
@@ -753,6 +775,7 @@ impl GameplayState {
                 self.line(self.strings.format(&message), message_color(message.color));
             }
             GameplayEvent::Profile(profile) => {
+                self.progression.profile(&profile);
                 self.guild
                     .identity(profile.guild_id, Some(u32::from(profile.guild_rank)));
                 // RoF2 profile resource fields can be placeholders in EQEmu.

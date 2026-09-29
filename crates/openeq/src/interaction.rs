@@ -43,6 +43,7 @@ pub struct Interaction {
     pub raid_seen_invitation: Option<u64>,
     pub raid_was_active: bool,
     pub guild_window: crate::guild_interaction::GuildWindowState,
+    pub skills_window: crate::progression_interaction::SkillsWindowState,
     pub merchant_stock: Option<u32>,
     pub merchant_sell: Option<InventorySlot>,
     pub merchant_quantity: u32,
@@ -239,6 +240,7 @@ impl Interaction {
         self.social_view(live, &mut view);
         self.raid_view(live, &mut view);
         self.guild_view(live, &mut view);
+        self.progression_view(live, &mut view);
         self.trade_view(live, &mut view);
         self.item_use_view(live, &mut view);
         view
@@ -410,6 +412,7 @@ impl Interaction {
             Action::Invite(name) => self.invite(live, name),
             Action::Raid => self.raid_open = !self.raid_open,
             Action::GuildWindow => self.guild_window.open = !self.guild_window.open,
+            Action::Skills => self.skills_window.open = !self.skills_window.open,
             Action::RaidInvite(name) => self.raid_invite(live, name),
             Action::RaidAccept => self.raid_answer(live, true),
             Action::RaidDismiss => self.raid_answer(live, false),
@@ -505,6 +508,8 @@ impl Interaction {
             UiAction::Social(action) => self.social_action(action, live),
             UiAction::Raid(action) => self.raid_action(action, live),
             UiAction::Guild(action) => self.guild_action(action, live),
+            UiAction::OpenSkills => self.skills_window.open = true,
+            UiAction::Progression(action) => self.progression_action(live, action),
             UiAction::ChatLink(id) => {
                 if let Some(link) = live.game.chat_links.get(&id).cloned() {
                     self.inspected_item = None;
@@ -698,6 +703,8 @@ impl Interaction {
             self.spell_inspection.close();
         } else if window == "raid" {
             self.raid_open = false;
+        } else if window == "skills" {
+            self.skills_window.open = false;
         } else if window == "guild" {
             self.guild_window.open = false;
         } else if window == "inventory" {
@@ -721,6 +728,7 @@ impl Interaction {
     pub fn tick(&mut self, live: &mut LiveWorld) {
         self.raid_tick(live);
         self.guild_tick(live);
+        self.progression_tick(live);
         live.trade_tick();
         self.item_use_tick(live);
         if live

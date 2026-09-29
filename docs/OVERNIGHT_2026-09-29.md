@@ -282,6 +282,8 @@ Published to `master` as **13a354b**. This is the current verified baseline.
 
 ## Sixth overnight batch (verified)
 
+Published to `master` as **2f023f4**. This is the current verified baseline.
+
 - Receive-only guild directory, profile identity, roster, MOTD and scoped member
   updates are integrated. `/guildwindow` opens the original GuildManagementWnd;
   `/guild` and `/gu` remain chat commands. No guild mutation/refresh/target/UCS
@@ -324,18 +326,56 @@ Published to `master` as **13a354b**. This is the current verified baseline.
   stored data, but shoreline clipping has nine counterexamples; surface rendering
   and swimming semantics remain unimplemented pending original-client evidence.
 
+## Seventh overnight batch (verified)
+
+- Receive-only normal XP, level and skill/language updates now have exact checked
+  codecs. Profile preserves training points, language bytes and absolute XP.
+  Network102 tests and strict Clippy pass; wide/reserved values and variable
+  profile alignment are covered, with no outgoing progression commands.
+- Bounded progression reducer separates 78 named base skills from 28 languages;
+  unknown slots never allocate arbitrary state. Profile totals/points are labelled
+  snapshots. A330-unit XP bar is independently received; out-of-range reports
+  remain observable but do not become fabricated percentages. Fresh profile is
+  required after travel/disconnect, duplicate updates do not produce notices,
+  and language messages remain server-owned. Six root tests and strict app
+  all-target Clippy pass. Independent source/lifecycle review found and corrected
+  missing Escape consumption on the new local window.
+- Original SkillsWindow plus Skills/Languages pages and inventory level/XP strip
+  are integrated. `/skills` and the inventory button are local-only;
+  rows use explicit original string IDs and unknown labels stay numeric.
+- Fellowship-only live proof passed profile/initial XP, skill0 55→54→55 and
+  language0 100→99→100 with foreground/SQL agreement, isolation of all78 normal
+  and28 language rows, exact restoration and fresh reconnect. All14 innate AA
+  rows, inventory/currency/binds/spells/buffs/corpses/social/skills/languages and
+  progression invariants equal baseline. Fellowship is offline with original
+  pose/resources restored; no movement, trainer, XP/level changes or Explorer.
+  Evidence: `/tmp/openeq-progression-foreground-1.log` and private journals.
+- All six UI CPU tests and20 original-art normal/Retina/narrow captures pass;
+  every named skill/language matches installed eqstr using production lookups.
+  Short inventory views keep controls reachable and explicitly report hidden
+  slots. Captures `/tmp/openeq-progression-ui` were inspected.
+- Combined verification: **582 workspace tests passed**, zero failures/ignored,
+  including original assets and GPU. Strict workspace Clippy, format, client
+  build and playback-disabled all-target check pass. Logs:
+  `/tmp/openeq-overnight-progression-{tests,clippy,build,headless}.log`.
+- Its inherited level10/XP0 baseline actually sends XP ratio4294966409. The
+  client retains the raw report but correctly displays unavailable. Same-total
+  XP would delevel this fixture; same-level assignment would clamp another
+  existing over-cap skill. Neither command was sent. This is administrative
+  receive-path validation, not ordinary skill-gain gameplay or live level proof.
+
 ## Active follow-up ownership
 
-- **eqemu_server**: guild live proof and cleanup complete; finalizes probe and
-  protocol evidence. Dedicated fixtures are free after root checkpoint.
-- **xml_ui**: guild UI handed back; progression UI research complete in
-  `PROGRESSION_UI_PLAN.md`.
-- **npc_assets**: heightmap water and guild review handed back; progression
-  protocol plan complete in `PROGRESSION_PROTOCOL_PLAN.md`, cursor reconciliation
-  follow-up read-only.
-- Root completed guild combined verification and owns publication.
-  Next supported implementation is receive-only
-  skills/languages/experience, with original skill names and inventory XP gauge.
-- Root should revisit native sky celestial orientation, thin liquid crossings,
-  NPC swimming projection, hover/cross-zone resurrection and XP/item recovery;
-  do not confuse first-pass completion with full original-client parity.
+- **eqemu_server**: Fellowship progression proof/cleanup complete; finishes
+  protocol evidence and plans a separate Reviver1 same-level/XP probe read-only.
+  No additional fixture use is authorized until that concrete recipe is reviewed.
+- **xml_ui**: progression presentation/tests/captures handed back; GPU slot free.
+- **npc_assets**: progression net/review complete; read-only hotbutton config/input
+  design in `HOTBUTTON_PLAN.md`. No runtime/server changes for that follow-up.
+- Root completed final progression verification and owns publication.
+  Next runtime slice is the original command hotbar/editor with saved bindings,
+  following `HOTBUTTON_PLAN.md`; do not begin before the current checkpoint.
+- Later work: configurable hotbuttons, trainer preview and verified transactions,
+  lossless heightmap water parsing, native sky celestial orientation, thin liquid
+  crossings, NPC swimming projection, hover/cross-zone resurrection and XP/item
+  recovery. First-pass milestones are not full original-client parity.

@@ -179,7 +179,14 @@ pub struct PlayerProfile {
     pub bank_currency: Currency,
     pub cursor_currency: Currency,
     pub shared_platinum: u32,
+    /// Last profile snapshot of unspent training points, not a live balance.
+    pub training_points: u32,
+    /// Raw base skills; additional slots do not establish named capabilities.
     pub skills: Vec<u32>,
+    /// Raw language bytes, including any extra profile padding slots.
+    pub languages: Vec<u8>,
+    /// Absolute XP at profile time, distinct from subsequent XP bar updates.
+    pub experience_total: u64,
     pub spell_book: Vec<u32>,
     pub memorized_spells: Vec<u32>,
     pub spell_refresh: Vec<u32>,
@@ -368,6 +375,7 @@ pub enum GameplayEvent {
     Social(crate::social::SocialEvent),
     Raid(crate::raid::RaidEvent),
     Guild(crate::guild::GuildEvent),
+    Progression(crate::progression::ProgressionEvent),
     Trade(crate::trade::TradeEvent),
     ItemUse(crate::item_use::ItemUseEvent),
     MerchantOpened {
@@ -848,6 +856,9 @@ pub fn parse_packet(opcode: u16, data: &[u8]) -> Option<Result<GameplayEvent, Zo
     }
     if let Some(event) = crate::guild::parse_packet(opcode, data) {
         return Some(event.map(GameplayEvent::Guild));
+    }
+    if let Some(event) = crate::progression::parse_packet(opcode, data) {
+        return Some(event.map(GameplayEvent::Progression));
     }
     if !matches!(
         opcode,
@@ -1727,7 +1738,7 @@ fn parse_profile(data: &[u8]) -> Option<PlayerProfile> {
     r.array(4, 64)?;
     r.array(4, 64)?;
     r.skip(11 + 12 + 5 + 16 + 8)?;
-    r.skip(4)?;
+    let training_points = r.u32()?;
     let mana = r.u32()?;
     let hp = r.u32()?;
     let mut stats = [0; 7];
@@ -1791,12 +1802,14 @@ fn parse_profile(data: &[u8]) -> Option<PlayerProfile> {
     let name = Reader(r.array(1, 64)?).string(63)?;
     let last_name = Reader(r.array(1, 64)?).string(63)?;
     r.skip(24)?;
-    r.array(1, 64)?; // languages
+    let languages = r.array(1, 64)?.to_vec();
     r.skip(4 + 16 + 4)?; // zone/instance, position, flags
     let guild_id = r.u32()?;
     let guild_id = (guild_id != crate::guild::GUILD_NONE).then_some(guild_id);
     let guild_rank = r.u8()?;
-    r.skip(9 + 8 + 1)?; // unknown, experience, eye height
+    r.skip(9)?;
+    let experience_total = u64::from_le_bytes(r.take(8)?.try_into().ok()?);
+    r.skip(1)?; // eye height
     let bank_currency = currency(&mut r)?;
     let shared_platinum = r.u32()?;
     Some(PlayerProfile {
@@ -1815,7 +1828,10 @@ fn parse_profile(data: &[u8]) -> Option<PlayerProfile> {
         bank_currency,
         cursor_currency,
         shared_platinum,
+        training_points,
         skills,
+        languages,
+        experience_total,
         spell_book,
         memorized_spells,
         spell_refresh,
@@ -1828,7 +1844,7 @@ mod tests {
     use super::*;
 
     // Compact variable-count profile fixture following RoF2's PlayerProfile
-    // writer. Distinct data on both sides of guild identity catches cursor drift
+    // writer. Distinct progression, guild and currency data catches cursor drift
     // without relying on a local client installation or private packet capture.
     fn guild_profile_fixture(guild_id: u32, guild_rank: u8, language_count: usize) -> Vec<u8> {
         fn zeros(out: &mut Vec<u8>, size: usize) {
@@ -1846,14 +1862,19 @@ mod tests {
         for stride in [4, 20, 20, 4, 4] {
             array(&mut data, 1, stride);
         }
-        zeros(&mut data, 11 + 12 + 5 + 16 + 8 + 4);
+        zeros(&mut data, 11 + 12 + 5 + 16 + 8);
+        data.extend_from_slice(&u32::MAX.to_le_bytes()); // training points
         for value in [101u32, 102, 10, 11, 12, 13, 14, 15, 16] {
             data.extend_from_slice(&value.to_le_bytes());
         }
         zeros(&mut data, 28);
         array(&mut data, 1, 12); // AA
-        for _ in 0..9 {
-            // skills, disciplines, timers, spellbook, gems, refresh
+        data.extend_from_slice(&100u32.to_le_bytes()); // skills
+        for value in [0u32, 254, 255, 70_001, u32::MAX].into_iter().chain(5..100) {
+            data.extend_from_slice(&value.to_le_bytes());
+        }
+        for _ in 0..8 {
+            // disciplines, timers, spellbook, gems, refresh
             array(&mut data, 1, 4);
         }
         zeros(&mut data, 1);
@@ -1874,7 +1895,8 @@ mod tests {
             data.extend_from_slice(value);
         }
         zeros(&mut data, 24);
-        array(&mut data, language_count, 1);
+        data.extend_from_slice(&(language_count as u32).to_le_bytes());
+        data.extend((0..language_count).map(|index| (index as u8).wrapping_mul(255)));
         data.extend_from_slice(&202u16.to_le_bytes());
         data.extend_from_slice(&7u16.to_le_bytes());
         zeros(&mut data, 16); // position
@@ -1882,7 +1904,7 @@ mod tests {
         data.extend_from_slice(&guild_id.to_le_bytes());
         data.push(guild_rank);
         zeros(&mut data, 9);
-        data.extend_from_slice(&0x0123_4567_89ab_cdefu64.to_le_bytes());
+        data.extend_from_slice(&0xf123_4567_89ab_cdefu64.to_le_bytes());
         data.push(5); // eye height
         for value in [40u32, 41, 42, 43, 50] {
             data.extend_from_slice(&value.to_le_bytes());
@@ -1893,8 +1915,8 @@ mod tests {
     }
 
     #[test]
-    fn profile_guild_identity_preserves_variable_cursor_and_currency_alignment() {
-        for language_count in [0, 1, 32, 64] {
+    fn profile_guild_identity_preserves_progression_and_currency_alignment() {
+        for language_count in [0, 1, 28, 32, 64] {
             for (wire_id, expected_id, rank) in [
                 (crate::guild::GUILD_NONE, None, 0),
                 (0, Some(0), 8), // only the documented sentinel means unguilded
@@ -1906,7 +1928,25 @@ mod tests {
                     panic!()
                 };
                 assert_eq!(profile.name, "Fellowship");
+                assert_eq!(profile.last_name, "Example");
                 assert_eq!((profile.guild_id, profile.guild_rank), (expected_id, rank));
+                assert_eq!(profile.training_points, u32::MAX);
+                assert_eq!(
+                    profile.skills,
+                    [0u32, 254, 255, 70_001, u32::MAX]
+                        .into_iter()
+                        .chain(5..100)
+                        .collect::<Vec<_>>()
+                );
+                assert_eq!(
+                    profile.languages,
+                    (0..language_count)
+                        .map(|index| (index as u8).wrapping_mul(255))
+                        .collect::<Vec<_>>()
+                );
+                assert_eq!(profile.experience_total, 0xf123_4567_89ab_cdef);
+                assert_eq!((profile.race, profile.class, profile.level), (522, 12, 85));
+                assert_eq!(profile.stats, [10, 11, 12, 13, 14, 15, 16]);
                 assert_eq!(
                     (profile.hp, profile.mana, profile.endurance),
                     (102, 101, 103)
@@ -1927,8 +1967,44 @@ mod tests {
                 );
                 for length in 0..data.len() {
                     assert!(parse_packet(0x6506, &data[..length]).unwrap().is_err());
+                    // Also verify the field reads, independently of the total
+                    // size stamp, reject a truncated profile at every offset.
+                    if length >= 9 {
+                        let mut truncated = data[..length].to_vec();
+                        truncated[4..8].copy_from_slice(&((length - 9) as u32).to_le_bytes());
+                        assert!(parse_packet(0x6506, &truncated).unwrap().is_err());
+                    }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn profile_rejects_language_count_beyond_existing_resource_bound() {
+        let data = guild_profile_fixture(70_001, 3, 65);
+        assert!(parse_packet(0x6506, &data).unwrap().is_err());
+    }
+
+    #[test]
+    fn progression_dispatch_preserves_events_and_malformed_packet_errors() {
+        use crate::progression::{
+            OP_EXP_UPDATE, OP_LEVEL_UPDATE, OP_SKILL_UPDATE, ProgressionEvent,
+        };
+        let data: Vec<_> = [127u32, 70_001, 0xffff_ffff]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect();
+        assert!(matches!(
+            parse_packet(OP_SKILL_UPDATE, &data),
+            Some(Ok(GameplayEvent::Progression(
+                ProgressionEvent::SkillValue {
+                    wire_skill_id: 127,
+                    value: 70_001,
+                }
+            )))
+        ));
+        for opcode in [OP_EXP_UPDATE, OP_LEVEL_UPDATE, OP_SKILL_UPDATE] {
+            assert!(parse_packet(opcode, &[]).unwrap().is_err());
         }
     }
 

@@ -1,11 +1,21 @@
 # Progression receive data and trainer protocol plan
 
-Read-only source investigation, 2026-09-29. EQEmu source revision is
+Source investigation and receive-only implementation, 2026-09-29. EQEmu source revision is
 `4aceae18b94ffaafc08e2b17bc41cd72c77f795d`; OpenEQ HEAD when inspected was
 `13a354b690040468f16ce9fd2c63f28745d79e97` with guild integration in progress.
-No runtime edits, server queries/logins, training transactions or GPU runs were
-performed. [PROGRESSION_UI_PLAN.md](PROGRESSION_UI_PLAN.md) covers presentation.
-Source behavior below is distinct from deployed fixture proof.
+The original research was read-only. Subsequent guarded fixture validation is
+recorded below, separately from source evidence.
+[PROGRESSION_UI_PLAN.md](PROGRESSION_UI_PLAN.md) covers presentation.
+
+Current implementation exposes profile training points, languages and absolute
+experience, checked incoming skill/language, experience and level events, and
+a foreground progression reducer with a received 330-unit XP ratio. It has no
+outgoing progression or trainer API. The dedicated Fellowship live proof passed
+for real profile data, skill/language changes, invalid-ratio handling and a
+restored fresh login. Live level changes and same-total XP commands were deferred
+on this fixture because its inherited level10/absolute-XP0 state is inconsistent.
+The original audit/proposals below are historical; the completed validation
+section records the implemented scope and live limits.
 
 The first useful slice is **profile skills/languages, server skill gains, local
 level changes and the server's experience progress bar**. It needs no outgoing
@@ -13,7 +23,7 @@ progression command. Trainer purchases remain a later slice: the available
 response does not quote current eligibility/costs or remaining training points,
 and the completion packet has no trainer entity ID or request ID.
 
-## Existing OpenEQ behavior
+## Original audit: existing OpenEQ behavior
 
 `openeq-net/src/gameplay.rs::PlayerProfile` retains level, a counted `Vec<u32>`
 of skills, spells and resources. The profile decoder currently skips:
@@ -273,7 +283,7 @@ just because a skill row, hotbutton, or stats window is opened.
    rejection, delayed/stale confirmation and exact restoration. No trainer
    purchases or server changes were performed for this document.
 
-## Narrow dedicated live proof, after the current fixture owner is free
+## Original proposal: narrow dedicated live proof
 
 Use one disposable/guarded progression character, with no other player target,
 no autoattack or cast pending, and the existing foreground/network capture
@@ -321,6 +331,79 @@ persistent data. Repeat deliveries must not double-count gains. A subsequent
 fresh login should reproduce the restored baseline and contain no stale
 fixture progress. No trainer request, training purchase, fabricated XP amount,
 or guessed server cap is required for this proof.
+
+## Completed Fellowship live validation, 2026-09-29
+
+`crates/openeq/src/bin/progression_smoke.rs` passed against the deployed RoF2
+server on storage2 using only the dedicated Fellowship character (character5,
+account `openeq_social1`). The preflight verified identity, account status250,
+GM1, offline status and no group, raid, guild, buffs or corpses. No other
+character was logged in or changed by this proof.
+
+The received profile had100 normal-skill entries and32 language entries,
+level10, training points0 and absolute XP0. SQL and profile agreed on normal
+skills0/1/28=55 and language0=100; all other received skill/language entries
+were zero. Skill0's server cap was75. The four commands were exactly:
+
+```text
+#set skill 0 54
+#set skill 0 55
+#set language 0 99
+#set language 0 100
+```
+
+Every command and poll required no current target. The actual incoming
+SkillUpdate events changed only normal skill0 or language0 respectively; wire
+ID100 updated language0 without touching normal skills. SQL row checks after
+each command matched the expected complete skill and language tables. The
+foreground retained level10, training-point snapshot0 and absolute-XP
+snapshot0 throughout. No movement, trainer, combat, XP or level command was
+sent.
+
+The initial ExpUpdate supplied raw bar units **4294966409**. This fixture's
+inherited level10/absolute-XP0 combination is inconsistent with the server XP
+curve: the zone-in calculation produces a negative ratio cast to u32. The
+reducer preserved that received value and returned `None` from
+`experience_fraction()`, rather than displaying a fabricated percentage. The
+initial profile-to-bar transition and a second fresh login both reproduced
+this result. This is live evidence for invalid-ratio handling, not a valid
+within-level experience gain.
+
+The same inherited state made the proposed same-total XP command unsafe:
+`SetEXP(0, ...)` recalculates level and would delevel Fellowship to1. A
+same-level command also resets XP and clamps every above-cap skill; existing
+skill28=55 exceeds its current server cap40. Those commands were deliberately
+deferred. Level packet decoding, transition semantics and valid XP fractions
+remain covered by source review and portable fixtures at this checkpoint;
+there is no claimed live LevelUpdate or ordinary gameplay XP/skill gain.
+
+The commands restored the original skill/language values. After disconnect,
+the probe independently compared all skills, languages,14 innate AA rows,
+training/highest-level/XP/AA bookkeeping, inventory gameplay fields, currency,
+binds, spells, buffs, corpses and social membership. The offline fallback
+allowed only skill0 at54/55 and language0 at99/100 on the exact dedicated
+identity with level10/level2=10, XP0, points0 and AA0. It did not insert/delete
+rows or restore whole tables. Pose/resources were restored under the same
+identity/offline/progression guards. The complete character and inventory
+rows were retained in a private journal; regenerated inventory GUIDs were
+excluded only from the gameplay-field comparison.
+
+A fresh connection reproduced the restored profile and foreground, followed
+by another disconnect and independent SQL verification: Fellowship offline
+in PoK202 instance0 at(1005,-15,389), heading0, HP338/mana0/endurance225,
+hunger/thirst6000, skills0/1/28=55, language0=100, level10/level2=10, XP0,
+points0, AA0,14 innate AA rows and no group/raid/guild/corpses. The probe exited
+successfully. Its evidence files are private (mode0600):
+
+- `/tmp/openeq-progression-foreground-1.log`
+- `/tmp/openeq-progression-foreground-1.baseline.txt`
+- `/tmp/openeq-progression-foreground-1.restore.sql`
+
+The probe build, targeted strict Clippy and `git diff --check` passed. Two
+preflight-only attempts stopped before login: an initially miscounted innate
+AA row total and textual opcode padding (`0x04c` versus `0x004c`). The final
+probe checks14 AA rows and compares opcode values numerically; no decoder
+change or fixture mutation was needed for those preflight corrections.
 
 ## Exact source anchors
 

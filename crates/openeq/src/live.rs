@@ -590,6 +590,7 @@ impl LiveWorld {
                     self.game.trade = Default::default();
                     self.game.raid.begin_zone();
                     self.game.guild.begin_zone();
+                    self.game.progression.begin_zone();
                     self.game.inventory.clear_trade();
                     self.item_use_reset();
                     self.game.inventory_command_pending = false;
@@ -1237,6 +1238,7 @@ impl LiveWorld {
                 self.game.recovery.begin_zone(self.zone_generation);
                 self.game.raid.begin_zone();
                 self.game.guild.begin_zone();
+                self.game.progression.begin_zone();
                 self.recovery_request = None;
                 self.ready = false;
                 self.environment = None;

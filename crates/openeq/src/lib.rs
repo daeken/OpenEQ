@@ -23,6 +23,7 @@ pub mod loading_ui;
 pub mod movement;
 pub mod movement_rules;
 pub mod profiling;
+pub mod progression_ui;
 pub mod raid;
 mod social_interaction;
 pub mod spell_effects;
@@ -50,3 +51,7 @@ pub mod zone_loading;
 pub mod combat_feedback;
 pub mod ui_layout;
 pub mod zone_travel;
+
+pub mod progression;
+
+pub mod progression_interaction;

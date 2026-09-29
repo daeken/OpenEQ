@@ -775,6 +775,8 @@ fn handle_gameplay_input(
         interaction.pointer = window.cursor_position().map(|p| [p.x, p.y]);
     }
     let mut chat_pointer_owned = false;
+    interaction.skills_window.visible_rows =
+        openeq::progression_ui::progression_visible_rows(window.height() as u32);
     interaction.guild_window.visible_rows =
         openeq::guild_ui::guild_visible_rows(window.height() as u32);
     interaction.raid_visible_rows = openeq::raid_ui::raid_visible_rows(
@@ -971,6 +973,9 @@ fn handle_gameplay_input(
             } else if interaction.raid_open {
                 interaction.raid_open = false;
                 interaction.escape_handled = true;
+            } else if interaction.skills_window.open {
+                interaction.skills_window.open = false;
+                interaction.escape_handled = true;
             } else if interaction.guild_window.open {
                 interaction.guild_window.open = false;
                 interaction.escape_handled = true;
@@ -1038,6 +1043,11 @@ fn handle_gameplay_input(
             if hit.window_id.as_deref() == Some("raid") {
                 for event in wheel.read() {
                     interaction.raid_wheel(live, event.y);
+                }
+            }
+            if hit.window_id.as_deref() == Some("skills") {
+                for event in wheel.read() {
+                    interaction.progression_wheel(live, hit, event.y);
                 }
             }
             if hit.window_id.as_deref() == Some("guild") {
@@ -1453,7 +1463,12 @@ fn render_frame(
                     });
             let state = hud::HudState {
                 character: live.character.clone(),
-                player_level: player.map_or(0, |e| e.spawn.level),
+                player_level: live
+                    .game
+                    .progression
+                    .level
+                    .and_then(|level| u8::try_from(level).ok())
+                    .unwrap_or_else(|| player.map_or(0, |e| e.spawn.level)),
                 hp: player.map_or(0., |e| e.spawn.hp_percent as f32 / 100.),
                 mana: live.game.mana.fraction(),
                 endurance: live.game.endurance.fraction(),

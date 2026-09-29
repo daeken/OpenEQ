@@ -116,11 +116,17 @@ full. Stack-split serial refresh is ambiguous; no safe read-only serial request
 was found. Do not enable NPC hand-ins or guess item deduplication before resolving
 that state path and proving ordered refunds with dedicated fixtures.
 
-## 10. Progression controls — queued
+## 10. Progression controls — receive-only first pass
 
 Experience feedback, skill display, trainer interactions, and configurable
 hotbuttons. Show server-confirmed gains and costs and persist user controls.
 Verify ordinary play and reconnect without altering the user's character.
+
+Receive-only skills/languages, level and XP progress now drive original skill
+names, a SkillsWindow and inventory progression strip. Profile totals and
+training points stay snapshots; unknown caps/ratios are not fabricated. Live
+fixture verification is tracked in [the overnight record](OVERNIGHT_2026-09-29.md).
+Trainer interactions and configurable hotbuttons remain subsequent slices.
 
 ## Discoveries
 

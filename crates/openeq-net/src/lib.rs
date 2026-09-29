@@ -34,6 +34,7 @@ pub use stream::{EqStream, StreamError};
 pub mod death;
 pub mod guild;
 pub mod item_use;
+pub mod progression;
 pub mod raid;
 pub mod session;
 pub mod social;
