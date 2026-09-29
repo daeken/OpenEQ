@@ -1,10 +1,11 @@
 # Overnight development — September 29, 2026
 
-User request: continue improving OpenEQ overnight, find and fix problems, and
-test thoroughly. Work in this task through 08:00 America/Chicago (13:00 UTC),
-then checkpoint and report. A thread heartbeat resumes this backlog every
-30 minutes until that cutoff. Preserve current work when resuming; do not start
-duplicate investigations. User-authorized publication target is `master`.
+User request: continue improving OpenEQ, find and fix problems, and test
+thoroughly. The original overnight window ended at 08:00 America/Chicago
+(13:00 UTC), but the user explicitly authorized continued development after
+resetting usage and again while at work. This backlog remains the continuation
+record. Preserve current work when resuming; do not start duplicate
+investigations. User-authorized publication target is `master`.
 
 Starting point: `4f32558`, clean tree, 363 original-asset-inclusive workspace
 tests passed, strict Clippy/format/build passed. Live checks proved chat focus
@@ -481,6 +482,8 @@ that authorization. No live fixture was left connected during the interruption.
 
 ## Eleventh batch (verified)
 
+Published as **c3d5089**.
+
 - Indexed heightmap water now draws authored bounded rectangles with native
   grid topology, two sides and quantized tile UVs. Feerrott2's 65 rectangles and
   Buried Sea's 900 use their correct distinct materials; Old Commonlands gains
@@ -504,14 +507,58 @@ that authorization. No live fixture was left connected during the interruption.
   client build and playback-disabled all-target check pass. Logs use prefix
   `/tmp/openeq-indexed-water-final-` and matching `ui` capture directory.
 
+## Twelfth batch (verified)
+
+Runtime changes committed as **4e2acdd** (terrain edges) and **1b90a5c** (main menu).
+
+- Added an original-skinned main menu with Play, Connection settings and Exit.
+  No-argument/`--login` startup opens the menu; existing authentication and
+  world/character selection are reused. Settings validate before applying, Back
+  discards drafts, and returning from credentials clears passwords/composition.
+  Local navigation revisions and held-key retirement reject stale input.
+- Five new CPU menu/input regressions and six original-art GPU captures cover
+  normal/Retina/compact layouts. Native macOS keyboard navigation, dummy typing,
+  password masking/clearing and normal exit passed without submitting sign-in
+  or opening network sockets. No live character or original audio was involved.
+  Menu captures: `/tmp/openeq-main-menu`; native: `/tmp/openeq-menu-native-*`.
+- Reproduced and fixed opposite-edge texture filtering on baked terrain tiles.
+  The explicit material addressing mode clamps at actual GPU texel centers after
+  interpolation in the diffuse passes, with matching alpha-shadow behavior.
+  Existing repeating materials and water keep their sampling rules. Tests cover
+  all four edges with opaque/blended output and an independent solid reference;
+  the repeating negative control still reproduces the defect.
+- Original Feerrott2 A/B changes only 3,932/518,400 pixels with geometry and bounds
+  unchanged. Inspected captures show thin color lines gone; authored ecosystem
+  discontinuities and 128px tile detail remain separate limitations. Original
+  Nektulos/Old Commonlands/Dead Hills fixtures confirm only baked tiles opt in.
+  Captures: `/tmp/openeq-terrain-addressing`. Independent review found no blocker.
+- Combined verification: **687 workspace tests passed**, zero failures/ignored,
+  including original assets and GPU checks. Strict workspace Clippy, formatting,
+  client build and playback-disabled all-target check pass. Logs use prefix
+  `/tmp/openeq-menu-terrain-`; final UI captures use the matching `ui` directory.
+
+## Native liquid-region research follow-up
+
+- `EQG_LIQUID_TRANSFORMS.md` records the original DAT reader → CPU terrain-height
+  sampler → registered box containment path, with exact code addresses,
+  arithmetic replay and 66 original records across six zones. It supplies
+  finite axis-aligned Feerrott2 and rotated Dead Hills wet/dry fixtures.
+- Native registration quantizes angles, ignores stored scale on this top-level
+  path, and samples quad diagonals according to bit 0x80. The generated server
+  map has materially different rules. Visible terrain topology, full overlap
+  precedence and binary EQGZ file-to-constructor transforms remain unresolved.
+  No runtime liquid behavior or live fixtures changed.
+
 ## Active follow-up ownership
 
-- All agents have handed back the indexed-water runtime/test slice. Final
-  verification, documentation and review are complete. No live fixtures are
+- Terrain/menu implementation, independent review and final verification are
+  complete. All agents have handed back this batch. No live fixtures are
   connected, and Explorer has not been involved.
 - Next priorities: newer liquid-volume transforms and swimming, native water
   time/blend fidelity, direct GPU terrain materials (current tile textures lose
-  detail), terrain texture-edge seams, and a broader live travel/NPC sweep.
+  detail), and a broader live travel/NPC sweep. Native terrain-height sampling
+  has a newly identified alternate-diagonal flag; visible topology must be
+  traced before changing rendering/collision or claiming a complete fix.
 - Other remaining milestones: trainer preview and verified transactions, quest
   hand-in cursor/refund reconciliation, native sky celestial orientation,
   collision-deflected thin liquid crossings, NPC swimming projection,

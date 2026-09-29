@@ -120,11 +120,14 @@ sheet is separate geometry; it cannot establish infinite water beneath the zone.
 Crescent has 57 water-labelled regions and one zone line. These findings are
 research evidence, not tested collision transforms.
 
-Heightmap EQTZP region records have names, type, alternate name, unknown bytes,
-position/rotation/scale/full size. EQEmu's loader adds tile origin and interpolated
-terrain height to their position and uses half size as extents. This mapping is
-not yet validated here. `water.dat` sheets describe finite surfaces with no
-proven lower volume bound and are deliberately excluded.
+Heightmap EQTZP native parsing, terrain anchoring and registered containment are
+now traced in [EQG_LIQUID_TRANSFORMS.md](EQG_LIQUID_TRANSFORMS.md). The two grid
+words are meaningful, CPU height sampling honors an alternate-diagonal quad
+flag, and native registered angles are quantized to 512 steps. These differ
+from the generated EQEmu WTR map. Native overlap/type precedence, edge anchors,
+parent transforms and binary EQGZ's reader-to-constructor path still need work;
+no runtime EQG volumes are enabled by that research. `water.dat` sheets describe
+finite surfaces with no proven lower volume bound and remain excluded.
 
 Sources consulted:
 
