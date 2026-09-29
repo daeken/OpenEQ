@@ -1,0 +1,173 @@
+From d4869f88f8799c6774cb71c802ae3540c03d6250 Mon Sep 17 00:00:00 2001
+From: Sera Brocious <sera.brocious@gmail.com>
+Date: Tue, 29 Sep 2026 12:45:03 -0500
+Subject: [PATCH] Preserve cursor tails when replacing the visible head
+
+---
+ common/inventory_profile.cpp   |   9 +++
+ tests/inventory_profile_test.h | 124 +++++++++++++++++++++++++++++++++
+ 2 files changed, 133 insertions(+)
+
+diff --git a/common/inventory_profile.cpp b/common/inventory_profile.cpp
+index 7b1a53a8b..b7b28887f 100644
+--- a/common/inventory_profile.cpp
++++ b/common/inventory_profile.cpp
+@@ -243,6 +243,15 @@ int16 EQ::InventoryProfile::PutItem(int16 slot_id, const ItemInstance& inst)
+ 		return slot_id;
+ 	}
+ 
++	if (slot_id == invslot::slotCursor) {
++		// DeleteItem already removed the old head. Insert its replacement
++		// without letting _PutItem remove the next queued item as well.
++		auto replacement = inst.Clone();
++		replacement->SetEvolveEquipped(false);
++		m_cursor.push_front(replacement);
++		return slot_id;
++	}
++
+ 	// Delegate to internal method
+ 	return _PutItem(slot_id, inst.Clone());
+ }
+diff --git a/tests/inventory_profile_test.h b/tests/inventory_profile_test.h
+index db9f62525..f9fc04bfb 100644
+--- a/tests/inventory_profile_test.h
++++ b/tests/inventory_profile_test.h
+@@ -31,6 +31,11 @@ public:
+ 		TEST_ADD(InventoryProfileTest::ChargedCursorItemPreservesTailsAtZero);
+ 		TEST_ADD(InventoryProfileTest::ConsumedCursorHeadPromotesOneTail);
+ 		TEST_ADD(InventoryProfileTest::NonCursorConsumptionPreservesCursor);
++		TEST_ADD(InventoryProfileTest::CursorPutReplacesOnlyHead);
++		TEST_ADD(InventoryProfileTest::CursorPutPreservesBagTrees);
++		TEST_ADD(InventoryProfileTest::CursorPutNullRemovesOnlyHead);
++		TEST_ADD(InventoryProfileTest::CursorPutOnEmptyQueue);
++		TEST_ADD(InventoryProfileTest::NonCursorPutPreservesCursor);
+ 	}
+ 
+ private:
+@@ -167,4 +172,123 @@ private:
+ 		TEST_ASSERT(inventory.GetItem(EQ::invslot::GENERAL_BEGIN) == nullptr);
+ 		TEST_ASSERT(Cursor(inventory) == cursor);
+ 	}
++
++	void CursorPutReplacesOnlyHead()
++	{
++		auto original_data = Item(100);
++		auto replacement_data = Item(200, true);
++		EQ::ItemInstance original(&original_data, 1);
++		EQ::ItemInstance replacement(&replacement_data, 8);
++		EQ::InventoryProfile inventory;
++		inventory.SetInventoryVersion(EQ::versions::ClientVersion::RoF2);
++		inventory.PushCursor(original);
++		inventory.PushCursor(original);
++		inventory.PushCursor(original);
++		const auto before = Cursor(inventory);
++
++		TEST_ASSERT(inventory.PutItem(EQ::invslot::slotCursor, replacement) == EQ::invslot::slotCursor);
++		const auto after = Cursor(inventory);
++		TEST_ASSERT(after.size() == before.size());
++		if (after.size() != before.size()) { return; }
++		TEST_ASSERT(after[0] != before[0]);
++		TEST_ASSERT(after[0] != &replacement);
++		TEST_ASSERT(after[0]->GetID() == replacement.GetID());
++		TEST_ASSERT(after[0]->GetSerialNumber() == replacement.GetSerialNumber());
++		TEST_ASSERT(after[0]->GetCharges() == 8);
++		TEST_ASSERT(after[1] == before[1]);
++		TEST_ASSERT(after[2] == before[2]);
++	}
++
++	void CursorPutPreservesBagTrees()
++	{
++		auto bag_data = Item(100);
++		bag_data.ItemClass = EQ::item::ItemClassBag;
++		bag_data.BagSlots = 10;
++		auto child_data = Item(200, true);
++		EQ::ItemInstance old_bag(&bag_data, 1);
++		EQ::ItemInstance replacement(&bag_data, 1);
++		EQ::ItemInstance child(&child_data, 6);
++		old_bag.PutItem(0, child);
++		replacement.PutItem(2, child);
++		replacement.PutItem(7, child);
++		EQ::InventoryProfile inventory;
++		inventory.SetInventoryVersion(EQ::versions::ClientVersion::RoF2);
++		inventory.PushCursor(old_bag);
++		inventory.PushCursor(old_bag);
++		inventory.PushCursor(old_bag);
++		const auto before = Cursor(inventory);
++		const auto* tail_child = before[1]->GetItem(0);
++
++		TEST_ASSERT(inventory.PutItem(EQ::invslot::slotCursor, replacement) == EQ::invslot::slotCursor);
++		const auto after = Cursor(inventory);
++		TEST_ASSERT(after.size() == before.size());
++		if (after.size() != before.size()) { return; }
++		TEST_ASSERT(after[0]->GetItem(0) == nullptr);
++		TEST_ASSERT(after[0]->GetItem(2) != nullptr);
++		TEST_ASSERT(after[0]->GetItem(7) != nullptr);
++		if (!after[0]->GetItem(2) || !after[0]->GetItem(7)) { return; }
++		TEST_ASSERT(after[0]->GetItem(2) != replacement.GetItem(2));
++		TEST_ASSERT(after[0]->GetItem(2)->GetSerialNumber() == replacement.GetItem(2)->GetSerialNumber());
++		TEST_ASSERT(after[0]->GetItem(7)->GetCharges() == 6);
++		TEST_ASSERT(after[1] == before[1]);
++		TEST_ASSERT(after[2] == before[2]);
++		TEST_ASSERT(after[1]->GetItem(0) == tail_child);
++	}
++
++	void CursorPutNullRemovesOnlyHead()
++	{
++		auto data = Item(100);
++		EQ::ItemInstance item(&data, 1);
++		EQ::ItemInstance empty;
++		EQ::InventoryProfile inventory;
++		inventory.SetInventoryVersion(EQ::versions::ClientVersion::RoF2);
++		inventory.PushCursor(item);
++		inventory.PushCursor(item);
++		inventory.PushCursor(item);
++		auto remaining = Cursor(inventory);
++		remaining.erase(remaining.begin());
++		TEST_ASSERT(inventory.PutItem(EQ::invslot::slotCursor, empty) == EQ::invslot::slotCursor);
++		TEST_ASSERT(Cursor(inventory) == remaining);
++	}
++
++	void CursorPutOnEmptyQueue()
++	{
++		auto data = Item(100);
++		EQ::ItemInstance item(&data, 1);
++		EQ::ItemInstance empty;
++		EQ::InventoryProfile inventory;
++		inventory.SetInventoryVersion(EQ::versions::ClientVersion::RoF2);
++		TEST_ASSERT(inventory.PutItem(EQ::invslot::slotCursor, empty) == EQ::invslot::slotCursor);
++		TEST_ASSERT(inventory.CursorEmpty());
++		TEST_ASSERT(inventory.PutItem(EQ::invslot::slotCursor, item) == EQ::invslot::slotCursor);
++		TEST_ASSERT(inventory.CursorSize() == 1);
++		if (!inventory.GetCursorItem()) { return; }
++		TEST_ASSERT(inventory.GetCursorItem()->GetSerialNumber() == item.GetSerialNumber());
++		TEST_ASSERT(inventory.PutItem(EQ::invslot::slotCursor, empty) == EQ::invslot::slotCursor);
++		TEST_ASSERT(inventory.CursorEmpty());
++	}
++
++	void NonCursorPutPreservesCursor()
++	{
++		auto data = Item(100, true);
++		EQ::ItemInstance original(&data, 5);
++		EQ::ItemInstance replacement(&data, 8);
++		EQ::ItemInstance empty;
++		EQ::InventoryProfile inventory;
++		inventory.SetInventoryVersion(EQ::versions::ClientVersion::RoF2);
++		inventory.PushCursor(original);
++		inventory.PushCursor(original);
++		const auto cursor = Cursor(inventory);
++		const auto slot = EQ::invslot::GENERAL_BEGIN;
++		TEST_ASSERT(inventory.PutItem(slot, original) == slot);
++		TEST_ASSERT(inventory.PutItem(slot, replacement) == slot);
++		TEST_ASSERT(inventory.GetItem(slot) != nullptr);
++		if (!inventory.GetItem(slot)) { return; }
++		TEST_ASSERT(inventory.GetItem(slot)->GetSerialNumber() == replacement.GetSerialNumber());
++		TEST_ASSERT(inventory.GetItem(slot)->GetCharges() == 8);
++		TEST_ASSERT(Cursor(inventory) == cursor);
++		TEST_ASSERT(inventory.PutItem(slot, empty) == slot);
++		TEST_ASSERT(inventory.GetItem(slot) == nullptr);
++		TEST_ASSERT(Cursor(inventory) == cursor);
++	}
+ };
+-- 
+2.54.0 (Apple Git-157)
+

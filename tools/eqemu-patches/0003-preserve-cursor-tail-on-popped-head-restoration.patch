@@ -1,0 +1,216 @@
+From 02ad89a6badc90fab1b7a3c14d2cb717b7355c46 Mon Sep 17 00:00:00 2001
+From: Sera Brocious <sera.brocious@gmail.com>
+Date: Tue, 29 Sep 2026 13:05:58 -0500
+Subject: [PATCH] Preserve cursor tails when restoring an already-popped head
+
+Add an explicit clone/prepend operation and use it for world-container exchange and stacked bandolier remainder restoration. PutItem retains its replacement semantics.
+
+Exercise the real InventoryProfile and ItemInstance restoration sequences, including tail order, sparse bag contents, independent stack charges, empty queues and ordinary slots. The former PopItem/PutItem sequences fail 2 of 93 utility tests; the corrected operations pass all 93. Modified zone inventory source also passes syntax checking.
+---
+ common/inventory_profile.cpp   |   7 +++
+ common/inventory_profile.h     |   4 ++
+ tests/inventory_profile_test.h | 110 +++++++++++++++++++++++++++++++++
+ zone/inventory.cpp             |  14 ++++-
+ 4 files changed, 133 insertions(+), 2 deletions(-)
+
+diff --git a/common/inventory_profile.cpp b/common/inventory_profile.cpp
+index b7b28887f..5fc13d6d5 100644
+--- a/common/inventory_profile.cpp
++++ b/common/inventory_profile.cpp
+@@ -261,6 +261,13 @@ int16 EQ::InventoryProfile::PushCursor(const ItemInstance &inst) {
+ 	return invslot::slotCursor;
+ }
+ 
++int16 EQ::InventoryProfile::PushCursorFront(const ItemInstance &inst) {
++	auto restored = inst.Clone();
++	restored->SetEvolveEquipped(false);
++	m_cursor.push_front(restored);
++	return invslot::slotCursor;
++}
++
+ EQ::ItemInstance* EQ::InventoryProfile::GetCursorItem() {
+ 	return m_cursor.peek_front();
+ }
+diff --git a/common/inventory_profile.h b/common/inventory_profile.h
+index 72aa803ae..52f0f120d 100644
+--- a/common/inventory_profile.h
++++ b/common/inventory_profile.h
+@@ -125,6 +125,10 @@ namespace EQ
+ 		// Add item to cursor queue
+ 		int16 PushCursor(const ItemInstance& inst);
+ 
++		// Prepend a clone without replacing any queued item; caller retains ownership.
++		// Use to restore the cursor head after PopItem(slotCursor).
++		int16 PushCursorFront(const ItemInstance& inst);
++
+ 		// Get cursor item in front of queue
+ 		ItemInstance* GetCursorItem();
+ 
+diff --git a/tests/inventory_profile_test.h b/tests/inventory_profile_test.h
+index f9fc04bfb..369ebed6b 100644
+--- a/tests/inventory_profile_test.h
++++ b/tests/inventory_profile_test.h
+@@ -20,6 +20,7 @@
+ #include "common/inventory_profile.h"
+ #include "cppunit/cpptest.h"
+ 
++#include <memory>
+ #include <vector>
+ 
+ class InventoryProfileTest : public Test::Suite {
+@@ -36,6 +37,10 @@ public:
+ 		TEST_ADD(InventoryProfileTest::CursorPutNullRemovesOnlyHead);
+ 		TEST_ADD(InventoryProfileTest::CursorPutOnEmptyQueue);
+ 		TEST_ADD(InventoryProfileTest::NonCursorPutPreservesCursor);
++		TEST_ADD(InventoryProfileTest::PoppedBandolierRemainderPreservesTails);
++		TEST_ADD(InventoryProfileTest::PoppedWorldExchangePreservesTails);
++		TEST_ADD(InventoryProfileTest::PoppedOnlyHeadRestores);
++		TEST_ADD(InventoryProfileTest::PoppedNonCursorItemRestores);
+ 	}
+ 
+ private:
+@@ -291,4 +296,109 @@ private:
+ 		TEST_ASSERT(inventory.GetItem(slot) == nullptr);
+ 		TEST_ASSERT(Cursor(inventory) == cursor);
+ 	}
++
++	void PoppedBandolierRemainderPreservesTails()
++	{
++		auto stack_data = Item(100, true);
++		auto tail_data = Item(200);
++		EQ::ItemInstance stack(&stack_data, 5);
++		EQ::ItemInstance tail(&tail_data, 1);
++		EQ::InventoryProfile inventory;
++		inventory.SetInventoryVersion(EQ::versions::ClientVersion::RoF2);
++		inventory.PushCursor(stack);
++		inventory.PushCursor(tail);
++		inventory.PushCursor(tail);
++		const auto before = Cursor(inventory);
++		std::unique_ptr<EQ::ItemInstance> popped(inventory.PopItem(EQ::invslot::slotCursor));
++		popped->SetCharges(4);
++		// SetBandolier restores the remainder, then equips one from its temporary item.
++		inventory.PushCursorFront(*popped);
++		popped->SetCharges(1);
++		inventory.PutItem(EQ::invslot::slotAmmo, *popped);
++		const auto after = Cursor(inventory);
++		TEST_ASSERT(after.size() == before.size());
++		if (after.size() != before.size()) { return; }
++		TEST_ASSERT(after[0] != popped.get());
++		TEST_ASSERT(after[0]->GetSerialNumber() == popped->GetSerialNumber());
++		TEST_ASSERT(after[0]->GetCharges() == 4);
++		TEST_ASSERT(after[1] == before[1]);
++		TEST_ASSERT(after[2] == before[2]);
++		TEST_ASSERT(inventory.GetItem(EQ::invslot::slotAmmo)->GetCharges() == 1);
++	}
++
++	void PoppedWorldExchangePreservesTails()
++	{
++		auto old_data = Item(100);
++		auto bag_data = Item(200);
++		bag_data.ItemClass = EQ::item::ItemClassBag;
++		bag_data.BagSlots = 10;
++		auto child_data = Item(300, true);
++		EQ::ItemInstance old_head(&old_data, 1);
++		EQ::ItemInstance bag(&bag_data, 1);
++		EQ::ItemInstance child(&child_data, 6);
++		bag.PutItem(2, child);
++		bag.PutItem(7, child);
++		EQ::ItemInstance world_container(&bag_data, 1);
++		world_container.PutItem(3, bag);
++		EQ::InventoryProfile inventory;
++		inventory.SetInventoryVersion(EQ::versions::ClientVersion::RoF2);
++		inventory.PushCursor(old_head);
++		inventory.PushCursor(bag);
++		inventory.PushCursor(old_head);
++		const auto before = Cursor(inventory);
++		const auto* tail_child = before[1]->GetItem(7);
++		std::unique_ptr<EQ::ItemInstance> world_item(world_container.PopItem(3));
++		std::unique_ptr<EQ::ItemInstance> popped(inventory.PopItem(EQ::invslot::slotCursor));
++		// Object::PutItem clones through its underlying ItemInstance container.
++		world_container.PutItem(3, *popped);
++		inventory.PushCursorFront(*world_item);
++		const auto after = Cursor(inventory);
++		TEST_ASSERT(after.size() == before.size());
++		if (after.size() != before.size()) { return; }
++		TEST_ASSERT(after[0]->GetSerialNumber() == world_item->GetSerialNumber());
++		TEST_ASSERT(after[0]->GetItem(0) == nullptr);
++		TEST_ASSERT(after[0]->GetItem(2) != nullptr);
++		TEST_ASSERT(after[0]->GetItem(7) != nullptr);
++		if (!after[0]->GetItem(2) || !after[0]->GetItem(7)) { return; }
++		TEST_ASSERT(after[0]->GetItem(2)->GetCharges() == 6);
++		TEST_ASSERT(after[0]->GetItem(7)->GetSerialNumber() == world_item->GetItem(7)->GetSerialNumber());
++		TEST_ASSERT(after[1] == before[1]);
++		TEST_ASSERT(after[2] == before[2]);
++		TEST_ASSERT(after[1]->GetItem(7) == tail_child);
++		TEST_ASSERT(world_container.GetItem(3)->GetSerialNumber() == popped->GetSerialNumber());
++	}
++
++	void PoppedOnlyHeadRestores()
++	{
++		auto data = Item(100, true);
++		EQ::ItemInstance item(&data, 5);
++		EQ::InventoryProfile inventory;
++		inventory.SetInventoryVersion(EQ::versions::ClientVersion::RoF2);
++		inventory.PushCursor(item);
++		std::unique_ptr<EQ::ItemInstance> popped(inventory.PopItem(EQ::invslot::slotCursor));
++		TEST_ASSERT(inventory.CursorEmpty());
++		inventory.PushCursorFront(*popped);
++		TEST_ASSERT(inventory.CursorSize() == 1);
++		TEST_ASSERT(inventory.GetCursorItem() != popped.get());
++		TEST_ASSERT(inventory.GetCursorItem()->GetSerialNumber() == popped->GetSerialNumber());
++		TEST_ASSERT(inventory.GetCursorItem()->GetCharges() == 5);
++	}
++
++	void PoppedNonCursorItemRestores()
++	{
++		auto data = Item(100, true);
++		EQ::ItemInstance item(&data, 5);
++		EQ::InventoryProfile inventory;
++		inventory.SetInventoryVersion(EQ::versions::ClientVersion::RoF2);
++		inventory.PushCursor(item);
++		inventory.PushCursor(item);
++		const auto cursor = Cursor(inventory);
++		inventory.PutItem(EQ::invslot::GENERAL_BEGIN, item);
++		std::unique_ptr<EQ::ItemInstance> popped(inventory.PopItem(EQ::invslot::GENERAL_BEGIN));
++		popped->SetCharges(4);
++		inventory.PutItem(EQ::invslot::GENERAL_BEGIN, *popped);
++		popped->SetCharges(1);
++		TEST_ASSERT(inventory.GetItem(EQ::invslot::GENERAL_BEGIN)->GetCharges() == 4);
++		TEST_ASSERT(Cursor(inventory) == cursor);
++	}
+ };
+diff --git a/zone/inventory.cpp b/zone/inventory.cpp
+index 4c9de5e84..1bd4680b9 100644
+--- a/zone/inventory.cpp
++++ b/zone/inventory.cpp
+@@ -1962,7 +1962,12 @@ bool Client::SwapItem(MoveItem_Struct* move_in) {
+ 						// World containers don't follow normal rules for swapping
+ 						EQ::ItemInstance* inv_inst = m_inv.PopItem(src_slot_id);
+ 						m_tradeskill_object->PutItem(world_idx, inv_inst);
+-						m_inv.PutItem(src_slot_id, *world_inst);
++						if (src_slot_id == EQ::invslot::slotCursor) {
++							m_inv.PushCursorFront(*world_inst);
++						}
++						else {
++							m_inv.PutItem(src_slot_id, *world_inst);
++						}
+ 						safe_delete(inv_inst);
+ 					}
+ 				}
+@@ -3150,7 +3155,12 @@ void Client::SetBandolier(const EQApplicationPacket *app)
+ 					if(Charges > 1) {
+ 						BandolierItems[BandolierSlot]->SetCharges(Charges-1);
+ 						// Take one charge out and put the rest back
+-						m_inv.PutItem(slot, *BandolierItems[BandolierSlot]);
++						if (slot == EQ::invslot::slotCursor) {
++							m_inv.PushCursorFront(*BandolierItems[BandolierSlot]);
++						}
++						else {
++							m_inv.PutItem(slot, *BandolierItems[BandolierSlot]);
++						}
+ 						database.SaveInventory(character_id, BandolierItems[BandolierSlot], slot);
+ 						BandolierItems[BandolierSlot]->SetCharges(1);
+ 					}
+-- 
+2.54.0 (Apple Git-157)
+

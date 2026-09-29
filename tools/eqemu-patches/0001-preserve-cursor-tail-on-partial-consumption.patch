@@ -1,0 +1,247 @@
+From d414cef5fba6b4f3810c2f35e0e60e7fa9e4ba6b Mon Sep 17 00:00:00 2001
+From: Sera Brocious <sera.brocious@gmail.com>
+Date: Tue, 29 Sep 2026 12:35:24 -0500
+Subject: [PATCH] Preserve cursor tails when partially consuming the head
+
+---
+ common/inventory_profile.cpp   |  10 +-
+ tests/CMakeLists.txt           |   1 +
+ tests/inventory_profile_test.h | 170 +++++++++++++++++++++++++++++++++
+ tests/main.cpp                 |   4 +-
+ 4 files changed, 183 insertions(+), 2 deletions(-)
+ create mode 100644 tests/inventory_profile_test.h
+
+diff --git a/common/inventory_profile.cpp b/common/inventory_profile.cpp
+index 2ec3d6a08..7b1a53a8b 100644
+--- a/common/inventory_profile.cpp
++++ b/common/inventory_profile.cpp
+@@ -424,7 +424,15 @@ bool EQ::InventoryProfile::DeleteItem(int16 slot_id, int16 quantity) {
+ 		}
+ 
+ 		// Charges still exist, or it is a charged item that is not expendable. Put back into inventory
+-		_PutItem(slot_id, item_to_delete);
++		if (slot_id == invslot::slotCursor) {
++			// The head was already popped. Replacing the current cursor item
++			// with _PutItem would discard the next item in the queue.
++			item_to_delete->SetEvolveEquipped(false);
++			m_cursor.push_front(item_to_delete);
++		}
++		else {
++			_PutItem(slot_id, item_to_delete);
++		}
+ 		return false;
+ 	}
+ 
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 346128d60..17cfbfa5a 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -12,6 +12,7 @@ set(tests_headers
+ 	fixed_memory_test.h
+ 	fixed_memory_variable_test.h
+ 	hextoi_32_64_test.h
++	inventory_profile_test.h
+ 	ipc_mutex_test.h
+ 	memory_mapped_file_test.h
+ 	string_util_test.h
+diff --git a/tests/inventory_profile_test.h b/tests/inventory_profile_test.h
+new file mode 100644
+index 000000000..db9f62525
+--- /dev/null
++++ b/tests/inventory_profile_test.h
+@@ -0,0 +1,170 @@
++/* EQEmu: EQEmulator
++
++   Copyright (C) 2001-2026 EQEmu Development Team
++
++   This program is free software; you can redistribute it and/or modify
++   it under the terms of the GNU General Public License as published by
++   the Free Software Foundation; either version 3 of the License, or
++   (at your option) any later version.
++
++   This program is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++   GNU General Public License for more details.
++
++   You should have received a copy of the GNU General Public License
++   along with this program. If not, see <http://www.gnu.org/licenses/>.
++*/
++#pragma once
++
++#include "common/inventory_profile.h"
++#include "cppunit/cpptest.h"
++
++#include <vector>
++
++class InventoryProfileTest : public Test::Suite {
++public:
++	InventoryProfileTest()
++	{
++		TEST_ADD(InventoryProfileTest::PartialCursorStackPreservesTailTrees);
++		TEST_ADD(InventoryProfileTest::PartialCursorStackWithoutTails);
++		TEST_ADD(InventoryProfileTest::ChargedCursorItemPreservesTailsAtZero);
++		TEST_ADD(InventoryProfileTest::ConsumedCursorHeadPromotesOneTail);
++		TEST_ADD(InventoryProfileTest::NonCursorConsumptionPreservesCursor);
++	}
++
++private:
++	void tear_down() override { EQ::InventoryProfile::CleanDirty(); }
++
++	static EQ::ItemData Item(uint32 id, bool stackable = false)
++	{
++		EQ::ItemData item{};
++		item.ID = id;
++		item.ItemClass = EQ::item::ItemClassCommon;
++		item.Stackable = stackable;
++		item.StackSize = stackable ? 20 : 1;
++		return item;
++	}
++
++	static std::vector<EQ::ItemInstance*> Cursor(EQ::InventoryProfile& inventory)
++	{
++		return {inventory.cursor_cbegin(), inventory.cursor_cend()};
++	}
++
++	void PartialCursorStackPreservesTailTrees()
++	{
++		auto stack_data = Item(100, true);
++		auto bag_data = Item(200);
++		bag_data.ItemClass = EQ::item::ItemClassBag;
++		bag_data.BagSlots = 10;
++		auto child_data = Item(300, true);
++		auto tail_data = Item(400);
++		EQ::ItemInstance stack(&stack_data, 5);
++		EQ::ItemInstance bag(&bag_data, 1);
++		EQ::ItemInstance child(&child_data, 7);
++		EQ::ItemInstance tail(&tail_data, 1);
++		bag.PutItem(2, child);
++		bag.PutItem(7, child);
++		EQ::InventoryProfile inventory;
++		inventory.PushCursor(stack);
++		inventory.PushCursor(bag);
++		inventory.PushCursor(tail);
++		const auto before = Cursor(inventory);
++		const auto* child_two = before[1]->GetItem(2);
++		const auto* child_seven = before[1]->GetItem(7);
++		const auto serial = before[0]->GetSerialNumber();
++
++		TEST_ASSERT(!inventory.DeleteItem(EQ::invslot::slotCursor, 2));
++		TEST_ASSERT(Cursor(inventory) == before);
++		TEST_ASSERT(inventory.GetCursorItem()->GetCharges() == 3);
++		TEST_ASSERT(inventory.GetCursorItem()->GetSerialNumber() == serial);
++		// Tail instance and child pointers must survive, not merely equal item IDs.
++		if (Cursor(inventory) != before) { return; }
++		TEST_ASSERT(before[1]->GetItem(2) == child_two);
++		TEST_ASSERT(before[1]->GetItem(7) == child_seven);
++		TEST_ASSERT(before[1]->GetItem(0) == nullptr);
++		TEST_ASSERT(child_two->GetCharges() == 7);
++		TEST_ASSERT(child_seven->GetCharges() == 7);
++		TEST_ASSERT(!inventory.DeleteItem(EQ::invslot::slotCursor, 1));
++		TEST_ASSERT(Cursor(inventory) == before);
++		TEST_ASSERT(inventory.GetCursorItem()->GetCharges() == 2);
++	}
++
++	void PartialCursorStackWithoutTails()
++	{
++		auto data = Item(100, true);
++		EQ::ItemInstance stack(&data, 5);
++		EQ::InventoryProfile inventory;
++		inventory.PushCursor(stack);
++		const auto before = Cursor(inventory);
++		TEST_ASSERT(!inventory.DeleteItem(EQ::invslot::slotCursor, 2));
++		TEST_ASSERT(Cursor(inventory) == before);
++		TEST_ASSERT(inventory.GetCursorItem()->GetCharges() == 3);
++	}
++
++	void ChargedCursorItemPreservesTailsAtZero()
++	{
++		auto charged_data = Item(100);
++		charged_data.MaxCharges = 5;
++		charged_data.Click.Type = EQ::item::ItemEffectClick;
++		auto tail_data = Item(200);
++		EQ::ItemInstance charged(&charged_data, 2);
++		EQ::ItemInstance tail(&tail_data, 1);
++		EQ::InventoryProfile inventory;
++		inventory.PushCursor(charged);
++		inventory.PushCursor(tail);
++		inventory.PushCursor(tail);
++		const auto before = Cursor(inventory);
++		TEST_ASSERT(!inventory.DeleteItem(EQ::invslot::slotCursor, 1));
++		TEST_ASSERT(Cursor(inventory) == before);
++		TEST_ASSERT(inventory.GetCursorItem()->GetCharges() == 1);
++		TEST_ASSERT(!inventory.DeleteItem(EQ::invslot::slotCursor, 1));
++		TEST_ASSERT(Cursor(inventory) == before);
++		TEST_ASSERT(inventory.GetCursorItem()->GetCharges() == 0);
++	}
++
++	void ConsumedCursorHeadPromotesOneTail()
++	{
++		for (int kind = 0; kind < 3; ++kind) {
++			auto head_data = Item(100, kind == 0);
++			if (kind == 1) {
++				head_data.MaxCharges = 1;
++				head_data.Click.Type = EQ::item::ItemEffectExpendable;
++			}
++			auto tail_data = Item(200);
++			EQ::ItemInstance head(&head_data, 1);
++			EQ::ItemInstance tail(&tail_data, 1);
++			EQ::InventoryProfile inventory;
++			inventory.PushCursor(head);
++			inventory.PushCursor(tail);
++			inventory.PushCursor(tail);
++			auto remaining = Cursor(inventory);
++			remaining.erase(remaining.begin());
++			TEST_ASSERT(inventory.DeleteItem(EQ::invslot::slotCursor, kind == 2 ? 0 : 1));
++			TEST_ASSERT(Cursor(inventory) == remaining);
++			TEST_ASSERT(inventory.GetCursorItem() == remaining.front());
++		}
++	}
++
++	void NonCursorConsumptionPreservesCursor()
++	{
++		auto data = Item(100, true);
++		EQ::ItemInstance stack(&data, 5);
++		EQ::InventoryProfile inventory;
++		inventory.SetInventoryVersion(EQ::versions::ClientVersion::RoF2);
++		inventory.PushCursor(stack);
++		inventory.PushCursor(stack);
++		inventory.PutItem(EQ::invslot::GENERAL_BEGIN, stack);
++		const auto cursor = Cursor(inventory);
++		const auto* carried = inventory.GetItem(EQ::invslot::GENERAL_BEGIN);
++		TEST_ASSERT(carried != nullptr);
++		if (!carried) { return; }
++		TEST_ASSERT(!inventory.DeleteItem(EQ::invslot::GENERAL_BEGIN, 2));
++		TEST_ASSERT(inventory.GetItem(EQ::invslot::GENERAL_BEGIN) == carried);
++		TEST_ASSERT(carried->GetCharges() == 3);
++		TEST_ASSERT(Cursor(inventory) == cursor);
++		TEST_ASSERT(inventory.DeleteItem(EQ::invslot::GENERAL_BEGIN, 3));
++		TEST_ASSERT(inventory.GetItem(EQ::invslot::GENERAL_BEGIN) == nullptr);
++		TEST_ASSERT(Cursor(inventory) == cursor);
++	}
++};
+diff --git a/tests/main.cpp b/tests/main.cpp
+index 9eb5c9080..d93d98ca1 100644
+--- a/tests/main.cpp
++++ b/tests/main.cpp
+@@ -20,6 +20,7 @@
+ #include "tests/fixed_memory_test.h"
+ #include "tests/fixed_memory_variable_test.h"
+ #include "tests/hextoi_32_64_test.h"
++#include "tests/inventory_profile_test.h"
+ #include "tests/ipc_mutex_test.h"
+ #include "tests/memory_mapped_file_test.h"
+ #include "tests/skills_util_test.h"
+@@ -56,7 +57,8 @@ int main()
+ 		tests.add(new DataVerificationTest());
+ 		tests.add(new SkillsUtilsTest());
+ 		tests.add(new TaskStateTest());
+-		tests.run(*output, true);
++		tests.add(new InventoryProfileTest());
++		return tests.run(*output, true) ? 0 : 1;
+ 	}
+ 	catch (std::exception &ex) {
+ 		LogError("Test Failure [{}]", ex.what());
+-- 
+2.54.0 (Apple Git-157)
+
