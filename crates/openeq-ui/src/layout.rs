@@ -304,7 +304,7 @@ impl UiWindow<'_> {
             || scrolling
             || matches!(
                 kind,
-                "Button" | "Editbox" | "Listbox" | "Combobox" | "InvSlot" | "Slider"
+                "Button" | "HotButton" | "Editbox" | "Listbox" | "Combobox" | "InvSlot" | "Slider"
             )
         {
             output.hit_targets.push(HitTarget {
@@ -375,7 +375,7 @@ impl UiWindow<'_> {
                     );
                 }
             }
-            "Button" => {
+            "Button" | "HotButton" => {
                 let template = element.child("ButtonDrawTemplate").or_else(|| {
                     element
                         .value("Template")
@@ -478,15 +478,15 @@ impl UiWindow<'_> {
                     text.to_owned()
                 };
                 let center = element.boolean(
-                    if kind == "Button" {
+                    if matches!(kind, "Button" | "HotButton") {
                         "TextAlignCenter"
                     } else {
                         "AlignCenter"
                     },
-                    kind == "Button" || titlebar,
+                    matches!(kind, "Button" | "HotButton") || titlebar,
                 );
                 let right = element.boolean(
-                    if kind == "Button" {
+                    if matches!(kind, "Button" | "HotButton") {
                         "TextAlignRight"
                     } else {
                         "AlignRight"
@@ -536,7 +536,7 @@ impl UiWindow<'_> {
                         },
                         vertical_center: element.boolean(
                             "TextAlignVCenter",
-                            kind == "Button" || kind == "Editbox" || titlebar,
+                            matches!(kind, "Button" | "HotButton" | "Editbox") || titlebar,
                         ),
                         wrap: !element.boolean("NoWrap", kind == "Editbox"),
                     });

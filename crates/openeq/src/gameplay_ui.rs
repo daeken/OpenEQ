@@ -5,6 +5,7 @@ pub use crate::commerce_ui::{CommerceAction, UiBank, UiMerchant, UiMerchantStock
 pub use crate::guild_ui::{
     GuildAction, GuildActionKind, UiGuild, UiGuildMember, UiGuildMotd, UiGuildPage, UiGuildPresence,
 };
+pub use crate::hotbutton_ui::{UiHotbutton, UiHotbuttonEditor, UiHotbuttons};
 use crate::hud::{Hud, HudState};
 pub use crate::progression_ui::{
     ProgressionAction, ProgressionActionKind, UiProgression, UiProgressionPage, UiProgressionRow,
@@ -36,6 +37,8 @@ pub fn valid_window_id(id: &str) -> bool {
             | "raid"
             | "guild"
             | "skills"
+            | "hotbuttons"
+            | "hotbutton_editor"
             | "chat"
             | "actions"
             | "inventory"
@@ -224,6 +227,7 @@ pub struct GameHudState {
     pub raid: Option<UiRaid>,
     pub guild: Option<UiGuild>,
     pub progression: Option<UiProgression>,
+    pub hotbuttons: Option<UiHotbuttons>,
     pub money: Option<UiMoney>,
     pub merchant: Option<UiMerchant>,
     pub bank: Option<UiBank>,
@@ -260,7 +264,8 @@ pub struct GameHudState {
     pub attack: bool,
     pub sitting: bool,
     /// Keys: player, target, chat, actions, inventory, loot, bag:<parent_slot>,
-    /// spellbar, spellbook, spell_inspection, casting, buffs, merchant, bank, group, raid, guild, skills, trade.
+    /// spellbar, spellbook, spell_inspection, casting, buffs, merchant, bank, group, raid,
+    /// guild, skills, trade, hotbuttons, hotbutton_editor.
     /// All coordinates are logical pixels.
     pub window_positions: BTreeMap<String, [f32; 2]>,
     /// Back-to-front logical IDs; used by standalone frame/capture callers.
@@ -739,6 +744,9 @@ impl Hud {
         if let Some(progression) = &state.progression {
             draw.progression(state, progression);
         }
+        if let Some(hotbuttons) = &state.hotbuttons {
+            draw.hotbuttons(state, hotbuttons);
+        }
         draw.compose_windows(additional, stack);
         let hovered = state
             .pointer
@@ -848,13 +856,14 @@ impl Hud {
         if let (Some(item), Some(point)) = (&state.cursor_item, state.pointer) {
             draw.icon(item, Rect::new(point[0] + 10., point[1] + 10., 40., 40.));
         }
+        draw.hotbutton_tooltip(state);
         draw.frame.warnings.sort();
         draw.frame.warnings.dedup();
         draw.frame
     }
 }
 
-fn chat_edit_text(input: &str, cursor: Option<usize>, visible: usize) -> String {
+pub(crate) fn chat_edit_text(input: &str, cursor: Option<usize>, visible: usize) -> String {
     let cursor = cursor.unwrap_or(input.len()).min(input.len());
     let cursor = (0..=cursor)
         .rev()

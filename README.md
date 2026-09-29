@@ -109,7 +109,16 @@ and manual roster/message refresh are not implemented.
 Use `/skills` or **Skills** in inventory to view your base skills and languages
 with their original names. The inventory also shows level and normal experience
 progress when the server supplies it. Skill changes appear in chat; unavailable
-values stay unknown. Trainer purchases and configurable hotbuttons are pending.
+values stay unknown. Trainer purchases remain pending.
+
+The hotbar has twelve initially empty command buttons. Click an empty button,
+right-click an existing one, or use `/hotbutton 1` through `/hotbutton 12` to
+edit its name and one supported slash command. Save stores it without running
+it; Cancel discards changes. Clear empties the draft; Save then removes the
+button. Left-click a saved button to run it once. `/hotbuttons` shows or hides
+the bar. Commands use the current target, spell gems and inspected item, just
+like chat commands. Buttons are saved per character with the window layout;
+multi-line macros, timers and number-key shortcuts are not implemented.
 
 Clicking a window brings it forward, including its blank background. Window
 positions, stacking order and map position/zoom are saved per world and character

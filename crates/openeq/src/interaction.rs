@@ -44,6 +44,8 @@ pub struct Interaction {
     pub raid_was_active: bool,
     pub guild_window: crate::guild_interaction::GuildWindowState,
     pub skills_window: crate::progression_interaction::SkillsWindowState,
+    pub hotbuttons: crate::hotbutton_interaction::HotbuttonState,
+    pub hotbutton_input: crate::hotbutton_input::HotbuttonInput,
     pub merchant_stock: Option<u32>,
     pub merchant_sell: Option<InventorySlot>,
     pub merchant_quantity: u32,
@@ -243,6 +245,7 @@ impl Interaction {
         self.progression_view(live, &mut view);
         self.trade_view(live, &mut view);
         self.item_use_view(live, &mut view);
+        self.hotbutton_view(&mut view);
         view
     }
 
@@ -413,6 +416,16 @@ impl Interaction {
             Action::Raid => self.raid_open = !self.raid_open,
             Action::GuildWindow => self.guild_window.open = !self.guild_window.open,
             Action::Skills => self.skills_window.open = !self.skills_window.open,
+            Action::Hotbuttons => self.hotbuttons.set_open(!self.hotbuttons.open),
+            Action::Hotbutton(slot) => {
+                self.sync_hotbuttons(
+                    live.zone_generation(),
+                    live.ready && live.error.is_none() && !live.game.recovery.blocks_movement(),
+                );
+                if self.hotbuttons.open_editor(self.hotbuttons.token(), slot) {
+                    self.chat_input.cancel_for_handoff(&mut self.editor);
+                }
+            }
             Action::RaidInvite(name) => self.raid_invite(live, name),
             Action::RaidAccept => self.raid_answer(live, true),
             Action::RaidDismiss => self.raid_answer(live, false),
@@ -729,6 +742,10 @@ impl Interaction {
         self.raid_tick(live);
         self.guild_tick(live);
         self.progression_tick(live);
+        self.sync_hotbuttons(
+            live.zone_generation(),
+            live.ready && live.error.is_none() && !live.game.recovery.blocks_movement(),
+        );
         live.trade_tick();
         self.item_use_tick(live);
         if live

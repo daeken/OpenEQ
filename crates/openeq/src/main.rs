@@ -216,13 +216,20 @@ fn main() -> AppExit {
     if let Some(config) = &options.connection {
         runtime.client_job = Some(zone_loading::start_client(options.dir.clone()));
         runtime.fly = false;
+        runtime
+            .interaction
+            .hotbuttons
+            .begin_session(Default::default());
         match openeq::ui_layout::LayoutStore::open(config) {
             Ok(store) => {
+                let mut hotbuttons = Default::default();
                 store.layout().apply(
                     &mut runtime.interaction.window_positions,
                     &mut runtime.interaction.window_stack,
                     &mut runtime.map_state,
+                    &mut hotbuttons,
                 );
+                runtime.interaction.hotbuttons.begin_session(hotbuttons);
                 runtime.layout_store = Some(store);
             }
             Err(error) => eprintln!(
@@ -296,6 +303,7 @@ fn persist_ui_layout(
         &runtime.interaction.window_positions,
         runtime.interaction.window_stack.order(),
         &runtime.map_state,
+        runtime.interaction.hotbuttons.bindings(),
     );
     if let Err(error) =
         runtime
@@ -714,14 +722,35 @@ fn handle_gameplay_input(
     if let Some(live) = runtime.live.as_mut() {
         live.poll();
     }
-    runtime.interaction.controls_blocked = runtime.interaction.editor.active;
+    if let Some(live) = &runtime.live {
+        let context = (
+            live.zone_generation(),
+            live.ready && live.error.is_none() && !live.game.recovery.blocks_movement(),
+        );
+        runtime.interaction.sync_hotbuttons(context.0, context.1);
+    }
+    runtime
+        .interaction
+        .hotbutton_input
+        .begin_handoff_frame(&mut keys);
+    runtime.interaction.controls_blocked =
+        runtime.interaction.editor.active || runtime.interaction.hotbuttons.editor.is_some();
     runtime.interaction.escape_handled = false;
     if let Some(input) = runtime.account_input.as_mut() {
         input.begin_handoff_frame(&mut keys);
     }
     if !runtime.world_ready() {
-        if let Some(input) = runtime.account_input.as_mut() {
-            for event in events.read() {
+        let generation = runtime
+            .live
+            .as_ref()
+            .map_or(0, |live| live.zone_generation());
+        runtime.interaction.sync_hotbuttons(generation, false);
+        for event in events.read() {
+            runtime
+                .interaction
+                .hotbutton_input
+                .filter_handoff_event(event, window_id, &mut keys);
+            if let Some(input) = runtime.account_input.as_mut() {
                 input.filter_handoff_event(event, window_id, &mut keys);
             }
         }
@@ -775,6 +804,8 @@ fn handle_gameplay_input(
         interaction.pointer = window.cursor_position().map(|p| [p.x, p.y]);
     }
     let mut chat_pointer_owned = false;
+    let mut hotbutton_pointer_owned = false;
+    let mut hotbutton_modal_owned = interaction.hotbuttons.editor.is_some();
     interaction.skills_window.visible_rows =
         openeq::progression_ui::progression_visible_rows(window.height() as u32);
     interaction.guild_window.visible_rows =
@@ -785,10 +816,102 @@ fn handle_gameplay_input(
     );
     interaction.chat_input.begin_handoff_frame(&mut keys);
     for event in events.read() {
+        // All owners must see native modifier releases, including releases
+        // subsequently consumed by the editor that originally captured them.
+        interaction
+            .hotbutton_input
+            .observe_modifiers(event, window_id);
+        interaction.chat_input.observe_modifiers(event, window_id);
+        if matches!(event, WindowEvent::WindowFocused(event) if event.window == window_id && !event.focused)
+        {
+            interaction.drag = None;
+            release_cursor(&mut cursor);
+        }
         if account_input
             .as_mut()
             .is_some_and(|input| input.filter_handoff_event(event, window_id, &mut keys))
         {
+            continue;
+        }
+        match event {
+            WindowEvent::CursorMoved(event) if event.window == window_id => {
+                interaction.pointer = Some(event.position.to_array());
+            }
+            WindowEvent::CursorLeft(event) if event.window == window_id => {
+                interaction.pointer = None;
+                interaction.drag = None;
+            }
+            WindowEvent::MouseButtonInput(event)
+                if event.window == window_id
+                    && event.button == MouseButton::Left
+                    && event.state == ButtonState::Released =>
+            {
+                interaction.drag = None;
+            }
+            _ => {}
+        }
+        let editing_hotbutton = interaction.hotbuttons.editor.is_some();
+        hotbutton_modal_owned |= editing_hotbutton;
+        if editing_hotbutton
+            && interaction
+                .chat_input
+                .filter_handoff_event(event, window_id, &mut keys)
+        {
+            interaction.controls_blocked = true;
+            continue;
+        }
+        if matches!(event, WindowEvent::MouseButtonInput(event) if event.window == window_id
+            && event.state == ButtonState::Pressed
+            && matches!(event.button, MouseButton::Left | MouseButton::Right))
+            && window.focused
+            && !is_captured(&cursor)
+            && let Some(hit) = interaction
+                .pointer
+                .and_then(|point| ui_frame.hit_test(point))
+            && openeq::hotbutton_ui::hotbutton_window_hit(hit)
+            && (!editing_hotbutton || hit.window_id.as_deref() == Some("hotbutton_editor"))
+        {
+            interaction.window_stack.raise_hit(hit);
+        }
+        if matches!(event, WindowEvent::MouseButtonInput(event) if event.window == window_id
+            && event.state == ButtonState::Pressed && event.button == MouseButton::Left)
+            && window.focused
+            && !is_captured(&cursor)
+            && let Some((point, hit)) = interaction
+                .pointer
+                .and_then(|point| ui_frame.hit_test(point).map(|hit| (point, hit)))
+            && let Some(hud::UiAction::BeginWindowDrag(name)) = hud::UiAction::from_hit(hit)
+            && ((name == "hotbutton_editor" && editing_hotbutton)
+                || (name == "hotbuttons" && interaction.hotbuttons.open && !editing_hotbutton))
+        {
+            interaction.window_stack.raise(&name);
+            interaction.drag = Some((name, [point[0] - hit.rect.x, point[1] - hit.rect.y]));
+        }
+        let context = openeq::hotbutton_input::HotbuttonInputContext {
+            frame: ui_frame,
+            window: window_id,
+            pointer: interaction.pointer,
+            pointer_allowed: window.focused && !is_captured(&cursor),
+        };
+        let hotbutton_result = interaction.hotbutton_input.route_event(
+            &mut interaction.hotbuttons,
+            &context,
+            event,
+            &mut keys,
+        );
+        interaction.escape_handled |= hotbutton_result.escape_handled;
+        if let Some((action, right)) = hotbutton_result.action {
+            if interaction.hotbutton_action(action, right, live, camera_position) {
+                exit.write(AppExit::Success);
+            }
+            if interaction.hotbuttons.editor.is_some() {
+                interaction.window_stack.raise("hotbutton_editor");
+            }
+        }
+        hotbutton_modal_owned |= interaction.hotbuttons.editor.is_some();
+        if hotbutton_result.captured {
+            hotbutton_pointer_owned |= matches!(event, WindowEvent::MouseButtonInput(_));
+            interaction.controls_blocked = true;
             continue;
         }
         // Use the displayed frame's original hit. Raising only changes the
@@ -847,11 +970,6 @@ fn handle_gameplay_input(
             .chat_scroll
             .saturating_add_signed(result.scroll as isize)
             .min(5000);
-        if matches!(event, WindowEvent::WindowFocused(event) if event.window == window_id && !event.focused)
-        {
-            interaction.drag = None;
-            release_cursor(&mut cursor);
-        }
         if interaction.editor.active {
             release_cursor(&mut cursor);
         }
@@ -864,6 +982,11 @@ fn handle_gameplay_input(
         }
     }
     interaction.chat_input.suppress_captured_keys(&mut keys);
+    interaction
+        .hotbutton_input
+        .suppress_captured_keys(&mut keys);
+    hotbutton_modal_owned |= interaction.hotbuttons.editor.is_some();
+    interaction.controls_blocked |= hotbutton_modal_owned;
     if live.game.recovery.blocks_movement() && keys.just_pressed(KeyCode::Escape) {
         interaction.escape_handled = true;
     }
@@ -1006,8 +1129,10 @@ fn handle_gameplay_input(
             }
         }
     }
-    let ui_left_click = !chat_pointer_owned && mouse.just_pressed(MouseButton::Left);
-    let ui_right_click = !chat_pointer_owned && mouse.just_pressed(MouseButton::Right);
+    let ordinary_pointer =
+        !chat_pointer_owned && !hotbutton_pointer_owned && !hotbutton_modal_owned;
+    let ui_left_click = ordinary_pointer && mouse.just_pressed(MouseButton::Left);
+    let ui_right_click = ordinary_pointer && mouse.just_pressed(MouseButton::Right);
     if window.focused
         && !is_captured(&cursor)
         && let Some(point) = interaction.pointer
@@ -1031,7 +1156,7 @@ fn handle_gameplay_input(
         if mouse.just_released(MouseButton::Left) {
             interaction.drag = None;
         }
-        if let Some(hit) = ui_frame.hit_test(point) {
+        if !hotbutton_modal_owned && let Some(hit) = ui_frame.hit_test(point) {
             if ui_left_click && let Some(action) = openeq::death::RecoveryAction::from_hit(hit) {
                 live.recovery_action(action);
             }
@@ -1159,8 +1284,9 @@ fn handle_gameplay_input(
     }
     // Clicks can focus chat too: synchronize native text input only after
     // both keyboard and pointer actions have chosen the final owner.
-    window.ime_enabled = window.focused && interaction.editor.active;
-    if interaction.editor.active {
+    window.ime_enabled =
+        window.focused && (interaction.editor.active || interaction.hotbuttons.editor.is_some());
+    if interaction.editor.active || interaction.hotbuttons.editor.is_some() {
         interaction.controls_blocked = true;
         release_cursor(&mut cursor);
     }
@@ -1691,13 +1817,21 @@ fn present_account(
         {
             tracing::warn!(%error,"could not save connection preferences");
         }
+        runtime
+            .interaction
+            .hotbuttons
+            .begin_session(Default::default());
+        runtime.layout_store = None;
         match openeq::ui_layout::LayoutStore::open_session(&ready.identity) {
             Ok(store) => {
+                let mut hotbuttons = Default::default();
                 store.layout().apply(
                     &mut runtime.interaction.window_positions,
                     &mut runtime.interaction.window_stack,
                     &mut runtime.map_state,
+                    &mut hotbuttons,
                 );
+                runtime.interaction.hotbuttons.begin_session(hotbuttons);
                 runtime.layout_store = Some(store);
             }
             Err(error) => {

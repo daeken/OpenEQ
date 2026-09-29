@@ -14,6 +14,8 @@ pub mod group;
 pub mod guild;
 mod guild_interaction;
 pub mod guild_ui;
+pub mod hotbutton_ui;
+pub mod hotbuttons;
 pub mod hud;
 pub mod input;
 pub mod interaction;
@@ -55,3 +57,6 @@ pub mod zone_travel;
 pub mod progression;
 
 pub mod progression_interaction;
+
+pub mod hotbutton_input;
+pub mod hotbutton_interaction;

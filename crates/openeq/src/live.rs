@@ -478,6 +478,10 @@ pub(crate) async fn logout_zone(zone: &mut openeq_net::zone::ZoneClient) -> anyh
 }
 
 impl LiveWorld {
+    pub fn zone_generation(&self) -> u64 {
+        self.zone_generation
+    }
+
     pub fn movement_allowed(&self) -> bool {
         self.ready
             && self.own_id.is_some()

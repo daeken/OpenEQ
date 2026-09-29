@@ -11,6 +11,49 @@ const XML: &str = r#"<XML>
 </XML>"#;
 
 #[test]
+fn hotbutton_reuses_button_art_states_and_centered_text_without_nested_slot_behavior() {
+    let xml = r#"<XML>
+      <TextureInfo item="buttons.tga"><Size><CX>200</CX><CY>40</CY></Size></TextureInfo>
+      <Ui2DAnimation item="normal"><Frames><Texture>buttons.tga</Texture><Location><X>0</X><Y>0</Y></Location><Size><CX>40</CX><CY>40</CY></Size></Frames></Ui2DAnimation>
+      <Ui2DAnimation item="hover"><Frames><Texture>buttons.tga</Texture><Location><X>40</X><Y>0</Y></Location><Size><CX>40</CX><CY>40</CY></Size></Frames></Ui2DAnimation>
+      <Ui2DAnimation item="pressed"><Frames><Texture>buttons.tga</Texture><Location><X>80</X><Y>0</Y></Location><Size><CX>40</CX><CY>40</CY></Size></Frames></Ui2DAnimation>
+      <Ui2DAnimation item="pressed_hover"><Frames><Texture>buttons.tga</Texture><Location><X>120</X><Y>0</Y></Location><Size><CX>40</CX><CY>40</CY></Size></Frames></Ui2DAnimation>
+      <Ui2DAnimation item="disabled"><Frames><Texture>buttons.tga</Texture><Location><X>160</X><Y>0</Y></Location><Size><CX>40</CX><CY>40</CY></Size></Frames></Ui2DAnimation>
+      <HotButton item="hot"><ScreenID>HB_Button1</ScreenID><Size><CX>40</CX><CY>40</CY></Size><Text>Attack</Text><SpellGem>not_a_piece</SpellGem><InvSlot>not_a_server_slot</InvSlot><ButtonDrawTemplate><Normal>normal</Normal><Flyby>hover</Flyby><Pressed>pressed</Pressed><PressedFlyby>pressed_hover</PressedFlyby><Disabled>disabled</Disabled></ButtonDrawTemplate></HotButton>
+    </XML>"#;
+    let document = UiDocument::from_xml(xml).unwrap();
+    for (enabled, pressed, hovered, x) in [
+        (true, false, false, 0.),
+        (true, false, true, 40.),
+        (true, true, false, 80.),
+        (true, true, true, 120.),
+        (false, false, false, 160.),
+    ] {
+        let mut bindings = UiBindings::default();
+        let state = bindings.widget_mut("hot");
+        state.enabled = Some(enabled);
+        state.pressed = pressed;
+        state.hovered = hovered;
+        let frame = document
+            .window("hot")
+            .unwrap()
+            .layout(Rect::new(0., 0., 100., 100.), &bindings);
+        assert!(frame.warnings.is_empty());
+        assert_eq!(frame.hit_targets.len(), 1);
+        assert_eq!(frame.hit_targets[0].kind, "HotButton");
+        assert_eq!(frame.hit_targets[0].enabled, enabled);
+        assert_eq!(frame.hit_test([5., 5.]).is_some(), enabled);
+        assert!(
+            frame
+                .commands
+                .iter()
+                .any(|cmd| matches!(cmd,DrawCommand::Image{source,..} if source.x==x))
+        );
+        assert!(frame.commands.iter().any(|cmd|matches!(cmd,DrawCommand::Text{align,vertical_center:true,text,..} if *align==openeq_ui::TextAlign::Center && text=="Attack")));
+    }
+}
+
+#[test]
 fn readonly_stml_scrolls_with_clipped_hits_and_missing_optional_art() {
     let xml = r#"<XML><STMLbox item="description"><ScreenID>DescriptionText</ScreenID><Size><CX>120</CX><CY>80</CY></Size><Style_VScroll>true</Style_VScroll><Text>line one</Text></STMLbox></XML>"#;
     let document = UiDocument::from_xml(xml).unwrap();

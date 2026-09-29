@@ -2,7 +2,8 @@
 
 Original read-only investigation, followed by implementation on 2026-09-29.
 The receive-only Skills/Languages window and inventory level/normal-XP strip
-are implemented; the command bar/editor and trainer sections remain proposals.
+and twelve-button command bar/editor are implemented; trainer sections remain
+proposals. `HOTBUTTON_PLAN.md` records the saved-command implementation and limits.
 Packet semantics and dedicated live proof belong to `PROGRESSION_PROTOCOL_PLAN.md`.
 
 ## Smallest useful slice

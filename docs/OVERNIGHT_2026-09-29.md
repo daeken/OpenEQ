@@ -328,6 +328,8 @@ Published to `master` as **2f023f4**. This is the current verified baseline.
 
 ## Seventh overnight batch (verified)
 
+Published to `master` as **cfa053c**.
+
 - Receive-only normal XP, level and skill/language updates now have exact checked
   codecs. Profile preserves training points, language bytes and absolute XP.
   Network102 tests and strict Clippy pass; wide/reserved values and variable
@@ -364,18 +366,54 @@ Published to `master` as **2f023f4**. This is the current verified baseline.
   existing over-cap skill. Neither command was sent. This is administrative
   receive-path validation, not ordinary skill-gain gameplay or live level proof.
 
+## Eighth overnight batch (verified)
+
+- Twelve saved command buttons and original HotButton/SocialEdit artwork are
+  integrated. Left release runs one existing action; empty slots/right release
+  open a modal editor. Save/Cancel/Clear do not execute commands. Labels and one
+  supported slash command persist per world/character, with malformed slots
+  cleared individually and valid neighbors retaining indices. No new packets,
+  scripts, timers or keyboard shortcuts. `/hotbuttons` toggles the bar;
+  `/hotbutton 1..12` opens an editor.
+- Revision/zone identities reject stale clicks across edits, close/reopen,
+  travel, disconnect and new character sessions. Activation resolves the current
+  target/last tell/gem/item through the existing dispatcher, including its guards
+  and Quit result. Modal editing blocks world/UI click-through and inspection
+  overlays. Native pointer press/release identity, held/repeated key retirement,
+  modifiers and field-owned IME composition have focused regressions.
+- Fifteen validation/persistence tests, five root state/dispatcher tests, fifteen
+  ordered-input tests and five UI CPU tests pass. Original-art GPU test and all22
+  normal/Retina/narrow captures pass and were inspected in
+  `/tmp/openeq-hotbuttons-ui`.
+- Independent review found cross-owner modifier releases and new/cancelled IME
+  commits could be lost. Both directions are fixed with combined-owner regressions;
+  an empty-preedit-before-commit gap also no longer lets Enter submit chat early.
+  All37 chat/hotbutton ordered-input tests pass.
+- Combined verification: **623 workspace tests passed**, zero failures/ignored,
+  including original assets and GPU. Strict workspace Clippy, format, client
+  build and playback-disabled all-target check passed. Logs:
+  `/tmp/openeq-overnight-hotbuttons-{tests,clippy,build,headless}.log`.
+  Complete GPU captures: `/tmp/openeq-overnight-hotbuttons-ui`. No live gameplay
+  or manual native editing was used to validate this local-UI slice.
+
 ## Active follow-up ownership
 
-- **eqemu_server**: Fellowship progression proof/cleanup complete; finishes
-  protocol evidence and plans a separate Reviver1 same-level/XP probe read-only.
-  No additional fixture use is authorized until that concrete recipe is reviewed.
-- **xml_ui**: progression presentation/tests/captures handed back; GPU slot free.
-- **npc_assets**: progression net/review complete; read-only hotbutton config/input
-  design in `HOTBUTTON_PLAN.md`. No runtime/server changes for that follow-up.
-- Root completed final progression verification and owns publication.
-  Next runtime slice is the original command hotbar/editor with saved bindings,
-  following `HOTBUTTON_PLAN.md`; do not begin before the current checkpoint.
-- Later work: configurable hotbuttons, trainer preview and verified transactions,
+- **eqemu_server**: hotbutton controller handed back. Root reviewed and authorized
+  the exact guarded recipe in `REVIVER_PROGRESSION_PROOF_PLAN.md` under existing
+  fixture authority: same-XP0 and same-level1 receive proof on Reviver only,
+  no movement or actual progression change. Revalidate all prerequisites, retain
+  private journals, restore only documented resources/pose, stop on any mismatch.
+  Coordinate temporary typed tracing with root's final hotbar verification.
+- **xml_ui**: hotbar presentation/GPU handed back. Prepared lossless heightmap
+  water data/parser slice in terrain.rs/tests/terrain.rs; begin after root's
+  hotbar publication. No rendering/liquid behavior assumptions.
+- **npc_assets**: hotbar/config/input handed back. Read-only thin-liquid crossing
+  and NPC swimming-projection investigation; source edits await checkpoint.
+- Root owns publication, then the confirmed Feerrott2 internal-name declaration
+  loader bug. Current load_eqg searches feerrott2.zon but the archive contains
+  feerrott.zon/feerrott.dat; preserve exact-name precedence and reject ambiguous
+  alternate declarations.
+- Later work: trainer preview and verified transactions,
   lossless heightmap water parsing, native sky celestial orientation, thin liquid
   crossings, NPC swimming projection, hover/cross-zone resurrection and XP/item
   recovery. First-pass milestones are not full original-client parity.

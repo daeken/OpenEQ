@@ -53,6 +53,10 @@ pub struct ChatInput {
     session_keys: HashSet<KeyCode>,
     // Keys whose whole-frame physical state needs ordered reconstruction.
     handoff_replay: HashSet<KeyCode>,
+    // Empty preedit is often delivered immediately before Commit, so it does
+    // not end ownership of the native composition.
+    composing: bool,
+    cancelled_composition: bool,
 }
 
 #[derive(Default, Debug)]
@@ -69,6 +73,8 @@ impl ChatInput {
         self.captured_keys.clear();
         self.session_keys.clear();
         self.handoff_replay.clear();
+        self.composing = false;
+        self.cancelled_composition = false;
         editor.cancel();
     }
 
@@ -76,6 +82,96 @@ impl ChatInput {
         for key in self.session_keys.drain() {
             self.modifiers.reset(key);
         }
+    }
+
+    /// Observe releases before another input owner can consume them. Presses
+    /// still belong to the normal chat route, preserving retired-key ownership.
+    pub fn observe_modifiers(&mut self, event: &WindowEvent, window: Entity) {
+        match event {
+            WindowEvent::KeyboardInput(event)
+                if event.window == window
+                    && event.state == ButtonState::Released
+                    && matches!(
+                        event.key_code,
+                        KeyCode::ControlLeft
+                            | KeyCode::ControlRight
+                            | KeyCode::SuperLeft
+                            | KeyCode::SuperRight
+                    ) =>
+            {
+                self.modifiers.reset(event.key_code);
+            }
+            WindowEvent::WindowFocused(event) if event.window == window && !event.focused => {
+                self.modifiers.reset_all();
+            }
+            _ => {}
+        }
+    }
+
+    fn cancel_composition(&mut self, editor: &mut ChatEditor) {
+        self.cancelled_composition |= self.composing || !editor.preedit.is_empty();
+        self.composing = false;
+        editor.preedit.clear();
+    }
+
+    /// Retire chat before handing native input to another local editor. Old
+    /// physical keys stay captured until released, and late IME commits cannot
+    /// become text in the other field.
+    pub fn cancel_for_handoff(&mut self, editor: &mut ChatEditor) {
+        self.cancel_composition(editor);
+        editor.cancel();
+        self.retire_session();
+    }
+
+    /// Captured-only routing while another editor owns input. Unlike route_event
+    /// this never opens chat, edits a draft or submits a command.
+    pub fn filter_handoff_event(
+        &mut self,
+        event: &WindowEvent,
+        window: Entity,
+        keys: &mut ButtonInput<KeyCode>,
+    ) -> bool {
+        self.observe_modifiers(event, window);
+        self.retire_session();
+        match event {
+            WindowEvent::KeyboardInput(event) if event.window == window => {
+                if self.captured_keys.contains(&event.key_code) {
+                    keys.reset(event.key_code);
+                    self.handoff_replay.insert(event.key_code);
+                    if event.state == ButtonState::Released {
+                        self.captured_keys.remove(&event.key_code);
+                        self.modifiers.reset(event.key_code);
+                    }
+                    return true;
+                }
+                if self.handoff_replay.contains(&event.key_code) {
+                    match event.state {
+                        ButtonState::Pressed => keys.press(event.key_code),
+                        ButtonState::Released => keys.release(event.key_code),
+                    }
+                }
+            }
+            WindowEvent::Ime(Ime::Commit { window: id, .. })
+                if *id == window && self.cancelled_composition =>
+            {
+                self.cancelled_composition = false;
+                return true;
+            }
+            WindowEvent::Ime(Ime::Preedit {
+                window: id, value, ..
+            }) if *id == window && !value.is_empty() => {
+                self.cancelled_composition = false;
+            }
+            WindowEvent::WindowFocused(event) if event.window == window && !event.focused => {
+                self.captured_keys.clear();
+                self.modifiers.reset_all();
+                for key in &self.handoff_replay {
+                    keys.reset(*key);
+                }
+            }
+            _ => {}
+        }
+        false
     }
 
     /// Begin once before routing a frame's native events. Bevy has already
@@ -140,8 +236,10 @@ impl ChatInput {
         event: &WindowEvent,
     ) -> ChatInputResult {
         let mut result = ChatInputResult::default();
+        self.observe_modifiers(event, window);
         // Pointer handlers can cancel the editor before forwarding this event.
         if !editor.active {
+            self.cancel_composition(editor);
             self.retire_session();
         }
         match event {
@@ -149,12 +247,24 @@ impl ChatInput {
                 self.modifiers.reset_all();
                 self.captured_keys.clear();
                 self.session_keys.clear();
-                editor.preedit.clear();
+                self.cancel_composition(editor);
             }
             WindowEvent::Ime(Ime::Preedit {
                 window: id, value, ..
-            }) if *id == window && editor.active => {
-                editor.preedit.clone_from(value);
+            }) if *id == window => {
+                if !value.is_empty() {
+                    self.cancelled_composition = false;
+                }
+                if editor.active {
+                    self.composing |= !value.is_empty();
+                    editor.preedit.clone_from(value);
+                    result.captured = true;
+                }
+            }
+            WindowEvent::Ime(Ime::Commit { window: id, .. })
+                if *id == window && self.cancelled_composition =>
+            {
+                self.cancelled_composition = false;
                 result.captured = true;
             }
             WindowEvent::Ime(Ime::Commit { window: id, value })
@@ -162,10 +272,11 @@ impl ChatInput {
             {
                 editor.insert(value);
                 editor.preedit.clear();
+                self.composing = false;
                 result.captured = true;
             }
             WindowEvent::Ime(Ime::Disabled { window: id }) if *id == window => {
-                editor.preedit.clear();
+                self.cancel_composition(editor);
             }
             WindowEvent::KeyboardInput(event) if event.window == window => {
                 if event.state == ButtonState::Pressed
@@ -220,12 +331,13 @@ impl ChatInput {
                 }
                 result.captured = true;
                 if event.key_code == KeyCode::Escape {
+                    self.cancel_composition(editor);
                     editor.cancel();
                     self.retire_session();
                     result.escape_handled = true;
                     return result;
                 }
-                if !editor.preedit.is_empty() {
+                if self.composing || !editor.preedit.is_empty() {
                     return result;
                 }
                 match event.key_code {
@@ -264,6 +376,11 @@ impl ChatInput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        hotbutton_input::{HotbuttonInput, HotbuttonInputContext},
+        hotbutton_interaction::HotbuttonState,
+        hotbutton_ui::HotbuttonActionKind,
+    };
     use bevy::{
         input::{
             keyboard::{Key, KeyboardInput, NativeKey},
@@ -328,6 +445,150 @@ mod tests {
             window,
             value: value.into(),
         })
+    }
+
+    #[derive(Default)]
+    struct EditorOwners {
+        chat: ChatInput,
+        editor: ChatEditor,
+        hotbuttons: HotbuttonState,
+        hotbutton_input: HotbuttonInput,
+        keys: ButtonInput<KeyCode>,
+    }
+
+    impl EditorOwners {
+        fn open_hotbutton_editor(&mut self) {
+            self.hotbuttons.sync_context(1, true);
+            self.chat.cancel_for_handoff(&mut self.editor);
+            assert!(self.hotbuttons.open_editor(self.hotbuttons.token(), 0));
+        }
+
+        fn route_frame(&mut self, events: &[WindowEvent]) {
+            let primary = window(1);
+            self.hotbuttons.sync_context(1, true);
+            self.keys.clear();
+            for event in events {
+                if let WindowEvent::KeyboardInput(event) = event
+                    && event.window == primary
+                {
+                    match event.state {
+                        ButtonState::Pressed => self.keys.press(event.key_code),
+                        ButtonState::Released => self.keys.release(event.key_code),
+                    }
+                }
+            }
+            recover_focus_loss(primary, events, &mut self.keys, &mut ButtonInput::default());
+            self.chat.begin_handoff_frame(&mut self.keys);
+            self.hotbutton_input.begin_handoff_frame(&mut self.keys);
+            let frame = openeq_ui::UiFrame::default();
+            for event in events {
+                // Match main's routing order: passive observation, retired
+                // chat filter, modal hotbutton owner, then ordinary chat.
+                self.chat.observe_modifiers(event, primary);
+                self.hotbutton_input.observe_modifiers(event, primary);
+                if self.hotbuttons.editor.is_some()
+                    && self
+                        .chat
+                        .filter_handoff_event(event, primary, &mut self.keys)
+                {
+                    continue;
+                }
+                let result = self.hotbutton_input.route_event(
+                    &mut self.hotbuttons,
+                    &HotbuttonInputContext {
+                        frame: &frame,
+                        window: primary,
+                        pointer: None,
+                        pointer_allowed: true,
+                    },
+                    event,
+                    &mut self.keys,
+                );
+                if let Some((action, _)) = result.action {
+                    assert_eq!(action.kind, HotbuttonActionKind::Cancel);
+                    self.hotbuttons.cancel_editor();
+                }
+                if !result.captured {
+                    self.chat
+                        .route_event(&mut self.editor, primary, event, &mut self.keys);
+                }
+            }
+            self.chat.suppress_captured_keys(&mut self.keys);
+            self.hotbutton_input.suppress_captured_keys(&mut self.keys);
+        }
+    }
+
+    #[test]
+    fn late_chat_commit_stays_cancelled_after_hotbutton_editor_closes() {
+        let primary = window(1);
+        for empty_preedit_before_handoff in [false, true] {
+            let mut owners = EditorOwners::default();
+            owners.editor.open("old draft");
+            owners.route_frame(&[preedit(primary, "old composition")]);
+            if empty_preedit_before_handoff {
+                owners.route_frame(&[preedit(primary, "")]);
+            }
+            owners.open_hotbutton_editor();
+            owners.route_frame(&[
+                press(primary, KeyCode::Escape, None),
+                press(primary, KeyCode::Enter, None),
+                commit(window(2), "foreign composition"),
+                commit(primary, "late old composition"),
+            ]);
+            assert!(owners.hotbuttons.editor.is_none());
+            assert!(owners.editor.active);
+            assert!(owners.editor.text.is_empty());
+            owners.route_frame(&[
+                preedit(primary, "new composition"),
+                preedit(primary, ""),
+                commit(primary, "new composition"),
+            ]);
+            assert_eq!(owners.editor.text, "new composition");
+        }
+    }
+
+    #[test]
+    fn fresh_chat_composition_replaces_cancelled_owner_after_hotbutton_close() {
+        let primary = window(1);
+        let mut owners = EditorOwners::default();
+        owners.editor.open("old draft");
+        owners.route_frame(&[preedit(primary, "cancelled")]);
+        owners.open_hotbutton_editor();
+        owners.route_frame(&[
+            press(primary, KeyCode::Escape, None),
+            press(primary, KeyCode::Enter, None),
+            preedit(primary, "fresh"),
+            commit(primary, "fresh"),
+        ]);
+        assert!(owners.editor.active);
+        assert_eq!(owners.editor.text, "fresh");
+        assert!(owners.editor.preedit.is_empty());
+    }
+
+    #[test]
+    fn hotbutton_owned_modifier_release_does_not_stick_in_reopened_chat() {
+        let primary = window(1);
+        for modifier in [
+            KeyCode::SuperLeft,
+            KeyCode::SuperRight,
+            KeyCode::ControlLeft,
+            KeyCode::ControlRight,
+        ] {
+            let mut owners = EditorOwners::default();
+            // This press was observed in gameplay, before chat could own it.
+            owners.route_frame(&[press(primary, modifier, None)]);
+            owners.open_hotbutton_editor();
+            owners.route_frame(&[
+                release(window(2), modifier),
+                release(primary, modifier),
+                press(primary, KeyCode::Escape, None),
+                press(primary, KeyCode::Enter, None),
+                press(primary, KeyCode::KeyA, Some("fresh")),
+            ]);
+            assert!(owners.editor.active);
+            assert_eq!(owners.editor.text, "fresh", "stale {modifier:?}");
+            assert!(!owners.keys.pressed(modifier));
+        }
     }
 
     fn route_keyboard_frame(
@@ -908,6 +1169,30 @@ mod tests {
     }
 
     #[test]
+    fn empty_preedit_does_not_release_chat_composition_before_commit() {
+        let primary = window(1);
+        let mut input = ChatInput::default();
+        let mut editor = ChatEditor::default();
+        let mut keys = ButtonInput::default();
+        editor.open("say ");
+        let results = route_keyboard_frame(
+            &mut input,
+            &mut editor,
+            primary,
+            &mut keys,
+            &[
+                preedit(primary, "にほん"),
+                preedit(primary, ""),
+                press(primary, KeyCode::Enter, None),
+                commit(primary, "日本"),
+            ],
+        );
+        assert!(results.iter().all(|result| result.submitted.is_none()));
+        assert!(editor.active);
+        assert_eq!(editor.text, "say 日本");
+    }
+
+    #[test]
     fn repeated_enter_never_reopens_after_submit_or_reset() {
         let primary = window(1);
         for enter in [KeyCode::Enter, KeyCode::NumpadEnter] {
@@ -1095,5 +1380,78 @@ mod tests {
                 .as_deref(),
             Some("hé猫👋e\u{301}")
         );
+    }
+    #[test]
+    fn retired_chat_owner_filters_old_text_and_restores_a_fresh_same_frame_press() {
+        let primary = window(1);
+        let mut input = ChatInput::default();
+        let mut editor = ChatEditor::default();
+        let mut keys = ButtonInput::default();
+        editor.open("/hotbutton 1");
+        input.route_event(
+            &mut editor,
+            primary,
+            &press(primary, KeyCode::KeyW, Some("w")),
+            &mut keys,
+        );
+        input.cancel_for_handoff(&mut editor);
+        keys.press(KeyCode::KeyW);
+        keys.release(KeyCode::KeyW); // Bevy already applied the whole batch.
+        input.begin_handoff_frame(&mut keys);
+        assert!(input.filter_handoff_event(
+            &keyboard(
+                primary,
+                KeyCode::KeyW,
+                ButtonState::Pressed,
+                Some("old"),
+                true
+            ),
+            primary,
+            &mut keys
+        ));
+        assert!(input.filter_handoff_event(&release(primary, KeyCode::KeyW), primary, &mut keys));
+        assert!(!keys.pressed(KeyCode::KeyW) && !keys.just_released(KeyCode::KeyW));
+        assert!(!input.filter_handoff_event(
+            &press(primary, KeyCode::KeyW, Some("fresh")),
+            primary,
+            &mut keys
+        ));
+        assert!(keys.pressed(KeyCode::KeyW) && keys.just_pressed(KeyCode::KeyW));
+        assert!(!input.filter_handoff_event(
+            &press(primary, KeyCode::Enter, None),
+            primary,
+            &mut keys
+        ));
+        assert!(!editor.active, "captured-only filter must never open chat");
+        assert_eq!(editor.text, "/hotbutton 1w");
+    }
+
+    #[test]
+    fn chat_composition_cannot_commit_into_another_editor_after_handoff() {
+        let primary = window(1);
+        let mut input = ChatInput::default();
+        let mut editor = ChatEditor::default();
+        let mut keys = ButtonInput::default();
+        editor.open("draft");
+        input.event(&mut editor, primary, &preedit(primary, "old composition"));
+        input.cancel_for_handoff(&mut editor);
+        assert!(!input.filter_handoff_event(&commit(window(2), "foreign"), primary, &mut keys));
+        assert!(input.filter_handoff_event(
+            &commit(primary, "late old composition"),
+            primary,
+            &mut keys
+        ));
+        assert!(!input.filter_handoff_event(
+            &preedit(primary, "new composition"),
+            primary,
+            &mut keys
+        ));
+        assert!(!input.filter_handoff_event(
+            &commit(primary, "new composition"),
+            primary,
+            &mut keys
+        ));
+        assert_eq!(editor.text, "draft");
+        assert!(!editor.active && editor.preedit.is_empty());
     }
 }

@@ -1,9 +1,10 @@
 # Small command hotbar implementation plan
 
-Read-only investigation, 2026-09-29, against OpenEQ after guild checkpoint
-`2f023f4` with progression integration in progress. This refines the command-bar
-part of [PROGRESSION_UI_PLAN.md](PROGRESSION_UI_PLAN.md). No runtime or server
-changes were made for this investigation.
+Investigation and implementation, 2026-09-29. This refines the command-bar
+part of [PROGRESSION_UI_PLAN.md](PROGRESSION_UI_PLAN.md). The first slice is now
+implemented: saved twelve-slot bar, original-art editor, ordered native input,
+and dispatch through existing actions. No protocol extensions or server changes.
+The verification record is in `OVERNIGHT_2026-09-29.md`.
 
 Implement one original-skin bar with twelve locally saved command buttons and
 a two-field editor. A button stores a label and one supported slash command.
