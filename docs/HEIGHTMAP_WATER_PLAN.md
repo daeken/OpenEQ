@@ -31,8 +31,9 @@ below. It changes no surface geometry, rendering or liquid behavior.
 - The rectangle is **not exactly reconstructible from current heights**.
   Neither ignoring it nor replacing it with a calculated submerged-quad bound
   is justified. Native constructors pass it to a two-sided subdivided planar
-  mesh; it is a geometric extent, not solely cache metadata. Later shader
-  effects and the complete final shoreline have not been verified.
+  mesh; it is a geometric extent, not solely cache metadata. The decoded water
+  shaders add neither displacement nor shoreline discard. Complete appearance
+  and external render states still require comparison.
 - The trailing float is -1000 in every extended record audited. Its purpose
   remains unknown. Do not turn it into a liquid bottom or a sentinel rule.
 
@@ -75,7 +76,7 @@ These map names use the existing shared-texture lookup after path stripping.
 The native indexed mesh uses tile-relative grid UVs, with `*UVSCALE` supplied
 separately as a shader parameter. Reusing the finite-sheet world-coordinate
 formula would be an approximation; see the static-analysis document for the
-decoded CPU mapping and unresolved shader operations.
+decoded grid lookup, fixed-point vertex packing and two scrolling shader UVs.
 
 ## Binary record layout and cross-zone checks
 
@@ -95,8 +96,8 @@ The earlier loader happened to consume all audited fixtures correctly with a
 signed-positive word gate, but would desynchronize for a modern zero/negative
 selector or legacy positive second float. Native versions below 12 omit these
 water fields; this does not establish OpenEQ support for those older complete
-DAT layouts. The other version-dependent record layouts, particularly version
-22 object placements, still require investigation.
+DAT layouts. Version-22 object placements have since been traced: their extra
+word uses `version >= 22`; a complete version-22 fixture remains unverified.
 
 The following independent complete parses distinguish an index from a simple
 record count and guard against making Feerrott2-specific rules universal:
@@ -192,8 +193,8 @@ Two concrete counterexamples prevent overclaiming:
   A planar interpolation crosses Z=-50 beyond Y=224. The calculated wet-quad
   bound ends at Y=240 instead. A hard crop at the recorded bound removes this
   narrow submerged edge; ignoring the bound preserves it. The native CPU mesh
-  uses the stored bound. Matching final shoreline appearance still requires
-  checking shader behavior and fixed original-client cameras.
+  uses the stored bound and the decoded water shaders add no shoreline discard.
+  Matching final appearance still requires fixed original-client cameras.
 
 The flags also cannot select the water by themselves. Across Feerrott2 the
 flag histogram is `{0:52342,128:31855,1:25,4:1,132:1}`. Inside recorded
@@ -268,8 +269,9 @@ Pinned source references were read directly:
    rectangles, 54 partial and 11 full-tile. Use stored bounds, retain existing
    terrain/depth rendering, and mark every surface noncollidable. A simple
    two-triangle rectangle would approximate the native subdivided, two-sided
-   mesh. Decode the remaining UV shader operations before treating an alternate
-   mapping as compatible.
+   mesh. The native UV path is now decoded; follow
+   [HEIGHTMAP_WATER_SURFACES.md](HEIGHTMAP_WATER_SURFACES.md) for grid subdivision,
+   fixed-point quantization, selector validation and a separate indexed UV mode.
    Do not recompute bounds from height, flood full tiles, use the unknown final
    float as a bottom, or alter camera/player liquid state.
 4. Before promoting that candidate to compatibility, compare fixed original-
