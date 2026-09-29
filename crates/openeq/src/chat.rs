@@ -189,9 +189,10 @@ pub enum Action {
     Location,
     Help,
     Quit,
+    Camp,
 }
 
-pub const HELP: &str = "Enter: chat • /say /tell NAME /reply /group /guild /rsay /ooc /shout /auction /emote\n/attack [on|off] /sit /stand /hail /con /assist [NAME] /target NAME /loot /inventory /cast 1–12 /book /stopcast /loc /quit\n/trade /canceltrade /scribe /useitem (inspected item)\n/audio [mute|unmute] /audio master|music|ambience 0–100\n/skills /hotbuttons /hotbutton 1–12 /guildwindow /raid /raidinvite [NAME] /raidaccept /raiddecline /raidleave /raidleader NAME\n/use /merchant /bank /invite [NAME] /accept /decline /leavegroup /makeleader NAME\nI inventory • Q attack • H hail • X sit/stand • L loot • C consider • V assist • Tab target • B spellbook • Alt+1–0 spell gems • M map • F9 camera • E door • R NPC service";
+pub const HELP: &str = "Enter: chat • /say /tell NAME /reply /group /guild /rsay /ooc /shout /auction /emote\n/attack [on|off] /sit /stand /hail /con /assist [NAME] /target NAME /loot /inventory /cast 1–12 /book /stopcast /loc /camp /quit\n/trade /canceltrade /scribe /useitem (inspected item)\n/audio [mute|unmute] /audio master|music|ambience 0–100\n/skills /hotbuttons /hotbutton 1–12 /guildwindow /raid /raidinvite [NAME] /raidaccept /raiddecline /raidleave /raidleader NAME\n/use /merchant /bank /invite [NAME] /accept /decline /leavegroup /makeleader NAME\nI inventory • Q attack • H hail • X sit/stand • L loot • C consider • V assist • Tab target • B spellbook • Alt+1–0 spell gems • M map • F9 camera • E door • R NPC service";
 
 pub fn parse(line: &str) -> Result<Action, String> {
     let line = line.trim();
@@ -310,7 +311,8 @@ pub fn parse(line: &str) -> Result<Action, String> {
         ),
         "loc" => Action::Location,
         "help" => Action::Help,
-        "quit" | "camp" => Action::Quit,
+        "quit" => Action::Quit,
+        "camp" => Action::Camp,
         _ => {
             return Err(format!(
                 "Unknown command /{command}. Type /help for supported commands."

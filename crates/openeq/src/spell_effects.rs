@@ -167,6 +167,14 @@ struct Particle {
     attached: bool,
 }
 impl SpellEffects {
+    /// Share immutable client assets across character sessions, with no cues,
+    /// particles, timing, correlation or counters from the departing player.
+    pub fn fresh_with_shared_assets(&self) -> Self {
+        Self {
+            assets: self.assets.clone(),
+            ..Default::default()
+        }
+    }
     pub fn set_assets(&mut self, assets: EffectAssets) {
         self.assets = Some(Arc::new(assets));
     }
@@ -702,6 +710,32 @@ fn sample_shape(shape: u32, dimensions: [f32; 3], distribution: [u32; 2], rng: &
 #[cfg(test)]
 mod simulation_tests {
     use super::*;
+    #[test]
+    fn fresh_character_shares_only_assets_and_discards_old_effect_state() {
+        let now = Instant::now();
+        let mut effects = SpellEffects::default();
+        effects.set_assets(EffectAssets {
+            catalog: Default::default(),
+            textures: Default::default(),
+            projectile_definitions: vec![],
+            projectile_models: Default::default(),
+        });
+        effects.timeline.cues.push(cue(now));
+        effects.clocks.insert((1, 0), 3.);
+        effects.last_frame = Some(now);
+        effects.stats.active_effects = 9;
+        let next = effects.fresh_with_shared_assets();
+        assert!(Arc::ptr_eq(
+            effects.assets.as_ref().unwrap(),
+            next.assets.as_ref().unwrap()
+        ));
+        assert!(
+            next.timeline.cues.is_empty() && next.clocks.is_empty() && next.particles.is_empty()
+        );
+        assert!(next.last_frame.is_none());
+        assert_eq!(next.stats.active_effects, 0);
+        assert_eq!(effects.timeline.cues.len(), 1);
+    }
     fn emitter() -> EmitterDefinition {
         let mut data = b"EDD\0".to_vec();
         data.extend_from_slice(b"110\0");

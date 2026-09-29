@@ -155,7 +155,8 @@ pub fn parse_hotbutton_command(command: &str) -> Result<Action, HotbuttonError> 
         | Action::StopCast
         | Action::Location
         | Action::Help
-        | Action::Quit => Ok(action),
+        | Action::Quit
+        | Action::Camp => Ok(action),
         Action::Hotbuttons | Action::Hotbutton(_) => Err(HotbuttonError::ManagementCommand),
     }
 }
@@ -291,7 +292,7 @@ mod tests {
             );
         }
         assert_eq!(parse_hotbutton_command(" /QuIt "), Ok(Action::Quit));
-        assert_eq!(parse_hotbutton_command("/camp"), Ok(Action::Quit));
+        assert_eq!(parse_hotbutton_command("/camp"), Ok(Action::Camp));
         assert_eq!(parse_hotbutton_command("/sit"), Ok(Action::Sit(true)));
         assert_eq!(parse_hotbutton_command("/stand"), Ok(Action::Sit(false)));
         assert!(matches!(

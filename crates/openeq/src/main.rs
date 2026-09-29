@@ -92,12 +92,79 @@ struct Runtime {
     account_preferences: Option<openeq::account::preferences::PreferenceStore>,
     account_preview: openeq::account_preview::Preview,
     client_data: Option<zone_loading::ClientData>,
+    account_handoff_pending: bool,
+    camp_input: openeq::account_ui::CampInput,
+    cached_client_assets: Option<(
+        openeq::game::StringTable,
+        openeq::spells::SpellCatalog,
+        openeq::spell_effects::SpellEffects,
+    )>,
 }
 
 impl Runtime {
+    fn account_active(&self) -> bool {
+        self.account
+            .as_ref()
+            .is_some_and(|account| account.view.stage != openeq::account::Stage::Playing)
+    }
+
+    /// A new character may enter the same zone at generation zero. Retire every
+    /// character-owned scene key and interaction before accepting that entry.
+    fn retire_character(&mut self) {
+        if let Some(store) = self.layout_store.as_mut() {
+            let layout = openeq::ui_layout::Layout::capture(
+                &self.interaction.window_positions,
+                self.interaction.window_stack.order(),
+                &self.map_state,
+                self.interaction.hotbuttons.bindings(),
+            );
+            if let Err(error) = store.update(layout, std::time::Instant::now(), true) {
+                tracing::warn!(%error, "could not save departing character layout");
+            }
+        }
+        if let Some(live) = self.live.take() {
+            self.cached_client_assets = Some((
+                live.game.strings,
+                live.game.spell_catalog,
+                live.spell_effects.fresh_with_shared_assets(),
+            ));
+        }
+        self.scene = None;
+        self.actors = None;
+        self.doors = None;
+        self.collision = None;
+        self.liquids = Default::default();
+        self.zone_lines = Default::default();
+        self.zone_travel = Default::default();
+        self.zone_map = None;
+        self.map_state = Default::default();
+        self.map_open = false;
+        self.third_person = false;
+        self.atmosphere_zone = None;
+        self.loaded_zone = None;
+        self.loaded_destination = None;
+        self.loading_destination = None;
+        self.loading_job = None;
+        self.loading_error = None;
+        self.layout_store = None;
+        self.interaction = Default::default();
+        self.ui_frame = Default::default();
+        self.chat_link_hits.clear();
+        self.ground_motion = Default::default();
+        self.spawn_needs_recovery = false;
+        self.moving = false;
+        self.account_handoff_pending = true;
+        if let Some(input) = self.account_input.as_mut() {
+            input.reset();
+        }
+        if let Some(audio) = self.audio.as_ref() {
+            audio.update(None, [0.; 3], 12);
+        }
+    }
+
     fn world_ready(&self) -> bool {
         self.scene.is_some()
-            && self.account.is_none()
+            && !self.account_active()
             && self.client_job.is_none()
             && self.loading_error.is_none()
             && self.loading_job.is_none()
@@ -159,6 +226,9 @@ impl Runtime {
             account_preferences: None,
             account_preview: Default::default(),
             client_data: None,
+            account_handoff_pending: false,
+            camp_input: Default::default(),
+            cached_client_assets: None,
         }
     }
 }
@@ -617,12 +687,21 @@ fn handle_cursor_capture(
     let Ok((entity, mut cursor)) = cursors.single_mut() else {
         return;
     };
-    if runtime.account.is_some() {
+    if runtime.account_active() {
         release_cursor(&mut cursor);
         focus.clear();
         return;
     }
 
+    if runtime
+        .live
+        .as_ref()
+        .is_some_and(|live| live.camp_view().is_some())
+    {
+        release_cursor(&mut cursor);
+        focus.clear();
+        return;
+    }
     if !runtime.world_ready() {
         release_cursor(&mut cursor);
         focus.clear();
@@ -716,7 +795,7 @@ fn handle_gameplay_input(
     let Ok((window_id, mut window, mut cursor)) = windows.single_mut() else {
         return;
     };
-    if runtime.account.is_some() {
+    if runtime.account_active() {
         events.clear();
         wheel.clear();
         return;
@@ -738,7 +817,16 @@ fn handle_gameplay_input(
     runtime.interaction.controls_blocked =
         runtime.interaction.editor.active || runtime.interaction.hotbuttons.editor.is_some();
     runtime.interaction.escape_handled = false;
-    if let Some(input) = runtime.account_input.as_mut() {
+    let Runtime {
+        account_input,
+        camp_input,
+        live,
+        ..
+    } = &mut *runtime;
+    if let Some(input) = account_input {
+        if live.as_ref().is_none_or(|live| live.camp_view().is_none()) {
+            camp_input.handoff(input);
+        }
         input.begin_handoff_frame(&mut keys);
     }
     if !runtime.world_ready() {
@@ -775,6 +863,33 @@ fn handle_gameplay_input(
         interaction.drag = None;
         interaction.pointer = None;
         runtime.interaction.controls_blocked = true;
+        return;
+    }
+    if let Some(camp) = runtime.live.as_ref().and_then(|live| live.camp_view()) {
+        let cancel_hit = window.cursor_position().is_some_and(|p| {
+            runtime
+                .ui_frame
+                .hit_test([p.x, p.y])
+                .is_some_and(|hit| hit.item == format!("camp:{}:cancel", camp.token) && hit.enabled)
+        });
+        if keys.just_pressed(KeyCode::Escape)
+            || (mouse.just_pressed(MouseButton::Left) && cancel_hit)
+        {
+            runtime.live.as_mut().unwrap().cancel_camp(camp.token);
+        }
+        runtime.camp_input.capture_pressed(&keys);
+        for event in events.read() {
+            runtime.camp_input.observe(window_id, event);
+        }
+        runtime.interaction.controls_blocked = true;
+        runtime.interaction.escape_handled = true;
+        runtime.moving = false;
+        events.clear();
+        wheel.clear();
+        keys.reset_all();
+        mouse.reset_all();
+        window.ime_enabled = false;
+        release_cursor(&mut cursor);
         return;
     }
     let camera_position = runtime.camera.position;
@@ -1310,6 +1425,25 @@ fn handle_account_input(
         events.clear();
         return;
     };
+    if !runtime.account_active() {
+        events.clear();
+        return;
+    }
+    if runtime.account_handoff_pending {
+        runtime.account_handoff_pending = false;
+        let Runtime {
+            account_input,
+            camp_input,
+            ..
+        } = &mut *runtime;
+        if let Some(input) = account_input {
+            input.suppress_held_keys(&keys);
+            camp_input.handoff(input);
+        }
+        keys.reset_all();
+        mouse.reset_all();
+        events.clear();
+    }
     let Runtime {
         account,
         account_input,
@@ -1677,6 +1811,13 @@ fn render_frame(
             frame.commands.append(&mut recovery.commands);
             frame.hit_targets.append(&mut recovery.hit_targets);
             frame.warnings.append(&mut recovery.warnings);
+            if let Some(camp) = runtime.live.as_ref().and_then(|live| live.camp_view()) {
+                let mut overlay =
+                    openeq::account_ui::camp_frame(runtime.account_ui.as_ref(), ui_size, camp);
+                frame.commands.append(&mut overlay.commands);
+                frame.hit_targets = overlay.hit_targets;
+                frame.warnings.append(&mut overlay.warnings);
+            }
             FrameSample::mark(&mut profile, "ui_build");
             renderer.set_ui_scaled(&frame, window.scale_factor());
             runtime
@@ -1698,9 +1839,16 @@ fn render_frame(
         } else {
             // A refused border request resumes the same scene, so scene
             // installation cannot clear this overlay for a missing XML skin.
-            runtime.ui_frame = openeq_ui::UiFrame::default();
+            runtime.ui_frame = runtime
+                .live
+                .as_ref()
+                .and_then(|live| live.camp_view())
+                .map(|camp| {
+                    openeq::account_ui::camp_frame(runtime.account_ui.as_ref(), ui_size, camp)
+                })
+                .unwrap_or_default();
             runtime.chat_link_hits.clear();
-            renderer.set_ui(&runtime.ui_frame);
+            renderer.set_ui_scaled(&runtime.ui_frame, window.scale_factor());
         }
         FrameSample::mark(&mut profile, "ui_upload");
         if let Some(scene) = runtime.scene.as_ref() {
@@ -1781,6 +1929,13 @@ fn desired_destination(runtime: &Runtime, options: &Options) -> Option<loading::
 }
 
 fn poll_client_assets(runtime: &mut Runtime) {
+    if let Some(live) = runtime.live.as_mut()
+        && let Some((strings, spells, effects)) = runtime.cached_client_assets.take()
+    {
+        live.game.strings = strings;
+        live.game.spell_catalog = spells;
+        live.spell_effects = effects;
+    }
     if let Some(result) = runtime.client_job.as_mut().and_then(|job| job.poll()) {
         runtime.client_job = None;
         match result {
@@ -1824,7 +1979,9 @@ fn present_account(
     }
     if let Some(ready) = runtime.account.as_mut().and_then(|account| account.poll()) {
         runtime.account_preview.update(None, renderer);
-        runtime.account = None;
+        if runtime.live.is_some() {
+            runtime.retire_character();
+        }
         if let Some(store) = &mut runtime.account_preferences
             && let Err(error) = store.save_session(&ready.identity)
         {
@@ -1855,6 +2012,13 @@ fn present_account(
         runtime.fly = false;
         poll_client_assets(runtime);
         return false;
+    }
+    if !runtime.account_active() {
+        runtime.account_preview.update(None, renderer);
+        return false;
+    }
+    if runtime.live.is_some() {
+        runtime.retire_character();
     }
     let controller = runtime.account.as_ref().unwrap();
     let preview_request = runtime
@@ -2445,5 +2609,46 @@ mod loading_tests {
             draw_loading_screen(&mut runtime, &mut renderer, &options, [320, 240], 1.);
             assert!(runtime.loading_job.is_none());
         }
+    }
+}
+
+#[cfg(test)]
+mod account_return_tests {
+    use super::*;
+    #[test]
+    fn returning_retires_same_zone_generation_and_character_state() {
+        let mut runtime = Runtime::new(Camera::default());
+        runtime.account = Some(Default::default());
+        runtime.account.as_mut().unwrap().view.stage = openeq::account::Stage::Playing;
+        assert!(!runtime.account_active());
+        runtime.loaded_zone = Some("arena".into());
+        runtime.loaded_destination = Some(loading::Destination {
+            zone: "arena".into(),
+            generation: 0,
+        });
+        runtime.loading_destination = runtime.loaded_destination.clone();
+        runtime.loading_error = Some("old failure".into());
+        runtime.atmosphere_zone = Some(("arena".into(), 12));
+        runtime.map_open = true;
+        runtime.third_person = true;
+        runtime.moving = true;
+        runtime.spawn_needs_recovery = true;
+        runtime.account.as_mut().unwrap().view.stage = openeq::account::Stage::Returning;
+        runtime.retire_character();
+        assert!(runtime.account_active());
+        assert!(
+            runtime.loaded_zone.is_none()
+                && runtime.loaded_destination.is_none()
+                && runtime.loading_destination.is_none()
+        );
+        assert!(runtime.loading_error.is_none() && runtime.atmosphere_zone.is_none());
+        assert!(
+            !runtime.map_open
+                && !runtime.third_person
+                && !runtime.moving
+                && !runtime.spawn_needs_recovery
+        );
+        assert!(runtime.account_handoff_pending);
+        assert!(runtime.ui_frame.hit_targets.is_empty() && runtime.chat_link_hits.is_empty());
     }
 }

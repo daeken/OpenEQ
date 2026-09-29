@@ -498,18 +498,25 @@ mod tests {
     }
 
     #[test]
-    fn quit_aliases_keep_exit_result_and_local_buttons_never_send_packets() {
+    fn quit_exits_and_direct_session_camp_keeps_playing() {
         let (mut live, mut wire) = command_world(1, 1.);
-        let mut interaction = Interaction::default();
-        for command in ["/quit", "/camp"] {
-            interaction.hotbuttons = configured(command);
-            assert!(interaction.activate_hotbutton(
-                interaction.hotbuttons.token(),
-                0,
-                &mut live,
-                [0.; 3]
-            ));
-        }
+        let mut interaction = Interaction {
+            hotbuttons: configured("/quit"),
+            ..Default::default()
+        };
+        assert!(interaction.activate_hotbutton(
+            interaction.hotbuttons.token(),
+            0,
+            &mut live,
+            [0.; 3]
+        ));
+        interaction.hotbuttons = configured("/camp");
+        assert!(!interaction.activate_hotbutton(
+            interaction.hotbuttons.token(),
+            0,
+            &mut live,
+            [0.; 3]
+        ));
         interaction.hotbuttons = configured("/skills");
         assert!(!interaction.skills_window.open);
         interaction.activate_hotbutton(interaction.hotbuttons.token(), 0, &mut live, [0.; 3]);

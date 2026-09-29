@@ -69,12 +69,14 @@ pub enum Stage {
     JoiningWorld,
     Characters,
     EnteringZone,
+    Playing,
+    Returning,
 }
 impl Stage {
     pub fn busy(self) -> bool {
         matches!(
             self,
-            Self::Authenticating | Self::JoiningWorld | Self::EnteringZone
+            Self::Authenticating | Self::JoiningWorld | Self::EnteringZone | Self::Returning
         )
     }
     pub fn label(self) -> &'static str {
@@ -85,6 +87,8 @@ impl Stage {
             Self::JoiningWorld => "Connecting to the world",
             Self::Characters => "Choose a character",
             Self::EnteringZone => "Entering Norrath",
+            Self::Playing => "Playing",
+            Self::Returning => "Returning to character selection",
         }
     }
 }
@@ -103,6 +107,9 @@ pub struct View {
     pub selected_world: Option<u32>,
     pub selected_character: Option<String>,
     pub notice: Option<String>,
+    /// Back on a resumed roster ends the authenticated session; the old login
+    /// socket is not assumed to survive an arbitrarily long play session.
+    pub resumed: bool,
 }
 pub struct Ready {
     pub identity: SessionIdentity,
@@ -126,6 +133,10 @@ enum Event {
         characters: Vec<Character>,
     },
     Ready(Box<Ready>),
+    Returning {
+        disconnected: bool,
+    },
+    SignedOut,
     Failed(String),
 }
 struct Reply {
@@ -198,24 +209,18 @@ impl AccountController {
                         // Finish that handshake only to log out; never publish
                         // its foreground world after cancellation.
                         if entering.load(Ordering::Relaxed)
-                            && let Ok(Ok((zone,_,_))) = tokio::time::timeout(std::time::Duration::from_secs(45),connection).await {
-                            cleanup_entry(zone).await;
+                            && let Ok(Ok(connected)) = tokio::time::timeout(std::time::Duration::from_secs(45),connection).await {
+                            cleanup_entry(connected.zone).await;
                         }
                         return;
                     },
                     result = &mut connection => result,
                 };
                 match result {
-                    Ok((zone,identity,token)) => {
-                        if *cancelled.borrow() { cleanup_entry(zone).await; return; }
-                        let character = identity.character.clone();
-                        let (live,io) = LiveWorld::channels(character.clone(),endpoint.host.eq_ignore_ascii_case("storage2.daeken.dev"));
-                        if sender.send(Reply { token,event:Event::Ready(Box::new(Ready { identity,live })) }).is_ok() {
-                            // Cancellation now belongs to LiveWorld's normal
-                            // movement-channel lifetime, on this same runtime.
-                            io.run(zone,&character).await;
-                        } else {
-                            cleanup_entry(zone).await;
+                    Ok(connected) => {
+                        if *cancelled.borrow() { cleanup_entry(connected.zone).await; return; }
+                        if let Err(error) = play_session(connected, &sender, &mut cancelled).await {
+                            let _ = sender.send(Reply { token, event: Event::Failed(format!("{error:#}")) });
                         }
                     }
                     Err(error) => { let _ = sender.send(Reply { token,event:Event::Failed(format!("{error:#}")) }); }
@@ -282,6 +287,7 @@ impl AccountController {
         true
     }
     pub fn poll(&mut self) -> Option<Ready> {
+        let mut ready = None;
         let replies: Vec<_> = self.replies.lock().unwrap().try_iter().collect();
         for reply in replies {
             // Failure can arrive from any pending stage in this attempt.
@@ -325,20 +331,39 @@ impl AccountController {
                         });
                     self.view.world_name = world_name;
                     self.view.characters = characters;
+                    if !self.view.resumed {
+                        self.view.notice = None;
+                    }
+                }
+                Event::Ready(returned) => {
+                    self.view.stage = Stage::Playing;
+                    // Keep private worker channels/session alive for camp.
+                    // A later failure in this batch must supersede this Ready.
+                    self.view.token = reply.token;
                     self.view.notice = None;
+                    ready = Some(*returned);
                 }
-                Event::Ready(ready) => {
-                    self.cancel = None;
-                    self.requests = None;
-                    return Some(*ready);
+                Event::Returning { disconnected } => {
+                    self.view.stage = Stage::Returning;
+                    self.view.token = reply.token;
+                    self.view.resumed = true;
+                    self.view.notice = disconnected.then(|| {
+                        "Connection closed while camping; returning to character selection.".into()
+                    });
+                    self.view.characters.clear();
                 }
+                Event::SignedOut => self.cancel(),
                 Event::Failed(notice) => {
                     self.cancel();
                     self.view.notice = Some(notice);
                 }
             }
         }
-        None
+        if self.view.stage == Stage::Playing {
+            ready
+        } else {
+            None
+        }
     }
 }
 impl Drop for AccountController {
@@ -349,6 +374,16 @@ impl Drop for AccountController {
     }
 }
 
+struct Connected {
+    zone: ZoneClient,
+    identity: SessionIdentity,
+    token: Token,
+    session: openeq_net::login::Session,
+    world_address: SocketAddr,
+    world_name: String,
+    requests: tokio::sync::mpsc::Receiver<Request>,
+}
+
 async fn connect_stages(
     endpoint: &Endpoint,
     username: String,
@@ -357,7 +392,7 @@ async fn connect_stages(
     mut requests: tokio::sync::mpsc::Receiver<Request>,
     sender: &mpsc::Sender<Reply>,
     entering: &AtomicBool,
-) -> Result<(ZoneClient, SessionIdentity, Token)> {
+) -> Result<Connected> {
     let address = tokio::net::lookup_host((endpoint.host.as_str(), endpoint.login_port))
         .await?
         .find(|address| address.is_ipv4())
@@ -437,7 +472,141 @@ async fn connect_stages(
             server_id: server.server_id,
             character,
         };
-        return Ok((zone, identity, token));
+        return Ok(Connected {
+            zone,
+            identity,
+            token,
+            session,
+            world_address,
+            world_name: server.name.clone(),
+            requests,
+        });
+    }
+}
+
+/// The same runtime owns every zone and world socket for the whole account
+/// session. Its password was already discarded before the first world list.
+async fn play_session(
+    mut connected: Connected,
+    sender: &mpsc::Sender<Reply>,
+    cancelled: &mut tokio::sync::watch::Receiver<bool>,
+) -> Result<()> {
+    loop {
+        let character = connected.identity.character.clone();
+        let (mut live, io) = LiveWorld::channels(
+            character.clone(),
+            connected
+                .identity
+                .endpoint
+                .host
+                .eq_ignore_ascii_case("storage2.daeken.dev"),
+        );
+        live.enable_roster_return();
+        if sender
+            .send(Reply {
+                token: connected.token,
+                event: Event::Ready(Box::new(Ready {
+                    identity: connected.identity.clone(),
+                    live,
+                })),
+            })
+            .is_err()
+        {
+            cleanup_entry(connected.zone).await;
+            return Ok(());
+        }
+        let disconnected = match io.run_for_account(connected.zone, &character).await {
+            crate::live::LiveExit::Shutdown => return Ok(()),
+            crate::live::LiveExit::Failed(error) => {
+                bail!("Connection ended: {error}. Sign in again to reconnect.")
+            }
+            crate::live::LiveExit::Camped => false,
+            crate::live::LiveExit::DisconnectedWhileCamping => true,
+        };
+        if *cancelled.borrow() || cancelled.has_changed().is_err() {
+            return Ok(());
+        }
+        connected.token.revision = connected.token.revision.wrapping_add(1);
+        sender
+            .send(Reply {
+                token: connected.token,
+                event: Event::Returning { disconnected },
+            })
+            .map_err(|_| anyhow::anyhow!("Account screen closed."))?;
+        let reconnect = async {
+            let mut world = WorldClient::connect(
+                connected.world_address,
+                connected.session.account_id,
+                &connected.session.key,
+            )
+            .await?;
+            let characters = world.characters().await?;
+            Ok::<_, anyhow::Error>((world, characters))
+        };
+        let (mut world, characters) = tokio::select! {
+            _ = cancelled.changed() => return Ok(()),
+            result = reconnect => result.context("Could not return to character selection; sign in again")?,
+        };
+        connected.token.revision = connected.token.revision.wrapping_add(1);
+        sender
+            .send(Reply {
+                token: connected.token,
+                event: Event::Characters {
+                    world_name: connected.world_name.clone(),
+                    characters: characters.clone(),
+                },
+            })
+            .map_err(|_| anyhow::anyhow!("Account screen closed."))?;
+        let character = loop {
+            let request = tokio::select! {
+                _ = cancelled.changed() => return Ok(()),
+                request = connected.requests.recv() => request.context("Account screen closed.")?,
+            };
+            if request.token != connected.token {
+                continue;
+            }
+            match request.action {
+                Action::Back => {
+                    let _ = sender.send(Reply {
+                        token: connected.token,
+                        event: Event::SignedOut,
+                    });
+                    return Ok(());
+                }
+                Action::ChooseCharacter(name)
+                    if characters
+                        .iter()
+                        .any(|entry| entry.enabled && entry.name == name) =>
+                {
+                    break name;
+                }
+                _ => {}
+            }
+        };
+        let entry = openeq_net::session::enter_character(
+            &mut world,
+            connected.world_address,
+            &connected.session,
+            &character,
+        );
+        tokio::pin!(entry);
+        let zone = tokio::select! {
+            _ = cancelled.changed() => {
+                // Entry can already be committed. Complete only to log out,
+                // retaining the same bounded cancellation contract as login.
+                if let Ok(Ok(zone)) = tokio::time::timeout(std::time::Duration::from_secs(45), &mut entry).await {
+                    cleanup_entry(zone).await;
+                }
+                return Ok(());
+            },
+            result = &mut entry => result?,
+        };
+        if *cancelled.borrow() || cancelled.has_changed().is_err() {
+            cleanup_entry(zone).await;
+            return Ok(());
+        }
+        connected.identity.character = character.clone();
+        connected.zone = zone;
     }
 }
 
@@ -592,5 +761,89 @@ mod tests {
         assert!(!c.action(c.view.token, Action::ChooseWorld(1)));
         assert!(rx.try_recv().is_err());
         assert!(c.action(c.view.token, Action::ChooseWorld(2)));
+    }
+}
+
+#[cfg(test)]
+mod return_tests {
+    use super::*;
+    fn ready(controller: &AccountController, token: Token) {
+        let (live, _io) = LiveWorld::channels("CampFixture".into(), false);
+        controller
+            .sender
+            .send(Reply {
+                token,
+                event: Event::Ready(Box::new(Ready {
+                    identity: SessionIdentity {
+                        endpoint: Endpoint::default(),
+                        server_id: 1,
+                        character: "CampFixture".into(),
+                    },
+                    live,
+                })),
+            })
+            .unwrap();
+    }
+    #[test]
+    fn playing_retains_cancel_and_request_handles_and_failure_wins_same_batch() {
+        let mut controller = AccountController::default();
+        let (requests, _rx) = tokio::sync::mpsc::channel(8);
+        let (cancel, _cancelled) = tokio::sync::watch::channel(false);
+        controller.requests = Some(requests);
+        controller.cancel = Some(cancel);
+        let token = controller.view.token;
+        ready(&controller, token);
+        assert!(controller.poll().is_some());
+        assert_eq!(controller.view.stage, Stage::Playing);
+        assert!(controller.requests.is_some() && controller.cancel.is_some());
+        ready(&controller, token);
+        controller
+            .sender
+            .send(Reply {
+                token,
+                event: Event::Failed("Connection ended".into()),
+            })
+            .unwrap();
+        assert!(controller.poll().is_none());
+        assert_eq!(controller.view.stage, Stage::Credentials);
+    }
+    #[test]
+    fn return_retires_old_roster_and_stale_actions_and_exposes_uncertain_close() {
+        let mut controller = AccountController::default();
+        let old = controller.view.token;
+        let returned = Token { revision: 2, ..old };
+        controller.view.stage = Stage::Playing;
+        controller
+            .sender
+            .send(Reply {
+                token: returned,
+                event: Event::Returning { disconnected: true },
+            })
+            .unwrap();
+        assert!(controller.poll().is_none());
+        assert_eq!(controller.view.stage, Stage::Returning);
+        assert!(controller.view.characters.is_empty());
+        assert!(controller.view.resumed);
+        assert!(
+            controller
+                .view
+                .notice
+                .as_deref()
+                .unwrap()
+                .contains("Connection closed while camping")
+        );
+        assert!(!controller.action(old, Action::ChooseCharacter("CampFixture".into())));
+        controller.cancel();
+        ready(&controller, returned);
+        controller
+            .sender
+            .send(Reply {
+                token: returned,
+                event: Event::Failed("late return".into()),
+            })
+            .unwrap();
+        assert!(controller.poll().is_none());
+        assert_eq!(controller.view.stage, Stage::Credentials);
+        assert!(controller.view.notice.is_none());
     }
 }

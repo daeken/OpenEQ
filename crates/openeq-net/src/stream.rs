@@ -43,6 +43,18 @@ pub enum StreamError {
     Closed,
 }
 
+/// Why a connected transport ended. Only a valid peer disconnect confirms the
+/// peer closed its session; silence and lost acknowledgments do not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseReason {
+    PeerDisconnect,
+    OutOfSession,
+    Inactivity,
+    Unacknowledged,
+    Transport,
+    Malformed,
+}
+
 /// A packet that arrived out of order and is waiting for its predecessors.
 enum Pending {
     Single(Vec<u8>),
@@ -56,6 +68,7 @@ struct Sent {
 }
 
 struct Inner {
+    connect_code: u32,
     crc_key: u32,
     crc_bytes: u8,
     compressing: bool,
@@ -72,11 +85,13 @@ struct Inner {
     closing: bool,
     last_received: Instant,
     assembly: Option<(usize, Vec<u8>)>,
+    close_reason: Option<CloseReason>,
 }
 
 impl Inner {
     fn new(crc_key: u32, crc_bytes: u8, compressing: bool) -> Self {
         Self {
+            connect_code: 0,
             crc_key,
             crc_bytes,
             compressing,
@@ -91,10 +106,12 @@ impl Inner {
             closing: false,
             last_received: Instant::now(),
             assembly: None,
+            close_reason: None,
         }
     }
 
-    fn close(&mut self) {
+    fn close(&mut self, reason: CloseReason) {
+        self.close_reason.get_or_insert(reason);
         self.connected = false;
         self.closing = true;
         self.sent.clear();
@@ -192,6 +209,10 @@ impl EqStream {
         self.incoming.recv().await
     }
 
+    pub async fn close_reason(&self) -> Option<CloseReason> {
+        self.inner.lock().await.close_reason
+    }
+
     pub fn peer(&self) -> SocketAddr {
         self.peer
     }
@@ -232,7 +253,7 @@ impl EqStream {
             }
             // Dropping this task's dispatcher closes recv(), including when the
             // ticker wakes us after an inactivity/retransmission timeout.
-            inner.lock().await.close();
+            inner.lock().await.close(CloseReason::Transport);
         })
     }
 
@@ -307,7 +328,8 @@ async fn read_session_response(
             return Err(StreamError::Encoding);
         }
         // EQEmu reports compression through its encode passes.
-        let inner = Inner::new(key, crc_bytes, pass_a == 1 || pass_b == 1);
+        let mut inner = Inner::new(key, crc_bytes, pass_a == 1 || pass_b == 1);
+        inner.connect_code = code;
         tracing::debug!(
             %from,
             key = format!("{key:#010x}"),
@@ -440,7 +462,17 @@ fn process_decoded(
                 cursor += length;
             }
         }
-        SessionOp::Disconnect | SessionOp::OutOfSession => inner.close(),
+        SessionOp::Disconnect => {
+            // EQEmu ReliableStreamDisconnect::serialize writes six bytes,
+            // despite the stale size() helper reporting eight.
+            if body.len() != 6
+                || u32::from_be_bytes(body[2..6].try_into().unwrap()) != inner.connect_code
+            {
+                return false;
+            }
+            inner.close(CloseReason::PeerDisconnect);
+        }
+        SessionOp::OutOfSession => inner.close(CloseReason::OutOfSession),
         SessionOp::Request
         | SessionOp::Response
         | SessionOp::KeepAlive
@@ -483,7 +515,7 @@ fn drain(
         let payload = match pending {
             Pending::Single(payload) => {
                 if inner.assembly.is_some() {
-                    inner.closing = true;
+                    inner.close(CloseReason::Malformed);
                     return;
                 }
                 Some(payload)
@@ -491,18 +523,18 @@ fn drain(
             Pending::Fragment(payload) => {
                 if let Some((total, collected)) = &mut inner.assembly {
                     if collected.len() + payload.len() > *total {
-                        inner.closing = true;
+                        inner.close(CloseReason::Malformed);
                         return;
                     }
                     collected.extend_from_slice(&payload);
                 } else {
                     if payload.len() < 4 {
-                        inner.closing = true;
+                        inner.close(CloseReason::Malformed);
                         return;
                     }
                     let total = u32::from_be_bytes(payload[..4].try_into().unwrap()) as usize;
                     if !(2..=4 * 1024 * 1024).contains(&total) || payload.len() - 4 > total {
-                        inner.closing = true;
+                        inner.close(CloseReason::Malformed);
                         return;
                     }
                     inner.assembly = Some((total, payload[4..].to_vec()));
@@ -571,14 +603,19 @@ fn tick(inner: &mut Inner, outgoing: &mut Vec<Vec<u8>>) {
 }
 
 fn tick_at(inner: &mut Inner, outgoing: &mut Vec<Vec<u8>>, now: Instant) {
-    if inner.closing
-        || now.saturating_duration_since(inner.last_received) >= SESSION_TIMEOUT
-        || inner
-            .sent
-            .values()
-            .any(|sent| now.saturating_duration_since(sent.first_sent_at) >= SESSION_TIMEOUT)
+    if inner.closing {
+        return;
+    }
+    if now.saturating_duration_since(inner.last_received) >= SESSION_TIMEOUT {
+        inner.close(CloseReason::Inactivity);
+        return;
+    }
+    if inner
+        .sent
+        .values()
+        .any(|sent| now.saturating_duration_since(sent.first_sent_at) >= SESSION_TIMEOUT)
     {
-        inner.close();
+        inner.close(CloseReason::Unacknowledged);
         return;
     }
     let stale: Vec<u16> = inner
@@ -672,6 +709,58 @@ fn random_u32() -> u32 {
 mod tests {
     use super::*;
 
+    fn disconnect_wire(inner: &Inner, code: u32) -> Vec<u8> {
+        let mut bytes = vec![0, SessionOp::Disconnect as u8];
+        if inner.compressing {
+            bytes.push(0xa5);
+        }
+        bytes.extend(code.to_be_bytes());
+        if inner.crc_bytes == 2 {
+            bytes.extend(crc16(&bytes, inner.crc_key).to_be_bytes());
+        }
+        bytes
+    }
+
+    #[test]
+    fn only_complete_matching_peer_disconnect_confirms_session_close() {
+        for (crc_bytes, compressing) in [(0, false), (2, false), (2, true)] {
+            let (tx, _) = mpsc::unbounded_channel();
+            let mut inner = Inner::new(123, crc_bytes, compressing);
+            inner.connect_code = 0x1234abcd;
+            let wrong = disconnect_wire(&inner, inner.connect_code + 1);
+            process_incoming(&mut inner, &wrong, &tx, &mut Vec::new());
+            assert!(inner.connected);
+            let wire = disconnect_wire(&inner, inner.connect_code);
+            for end in 0..wire.len() {
+                process_incoming(&mut inner, &wire[..end], &tx, &mut Vec::new());
+                assert!(inner.connected, "truncated disconnect at {end}");
+                assert_eq!(inner.close_reason, None);
+            }
+            if crc_bytes == 2 {
+                let mut corrupt = wire.clone();
+                *corrupt.last_mut().unwrap() ^= 1;
+                process_incoming(&mut inner, &corrupt, &tx, &mut Vec::new());
+                assert!(inner.connected);
+            }
+            process_incoming(&mut inner, &wire, &tx, &mut Vec::new());
+            assert_eq!(inner.close_reason, Some(CloseReason::PeerDisconnect));
+            assert!(!inner.connected);
+            inner.close(CloseReason::Transport);
+            assert_eq!(inner.close_reason, Some(CloseReason::PeerDisconnect));
+        }
+    }
+
+    #[test]
+    fn out_of_session_and_malformed_fragment_are_not_peer_logout() {
+        let (tx, _) = mpsc::unbounded_channel();
+        let mut inner = Inner::new(0, 0, false);
+        process_incoming(&mut inner, &[0, 0x1d], &tx, &mut Vec::new());
+        assert_eq!(inner.close_reason, Some(CloseReason::OutOfSession));
+        let mut inner = Inner::new(0, 0, false);
+        process_incoming(&mut inner, &[0, 0x0d, 0, 0, 1], &tx, &mut Vec::new());
+        assert_eq!(inner.close_reason, Some(CloseReason::Malformed));
+    }
+
     #[test]
     fn restarted_server_out_of_session_is_unprotected_and_closes() {
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -705,6 +794,7 @@ mod tests {
         tick_at(&mut inner, &mut outgoing, deadline);
         assert!(!inner.connected);
         assert!(inner.closing);
+        assert_eq!(inner.close_reason, Some(CloseReason::Inactivity));
     }
 
     #[test]
@@ -734,6 +824,7 @@ mod tests {
         assert!(!inner.connected);
         assert!(inner.sent.is_empty());
         assert!(outgoing.is_empty());
+        assert_eq!(inner.close_reason, Some(CloseReason::Unacknowledged));
     }
 
     #[tokio::test]
@@ -765,6 +856,7 @@ mod tests {
             stream.send(&AppPacket::empty(0x7dfc)).await,
             Err(StreamError::Closed)
         ));
+        assert_eq!(stream.close_reason().await, Some(CloseReason::Inactivity));
     }
 
     #[test]

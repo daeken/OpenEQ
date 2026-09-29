@@ -1,6 +1,7 @@
 //! Background networking and bounded prediction of server-authoritative spawns.
 #[cfg(test)]
 mod action_epoch_tests;
+pub mod camp;
 
 use crate::coordinates;
 use crate::game::{GameplayState, display_name};
@@ -20,6 +21,15 @@ use std::{
 pub enum Message {
     Event(Box<ZoneEvent>),
     Error(String),
+    CampStarted {
+        request: camp::Request,
+        deadline: Instant,
+    },
+    CampFinishing(camp::Request),
+    CampCancelled {
+        request: camp::Request,
+        notice: String,
+    },
     CommandSent {
         command: Command,
         epoch: u64,
@@ -41,6 +51,8 @@ pub enum Message {
     },
 }
 pub(crate) enum NetworkCommand {
+    StartCamp(camp::Request, Option<MovementUpdate>),
+    CancelCamp(camp::Request),
     Target(u32, u64),
     Gameplay(Command, u64),
     Raid {
@@ -214,7 +226,7 @@ struct PendingZoneRequest {
 }
 
 #[derive(Clone, Copy)]
-struct MovementUpdate {
+pub(crate) struct MovementUpdate {
     id: u32,
     revision: u64,
     position: Position,
@@ -301,6 +313,14 @@ impl MovementAuthority {
             .then_some((update.id, update.position))
     }
 
+    fn stopped_position(&self, update: Option<MovementUpdate>) -> Option<(u32, Position)> {
+        let (id, mut position) = self.position(update)?;
+        position.velocity = [0.; 3];
+        position.delta_heading = 0.;
+        position.animation = 0;
+        Some((id, position))
+    }
+
     fn permits_gameplay(&self, epoch: u64, command: &Command) -> bool {
         epoch == self.action_epoch && (!self.suspended || command_while_dead(command))
     }
@@ -332,6 +352,7 @@ pub struct LiveWorld {
     movement: tokio::sync::watch::Sender<Option<MovementUpdate>>,
     movement_authority: MovementAuthority,
     recovery_request: Option<crate::death::RecoveryRequest>,
+    camp: camp::State,
     commands: tokio::sync::mpsc::UnboundedSender<NetworkCommand>,
 }
 
@@ -357,11 +378,33 @@ pub(crate) struct NetworkIo {
     updates: tokio::sync::watch::Receiver<Option<MovementUpdate>>,
     requests: tokio::sync::mpsc::UnboundedReceiver<NetworkCommand>,
 }
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum LiveExit {
+    Camped,
+    DisconnectedWhileCamping,
+    Shutdown,
+    Failed(String),
+}
 impl NetworkIo {
     pub(crate) fn fail(self, error: anyhow::Error) {
         let _ = self.tx.send(Message::Error(format!("{error:#}")));
     }
-    pub(crate) async fn run(self, mut zone: openeq_net::zone::ZoneClient, character: &str) {
+    pub(crate) async fn run(self, zone: openeq_net::zone::ZoneClient, character: &str) {
+        self.run_inner(zone, character, false).await;
+    }
+    pub(crate) async fn run_for_account(
+        self,
+        zone: openeq_net::zone::ZoneClient,
+        character: &str,
+    ) -> LiveExit {
+        self.run_inner(zone, character, true).await
+    }
+    async fn run_inner(
+        self,
+        mut zone: openeq_net::zone::ZoneClient,
+        character: &str,
+        allow_camp: bool,
+    ) -> LiveExit {
         let Self {
             tx,
             mut updates,
@@ -370,13 +413,76 @@ impl NetworkIo {
         let result = async {
                 let mut motion = MovementAuthority::default();
                 let mut raid_generation = 0u64;
+                let mut camping: Option<(camp::Request, Instant)> = None;
+                let mut camp_authority = camp::Authority::default();
                 let mut heartbeat = tokio::time::interval(std::time::Duration::from_millis(100));
                 loop {
-                    tokio::select! {
-                        Some(request) = requests.recv() => {
+                    let input = camp::next_input(
+                        zone.next_event(), &mut requests, &mut updates,
+                        &mut heartbeat, camping.map(|(_, deadline)| deadline),
+                    ).await;
+                    match input {
+                        camp::Input::Event(event) => {
+                            let event = match event {
+                                Ok(event) => event,
+                                Err(openeq_net::zone::ZoneError::Closed) if camping.is_some() && zone.peer_disconnected().await => return Ok(LiveExit::DisconnectedWhileCamping),
+                                Err(error) => return Err(error.into()),
+                            };
+                            let interruption = if let ZoneEvent::Gameplay(event) = &*event {
+                                camp_authority.observe(event, motion.own_id)
+                            } else { None };
+                            if let Some(stand) = interruption
+                                && let Some((request, _)) = camping.take() {
+                                if stand && !zone.is_zoning() && let Some(player_id) = motion.own_id {
+                                    let command = Command::Posture { player_id, posture: 0 };
+                                    zone.command(command.clone()).await?;
+                                    let _ = tx.send(Message::CommandSent { command, epoch: request.epoch });
+                                }
+                                let _ = tx.send(Message::CampCancelled { request, notice: "Camping interrupted.".into() });
+                            }
+                            if let ZoneEvent::Gameplay(event) = &*event {
+                                motion.gameplay(event, zone.current_zone());
+                                if let GameplayEvent::Raid(event) = event && crate::raid::changes_membership(event) {
+                                    raid_generation = raid_generation.wrapping_add(1);
+                                }
+                            }
+                            if let ZoneEvent::Spawn(spawn) = &*event { motion.spawn(spawn, character); }
+                            if tx.send(Message::Event(event)).is_err() { logout_zone(&mut zone).await?; break; }
+                        }
+
+                        camp::Input::Request(request) => {
                             match request {
+                                NetworkCommand::StartCamp(request, position) => {
+                                    if !allow_camp || !camp_authority.permits(request) || camping.is_some() || motion.suspended || motion.own_id.is_none()
+                                        || request.epoch != motion.action_epoch || request.motion_revision != motion.revision
+                                        || !zone.is_ready() || zone.is_zoning() {
+                                        let _ = tx.send(Message::CampCancelled { request, notice: "Camping is no longer available in this state.".into() });
+                                        continue;
+                                    }
+                                    if let Some((id, position)) = motion.stopped_position(position) {
+                                        zone.send_position(id, coordinates::scene_to_server(position)).await?;
+                                    }
+                                    let sit = Command::Posture { player_id: motion.own_id.unwrap(), posture: 1 };
+                                    zone.command(sit.clone()).await?;
+                                    let _ = tx.send(Message::CommandSent { command: sit, epoch: request.epoch });
+                                    zone.camp().await?;
+                                    let deadline = Instant::now() + camp::COUNTDOWN;
+                                    camping = Some((request, deadline));
+                                    let _ = tx.send(Message::CampStarted { request, deadline });
+                                }
+                                NetworkCommand::CancelCamp(request) => {
+                                    if camping.is_some_and(|(active, _)| active == request) {
+                                        camping = None;
+                                        if let Some(player_id) = motion.own_id {
+                                            let stand = Command::Posture { player_id, posture: 0 };
+                                            zone.command(stand.clone()).await?;
+                                            let _ = tx.send(Message::CommandSent { command: stand, epoch: request.epoch });
+                                        }
+                                        let _ = tx.send(Message::CampCancelled { request, notice: "Camping cancelled.".into() });
+                                    }
+                                }
                                 NetworkCommand::Raid { request, motion_revision, raid_generation: requested_generation } => {
-                                    if motion_revision != motion.revision || motion.suspended || requested_generation != raid_generation {
+                                    if camping.is_some() || motion_revision != motion.revision || motion.suspended || requested_generation != raid_generation {
                                         let _ = tx.send(Message::RaidRejected { token: request.token, notice: "That raid choice is no longer current.".into() });
                                         continue;
                                     }
@@ -392,7 +498,7 @@ impl NetworkIo {
                                     }
                                 }
                                 NetworkCommand::Recovery { request, motion_revision } => {
-                                    if motion_revision != motion.revision {
+                                    if camping.is_some() || motion_revision != motion.revision {
                                         let _ = tx.send(Message::RecoveryRejected { token: request.token, notice: "That recovery choice is no longer current.".into() });
                                         continue;
                                     }
@@ -411,9 +517,9 @@ impl NetworkIo {
                                         Err(error) => return Err(error.into()),
                                     }
                                 }
-                                NetworkCommand::Target(id, epoch) => { if epoch == motion.action_epoch && !zone.is_zoning() && !motion.suspended { zone.target(id).await?; } },
+                                NetworkCommand::Target(id, epoch) => { if camping.is_none() && epoch == motion.action_epoch && !zone.is_zoning() && !motion.suspended { zone.target(id).await?; } },
                                 NetworkCommand::Gameplay(command, epoch) => {
-                                    if !motion.permits_gameplay(epoch, &command) {
+                                    if !motion.permits_gameplay(epoch, &command) || (camping.is_some() && !matches!(command, Command::Chat { .. })) {
                                         let _ = tx.send(Message::CommandRejected { command, epoch, notice: "That action belongs to a previous zone or recovery state.".into() });
                                         continue;
                                     }
@@ -445,30 +551,31 @@ impl NetworkIo {
                                 }
                             }
                         },
-                        changed = updates.changed() => {
-                            if changed.is_err() { logout_zone(&mut zone).await?; break; }
+                        camp::Input::MovementClosed(closed) => {
+                            if closed { logout_zone(&mut zone).await?; break; }
                         },
-                        _ = heartbeat.tick() => {
+                        camp::Input::Heartbeat => {
                             let position = motion.position(*updates.borrow());
-                            if let Some((id, position)) = position { zone.send_position(id, coordinates::scene_to_server(position)).await?; }
+                            if camping.is_none() && let Some((id, position)) = position { zone.send_position(id, coordinates::scene_to_server(position)).await?; }
                         }
-                        event = zone.next_event() => {
-                            let event = event?;
-                            if let ZoneEvent::Gameplay(event) = &event {
-                                motion.gameplay(event, zone.current_zone());
-                                if let GameplayEvent::Raid(event) = event && crate::raid::changes_membership(event) {
-                                    raid_generation = raid_generation.wrapping_add(1);
-                                }
-                            }
-                            if let ZoneEvent::Spawn(spawn) = &event { motion.spawn(spawn, character); }
-                            if tx.send(Message::Event(Box::new(event))).is_err() { logout_zone(&mut zone).await?; break; }
+                        camp::Input::Deadline => {
+                            let (request, _) = camping.take().unwrap();
+                            let _ = tx.send(Message::CampFinishing(request));
+                            zone.logout_for_roster().await?;
+                            return Ok(LiveExit::Camped);
                         }
+
                     }
                 }
-                Ok::<_, anyhow::Error>(())
+                Ok::<_, anyhow::Error>(LiveExit::Shutdown)
         }.await;
-        if let Err(error) = result {
-            let _ = tx.send(Message::Error(format!("{error:#}")));
+        match result {
+            Ok(exit) => exit,
+            Err(error) => {
+                let notice = format!("{error:#}");
+                let _ = tx.send(Message::Error(notice.clone()));
+                LiveExit::Failed(notice)
+            }
         }
     }
 }
@@ -493,12 +600,84 @@ pub(crate) async fn logout_zone(zone: &mut openeq_net::zone::ZoneClient) -> anyh
 }
 
 impl LiveWorld {
+    pub(crate) fn enable_roster_return(&mut self) {
+        self.camp.enabled = true;
+    }
+
+    pub fn camp_view(&self) -> Option<camp::View> {
+        self.camp.view(Instant::now())
+    }
+
+    pub fn request_camp(&mut self) -> bool {
+        if !self.camp.enabled {
+            self.game.error("Camp to character selection is available after signing in from the main menu. Use /quit to exit this direct session.");
+            return false;
+        }
+        if self.camp.active() {
+            return false;
+        }
+        if !self.movement_allowed()
+            || self.game.attack
+            || self.game.casting.is_some()
+            || self.game.cast_pending_until.is_some()
+            || self.game.inventory_command_pending
+            || self.game.item_use.pending.is_some()
+            || self.game.trade.engaged()
+            || self.game.loot.is_some()
+            || self.game.commerce.bank.is_some()
+            || self.game.commerce.merchant.is_some()
+            || self.game.commerce.pending.is_some()
+            || self.game.commerce.coin_pending
+            || self.game.commerce.merchant_closing
+        {
+            self.game
+                .error("Finish combat, casting and item or service actions before camping.");
+            return false;
+        }
+        let request = self
+            .camp
+            .request(
+                self.movement_authority.action_epoch,
+                self.movement_authority.revision,
+            )
+            .unwrap();
+        if self
+            .commands
+            .send(NetworkCommand::StartCamp(request, *self.movement.borrow()))
+            .is_err()
+        {
+            self.camp.retire(request);
+            self.game.error("The network worker has stopped.");
+            return false;
+        }
+        self.movement.send_replace(None);
+        self.game
+            .notice("Preparing to camp. Press Escape or choose Cancel to stop.");
+        true
+    }
+
+    pub fn cancel_camp(&mut self, token: u64) -> bool {
+        let Some(request) = self.camp.cancel_request(token) else {
+            return false;
+        };
+        if self
+            .commands
+            .send(NetworkCommand::CancelCamp(request))
+            .is_err()
+        {
+            self.game.error("The network worker has stopped.");
+            return false;
+        }
+        true
+    }
+
     pub fn zone_generation(&self) -> u64 {
         self.zone_generation
     }
 
     pub fn movement_allowed(&self) -> bool {
         self.ready
+            && !self.camp.active()
             && self.own_id.is_some()
             && self.error.is_none()
             && !self.zone_request_pending()
@@ -577,6 +756,7 @@ impl LiveWorld {
             movement,
             movement_authority: MovementAuthority::default(),
             recovery_request: None,
+            camp: Default::default(),
             commands,
         };
         (
@@ -594,7 +774,15 @@ impl LiveWorld {
         let messages: Vec<_> = self.rx.lock().unwrap().try_iter().collect();
         for message in messages {
             match message {
+                Message::CampStarted { request, deadline } => self.camp.started(request, deadline),
+                Message::CampFinishing(request) => self.camp.finishing(request),
+                Message::CampCancelled { request, notice } => {
+                    if self.camp.retire(request) {
+                        self.game.notice(notice);
+                    }
+                }
                 Message::Error(error) => {
+                    self.camp.clear();
                     tracing::error!(%error, "live connection failed");
                     self.error = Some(error);
                     self.ready = false;
@@ -778,6 +966,9 @@ impl LiveWorld {
     }
 
     pub fn set_target(&mut self, id: Option<u32>) {
+        if self.camp.active() {
+            return;
+        }
         self.target = id;
         let _ = self.commands.send(NetworkCommand::Target(
             id.unwrap_or(0),
@@ -868,6 +1059,10 @@ impl LiveWorld {
     }
 
     pub fn recovery_action(&mut self, action: crate::death::RecoveryAction) -> bool {
+        if self.camp.active() {
+            self.game.notice("Cancel camping before choosing recovery.");
+            return false;
+        }
         if !self.ready || self.error.is_some() {
             self.game.error("You are not connected to the zone.");
             return false;
@@ -905,6 +1100,9 @@ impl LiveWorld {
     }
 
     pub(crate) fn queue_raid(&mut self, request: crate::raid::QueuedRequest) -> bool {
+        if self.camp.active() {
+            return false;
+        }
         if self
             .commands
             .send(NetworkCommand::Raid {
@@ -921,6 +1119,15 @@ impl LiveWorld {
     }
 
     pub fn command(&mut self, command: Command) -> bool {
+        if let Some(camp) = self.camp_view() {
+            if matches!(command, Command::Posture { posture: 0, .. }) {
+                return self.cancel_camp(camp.token);
+            }
+            if !matches!(command, Command::Chat { .. }) {
+                self.game.notice("Cancel camping before doing that.");
+                return false;
+            }
+        }
         if !self.ready || self.error.is_some() {
             self.game.error("You are not connected to the zone.");
             return false;
@@ -1245,6 +1452,7 @@ impl LiveWorld {
     }
 
     pub(crate) fn gameplay_event(&mut self, mut event: GameplayEvent) {
+        self.camp.observe(&event, self.movement_authority.own_id);
         self.movement_authority
             .gameplay(&event, self.current_zone());
         self.trade_event(&event);
@@ -1846,6 +2054,7 @@ pub(crate) mod tests {
                 ..Default::default()
             },
             recovery_request: None,
+            camp: Default::default(),
             commands,
         };
         live.game.currency = Currency {
@@ -3694,6 +3903,7 @@ pub(crate) mod tests {
                 ..Default::default()
             },
             recovery_request: None,
+            camp: Default::default(),
             commands,
         };
         live.game.attack = true;

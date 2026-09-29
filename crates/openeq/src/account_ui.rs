@@ -22,6 +22,39 @@ const WHITE: Color = [235, 231, 220, 255];
 const GOLD: Color = [221, 190, 124, 255];
 const MUTED: Color = [160, 168, 181, 255];
 
+/// A modal must retain physical ownership even though Bevy button state is
+/// cleared each frame. Release-aware raw events survive an empty handoff frame.
+#[derive(Default)]
+pub struct CampInput {
+    held: HashSet<KeyCode>,
+}
+impl CampInput {
+    pub fn observe(&mut self, window: Entity, event: &WindowEvent) {
+        match event {
+            WindowEvent::KeyboardInput(event) if event.window == window => {
+                if event.state == ButtonState::Pressed {
+                    self.held.insert(event.key_code);
+                } else {
+                    self.held.remove(&event.key_code);
+                }
+            }
+            WindowEvent::WindowFocused(event) if event.window == window && !event.focused => {
+                self.held.clear()
+            }
+            _ => {}
+        }
+    }
+    pub fn capture_pressed(&mut self, keys: &ButtonInput<KeyCode>) {
+        self.held.extend(keys.get_pressed().copied());
+    }
+    pub fn handoff(&mut self, account: &mut AccountInput) {
+        account.returning_held.extend(self.held.drain());
+        account
+            .captured
+            .extend(account.returning_held.iter().copied());
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Intent {
     SignIn,
@@ -194,6 +227,7 @@ pub struct AccountInput {
     modifiers: ButtonInput<KeyCode>,
     captured: HashSet<KeyCode>,
     handoff_replay: HashSet<KeyCode>,
+    returning_held: HashSet<KeyCode>,
     pointer: Option<[f32; 2]>,
     pressed: Option<String>,
     seen: Option<(Token, Stage)>,
@@ -221,6 +255,7 @@ impl AccountInput {
             modifiers: ButtonInput::default(),
             captured: HashSet::new(),
             handoff_replay: HashSet::new(),
+            returning_held: HashSet::new(),
             pointer: None,
             pressed: None,
             seen: None,
@@ -266,6 +301,7 @@ impl AccountInput {
         self.modifiers.reset_all();
         self.captured.clear();
         self.handoff_replay.clear();
+        self.returning_held.clear();
         self.preview = None;
         self.preview_revision = self.preview_revision.wrapping_add(1);
         self.preview_held.clear();
@@ -275,6 +311,11 @@ impl AccountInput {
         self.pressed = None;
         self.pointer = None;
         self.notice = None;
+    }
+    /// Inputs held in the departing world remain inert until their release.
+    pub fn suppress_held_keys(&mut self, keys: &ButtonInput<KeyCode>) {
+        self.returning_held.extend(keys.get_pressed().copied());
+        self.captured.extend(self.returning_held.iter().copied());
     }
     fn cancel_composition(&mut self) {
         self.cancelled_composition |= self.composition_field.take().is_some();
@@ -307,6 +348,7 @@ impl AccountInput {
                 if self.captured.contains(&event.key_code) {
                     if event.state == ButtonState::Released {
                         self.captured.remove(&event.key_code);
+                        self.returning_held.remove(&event.key_code);
                         self.modifiers.release(event.key_code);
                     }
                     return true;
@@ -322,6 +364,7 @@ impl AccountInput {
             }
             WindowEvent::WindowFocused(event) if event.window == window && !event.focused => {
                 self.captured.clear();
+                self.returning_held.clear();
                 self.modifiers.reset_all();
                 for key in &self.handoff_replay {
                     keys.reset(*key);
@@ -387,6 +430,7 @@ impl AccountInput {
                 if !event.focused {
                     self.modifiers.reset_all();
                     self.captured.clear();
+                    self.returning_held.clear();
                     self.preview_held.clear();
                     if let Some(navigation) = &mut self.navigation {
                         navigation.held_keys.clear();
@@ -407,10 +451,14 @@ impl AccountInput {
                 if event.state == ButtonState::Released {
                     self.modifiers.release(event.key_code);
                     self.captured.remove(&event.key_code);
+                    self.returning_held.remove(&event.key_code);
                     self.preview_held.remove(&event.key_code);
                     if let Some(navigation) = &mut self.navigation {
                         navigation.held_keys.remove(&event.key_code);
                     }
+                    return None;
+                }
+                if self.returning_held.contains(&event.key_code) {
                     return None;
                 }
                 self.captured.insert(event.key_code);
@@ -1406,7 +1454,11 @@ impl Paint<'_> {
             },
             "back",
             Rect::new(list.x, y, width * 0.22, 32.),
-            if characters { "Back" } else { "Sign out" },
+            if characters && !self.view.resumed {
+                "Back"
+            } else {
+                "Sign out"
+            },
             true,
             input.focus == Focus::Back,
             input,
@@ -1471,6 +1523,84 @@ fn class_name(class: u8) -> &'static str {
     .get(class as usize)
     .copied()
     .unwrap_or("Unknown")
+}
+
+/// Modal countdown uses the installed EQ button artwork while keeping its hit
+/// identity tied to one camp request. No character data or credentials appear.
+pub fn camp_frame(
+    ui: Option<&AccountUi>,
+    viewport: [u32; 2],
+    camp: crate::live::camp::View,
+) -> UiFrame {
+    let fallback = AccountUi {
+        login: None,
+        characters: None,
+    };
+    let ui = ui.unwrap_or(&fallback);
+    let view = View::default();
+    let screen = Rect::new(0., 0., viewport[0] as f32, viewport[1] as f32);
+    let mut paint = Paint {
+        frame: UiFrame {
+            bounds: screen,
+            ..Default::default()
+        },
+        screen,
+        ui,
+        view: &view,
+        prefix: format!("camp:{}:", camp.token),
+    };
+    paint.fill(screen, [0, 0, 0, 115]);
+    paint.hit("frame", "CampCapture", screen, true);
+    let width = 440_f32.min(screen.width);
+    let height = 190_f32.min(screen.height);
+    let panel = Rect::new(
+        (screen.width - width) * 0.5,
+        (screen.height - height) * 0.5,
+        width,
+        height,
+    );
+    paint.fill(panel, [12, 18, 27, 245]);
+    paint.outline(panel, GOLD);
+    paint.text(
+        Rect::new(panel.x + 22., panel.y + 20., width - 44., 32.),
+        "Return to character selection",
+        5,
+        GOLD,
+        false,
+    );
+    let status = match camp.seconds {
+        Some(seconds) => format!("Camping in {seconds} seconds"),
+        None if camp.cancellable => "Preparing to camp…".into(),
+        None => "Leaving the world…".into(),
+    };
+    paint.text(
+        Rect::new(panel.x + 22., panel.y + 67., width - 44., 30.),
+        &status,
+        3,
+        WHITE,
+        false,
+    );
+    let button = Rect::new(panel.x + 22., panel.bottom() - 60., 140., 32.);
+    if !paint.skin(
+        "LOGIN_CancelButton",
+        button,
+        "Cancel",
+        camp.cancellable,
+        false,
+        false,
+        false,
+    ) {
+        paint.fill(button, [38, 45, 60, 255]);
+        paint.text(
+            Rect::new(button.x + 15., button.y + 7., 110., 24.),
+            "Cancel",
+            3,
+            if camp.cancellable { WHITE } else { MUTED },
+            false,
+        );
+    }
+    paint.hit("cancel", "Button", button, camp.cancellable);
+    paint.frame
 }
 
 #[cfg(test)]
@@ -2015,6 +2145,137 @@ mod tests {
         assert!(!keys.pressed(KeyCode::KeyW));
         input.begin_handoff_frame(&mut keys);
         assert!(!keys.just_pressed(KeyCode::KeyW));
+    }
+    #[test]
+    fn camp_raw_ownership_survives_cleared_buttons_and_empty_handoff_frame() {
+        let view = characters();
+        let mut input = AccountInput::new(Endpoint::default());
+        let ui = AccountUi::default();
+        let mut camp = CampInput::default();
+        let mut keys = ButtonInput::default();
+        for key in [KeyCode::Enter, KeyCode::ArrowDown, KeyCode::Escape] {
+            keys.press(key);
+            camp.observe(window(), &press(key, None));
+        }
+        keys.reset_all(); // Happens on every countdown frame.
+        camp.capture_pressed(&keys); // An empty later frame must not lose ownership.
+        input.reset(); // Character retirement.
+        input.suppress_held_keys(&keys); // Ordinary handoff alone cannot recover it.
+        camp.handoff(&mut input);
+        let frame = ui.frame([800, 600], &view, &input, 0.);
+        for key in [KeyCode::Enter, KeyCode::ArrowDown, KeyCode::Escape] {
+            let mut repeat = press(key, None);
+            if let WindowEvent::KeyboardInput(event) = &mut repeat {
+                event.repeat = true;
+            }
+            assert_eq!(input.event(&view, &frame, window(), &repeat), None);
+            assert_eq!(
+                input.event(&view, &frame, window(), &press(key, None)),
+                None
+            );
+            assert_eq!(input.event(&view, &frame, window(), &release(key)), None);
+        }
+        assert_eq!(
+            input.event(&view, &frame, window(), &press(KeyCode::Enter, None)),
+            Some(Intent::Play { token: view.token })
+        );
+    }
+    #[test]
+    fn returning_held_keys_cannot_activate_roster_until_released() {
+        let view = characters();
+        let mut input = AccountInput::new(Endpoint::default());
+        let frame = AccountUi::default().frame([800, 600], &view, &input, 0.);
+        let mut held = ButtonInput::default();
+        held.press(KeyCode::Enter);
+        held.press(KeyCode::Escape);
+        input.suppress_held_keys(&held);
+        for key in [KeyCode::Enter, KeyCode::Escape] {
+            assert_eq!(
+                input.event(&view, &frame, window(), &press(key, None)),
+                None
+            );
+            assert_eq!(input.event(&view, &frame, window(), &release(key)), None);
+        }
+        assert_eq!(
+            input.event(&view, &frame, window(), &press(KeyCode::Enter, None)),
+            Some(Intent::Play { token: view.token })
+        );
+    }
+    #[test]
+    fn camp_overlay_hits_are_attempt_scoped_and_disabled_during_logout() {
+        for (token, cancellable) in [(7, true), (8, false)] {
+            let frame = camp_frame(
+                None,
+                [800, 600],
+                crate::live::camp::View {
+                    token,
+                    seconds: cancellable.then_some(29),
+                    cancellable,
+                },
+            );
+            let cancel = frame
+                .hit_targets
+                .iter()
+                .find(|h| h.screen_id == "cancel")
+                .unwrap();
+            assert_eq!(cancel.item, format!("camp:{token}:cancel"));
+            assert_eq!(cancel.enabled, cancellable);
+            assert!(
+                frame
+                    .hit_targets
+                    .iter()
+                    .all(|h| h.item.starts_with(&format!("camp:{token}:")))
+            );
+        }
+    }
+    #[test]
+    #[ignore = "requires original UI assets and GPU; no network or audio"]
+    fn original_camp_frames_at_one_and_two_scales() {
+        let directory = openeq_assets::loader::default_client_dir().unwrap();
+        let ui = AccountUi::load(&directory);
+        assert!(ui.login.is_some());
+        for (name, camp) in [
+            (
+                "countdown",
+                crate::live::camp::View {
+                    token: 1,
+                    seconds: Some(27),
+                    cancellable: true,
+                },
+            ),
+            (
+                "leaving",
+                crate::live::camp::View {
+                    token: 1,
+                    seconds: None,
+                    cancellable: false,
+                },
+            ),
+        ] {
+            for scale in [1., 2.] {
+                let frame = camp_frame(Some(&ui), [800, 600], camp);
+                assert!(frame.commands.iter().any(|command| matches!(command, DrawCommand::Image { texture, .. } if texture.exists())));
+                let mut renderer = openeq_render::Renderer::new_headless(
+                    (800. * scale) as u32,
+                    (600. * scale) as u32,
+                )
+                .unwrap();
+                renderer.set_ui_scaled(&frame, scale);
+                renderer.render_ui();
+                let (width, height, pixels) = renderer.read_rgba().unwrap();
+                assert!(
+                    pixels
+                        .chunks_exact(4)
+                        .any(|pixel| pixel[0] > 80 && pixel[1] > 80)
+                );
+                if let Some(output) = std::env::var_os("OPENEQ_UI_CAPTURE_DIR") {
+                    let path = std::path::PathBuf::from(output)
+                        .join(format!("camp-{name}-{}x.png", scale as u32));
+                    image::save_buffer(path, &pixels, width, height, image::ColorType::Rgba8)
+                        .unwrap();
+                }
+            }
+        }
     }
     #[test]
     #[ignore = "requires original UI assets and GPU; no network or audio"]

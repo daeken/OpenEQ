@@ -479,6 +479,9 @@ impl Interaction {
             )),
             Action::Help => live.game.notice(chat::HELP),
             Action::Quit => return true,
+            Action::Camp => {
+                live.request_camp();
+            }
         }
         false
     }

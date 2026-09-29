@@ -337,9 +337,10 @@ character creation/deletion support.
 
 ## Remaining integration considerations
 
-- `Character` still omits return-home/tutorial flags, appearance, equipment,
-  and last-login fields present in the tail. Keep richer appearance and special
-  entry actions for later. No new server request is needed for these fields.
+- `Character` now decodes appearance and equipment for the selected-character
+  preview. Return-home/tutorial flags and last-login still need explicit
+  handling before special entry actions are exposed. No new server request is
+  needed for those fields.
 - `EqStream` enforces 30 seconds of incoming inactivity and 30 seconds of
   unacknowledged reliable data. Its ticker retransmits/ACKs but does not generate
   outbound keepalives. Incoming valid server keepalives do refresh it. Human
@@ -374,5 +375,259 @@ character creation/deletion support.
 
 This first slice delivers credentials → server list → existing character list →
 the current playable world. Character creation/deletion, entitlement emulation,
-return-home/tutorial entry, 3D previews, and camping back to selection remain
+return-home/tutorial entry and camping back to selection remain
 separate, source-backed additions.
+
+Selected-character appearance previews were subsequently implemented from the
+received roster fields, with local rotation and cancellable asset loading.
+See `ACCOUNT_UI.md` for original-asset/GPU verification and remaining material,
+tint and animated-equipment limitations.
+
+## Next lifecycle slice: camp to the same world's fresh roster
+
+Source audit: EQEmu revision `4aceae18b94ffaafc08e2b17bc41cd72c77f795d`,
+2026-09-29. This section specifies the next implementation and its proof; it
+does not claim a live camp or character-creation test. The installed 2016 client
+assets remain a presentation reference, not proof of RoF2 wire layouts.
+
+Camp-to-roster is smaller than creation and has a complete server path. Current
+Before this implementation OpenEQ `/camp` was an immediate `/quit` alias (`chat.rs`, `hotbuttons.rs` and
+`HOTBUTTON_PLAN.md`). `connect_stages` returns after entry, dropping its account
+request receiver/session; `AccountController::poll` retires its channels and
+`main::present_account` discards the controller. The live worker owns the zone
+on that same runtime and `logout_zone` only sends Logout and drains 200ms. None
+of those actions currently restores a character list.
+
+### Camp protocol and cancellation
+
+| Step | Source-backed behavior |
+| --- | --- |
+| Sit | Existing `Command::Posture` sends `OP_SpawnAppearance=0x0971`, 8 bytes: own spawn ID u16, type u16=14, parameter u32=110. Standing is parameter100. `zone/client_packet.cpp::Handle_OP_SpawnAppearance` handles both and standing disables `camp_timer` and `bot_camp_timer`. |
+| Begin camp | `OP_Camp=0x28ec` (`utils/patches/patch_RoF2.conf:236`). No RoF2 translation or payload struct is registered; `Handle_OP_Camp` reads no payload. An empty application packet is sufficient for this EQEmu handler. It starts a 29,000ms server timer, stops LFP, and optionally starts a bot timer. Parcel-merchant engagement rejects camping by standing the player and emitting a message. |
+| Timer | `zone/client_process.cpp:193` saves, leaves the group, updates raid/guild and mercenary state, sets `instalog=true`, and disables the timer. Expiry does **not** itself close the ordinary player's stream. A client countdown should wait 30 seconds from Camp dispatch; it must continue receiving zone events throughout. Do not infer a shorter countdown from account privileges. |
+| Cancel | Send the existing standing appearance before expiry. Local Escape/Cancel/stand and server-directed standing, damage, death or travel retire the local camp attempt. Send no standing pose for an already-dead/replaced player. Countdown completion and cancel must be serialized on the worker so only one wins. |
+| Complete | `OP_Logout=0x4ac6` is connected-only. `Handle_OP_Logout` calls `SendLogoutPackets`, queues LogoutReply and calls `Disconnect`. Both `OP_PreLogoutReply` and `OP_LogoutReply` map to **0** for RoF2; neither is a usable application success acknowledgment. CancelTrade(action7), also sent by death, is not camp completion. |
+| Peer close | `common/net/reliable_stream_connection.cpp::Close` flushes and sends session `0x0005`; `ReliableStreamDisconnect::serialize` writes zero byte, opcode byte, and big-endian u32 connection code (six decoded bytes; its `size()` comment/helper says8). Compression/CRC follow negotiated encoding. Distinguish this from OutOfSession, malformed data, transport failure and 30-second timeout; the transport now retains the first close reason separately from `EqStream::recv(None)`. |
+| GM early close | With the default `EnableHackedFastCampForGM=false`, `Handle_OP_Camp` calls `OnDisconnect(true)` immediately for a GM. A matching peer close after Camp but before intentional Logout is `DisconnectedWhileCamping`, never `Camped`: retire the zone and attempt one fresh nonzoning world reconnect with “Connection closed while camping; returning to character selection.” This also safely treats an indistinguishable kick/shutdown as disconnect recovery. The fresh roster is authoritative; no claim of saved state is made. |
+| Return to world | After the old zone has actually closed, use a **new non-zoning** `WorldClient::connect` with the retained account ID/key and selected world's address. `world/client.cpp::HandleSendLoginInfoPacket:479` explicitly handles “Game -> Char Select”, sets `CLE_Status::CharSelect`, and sends membership/expansion/roster data. `connect_zoning` skips that roster and is wrong here. |
+
+The session key remains usable while the world retains its `ClientListEntry`:
+`CheckAuth` compares the login-server account ID/key; `Camp/ClearVars(false)`
+clear character/zone state while retaining those fields. World/zone keepalives
+maintain that entry; `CheckStale` removes it after more than20 ten-second checks.
+This supports an immediate authenticated return, not indefinite session reuse.
+A rejected/expired return must end at sign-in with a clear notice. Do not retain
+the account password, invent a new key, or automatically replay authentication.
+
+### Bounded implementation contract
+
+1. Keep one private account worker/runtime and its authenticated session through
+   repeated `Characters -> EnteringZone -> Playing -> Returning -> Characters`.
+   Keep the controller hidden during Playing rather than destroying it. A fresh
+   roster comes from the newly authenticated world connection and advances the
+   account revision. The foreground still receives only nonsecret identity and
+   live channels. A first slice may make Back after returning end the session at
+   sign-in; it must not assume the old login-server socket survives a long play.
+2. Give camping an explicit request token and source movement/action context.
+   Reject stale/double requests and camp during death, zoning, casting or pending
+   inventory/services. Keep state/event processing alive while the countdown
+   runs; block gameplay that conflicts with sitting, and offer Cancel until the
+   worker commits Logout. Retire the timer on recovery/zone boundaries. Final
+   logout sends no further target, gameplay or position packets. No stale
+   callback may revive a camp attempt or a subsequent character's pending work.
+3. Await bounded peer close after Logout. A timeout, malformed transport or
+   OutOfSession is a failed return with sign-in/exit recovery. A matching peer
+   close while counting is the explicit uncertain disconnect-recovery path
+   described above, with exactly one fresh world reconnect and no success claim.
+   Existing shutdown/committed-entry cleanup
+   remains available; dropping a process is not the ordinary camp operation.
+4. Returning invalidates old zone loaders, preview jobs, hit targets and held
+   input. Save the old character's layout before clearing live state, entities,
+   doors, map/travel/collision/liquid/atmosphere state and gameplay interaction.
+   Reuse only account-independent client asset caches. Destination currently
+   keys by zone name and per-LiveWorld generation, which restarts at0: clear it
+   or add session identity, or a second character in the same zone can inherit
+   the first character's scene/arrival. Stop zone audio on leaving play.
+5. Preserve direct `--connect` and offline startup. A path without a retained
+   account controller must explicitly say camp-to-roster is unavailable; it
+   must neither create a second login nor claim that a roster will follow.
+   Keep `/quit` as application exit. Update `/camp` chat/hotbutton parsing and
+   tests together so a saved Camp button no longer takes the Quit path.
+
+Required proof before a live fixture:
+
+- Transport tests distinguish valid peer disconnect, truncated/wrong-session
+  disconnect, OutOfSession, CRC/encoding errors, silence, unacknowledged sends
+  and malformed fragmentation. A timeout must wake a waiting receiver.
+- Pure camp tests cover countdown from dispatch, double/stale requests,
+  cancellation immediately before expiry, cancellation after Logout commits,
+  authoritative stand/own damage/death/bind/travel, old timer callbacks, GM early
+  close, and no movement/gameplay sends during final logout.
+- A loopback fake server records sit/Camp/stand and sit/Camp/Logout order, emits
+  peer close or stays silent, verifies `SendLoginInfo.zoning=0` and a fresh
+  roster, then permits a second selected-character entry on the same runtime.
+  Cancel/drop at each boundary must neither publish stale Ready/roster nor
+  leave a committed entry without the existing bounded cleanup.
+- UI checks cover camp progress/cancel, held Escape/Enter across return, late
+  pointer releases, re-entry into the same zone with a different character,
+  expired-session sign-in recovery, and direct-connect unavailability. Original
+  artwork captures require no login and no audio playback.
+- Later live proof needs one coordinated disposable account/character, initially
+  offline and alive, with no combat/cast/trade/loot/bank/merchant operation in
+  progress, plus a private pre-login snapshot. Observe actual timed camp, fresh
+  roster, re-entry and ordinary logout; verify offline state and restore/check
+  pose/resources, items/cash, spells/buffs, binds, progression and corpses. No
+  creation, other account or server-rule changes are needed for this slice.
+
+## Character creation audit and safe next boundary
+
+Creation should follow camp. Its packet data is known, but it changes durable
+server state **at name approval**, earlier than its name suggests. Begin with
+bounded catalog/capability decoding and a local draft/preview; do not expose a
+standalone “Check name” network button.
+
+| Exchange | RoF2 payload and source |
+| --- | --- |
+| ExpansionInfo `0x590d` | Exactly68 bytes; expansion bit mask at64 after64 unknown bytes (`rof2_structs.h:4699`, `rof2.cpp::ENCODE(OP_ExpansionInfo)`). The common server struct is only4 bytes and must not be used as the wire layout. `SendExpansionInfo` uses CharacterSelectExpansionSettings, client-based settings, or World.ExpansionSettings in that order. |
+| SendMaxCharacters `0x5475` |12 bytes: u32 maximum then two unknown u32s. Server limits by client/common creation limit; RoF2 is12. Roster count is not a capacity advertisement. |
+| SendMembership `0x7acc` |116 bytes: u32 membership, race mask, class mask, entry count=25, then25 signed u32-sized settings. `rof2.cpp` expands the common21 settings; its header's terminal offset comment is stale. Pinned server advertises gold/all races/classes. Do not infer eligibility from that hardcoded deployment behavior on another server. MembershipDetails=`0x057b` has separate settings and purchase mappings; never open purchase URLs. |
+| CharacterCreateRequest `0x6773` | Empty request is accepted (handler does not read payload). Reply: u8=0, u32 allocation count, N×60-byte allocations, u32 combination count, M×24-byte combinations. `world/sof_char_create_data.h` packs an allocation as index +7 base stats +7 default increments, all u32; a combination is expansion requirement, race, class, deity, allocation index, start zone, all u32. Bound counts/checked arithmetic before allocating; require exact length, known referenced allocation and unambiguous IDs. |
+| ApproveName `0x56a2` |72-byte request: NUL-terminated name[64], race u32 at64, class u32 at68 (`common/eq_packet_structs.h::NameApproval_Struct`, passthrough RoF2). Reply is exactly one byte0/1 in this server. The similarly named old `NameApproval` structure in `rof2_structs.h` is unrelated. Preserve unknown reply values as rejection, not success. |
+| CharacterCreate `0x6bbf` |96 bytes,24 little-endian u32s: gender0, race4, class8, deity12, start zone16; hair color20, beard24, beard color28, hairstyle32, face36, eye1/eye2 at40/44; Drakkin heritage/tattoo/details48/52/56; STR60, STA64, AGI68, DEX72, WIS76, INT80, CHA84; tutorial88; unknown92 zero. `rof2.cpp::DECODE(OP_CharacterCreate)` copies all except unknown92. The DEX offset comment73 is a typo; packed u32 layout gives72. There is **no name field**: the server uses this connection's last approved `char_name`. |
+| Creation outcome | `HandleCharacterCreatePacket` sends a fresh `SendCharInfo` on success; on failure it deletes the reserved name and sends `ApproveName(0)`. A transport send or approved name alone is not successful creation. Match the fresh roster to the immutable submitted name and expected identity before offering Play. |
+| RandomNameGenerator `0x5954` |72 bytes: race u32, gender u32, name[64]. Server replaces the name and echoes the packet; generation is not reservation and does not establish availability for a later request. Optional after the basic creation flow. |
+
+`WorldClient::characters()` currently discards capability packets while awaiting
+SendCharInfo. Creation first needs a bounded `CharacterSelection` snapshot that
+retains capabilities with the roster. Do not infer missing data as all-enabled.
+`world/worlddb.cpp::LoadCharacterCreateAllocations/Combos` obtains the creation
+catalog from the database; no fixed race/class/deity/start-zone table belongs in
+the client. `ExpansionRequired` is an expansion bit mask (e.g. historical
+`utils/sql/svn/2024_required_update.sql` uses2048 for Crescent Reach/Drakkin,
+matching `common/emu_versions.h::bitTSS=0x800`); require all requested bits from
+ExpansionInfo. Membership race masks need the explicit player-race mapping
+(`common/races.cpp::GetPlayerRaceBit`), not `1 << (race_id-1)` for128/130/330/522.
+
+The stat arrays use **STR, DEX, AGI, STA, INT, WIS, CHA**, whereas the outgoing
+96-byte request uses STR, STA, AGI, DEX, WIS, INT, CHA. `CheckCharCreateInfoSoF`
+requires the exact advertised race/class/deity/start-zone combination, resolves
+its allocation index, bounds every stat between base and base+sum(default
+increments), and rejects total increments above that sum. It permits unspent
+points. Start with the server's default allocation, validate sums with checked
+arithmetic, and label individual stats rather than copying array order. The
+validator does not enforce expansion/membership or cosmetic ranges. Server
+start-zone/tutorial rules can change the actual result; first creation should
+send tutorial=0 and use the returned roster/zone, without predicting a final
+spawn or inventing tutorial eligibility.
+
+Appearance limits require separate evidence. `common/races.cpp::RaceAppearance`
+contains race/gender/model-specific helpers, but **OPCharCreate does not call
+them**; it narrows/copies appearance fields into the profile. Helpers accept
+255/u32::MAX sentinels used elsewhere, which are not normal selectable choices.
+The local renderer's normalization is a fallback, not a creation validator.
+Examples that preclude a universal range:
+
+- Faces are0–7 for most playable races,0–9 for Froglok,0–6 for Drakkin in the
+  helpers. Barbarian composite face/woad selection is separate; current Luclin
+  rendering uses decimal face/10 and face%10. Do not flatten that into a guessed
+  universal face slider.
+- Luclin hair is0–3 for supported ordinary race/gender pairs, Erudite male0–5
+  and female0–8, Drakkin male0–8 and female0–7. Beard options vary from Dwarf
+  female0–1 through Drakkin male0–11; unsupported parts must be hidden.
+- Hair/beard palettes vary by race (Dark Elf13–18, Gnome0–24, Drakkin0–3, etc.).
+  Existing Luclin preview does not reproduce these palettes; do not offer a
+  color picker whose preview silently normalizes the selected value away.
+- Drakkin helpers allow heritage0–7, but the installed
+  `Resources/playercustomization.txt` has authored parents0–5 and per-parent
+  class lists, both genders, four colors, seven faces, twelve eyes, eight
+  tattoos and eight facial attachments. Intersect supported assets, that
+  metadata and server-advertised combinations. The same2016 file's Human
+  entries describe newer feature counts while most older race rows are zero
+  placeholders; it cannot replace a verified RoF2/classic/Luclin capability
+  table. Unsupported choices need to remain unavailable, not invented defaults.
+
+### Creation commit and cancellation requirements
+
+`HandleNameApprovalPacket` validates a4–15-letter name, uppercase first letter,
+no later uppercase, and no spaces; `Database::CheckNameFilter` also rejects
+nonletters, more than two identical consecutive letters and configured banned
+substrings. It checks playable race/class and then calls `ReserveName`.
+`ReserveName` rejects existing character/bot/NPC/pet names and **inserts a real
+`character_data` row with level0**, optionally also adding default guild
+membership. No name-reservation rollback is present in the world client
+destructor. A subsequent name approval can overwrite this connection's selected
+`char_name`; the client must never have two approval/create attempts in flight.
+
+The final Create action therefore freezes a complete locally validated draft
+and locks its revision before sending ApproveName. On approval, immediately send
+exactly that draft's CharacterCreate on the same authenticated world socket,
+then await the fresh roster/failure. Cancel before approval sends nothing;
+navigation or app cancellation after approval has potentially reserved durable
+state, so finish the bounded committed transaction without publishing stale UI.
+An uncertain network failure must not retry approval/create or issue an
+automatic DeleteCharacter. Reconnect to inspect the roster and report the
+uncertain result; resolving a leftover reserved row requires a separate,
+explicitly scoped action. The normal DeleteCharacter opcode is not a safe
+generic rollback: it deletes an account-owned character by name, not a token-
+identified reservation, and can soft-delete all of its associated state.
+
+Creation tests should first cover every packet prefix/trailer, count overflow,
+duplicate IDs, missing allocations, capability absence, nonmatching masks,
+wire/stat-order mapping, checked stat sums, immutable approval/create pairing,
+single-flight behavior, rejection/unknown reply, socket failure after approval,
+cancel before/after commit, stale roster and changed session. A fake server can
+prove that no retry or deletion follows ambiguous success. Live creation and
+deletion need their own disposable-account fixture and explicit test scope;
+camp proof requires neither.
+
+
+### Camp implementation and verification status
+
+Implemented the retained account worker/controller, explicit countdown tokens,
+validated current-pose stop before sitting, empty Camp, standing cancellation,
+authoritative damage/death/standing/bind/travel interruption, bounded final
+Logout confirmation, distinct early-close recovery, fresh nonzoning roster,
+and same-runtime reentry. The foreground retires character scene/load keys,
+actors, doors, map/travel/collision/liquids/atmosphere, old interaction/hits and
+layout ownership before the next character. Zone audio receives no destination;
+held world keys cannot trigger account controls before release. A release-aware
+raw-key ledger preserves that ownership across cleared Bevy input frames.
+Immutable text/spell catalogs survive reentry, while spell simulation starts
+fresh and shares only its decoded assets. `/quit` still exits, while direct
+sessions explain the unavailable roster return.
+
+Local fake-server tests cover ready-only Camp, exact sitting/Camp/standing/
+Logout order, matching intentional close, silence, wrong connection code,
+OutOfSession, and early close that cannot retroactively become Logout success.
+Pure tests cover valid motion stopping without invented coordinates, rejected
+stale/double camp, stale timer callbacks, blocked gameplay and interruptions,
+retained controller cancellation handles, fresh roster revisions, old callback
+rejection, and input/scene retirement. The production input selector is tested
+with ready authority, queued Cancel and expired deadline simultaneously: it
+chooses them in that order. A camp-specific interruption revision rejects starts
+queued before damage/standing. Both worker and foreground use the living
+MovementAuthority ID; corpse events cannot desynchronize later camp requests.
+
+The root task's first guarded live proofs succeeded: Reviver cancelled once,
+then returned after30,230ms with `uncertain_close=false` and reentered; Barterer
+returned after235ms with `uncertain_close=true` and reentered. Both requested
+graceful shutdown and root reported exact restoration/offline verification.
+Private logs are `/tmp/openeq-camp-reviver-proof/live.log` and
+`/tmp/openeq-camp-barterer-proof/live.log`. Those runs preceded the final queue
+ordering/stamp and held-input fixes. The root task's final rebuilt Reviver rerun
+passed after fresh source/rules/fixture revalidation: cancel, full30,257ms camp,
+fresh roster, same-character reentry and graceful shutdown. The final private
+log is `/tmp/openeq-camp-reviver-proof/live-final.log`; all29-table invariants
+and baseline pose/resources were restored with Reviver offline. No live login
+or database change was performed by xml_ui.
+
+Original-art countdown and leaving captures passed at1×/2× and were visually
+inspected in `/tmp/openeq-camp-ui`; Cancel becomes disabled during final Logout.
+All-target application/network clippy passes with warnings denied.
+
+`camp_smoke PRIVATE_CONFIG EXPECTED_CHARACTER [--early-close]` drives the
+production AccountController, ordinary cancellation/countdown or GM early-close
+recovery, fresh roster and same-character reentry, then requests graceful
+shutdown. It does not snapshot or write the database; the operator must perform
+preflight, offline verification and guarded restoration. It never logs private
+configuration contents, raw packets or session keys and opens no audio device.

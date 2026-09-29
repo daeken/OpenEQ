@@ -15,6 +15,12 @@ pub enum ZoneError {
     Malformed(&'static str),
     #[error("zone connection closed")]
     Closed,
+    #[error("zone logout was not confirmed before the deadline")]
+    LogoutTimeout,
+    #[error("zone logout ended without a confirmed peer disconnect")]
+    LogoutUnconfirmed,
+    #[error("the zone is not ready for this action")]
+    NotReady,
     #[error(transparent)]
     World(#[from] crate::world::WorldError),
     #[error("a zone handoff is in progress")]
@@ -497,6 +503,53 @@ impl ZoneClient {
             .await?;
         Ok(())
     }
+
+    /// EQEmu starts its camp timer on this connected-only, empty request.
+    /// The caller owns the sitting/countdown/cancellation lifecycle.
+    pub async fn camp(&self) -> Result<(), ZoneError> {
+        if !self.ready {
+            return Err(ZoneError::NotReady);
+        }
+        if self.is_zoning() {
+            return Err(ZoneError::Zoning);
+        }
+        self.stream.send(&AppPacket::empty(0x28ec)).await?;
+        Ok(())
+    }
+
+    pub async fn peer_disconnected(&self) -> bool {
+        self.stream.close_reason().await == Some(crate::stream::CloseReason::PeerDisconnect)
+    }
+
+    /// RoF2 has no mapped LogoutReply. Keep the transport alive until EQEmu
+    /// closes it; a send, timeout, or OutOfSession is not confirmation.
+    pub async fn logout_for_roster(&mut self) -> Result<(), ZoneError> {
+        if !self.ready {
+            return Err(ZoneError::NotReady);
+        }
+        if self.is_zoning() {
+            return Err(ZoneError::Zoning);
+        }
+        self.logout_for_roster_with_timeout(std::time::Duration::from_secs(20))
+            .await
+    }
+
+    async fn logout_for_roster_with_timeout(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> Result<(), ZoneError> {
+        self.logout().await?;
+        tokio::time::timeout(timeout, async {
+            while self.stream.recv().await.is_some() {}
+            if self.peer_disconnected().await {
+                Ok(())
+            } else {
+                Err(ZoneError::LogoutUnconfirmed)
+            }
+        })
+        .await
+        .map_err(|_| ZoneError::LogoutTimeout)?
+    }
 }
 
 fn signed(word: u32, shift: u32, bits: u32) -> i32 {
@@ -875,3 +928,6 @@ mod tests {
         assert!(parse_environment(&data).is_none());
     }
 }
+
+#[cfg(test)]
+mod camp_tests;
