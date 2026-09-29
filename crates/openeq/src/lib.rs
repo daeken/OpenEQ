@@ -13,6 +13,7 @@ pub mod loading;
 pub mod loading_ui;
 pub mod movement;
 mod social_interaction;
+pub mod spell_effects;
 pub mod spells;
 pub mod targeting;
 

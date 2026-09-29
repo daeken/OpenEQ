@@ -20,6 +20,7 @@ pub mod loader;
 pub mod mesh;
 pub mod pfs;
 pub mod read;
+pub mod spell_effects;
 pub mod terrain;
 pub mod texture;
 pub mod wld;

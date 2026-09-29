@@ -282,6 +282,43 @@ pub struct Buff {
     pub caster: String,
 }
 
+/// Explicit particle definition, not a spells_us spell ID. RoF2 forwards the
+/// common SpellEffect_Struct unchanged, including its millisecond timing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpellEffect {
+    pub effect_id: u32,
+    pub source_id: u32,
+    pub target_id: u32,
+    pub duration_ms: u32,
+    pub finish_delay_ms: u32,
+    pub unknown_020: u32,
+}
+
+/// Authored item projectile. Position and heading remain in server space,
+/// matching other network events. Velocity units and trajectory are client
+/// presentation parameters, not an authoritative damage/arrival timestamp.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Projectile {
+    pub source_id: u32,
+    pub target_id: u32,
+    pub position: [f32; 3],
+    pub velocity: f32,
+    pub launch_angle: f32,
+    pub tilt: f32,
+    pub arc: f32,
+    pub item_id: u32,
+    pub skill: u8,
+    pub item_type: u8,
+    pub model_name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NimbusEffect {
+    pub id: u32,
+    pub effect_id: u32,
+    pub removed: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct Door {
     pub id: u8,
@@ -382,8 +419,15 @@ pub enum GameplayEvent {
         target_id: u32,
         spell_id: u32,
         level: u16,
+        /// 231 is a spell; other values are combat skill/action types.
+        action_type: u8,
+        spell_level: u8,
+        instrument_modifier: f32,
         effect_flag: u8,
     },
+    SpellEffect(SpellEffect),
+    Projectile(Projectile),
+    NimbusEffect(NimbusEffect),
     Buffs {
         id: u32,
         all: bool,
@@ -797,6 +841,10 @@ pub fn parse_packet(opcode: u16, data: &[u8]) -> Option<Result<GameplayEvent, Zo
             | 0x318f
             | 0x048c
             | 0x744c
+            | 0x5936
+            | 0x747c
+            | 0xc693
+            | 0x7b1e
             | 0x3377
             | 0x4f4b
             | 0x659c
@@ -980,9 +1028,13 @@ fn parse_known(opcode: u16, data: &[u8]) -> Option<GameplayEvent> {
             let target_id = r.u16()? as u32;
             let source_id = r.u16()? as u32;
             let level = r.u16()?;
-            r.skip(27)?;
+            r.skip(4)?;
+            let instrument_modifier = r.float()?;
+            r.skip(12)?; // force, hit_heading and hit_pitch are combat push data
+            let action_type = r.u8()?;
+            r.skip(6)?;
             let spell_id = r.u32()?;
-            r.skip(1)?;
+            let spell_level = r.u8()?;
             let effect_flag = r.u8()?;
             r.skip(17)?;
             if !r.done() {
@@ -993,8 +1045,75 @@ fn parse_known(opcode: u16, data: &[u8]) -> Option<GameplayEvent> {
                 target_id,
                 spell_id,
                 level,
+                action_type,
+                spell_level,
+                instrument_modifier,
                 effect_flag,
             }
+        }
+        0x5936 => {
+            let effect = SpellEffect {
+                effect_id: r.u32()?,
+                source_id: r.u32()?,
+                target_id: r.u32()?,
+                duration_ms: r.u32()?,
+                finish_delay_ms: r.u32()?,
+                unknown_020: r.u32()?,
+            };
+            r.skip(4)?; // unknown024/025/026, encoded as 1/1/0 by EQEmu
+            if !r.done() {
+                return None;
+            }
+            GameplayEvent::SpellEffect(effect)
+        }
+        0xc693 | 0x7b1e => {
+            let effect = NimbusEffect {
+                id: r.u32()?,
+                effect_id: r.u32()?,
+                removed: opcode == 0x7b1e,
+            };
+            if !r.done() {
+                return None;
+            }
+            GameplayEvent::NimbusEffect(effect)
+        }
+        0x747c => {
+            let y = r.float()?;
+            let x = r.float()?;
+            let z = r.float()?;
+            r.skip(12)?;
+            let velocity = r.float()?;
+            let launch_angle = r.float()?;
+            let tilt = r.float()?;
+            r.skip(8)?;
+            let arc = r.float()?;
+            let source_id = r.u32()?;
+            let target_id = r.u32()?;
+            let item_id = r.u32()?;
+            r.skip(13)?;
+            let skill = r.u8()?;
+            let item_type = r.u8()?;
+            r.skip(14)?;
+            let model = r.take(27)?;
+            // The RoF2 encoder uses strncpy and can fill the entire fixed field.
+            let end = model.iter().position(|b| *b == 0).unwrap_or(model.len());
+            let model_name = String::from_utf8_lossy(&model[..end]).into_owned();
+            if !r.done() {
+                return None;
+            }
+            GameplayEvent::Projectile(Projectile {
+                source_id,
+                target_id,
+                position: [x, y, z],
+                velocity,
+                launch_angle,
+                tilt,
+                arc,
+                item_id,
+                skill,
+                item_type,
+                model_name,
+            })
         }
         0x3377 | 0x4f4b => {
             let id = r.u32()?;
@@ -2057,6 +2176,164 @@ mod tests {
         assert!(parse_packet(0x048c, &[0; 8]).unwrap().is_ok());
         assert!(parse_packet(0x048c, &[0; 7]).unwrap().is_err());
     }
+    #[test]
+    fn rof2_explicit_particle_and_nimbus_packets_keep_effect_ids_and_timing() {
+        // common/eq_packet_structs.h SpellEffect_Struct and
+        // zone/mob.cpp SendSpellEffect; RoF2 has no translating encoder.
+        let mut bytes = Vec::new();
+        for value in [278u32, 0x10002, 0x30004, 2250, 375, 3000] {
+            bytes.extend(value.to_le_bytes());
+        }
+        bytes.extend([1, 1, 0, 0]);
+        assert_eq!(bytes.len(), 28);
+        let GameplayEvent::SpellEffect(effect) = parse_packet(0x5936, &bytes).unwrap().unwrap()
+        else {
+            panic!("spell effect");
+        };
+        assert_eq!(
+            effect,
+            SpellEffect {
+                effect_id: 278,
+                source_id: 0x10002,
+                target_id: 0x30004,
+                duration_ms: 2250,
+                finish_delay_ms: 375,
+                unknown_020: 3000,
+            }
+        );
+        for n in 0..bytes.len() {
+            assert!(parse_packet(0x5936, &bytes[..n]).unwrap().is_err());
+        }
+        bytes.push(0);
+        assert!(parse_packet(0x5936, &bytes).unwrap().is_err());
+
+        // AddNimbusEffect and RemoveNimbusEffect share an 8-byte payload.
+        let bytes = [0x10002u32.to_le_bytes(), 278u32.to_le_bytes()].concat();
+        for (opcode, removed) in [(0xc693, false), (0x7b1e, true)] {
+            let GameplayEvent::NimbusEffect(effect) =
+                parse_packet(opcode, &bytes).unwrap().unwrap()
+            else {
+                panic!("nimbus effect");
+            };
+            assert_eq!(
+                effect,
+                NimbusEffect {
+                    id: 0x10002,
+                    effect_id: 278,
+                    removed
+                }
+            );
+            for n in 0..bytes.len() {
+                assert!(parse_packet(opcode, &bytes[..n]).unwrap().is_err());
+            }
+            let mut extra = bytes.clone();
+            extra.push(0);
+            assert!(parse_packet(opcode, &extra).unwrap().is_err());
+        }
+    }
+
+    #[test]
+    fn rof2_item_projectile_uses_translated_offsets_and_server_xyz() {
+        // rof2_structs.h Arrow_Struct is 116 bytes, not the common packet's
+        // layout. ENCODE(OP_SomeItemPacketMaybe) also inserts byte070=175.
+        let mut bytes = vec![0; 116];
+        for (offset, value) in [
+            (0, -17.25f32),
+            (4, 90.5),
+            (8, 42.125),
+            (24, 4.),
+            (28, 192.),
+            (32, 125.),
+            (44, 50.),
+        ] {
+            bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        for (offset, value) in [(48, 0x10002u32), (52, 0x30004), (56, 8005)] {
+            bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        bytes[70] = 175;
+        bytes[73] = 7;
+        bytes[74] = 27;
+        bytes[89..95].copy_from_slice(b"IT600\0");
+        let GameplayEvent::Projectile(projectile) = parse_packet(0x747c, &bytes).unwrap().unwrap()
+        else {
+            panic!("projectile");
+        };
+        assert_eq!(
+            projectile,
+            Projectile {
+                source_id: 0x10002,
+                target_id: 0x30004,
+                position: [90.5, -17.25, 42.125],
+                velocity: 4.,
+                launch_angle: 192.,
+                tilt: 125.,
+                arc: 50.,
+                item_id: 8005,
+                skill: 7,
+                item_type: 27,
+                model_name: "IT600".into(),
+            }
+        );
+        for n in 0..bytes.len() {
+            assert!(parse_packet(0x747c, &bytes[..n]).unwrap().is_err());
+        }
+        for offset in [0, 4, 8, 24, 28, 32, 44] {
+            let mut invalid = bytes.clone();
+            invalid[offset..offset + 4].copy_from_slice(&f32::NAN.to_le_bytes());
+            assert!(parse_packet(0x747c, &invalid).unwrap().is_err());
+        }
+        // strncpy can fill the whole fixed-width model name without a NUL.
+        bytes[89..].fill(b'X');
+        let GameplayEvent::Projectile(projectile) = parse_packet(0x747c, &bytes).unwrap().unwrap()
+        else {
+            panic!("projectile");
+        };
+        assert_eq!(projectile.model_name, "X".repeat(27));
+        bytes.push(0);
+        assert!(parse_packet(0x747c, &bytes).unwrap().is_err());
+    }
+
+    #[test]
+    fn rof2_spell_action_preserves_initial_success_and_nonspell_types() {
+        // ENCODE(OP_Action) writes ActionAlt_Struct (56 bytes). An initial
+        // flag0 reaches observers; flag4 success may follow for caster/target.
+        let mut bytes = vec![0; 56];
+        bytes[0..2].copy_from_slice(&42u16.to_le_bytes());
+        bytes[2..4].copy_from_slice(&9u16.to_le_bytes());
+        bytes[4..6].copy_from_slice(&65u16.to_le_bytes());
+        bytes[10..14].copy_from_slice(&1.5f32.to_le_bytes());
+        bytes[33..37].copy_from_slice(&288u32.to_le_bytes());
+        bytes[37] = 63;
+        for action_type in [231, 1] {
+            bytes[26] = action_type;
+            for effect_flag in [0, 4] {
+                bytes[38] = effect_flag;
+                let GameplayEvent::SpellAction {
+                    source_id,
+                    target_id,
+                    spell_id,
+                    level,
+                    action_type: parsed_type,
+                    spell_level,
+                    instrument_modifier,
+                    effect_flag: parsed_flag,
+                } = parse_packet(0x744c, &bytes).unwrap().unwrap()
+                else {
+                    panic!("action");
+                };
+                assert_eq!((source_id, target_id, spell_id, level), (9, 42, 288, 65));
+                assert_eq!(
+                    (parsed_type, parsed_flag, spell_level),
+                    (action_type, effect_flag, 63)
+                );
+                assert_eq!(instrument_modifier, 1.5);
+            }
+        }
+        bytes[10..14].copy_from_slice(&f32::INFINITY.to_le_bytes());
+        assert!(parse_packet(0x744c, &bytes).unwrap().is_err());
+    }
+
     #[test]
     fn buff_lists_are_bounded_and_require_complete_strings() {
         let mut data = 42u32.to_le_bytes().to_vec();

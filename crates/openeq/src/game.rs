@@ -1019,6 +1019,7 @@ mod tests {
             crate::spells::Spell {
                 id: 288,
                 name: "Minor Shielding".into(),
+                projectile_model: String::new(),
                 icon: 0,
                 mana: 10,
                 cast_time_ms: 2500,
@@ -1027,6 +1028,10 @@ mod tests {
                 range: 0.,
                 target_type: 6,
                 beneficial: true,
+                effect_id: 220,
+                casting_animation: 43,
+                travel_type: 0,
+                persistent_particles: false,
                 levels: [1; 16],
                 description: String::new(),
             },

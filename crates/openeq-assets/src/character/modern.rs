@@ -466,11 +466,19 @@ impl ModernModel {
         blend: f32,
         meshes: &mut [Geometry],
     ) -> bool {
+        self.skin_into(&self.blended_bone_transforms(from, to, blend), meshes)
+    }
+    pub(super) fn blended_bone_transforms(
+        &self,
+        from: CharacterPose<'_>,
+        to: CharacterPose<'_>,
+        blend: f32,
+    ) -> Vec<Mat4> {
         if blend <= 0. {
-            return self.sample_into(from.animation, from.time_seconds, from.looping, meshes);
+            return self.bone_transforms(from.animation, from.time_seconds, from.looping);
         }
         if blend >= 1. {
-            return self.sample_into(to.animation, to.time_seconds, to.looping, meshes);
+            return self.bone_transforms(to.animation, to.time_seconds, to.looping);
         }
         let from = self.local_transforms(from.animation, from.time_seconds, from.looping);
         let to = self.local_transforms(to.animation, to.time_seconds, to.looping);
@@ -479,7 +487,10 @@ impl ModernModel {
             .zip(to)
             .map(|(a, b)| a.blend(b, blend))
             .collect();
-        self.skin_into(&self.global_transforms(&local), meshes)
+        self.global_transforms(&local)
+    }
+    pub(super) fn center_offset(&self) -> Mat4 {
+        Mat4::from_translation(Vec3::new(0., 0., -self.center_z))
     }
     pub(super) fn sample_into(
         &self,

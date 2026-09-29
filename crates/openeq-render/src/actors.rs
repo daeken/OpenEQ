@@ -108,12 +108,51 @@ impl ActorBounds {
 
 type AppearanceKey = (u32, u8, CharacterAppearance);
 
+/// Animated spell attachment locations, in scene coordinates. Missing sockets
+/// remain absent so non-humanoid models can use an explicit body fallback.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ActorSockets {
+    pub head: Option<[f32; 3]>,
+    pub chest: Option<[f32; 3]>,
+    pub left_hand: Option<[f32; 3]>,
+    pub right_hand: Option<[f32; 3]>,
+    pub left_foot: Option<[f32; 3]>,
+    pub right_foot: Option<[f32; 3]>,
+    pub left_hand_rotation: Option<[f32; 4]>,
+    pub right_hand_rotation: Option<[f32; 4]>,
+}
+
+fn socket_indices(model: &CharacterModel) -> [Option<usize>; 6] {
+    let find = |names: &[&str]| {
+        names.iter().find_map(|name| {
+            model
+                .bone_names
+                .iter()
+                .position(|bone| bone == name || bone.get(3..) == Some(*name))
+        })
+    };
+    [
+        find(&["HEAD_POINT_TRACK", "HEAD_HEAD", "HE_TRACK"]),
+        find(&[
+            "CHEST_POINT_TRACK",
+            "CHCHEST2_TRACK",
+            "CH_TRACK",
+            "CHEST_CHEST03",
+        ]),
+        find(&["L_POINT_TRACK", "ARML_WEAP", "ARML_HAND"]),
+        find(&["R_POINT_TRACK", "ARMR_WEAP", "ARMR_HAND"]),
+        find(&["BO_L_TRACK", "BOFOOTL_TRACK", "LEGL_FOOT"]),
+        find(&["BO_R_TRACK", "BOFOOTR_TRACK", "LEGR_FOOT"]),
+    ]
+}
+
 struct Batch {
     model: CharacterModel,
     poses: Vec<Geometry>,
     actor: GpuActor,
     capacity: usize,
     last_seen: f32,
+    socket_indices: [Option<usize>; 6],
 }
 struct Timeline {
     action: ActorAction,
@@ -199,6 +238,8 @@ pub struct ActorRenderer {
     unavailable: BTreeSet<(u32, u8)>,
     timelines: BTreeMap<u32, Timeline>,
     bounds: BTreeMap<u32, ActorBounds>,
+    sockets: BTreeMap<u32, ActorSockets>,
+    projectiles: crate::projectiles::ProjectileRenderer,
     pub rendered_instances: usize,
 }
 
@@ -218,12 +259,28 @@ impl ActorRenderer {
             unavailable: BTreeSet::new(),
             timelines: BTreeMap::new(),
             bounds: BTreeMap::new(),
+            sockets: BTreeMap::new(),
+            projectiles: Default::default(),
             rendered_instances: 0,
         })
     }
 
     pub fn update(&mut self, renderer: &Renderer, states: &[ActorState], time: f32) {
         self.preload(&renderer.upload_context(), states, time);
+    }
+
+    /// Submit the complete current projectile snapshot; an empty slice clears
+    /// visible projectiles while retaining a bounded, expiring model cache.
+    pub fn update_projectiles(
+        &mut self,
+        renderer: &Renderer,
+        states: &[crate::projectiles::ProjectileState],
+    ) -> crate::projectiles::ProjectileStats {
+        self.projectiles.update(renderer, &self.library, states)
+    }
+
+    pub fn projectile_stats(&self) -> crate::projectiles::ProjectileStats {
+        self.projectiles.stats()
     }
 
     /// Decodes models and uploads the initial appearances, poses and instances.
@@ -309,6 +366,7 @@ impl ActorRenderer {
         }
         self.rendered_instances = 0;
         self.bounds.clear();
+        self.sockets.clear();
         for (key, batch) in &mut self.batches {
             if !progress(total, total) {
                 return false;
@@ -368,14 +426,50 @@ impl ActorRenderer {
                     );
                 }
                 let bounds = ActorBounds::from_geometry(geometry);
+                let transforms = batch.model.attachment_transforms(
+                    pose.from.as_ref().unwrap_or(&pose.to).sample(),
+                    pose.to.sample(),
+                    f32::from(pose.step) / f32::from(TRANSITION_STEPS),
+                );
                 let height = (batch.model.bounds_max[2] - batch.model.bounds_min[2]).max(0.1);
                 for state in actors {
                     let instance = actor_instance(state, height);
-                    if let Some(bounds) = bounds {
-                        self.bounds.insert(
+                    let matrix = Mat4::from_cols_array_2d(&instance.columns);
+                    if let Some(transforms) = &transforms {
+                        let hand_rotation = |index: usize| {
+                            batch.socket_indices[index]
+                                .and_then(|index| transforms.get(index))
+                                .map(|bone| {
+                                    (matrix * *bone)
+                                        .to_scale_rotation_translation()
+                                        .1
+                                        .to_array()
+                                })
+                        };
+                        let [head, chest, left_hand, right_hand, left_foot, right_foot] =
+                            batch.socket_indices.map(|index| {
+                                index.and_then(|index| {
+                                    transforms.get(index).map(|bone| {
+                                        (matrix * *bone).transform_point3(Vec3::ZERO).to_array()
+                                    })
+                                })
+                            });
+                        self.sockets.insert(
                             state.id,
-                            bounds.transformed(Mat4::from_cols_array_2d(&instance.columns)),
+                            ActorSockets {
+                                head,
+                                chest,
+                                left_hand,
+                                right_hand,
+                                left_foot,
+                                right_foot,
+                                left_hand_rotation: hand_rotation(2),
+                                right_hand_rotation: hand_rotation(3),
+                            },
                         );
+                    }
+                    if let Some(bounds) = bounds {
+                        self.bounds.insert(state.id, bounds.transformed(matrix));
                     }
                     instances.push(instance);
                 }
@@ -411,12 +505,14 @@ impl ActorRenderer {
             .library
             .load_race_with_appearance(key.0, key.1, &key.2)?;
         let (actor, poses) = upload_actor(upload, &self.library, &model, 2)?;
+        let socket_indices = socket_indices(&model);
         Ok(Batch {
             model,
             actor,
             poses,
             capacity: 2,
             last_seen: time,
+            socket_indices,
         })
     }
 
@@ -432,11 +528,16 @@ impl ActorRenderer {
                     .any(|draw| draw.instance_count > 0)
             })
             .map(|batch| &batch.actor)
+            .chain(self.projectiles.draws())
             .collect()
     }
 
     pub fn bounds(&self) -> &BTreeMap<u32, ActorBounds> {
         &self.bounds
+    }
+
+    pub fn sockets(&self) -> &BTreeMap<u32, ActorSockets> {
+        &self.sockets
     }
 }
 

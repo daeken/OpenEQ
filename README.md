@@ -108,6 +108,9 @@ you up and automatically returns, following the default five-second cycle.
   named avoidance outcomes, with short lifetimes and bounded stacking.
 - Spellbook/gems, memorization, casting, interruption, cooldown feedback, mana
   consumption, buffs and dismissal. Effects remain authoritative on EQEmu.
+- Original spell particles for casting, impacts, buffs and nimbus effects,
+  with animated hand attachments, texture sheets, soft/additive blending and fog.
+  Original arrows/bolts and authored missile flame trails follow server packets.
 - Scroll scribing and item effects, with owned-item validation, finite charges,
   consumable stacks, interrupted casts and shared reuse timers.
 - Classic and optional Luclin armor/skins/tints and held equipment, including
@@ -127,13 +130,17 @@ you up and automatically returns, following the default five-second cycle.
 This is a playable development milestone, with substantial parity work remaining:
 NPC quest hand-ins, augmentation, raid and guild management, quest journals,
 interactive account/character creation, EQG/absolute-destination border
-triggers, spell particles/audio, advanced XML widgets and full swimming/movement
+triggers, audio, advanced XML widgets and full swimming/movement
 rules. Luclin hair/beard colors, Hero's Forge, animated equipment, weather,
 terrain ecosystem effects and water refraction remain incomplete. Door motion
 classes include approximations; ordinary door collision switches to the final
 pose, while lifts collide throughout their motion. Lift timing is approximate.
 Some skins/layouts need more work at small window sizes. No original assets are
 redistributed.
+
+Spell effects have a verified first pass, with remaining attachment/mode enums,
+some timing rules and translucent ordering tracked in the
+[spell rendering notes](docs/SPELL_EFFECT_RENDERING.md).
 
 The [next ten milestones](docs/NEXT_TEN_MILESTONES.md) are ordered hardest first,
 with the active work, discoveries, and verification recorded as implementation
@@ -174,6 +181,11 @@ cargo run -p openeq --bin live_smoke -- \
 # Integrated gameplay state and presentation probe (dedicated caster fixture).
 cargo run -p openeq --bin gameplay_smoke -- \
   "$HOME/.config/openeq/storage2-spell-credentials.json"
+
+# Visible spell casting, impact and interruption (dedicated Arcanist fixture).
+cargo run -p openeq --bin spell_effect_smoke -- \
+  "$HOME/.config/openeq/storage2-spell-credentials.json" \
+  /tmp/openeq-spell-effects --first-person
 
 # Integrated merchant/bank roundtrip, restoring the dedicated Broker fixture.
 cargo run -p openeq --bin commerce_smoke -- \
@@ -225,5 +237,6 @@ state their requirements. No original client assets are distributed here.
 - [Merchant/bank protocol and persistence proof](docs/COMMERCE_PROTOCOL.md)
 - [Groups, quest links and two-client proof](docs/SOCIAL_PROTOCOL.md)
 - [Character rendering and equipment coverage](docs/CHARACTER_RENDERING.md)
+- [Spell rendering and verification](docs/SPELL_EFFECT_RENDERING.md)
 - [Dynamic doors and collision](docs/DYNAMIC_OBJECTS.md)
 - [Kelethin buttons and lift verification](docs/LIFT_PROTOCOL.md)

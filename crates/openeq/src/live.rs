@@ -202,6 +202,7 @@ pub struct LiveWorld {
     pub doors: BTreeMap<u8, Door>,
     pub zone_points: BTreeMap<u32, ZonePoint>,
     pub combat_feedback: crate::combat_feedback::CombatFeedback,
+    pub spell_effects: crate::spell_effects::SpellEffects,
     zone_request: Option<PendingZoneRequest>,
     door_return_deadlines: BTreeMap<u8, Instant>,
     pending_destination: Option<ZoneDestination>,
@@ -294,6 +295,7 @@ impl LiveWorld {
             doors: BTreeMap::new(),
             zone_points: BTreeMap::new(),
             combat_feedback: Default::default(),
+            spell_effects: Default::default(),
             zone_request: None,
             door_return_deadlines: BTreeMap::new(),
             pending_destination: None,
@@ -314,6 +316,7 @@ impl LiveWorld {
                     self.ready = false;
                     self.zone_request = None;
                     self.combat_feedback.clear();
+                    self.spell_effects.clear();
                     self.game.attack = false;
                     self.game.commerce.close_services();
                     self.game.trade = Default::default();
@@ -336,6 +339,20 @@ impl LiveWorld {
                             if spawn.name.eq_ignore_ascii_case(&self.character) {
                                 self.own_id = Some(spawn.id);
                                 self.initial_position = Some(spawn.position);
+                                if let Some(profile) = &self.game.profile {
+                                    self.spell_effects.event(
+                                        &GameplayEvent::Buffs {
+                                            id: spawn.id,
+                                            all: true,
+                                            tick_timer: 0,
+                                            kind: 0,
+                                            buffs: profile.buffs.clone(),
+                                        },
+                                        &self.game.spell_catalog,
+                                        self.own_id,
+                                        now,
+                                    );
+                                }
                             }
                             self.entities.insert(spawn.id, Entity::new(spawn, now));
                         }
@@ -351,6 +368,7 @@ impl LiveWorld {
                         ZoneEvent::Despawn(id) => {
                             self.trade_partner_gone(id);
                             self.entities.remove(&id);
+                            self.spell_effects.remove_entity(id);
                             if self.target == Some(id) {
                                 self.target = None;
                             }
@@ -804,6 +822,11 @@ impl LiveWorld {
                     }
                 }
             }
+            GameplayEvent::Projectile(projectile) => {
+                projectile.position = coordinates::server_point_to_scene(projectile.position);
+                projectile.launch_angle =
+                    coordinates::server_heading_to_scene(projectile.launch_angle);
+            }
             GameplayEvent::Doors(doors) => {
                 for door in doors {
                     door.position = coordinates::server_point_to_scene(door.position);
@@ -815,6 +838,12 @@ impl LiveWorld {
             }
             _ => {}
         }
+        self.spell_effects.event(
+            &event,
+            &self.game.spell_catalog,
+            self.own_id,
+            Instant::now(),
+        );
         match &event {
             GameplayEvent::ZoneTransition { zone_id, .. } => {
                 self.zone_generation = self.zone_generation.wrapping_add(1);
@@ -824,6 +853,7 @@ impl LiveWorld {
                 self.zone_request = None;
                 self.pending_destination = None;
                 self.combat_feedback.clear();
+                self.spell_effects.clear();
                 self.entities.clear();
                 self.doors.clear();
                 self.door_return_deadlines.clear();
@@ -928,9 +958,21 @@ impl LiveWorld {
                 }
             }
             GameplayEvent::Assist(id) => self.set_target(Some(*id)),
-            GameplayEvent::BeginCast { caster_id, .. } => {
+            GameplayEvent::BeginCast {
+                caster_id,
+                spell_id,
+                ..
+            } => {
+                let action = self
+                    .game
+                    .spell_catalog
+                    .spells
+                    .get(spell_id)
+                    .map_or(ActorAction::Cast, |spell| {
+                        ActorAction::Animation(spell.casting_animation)
+                    });
                 if let Some(entity) = self.entities.get_mut(caster_id) {
-                    entity.action = ActorAction::Cast;
+                    entity.action = action;
                     entity.action_sequence = entity.action_sequence.wrapping_add(1);
                 }
             }
@@ -1077,6 +1119,61 @@ impl LiveWorld {
         self.actor_states(camera, None)
     }
 
+    /// Prefer the rendered, terrain-adjusted skeleton. Unrendered entities use
+    /// their network anchor; first-person casting hands use a camera-relative
+    /// fallback because no player body is submitted in that view.
+    pub fn effect_anchors(
+        &self,
+        camera: &openeq_render::Camera,
+        actors: Option<&openeq_render::actors::ActorRenderer>,
+    ) -> BTreeMap<u32, crate::spell_effects::EffectAnchor> {
+        let now = Instant::now();
+        self.entities
+            .iter()
+            .filter(|(_, entity)| !entity.spawn.is_corpse)
+            .map(|(&id, entity)| {
+                let sockets = actors.and_then(|actors| actors.sockets().get(&id)).copied();
+                let mut position = entity.position(now);
+                let mut heading = entity.heading(now);
+                let sockets = if Some(id) == self.own_id && sockets.is_none() {
+                    position = [
+                        camera.position[0],
+                        camera.position[1],
+                        camera.position[2] - 3.,
+                    ];
+                    heading = camera.yaw * 512. / std::f32::consts::TAU;
+                    let forward = [camera.yaw.sin(), camera.yaw.cos()];
+                    let hand = |side: f32| {
+                        [
+                            position[0] + forward[0] * 2. + forward[1] * side,
+                            position[1] + forward[1] * 2. - forward[0] * side,
+                            position[2] + 1.5,
+                        ]
+                    };
+                    openeq_render::actors::ActorSockets {
+                        left_hand: Some(hand(-0.8)),
+                        right_hand: Some(hand(0.8)),
+                        ..Default::default()
+                    }
+                } else {
+                    sockets.unwrap_or_default()
+                };
+                if let Some(chest) = sockets.chest {
+                    position = chest;
+                }
+                (
+                    id,
+                    crate::spell_effects::EffectAnchor {
+                        position,
+                        heading,
+                        size: entity.spawn.size,
+                        sockets,
+                    },
+                )
+            })
+            .collect()
+    }
+
     pub fn actor_states(
         &self,
         camera: [f32; 3],
@@ -1216,6 +1313,7 @@ pub(crate) mod tests {
             doors: BTreeMap::new(),
             zone_points: BTreeMap::new(),
             combat_feedback: Default::default(),
+            spell_effects: Default::default(),
             zone_request: None,
             door_return_deadlines: BTreeMap::new(),
             pending_destination: None,
@@ -2421,6 +2519,7 @@ pub(crate) mod tests {
             doors: BTreeMap::new(),
             zone_points: BTreeMap::new(),
             combat_feedback: Default::default(),
+            spell_effects: Default::default(),
             zone_request: None,
             door_return_deadlines: BTreeMap::new(),
             pending_destination: None,

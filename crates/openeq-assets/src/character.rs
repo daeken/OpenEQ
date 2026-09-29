@@ -752,6 +752,39 @@ impl CharacterModel {
         Some(self.compose_frames(&frames))
     }
 
+    /// Named attachment transforms in the same centered coordinate space as
+    /// sampled geometry, including transitions. Modern raw bone transforms
+    /// retain authored bind coordinates; their body-center offset belongs here.
+    pub fn attachment_transforms(
+        &self,
+        from: CharacterPose<'_>,
+        to: CharacterPose<'_>,
+        blend: f32,
+    ) -> Option<Vec<Mat4>> {
+        let blend = if blend.is_finite() {
+            blend.clamp(0., 1.)
+        } else {
+            1.
+        };
+        if let Some(modern) = &self.modern {
+            let offset = modern.center_offset();
+            return Some(
+                modern
+                    .blended_bone_transforms(from, to, blend)
+                    .into_iter()
+                    .map(|matrix| offset * matrix)
+                    .collect(),
+            );
+        }
+        let frames = self
+            .local_frames(from)?
+            .into_iter()
+            .zip(self.local_frames(to)?)
+            .map(|(a, b)| blend_frame(a, b, blend))
+            .collect::<Vec<_>>();
+        Some(self.compose_frames(&frames))
+    }
+
     fn local_frames(&self, pose: CharacterPose<'_>) -> Option<Vec<Frame>> {
         let CharacterPose {
             animation,

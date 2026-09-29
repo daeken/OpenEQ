@@ -7,6 +7,7 @@ use std::{collections::BTreeMap, path::Path};
 pub struct Spell {
     pub id: u32,
     pub name: String,
+    pub projectile_model: String,
     pub icon: u32,
     pub mana: u32,
     pub cast_time_ms: u32,
@@ -15,6 +16,10 @@ pub struct Spell {
     pub range: f32,
     pub target_type: u32,
     pub beneficial: bool,
+    pub effect_id: u32,
+    pub casting_animation: u8,
+    pub travel_type: u32,
+    pub persistent_particles: bool,
     pub levels: [u8; 16],
     pub description: String,
 }
@@ -108,6 +113,7 @@ fn parse_spell(fields: &[&str]) -> Option<Spell> {
     Some(Spell {
         id,
         name: fields[1].into(),
+        projectile_model: fields.get(2).copied().unwrap_or("").to_owned(),
         icon: number(icon),
         mana: number(19),
         cast_time_ms: number(13),
@@ -116,6 +122,10 @@ fn parse_spell(fields: &[&str]) -> Option<Spell> {
         range: range.max(0.),
         target_type: number(target),
         beneficial: number(beneficial) > 0,
+        effect_id: number(if compact { 85 } else { 145 }),
+        casting_animation: number(if compact { 60 } else { 120 }).min(255) as u8,
+        travel_type: number(if compact { 62 } else { 122 }),
+        persistent_particles: number(if compact { 93 } else { 153 }) != 0,
         levels,
         description: fields.get(6).copied().unwrap_or("").to_owned(),
     })
@@ -140,6 +150,10 @@ mod tests {
             fields[if compact { 84 } else { 144 }] = "99";
             fields[if compact { 38 } else { 98 }] = "5";
             fields[if compact { 35 } else { 83 }] = "1";
+            fields[if compact { 85 } else { 145 }] = "278";
+            fields[if compact { 60 } else { 120 }] = "43";
+            fields[if compact { 62 } else { 122 }] = "3";
+            fields[if compact { 93 } else { 153 }] = "1";
             if compact {
                 fields[173] = "1|0|10|0|2|20";
             }
@@ -152,6 +166,10 @@ mod tests {
             assert_eq!(spell.cast_time_ms, 1500);
             assert!(spell.beneficial);
             assert_eq!(spell.target_type, 5);
+            assert_eq!(spell.effect_id, 278);
+            assert_eq!(spell.casting_animation, 43);
+            assert_eq!(spell.travel_type, 3);
+            assert!(spell.persistent_particles);
         }
     }
     #[test]
@@ -174,5 +192,9 @@ mod tests {
         assert_eq!(catalog.spells[&200].levels[1], 1);
         assert_eq!(catalog.spells[&36].target_type, 6);
         assert_eq!(catalog.spells[&36].name, "Gate");
+        assert_eq!(catalog.spells[&200].effect_id, 278);
+        assert_eq!(catalog.spells[&54].effect_id, 179);
+        assert_eq!(catalog.spells[&54].travel_type, 3);
+        assert_eq!(catalog.spells[&288].effect_id, 220);
     }
 }

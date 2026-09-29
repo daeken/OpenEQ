@@ -27,6 +27,7 @@ pub struct ClientData {
     pub hud: Option<Hud>,
     pub strings: crate::game::StringTable,
     pub spells: crate::spells::SpellCatalog,
+    pub spell_effects: Option<crate::spell_effects::EffectAssets>,
 }
 
 pub struct PreparedZone {
@@ -129,6 +130,14 @@ pub fn start_client(dir: PathBuf) -> Job<ClientData> {
         let strings = crate::game::StringTable::load(&dir);
         report.stage("Reading spells and abilities", Some(0.35))?;
         let spells = crate::spells::SpellCatalog::load(&dir).unwrap_or_default();
+        report.stage("Reading spell effects", Some(0.50))?;
+        let spell_effects = match crate::spell_effects::EffectAssets::load(&dir) {
+            Ok(assets) => Some(assets),
+            Err(error) => {
+                tracing::warn!(%error, "original spell effects unavailable");
+                None
+            }
+        };
         report.stage("Preparing the interface", Some(0.65))?;
         let hud = match Hud::load(&dir) {
             Ok(hud) => Some(hud),
@@ -142,6 +151,7 @@ pub fn start_client(dir: PathBuf) -> Job<ClientData> {
             hud,
             strings,
             spells,
+            spell_effects,
         })
     })
 }

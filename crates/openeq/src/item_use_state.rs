@@ -463,6 +463,7 @@ pub(crate) mod tests {
             crate::spells::Spell {
                 id: 288,
                 name: "Minor Shielding".into(),
+                projectile_model: String::new(),
                 icon: 0,
                 mana: 10,
                 cast_time_ms: 2000,
@@ -471,6 +472,10 @@ pub(crate) mod tests {
                 range: 100.,
                 target_type: 6,
                 beneficial: true,
+                effect_id: 220,
+                casting_animation: 43,
+                travel_type: 0,
+                persistent_particles: false,
                 levels,
                 description: String::new(),
             },
@@ -552,6 +557,9 @@ pub(crate) mod tests {
             spell_id: 278,
             level: 20,
             effect_flag: 0,
+            action_type: 231,
+            spell_level: 20,
+            instrument_modifier: 1.,
         }
     }
 

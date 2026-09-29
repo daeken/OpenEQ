@@ -192,6 +192,26 @@ impl ZoneClient {
                     "malformed gameplay packet"
                 );
             })?;
+            if matches!(
+                &event,
+                GameplayEvent::BeginCast { .. }
+                    | GameplayEvent::CastInterrupted { .. }
+                    | GameplayEvent::SpellAction { .. }
+                    | GameplayEvent::SpellEffect(_)
+                    | GameplayEvent::Projectile(_)
+                    | GameplayEvent::NimbusEffect(_)
+                    | GameplayEvent::Buffs { .. }
+                    | GameplayEvent::BuffChanged { .. }
+                    | GameplayEvent::SpellBarEnabled { .. }
+                    | GameplayEvent::Damage(_)
+            ) {
+                tracing::debug!(
+                    target: "openeq_net::spell_effects",
+                    opcode = format!("{:#06x}", packet.opcode),
+                    ?event,
+                    "spell presentation event"
+                );
+            }
             if let GameplayEvent::SpellBarEnabled {
                 mana, endurance, ..
             } = event

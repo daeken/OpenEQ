@@ -12,6 +12,8 @@
 pub mod actors;
 pub mod doors;
 pub mod environment;
+pub mod particles;
+pub mod projectiles;
 pub mod scene;
 mod shadow;
 #[cfg(test)]
@@ -138,6 +140,7 @@ pub struct Renderer {
     lighting_bind_group: Option<wgpu::BindGroup>,
     pipelines: Pipelines,
     transparency: transparency::Transparency,
+    particles: particles::ParticleRenderer,
     start: std::time::Instant,
     width: u32,
     height: u32,
@@ -603,6 +606,7 @@ impl Renderer {
             width,
             height,
         );
+        let particles = particles::ParticleRenderer::new(&device, &globals_layout, config.format);
         Self {
             device: device.clone(),
             queue,
@@ -627,6 +631,7 @@ impl Renderer {
                 lighting: lighting_pipeline,
             },
             transparency,
+            particles,
             ui: None,
             environment: EnvironmentSettings::default(),
             sky,
@@ -646,6 +651,21 @@ impl Renderer {
             self.environment.apply_sky(assets);
             self.sky = SkyResources::new(&self.device, &self.queue, Some(assets));
         }
+    }
+
+    /// Replaces live spell billboards. Reuse the frame's texture Arc to retain
+    /// its atlas; missing/invalid textures are skipped without placeholders.
+    pub fn set_particles(&mut self, frame: &particles::ParticleFrame) -> particles::ParticleStats {
+        self.particles.set_frame(&self.device, &self.queue, frame)
+    }
+
+    /// Removes live billboards while retaining their bounded texture cache.
+    pub fn clear_particles(&mut self) {
+        self.particles.clear();
+    }
+
+    pub fn particle_stats(&self) -> particles::ParticleStats {
+        self.particles.stats()
     }
 
     pub fn set_ui(&mut self, frame: &openeq_ui::UiFrame) {
@@ -920,6 +940,7 @@ impl Renderer {
         };
         self.queue
             .write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
+        self.particles.prepare(&self.queue, camera);
 
         let scene_bind_group = self.scene_bind_group.as_ref().unwrap();
         let plain_bind_group = self.scene_bind_group_plain.as_ref().unwrap();
@@ -1047,7 +1068,15 @@ impl Renderer {
             },
         );
 
-        // 5. UI always stays above transparent geometry.
+        // 5. Emissive spell billboards use opaque depth and never write it.
+        self.particles.render(
+            &mut encoder,
+            final_view,
+            &self.targets.depth_view,
+            &self.globals_bind_group,
+        );
+
+        // 6. UI always stays above transparent geometry and particles.
         if let Some(ui) = &self.ui {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("world UI"),

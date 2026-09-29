@@ -964,6 +964,22 @@ fn render_frame(
         if let (Some(actors), Some(states)) = (runtime.actors.as_mut(), states) {
             actors.update(&renderer, &states, elapsed);
         }
+        {
+            let runtime = &mut *runtime;
+            if let Some(live) = &mut runtime.live {
+                let anchors = live.effect_anchors(&player_camera, runtime.actors.as_ref());
+                let frame = live
+                    .spell_effects
+                    .frame(std::time::Instant::now(), &anchors);
+                renderer.set_particles(&frame);
+                let projectiles = live
+                    .spell_effects
+                    .projectiles(std::time::Instant::now(), &anchors);
+                if let Some(actors) = &mut runtime.actors {
+                    actors.update_projectiles(&renderer, &projectiles);
+                }
+            }
+        }
         let doors = runtime.live.as_ref().map(door_states);
         if let (Some(renderer_doors), Some(states)) = (runtime.doors.as_mut(), doors) {
             renderer_doors.update(&renderer, &states, elapsed);
@@ -1128,6 +1144,9 @@ fn prepare_world(runtime: &mut Runtime, renderer: &mut Renderer, options: &Optio
                     let mut live = live::LiveWorld::start(config.clone());
                     live.game.strings = client.strings;
                     live.game.spell_catalog = client.spells;
+                    if let Some(effects) = client.spell_effects {
+                        live.spell_effects.set_assets(effects);
+                    }
                     runtime.hud = client.hud;
                     runtime.live = Some(live);
                 }
