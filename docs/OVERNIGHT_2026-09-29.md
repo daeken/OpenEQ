@@ -368,6 +368,8 @@ Published to `master` as **cfa053c**.
 
 ## Eighth overnight batch (verified)
 
+Published to `master` as **c4b8601**.
+
 - Twelve saved command buttons and original HotButton/SocialEdit artwork are
   integrated. Left release runs one existing action; empty slots/right release
   open a modal editor. Save/Cancel/Clear do not execute commands. Labels and one
@@ -396,14 +398,29 @@ Published to `master` as **cfa053c**.
   Complete GPU captures: `/tmp/openeq-overnight-hotbuttons-ui`. No live gameplay
   or manual native editing was used to validate this local-UI slice.
 
+## Progression live follow-up (verified)
+
+- Reviver's guarded same-XP0 and same-level1 proof passed real typed receipt
+  through ZoneClient and production GameplayState::apply. Duplicate XP/level
+  events left reducer revision2 unchanged. Command-free reconnect reproduced
+  profile1/XP0/training0 and ExpUpdate0. This standalone probe bypassed LiveWorld's
+  mailbox adapter and graphical UI; no temporary product tracing was needed.
+- Both sessions explicitly logged out. Independent SQL verified offline status
+  and the full character/gameplay baseline plus28 related tables. Ordinary
+  saves clamped inherited HP/endurance100/100 to36/21 in both runs; the exact
+  guarded offline resource restore matched/changed one row per run. All skills,
+  languages,14 AA grants, binds, inventory/currency/buffs/factions/tasks/social
+  and pet/XP-modifier invariants remained unchanged. No movement, target,
+  actual progression gain/loss, other commands or Explorer.
+- Source/recipe/results: `REVIVER_PROGRESSION_PROOF_PLAN.md`. Private evidence:
+  `/tmp/openeq-reviver-proof-1/`, mode0700 directory and0600 files. No runtime
+  changes in this follow-up; original623-test checkpoint remains applicable.
+
 ## Active follow-up ownership
 
-- **eqemu_server**: hotbutton controller handed back. Root reviewed and authorized
-  the exact guarded recipe in `REVIVER_PROGRESSION_PROOF_PLAN.md` under existing
-  fixture authority: same-XP0 and same-level1 receive proof on Reviver only,
-  no movement or actual progression change. Revalidate all prerequisites, retain
-  private journals, restore only documented resources/pose, stop on any mismatch.
-  Coordinate temporary typed tracing with root's final hotbar verification.
+- **eqemu_server**: Reviver proof/cleanup complete; no active live fixtures.
+  Read-only authoritative binary EQG collision-flag investigation for Bloodfields;
+  no runtime/server edits or inferred meanings from distributions alone.
 - **xml_ui**: hotbar presentation/GPU handed back. Prepared lossless heightmap
   water data/parser slice in terrain.rs/tests/terrain.rs; begin after root's
   hotbar publication. No rendering/liquid behavior assumptions.

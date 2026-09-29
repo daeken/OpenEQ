@@ -14,6 +14,10 @@ outgoing progression or trainer API. The dedicated Fellowship live proof passed
 for real profile data, skill/language changes, invalid-ratio handling and a
 restored fresh login. Live level changes and same-total XP commands were deferred
 on this fixture because its inherited level10/absolute-XP0 state is inconsistent.
+The later [Reviver proof](REVIVER_PROGRESSION_PROOF_PLAN.md) passed actual
+same-total XP0 and same-level1 receipt through the decoder and production
+foreground state handler, with guarded restoration and fresh-login validation;
+that standalone probe bypassed LiveWorld's mailbox adapter.
 The original audit/proposals below are historical; the completed validation
 section records the implemented scope and live limits.
 
@@ -375,7 +379,10 @@ same-level command also resets XP and clamps every above-cap skill; existing
 skill28=55 exceeds its current server cap40. Those commands were deliberately
 deferred. Level packet decoding, transition semantics and valid XP fractions
 remain covered by source review and portable fixtures at this checkpoint;
-there is no claimed live LevelUpdate or ordinary gameplay XP/skill gain.
+there was no claimed live LevelUpdate at that checkpoint. The separately
+reviewed [Reviver proof](REVIVER_PROGRESSION_PROOF_PLAN.md) subsequently added
+same-level LevelUpdate and valid unchanged XP-bar receipt. Ordinary gameplay
+XP/skill gain and a real level gain/loss remain unproven live.
 
 The commands restored the original skill/language values. After disconnect,
 the probe independently compared all skills, languages,14 innate AA rows,
