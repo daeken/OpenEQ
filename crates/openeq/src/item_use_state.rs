@@ -479,6 +479,8 @@ pub(crate) mod tests {
                 levitation_mode: None,
                 water_breathing: false,
                 levels,
+                description_id: 0,
+                landing_message: String::new(),
                 description: String::new(),
             },
         );

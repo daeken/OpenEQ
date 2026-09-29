@@ -1,4 +1,6 @@
 //! Shared client state and presentation used by the windowed app and live probes.
+pub mod account;
+pub mod account_ui;
 pub mod audio;
 pub mod chat;
 pub mod chat_links;

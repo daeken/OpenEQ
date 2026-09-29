@@ -8,8 +8,20 @@ protocol. The previous C# mainline is preserved on branch
 ## Play on the development server
 
 The populated EQEmu world on `storage2.daeken.dev` is running with PEQ NPCs,
-patrols, quests and navigation data. The private connection file selects the
-`Explorer` development character in Plane of Knowledge:
+patrols, quests and navigation data. Open the sign-in screen, enter an existing
+account, then choose a world and character:
+
+```sh
+cargo run -p openeq -- --login storage2.daeken.dev
+```
+
+Running without arguments opens the same screen with your last server address.
+Passwords are never saved by this flow; only the server address and last
+world/character choices are saved in `~/.config/openeq/connection.json` (or under
+`$XDG_CONFIG_HOME`). Account and character creation are not implemented yet.
+
+The existing private connection file still skips selection and enters its
+configured `Explorer` development character directly:
 
 ```sh
 cargo run -p openeq -- --connect "$HOME/.config/openeq/storage2-credentials.json"
@@ -58,6 +70,7 @@ Controls:
 | L | Loot targeted corpse; click items or use Loot All |
 | B; Alt+1 through Alt+0 | Spellbook; cast gems 1–10 |
 | Right-click gem | Open spellbook and select destination gem |
+| Right-click a spell in the book | Inspect its original description and spell data |
 | Right-click buff | Dismiss buff |
 | M; wheel over map | Map; zoom; click a landmark to mark a waypoint |
 | F9 | Toggle first/third person |
@@ -95,6 +108,8 @@ Scribing moves one scroll to an empty cursor and waits for the server to confirm
 the book entry and consumption. Item effects use server cast times, charge
 updates and reuse timers, including effects from inside bags.
 With the spellbook open, select a gem then a learned spell to memorize it.
+Right-click a learned spell to inspect it; scroll longer descriptions with the
+wheel, arrows or scrollbar. Unresolved original description values display `?`.
 Window title bars can be dragged. Escape interrupts casting before closing panels;
 with no active panel or captured mouse, it exits.
 Walking through a supported classic zone exit requests travel automatically.
@@ -108,7 +123,8 @@ you up and automatically returns, following the default five-second cycle.
 
 ## Working now
 
-- Login, character selection, live NPC movement and authenticated zone handoffs.
+- Interactive sign-in, world/character selection, live NPC movement and
+  authenticated zone handoffs, with safe connection cancellation.
 - Inventory, bags, equipment, stack moves, item inspection and cursor items,
   using original icons and real server item records.
 - Editable, scrollable channel chat and formatted system/combat messages.
@@ -147,7 +163,8 @@ you up and automatically returns, following the default five-second cycle.
 
 This is a playable development milestone, with substantial parity work remaining:
 NPC quest hand-ins, augmentation, raid and guild management, quest journals,
-interactive account/character creation, EQG/absolute-destination border
+account/character creation, 3D character previews, camp-to-roster,
+EQG/absolute-destination border
 triggers, XMI music and event sounds, advanced XML widgets, EQG liquid volumes and environmental
 damage rules. Luclin hair/beard colors, Hero's Forge, animated equipment, weather,
 terrain ecosystem effects and water refraction remain incomplete. Door motion

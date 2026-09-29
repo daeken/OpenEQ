@@ -26,7 +26,7 @@ recovery and movement after a Plane of Knowledge arrival.
    ambience/streamed MP3 music, bounded voices, zone cancellation and saved
    volume commands. XMI synthesis, combat/spell events and graphical controls
    remain follow-ups; listening/native acoustic comparison is still manual.
-5. [ ] Interactive account flow: connection/server/character selection with
+5. [x] Interactive account flow, first pass: connection/server/character selection with
    clear errors and private credential handling.
 6. [ ] Social parity: raid/guild state and usable controls, channel coverage.
 7. [ ] Quest interaction: safe NPC item/coin hand-ins and server outcomes.
@@ -146,24 +146,63 @@ Published to `master` as **71291ec**. This is the continuation's current baselin
   client build pass; playback-disabled all-target build also passes. Log:
   `/tmp/openeq-overnight-audio-ui-tests.log`.
 
+## Third overnight batch (verified)
+
+Baseline: `d8fb83d` (plan), with runtime baseline `71291ec`.
+
+- Interactive original-skinned credentials → world list → character list →
+  playable world is integrated. No-argument startup opens sign-in; `--login`
+  selects an endpoint; private-file `--connect` and explicit offline zones remain.
+  Passwords are masked before rendering and never persisted. Atomic preferences
+  store only endpoint and last world/character choices. Character creation,
+  deletion, 3D preview and camping back to the roster remain follow-ups.
+- Account worker retains the same runtime through authentication and gameplay.
+  Attempt/revision tokens reject stale and double actions; disabled characters
+  and unavailable worlds cannot send entry. Source-backed checked login and
+  roster decoders reject malformed lists/replies and show useful rejection text.
+- Dedicated Reviver probes passed both >35-second selection pauses, refresh,
+  real profile/Ready handoff, continued runtime after controller drop, and cancel
+  after EnterWorld. EQEmu ignores Logout before ClientReady: cleanup now finishes
+  that bounded handshake before normal logout, including stale queued Ready.
+  Reviver was confirmed offline with original pose/resources/invariants restored;
+  no movement or gameplay commands. Evidence:
+  `/tmp/openeq-account-idle-1.log`, `/tmp/openeq-account-controller-1.log`.
+- Account input review reproduced held-key repeats leaking into new chat and
+  same-frame repeat/release triggering a shortcut. Native-order handoff filtering
+  now suppresses both raw text and physical edges until release, preserves fresh
+  presses, and drains releases during loading. Positive regressions cover both
+  failures plus focus loss and fresh presses in the same batch.
+- Original account-screen GPU captures cover credentials/worlds/characters/busy
+  at 1×/2×. Native unauthenticated QA verified Unicode typing, password masking,
+  ordinary Tab, Backspace and Exit. Only dummy strings were entered and the QA
+  client was closed without authenticating. Synthesized modifier chords were
+  inconclusive; pure ordered modifier tests remain the evidence for those.
+- Spellbook right-click opens original scrollable SpellDisplayWindow without
+  gameplay packets. Actual descriptions use dbstr type6 and the verified compact/
+  fixed description-ID fields; landing text stays separate. Unknown dynamic
+  values show `?`. Measured text rows drive scroll clamping/thumb placement;
+  positions/stacking persist. Original short/long top/bottom captures at both
+  scales were inspected. See `UI_WIDGET_FOLLOWUP.md`.
+- Combined verification: **499 workspace tests passed**, zero failures/ignored,
+  including original assets and GPU tests. Strict workspace Clippy, format,
+  client build and playback-disabled all-target check pass. Logs:
+  `/tmp/openeq-overnight-account-{tests,clippy,build,headless}.log`.
+- XMI research is recorded in `XMI_PLAN.md`: original timing/containers and the
+  existing macOS system DLS bank are understood, but EQ selector-to-sequence
+  mapping remains unresolved. No synthesis/playback/download was attempted.
+
 ## Active follow-up ownership
 
-- **xml_ui**: first UI slice handed back. Read-only follow-up audit of highest
-  impact missing original XML widget/text behavior → `UI_WIDGET_FOLLOWUP.md`.
-- **eqemu_server**: recovery work handed back. `ACCOUNT_FLOW_PLAN.md` research is
-  complete. Now owns login.rs/world.rs/session.rs and tests for bounded checked
-  list/reply parsing, enabled/instance roster fields, useful verified errors and
-  Session Debug redaction. Preserve direct config connection. Authorized to test
-  >30s login/roster idle on the dedicated recovery account/Reviver only; restore
-  and leave offline. No global rules/account changes or invented keepalive.
-- **npc_assets**: asset slice and runtime review handed back. Read-only XMI
-  sequence/timing and available synthesis-bank research → `XMI_PLAN.md`.
-  A macOS system DLS bank exists; no downloads or playback are authorized by
-  this research assignment, and it must not be redistributed.
-- Root owns all runtime integration again. Agents must not commit/push. Read
-  their latest messages before overlapping new work. Next primary milestone is
-  interactive account/server/character selection; incorporate bounded UI/audio
-  discoveries as appropriate.
+- **eqemu_server**: account protocol and live controller probe handed back.
+  Read-only raid/guild protocol and fixture research → `SOCIAL_PARITY_PLAN.md`.
+  No protocol/runtime edits or server mutations in this assignment.
+- **xml_ui**: spell slice and account handoff review handed back. Read-only
+  original raid/guild UI audit → `SOCIAL_UI_PLAN.md`, coordinated with protocol.
+- **npc_assets**: account UI and handoff fix handed back. Read-only representative
+  compatibility gap assessment → `COMPATIBILITY_SWEEP_PLAN.md`; no GPU work during
+  root's full suite, no runtime edits.
+- Root owns runtime integration, combined validation and publication. Agents
+  must not commit/push. Preserve their research files until reviewed.
 - Root should revisit native sky celestial orientation, thin liquid crossings,
-  NPC swimming projection, hover/cross-zone resurrection and XP/item recovery; do not
-  confuse first-pass completion with full original-client parity.
+  NPC swimming projection, hover/cross-zone resurrection and XP/item recovery;
+  do not confuse first-pass completion with full original-client parity.

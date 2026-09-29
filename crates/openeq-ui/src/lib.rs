@@ -8,6 +8,6 @@ mod layout;
 
 pub use document::{Element, TextureInfo, UiAnimation, UiDocument, UiError, UiImageFrame};
 pub use layout::{
-    Color, DrawCommand, HitTarget, Rect, TextAlign, TextLine, TextLink, UiBindings, UiFrame,
-    UiWindow, WidgetState,
+    Color, DrawCommand, HitTarget, Rect, ScrollImage, ScrollThumb, TextAlign, TextLine, TextLink,
+    TextScrollMetrics, UiBindings, UiFrame, UiWindow, WidgetState,
 };

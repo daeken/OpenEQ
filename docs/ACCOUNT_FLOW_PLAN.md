@@ -1,7 +1,9 @@
 # Interactive account, server, and character selection
 
-Read-only source investigation, 2026-09-29. No account/character records were
-changed and no new login sessions were opened for this investigation.
+Source investigation, bounded protocol prerequisites, and staged controller,
+2026-09-29. The protocol and controller changes described below are implemented;
+dedicated-account live validation is recorded separately below. The integration
+outline records the original design and the constraints still used by the UI.
 
 The existing transport can already authenticate an account, list worlds, choose
 a world, list its characters, and enter an existing character. The first usable
@@ -36,21 +38,29 @@ the necessary pause points:
 | List/refresh worlds | `LoginClient::server_list()` | ID, name, address, type, country, language, status, player count |
 | Join chosen world | `LoginClient::play(server_id)` | Accepted or rejected, stream/malformed/timeout errors |
 | World transport | `WorldClient::connect(address, account_id, key)` | Authenticated world socket |
-| Character roster | `WorldClient::characters()` | Name, level, class, race, gender, last zone ID |
+| Character roster | `WorldClient::characters()` | Name, level, class, race, gender, last zone/instance, Enabled flag |
 | Enter chosen character | `WorldClient::enter_world(name)` | Actual zone IP and port, or zone unavailable/error |
-| Zone transport | `ZoneClient::connect(address, name)` and `enable_zoning(...)` | Existing zone/profile/spawn/Ready lifecycle |
+| Selected-character handoff | Public `session::enter_character(&mut WorldClient, world_address, &Session, character)` | Connected `ZoneClient` with authenticated later zoning enabled |
 
 `WorldClient::connect_zoning` is specifically for an existing character's zone
 handoff. Returning to character selection should use the non-zoning connection
 mode and a valid authenticated session instead.
 
-The graphical executable accepts only `--connect CONFIG` for live play today.
-`main.rs::prepare_world` waits for the client asset job, calls
-`LiveWorld::start(config)`, and lets the server's environment name select the
-actual zone assets. `LiveWorld::start` owns a background thread with a current-
-thread Tokio runtime, calls the automatic `config.connect()`, then starts the
-existing event/command/movement loop. Errors become the current loading error;
-there is no interactive retry/selection state yet.
+`session::enter_character` shares the existing `enter_world` → zone connect →
+authenticated handoff setup with `ConnectionConfig::connect`. It borrows the
+authenticated session and clones its private transient key into the zone's
+handoff; raw `ZoneClient::enable_zoning` remains crate-private. Call it only for
+the selected enabled entry in the current roster and on the same live runtime
+as the world connection.
+
+`LiveWorld::start(config)` retains the automatic private-file connection path.
+Interactive entry uses `AccountController`, whose worker performs authentication,
+publishes world and character rows, and waits for token-checked user actions.
+Both paths run the same `NetworkIo` event/command/movement loop. Login, world,
+and zone sockets stay on their original worker's current-thread Tokio runtime;
+the foreground receives a nonsecret `SessionIdentity` and `LiveWorld`, not a
+socket moved into a fresh runtime. The server's environment name selects the
+actual zone assets.
 
 ## Exact protocol evidence
 
@@ -157,39 +167,179 @@ character preview can follow when the remaining appearance fields are decoded.
    player chooses a character. Do not invent a temporary config containing
    credentials merely to address layout preferences.
 
-Back from a character roster can close that world socket and return to the
+Back from a character roster closes that world socket and returns to the
 still-valid login/world list. If that login session has expired, return to the
-credentials screen with a clear reason. Cancel drops owned streams and abandons
-in-flight futures; a later stale result cannot enter a character. Initial scope
-need not implement camping from a running character into the roster: that is a
-separate logout/camp lifecycle that must await the existing zone logout path.
+credentials screen with a clear reason. Before EnterWorld is sent, Cancel drops
+owned streams and abandons in-flight futures. Once entry may have committed,
+cancellation completes the bounded zone handshake solely to send normal logout;
+it never publishes the cancelled foreground world. Initial scope does not
+implement camping from a running character into the roster: that is a separate
+logout/camp lifecycle that must await the existing zone logout path.
 
-## Gaps to close before exposing arbitrary server/roster input
+## Controller and cancellation contract
 
-- `parse_server_list` allocates directly from an unbounded wire count, accepts
-  nonterminated strings, ignores the reply success field, and substitutes
-  loopback for an invalid address. Use bounded checked decoding, explicit errors,
-  count/string limits, and reject invalid addresses; never redirect silently.
-- `parse_characters` currently returns an empty or partial vector on truncation.
-  A genuine zero-character roster must be distinguishable from malformed data.
-  Return `Result`, bound/validate each name and tail, reject unsupported counts
-  and trailing/truncated entries. The current RoF2 encoder caps at 12 characters;
-  the Rust parser currently caps its loop at 32. Preserve a deliberate documented
-  protocol bound rather than treating partial parsing as success.
-- `Character` omits instance, Enabled, return-home/tutorial flags, appearance,
-  equipment, and last-login fields that are already present in the tail. At
-  minimum decode Enabled and instance for correct row/action state; keep richer
-  appearance and special entry actions for later. No new server request is
-  needed to obtain these existing fields.
-- Login/world failures lose useful reason codes. `play()` only reads success
-  and currently accepts a 15-byte minimum even though its complete reply is 20
-  bytes. Validate complete reply shape and selected server ID; surface the
-  server error string ID (unavailable, suspended/banned, full, already online)
-  without exposing private payloads. Authentication errors similarly have
-  `LoginBaseReplyMessage` reason data currently collapsed into `Rejected`.
-- `login::Session` derives `Debug` while containing the transient key. Remove
-  that derivation or redact it before adding worker/state diagnostics. Existing
-  `ConnectionConfig` and the zone's authenticated handoff already avoid Debug.
+`AccountController::sign_in` starts a fresh attempt from `Stage::Credentials`.
+`poll()` applies world/character/error replies and returns `Ready` only for the
+current attempt. `action(Token, Action)` accepts world IDs and enabled character
+names from the current rows. Tokens carry attempt and list revision; stale rows,
+wrong-stage actions, and double submissions do not send requests. Refresh advances
+the list revision and preserves a selection by identity when it remains present.
+The returned `Ready` contains endpoint, selected world ID, selected character,
+and `LiveWorld`. Destroying the controller after consuming it does not destroy
+the runtime still serving that world.
+
+`cancel()` invalidates the attempt immediately and resets the view to credentials.
+The worker marks entry committed before calling `enter_character`. Cancellation
+before that point drops the pending future; after it, the worker allows at most
+45 seconds to complete entry and uses `live::logout_zone` to finish the zone
+handshake, with a further 20-second bound, then send Logout. A cancellation flag
+check also covers a ready connection racing the cancellation notification.
+Dropping a queued stale `Ready` closes its live channels and follows that same
+cleanup helper. Thread-spawn failure restores credentials so sign-in can retry.
+
+Waiting for zone Ready during cleanup is protocol-required. EQEmu registers
+`OP_Logout` in `ConnectedOpcodes`, not `ConnectingOpcodes`; `HandlePacket` dispatches
+by connection state. `Handle_Connect_OP_ClientReady` calls `CompleteConnect`, which
+sets `CLIENT_CONNECTED`. OpenEQ emits its local `ZoneEvent::Ready` after sending
+ClientReady on the reliable stream, so a following Logout reaches the connected
+handler in order. Sending Logout immediately after ZoneClient creation would be
+ignored by the connecting handler. The helper gives the stream a short drain
+after Logout, while smoke tests still require database-confirmed offline state.
+
+## Implemented protocol prerequisites
+
+- `parse_server_list` uses checked cursors and rejects incomplete or trailing
+  data as a whole. It bounds count before allocation (1024 entries plus a
+  minimum remaining-byte check), bounds names to 200 bytes and address/locale
+  fields, requires terminated strings, checks reply success, rejects duplicate
+  or zero server IDs, and reports invalid addresses instead of substituting
+  loopback. Its request sequence/header checks match EQEmu's echoed sequence.
+- `parse_characters` now returns `Result`, distinguishing a genuine empty list
+  from a malformed one. It requires complete UTF-8 names of 1–63 bytes,
+  case-insensitively unique names, complete 274-byte tails, the RoF2 source limit
+  of 12 characters, and no trailing bytes. `Character` now exposes
+  `instance_id: u16` (tail offset 13) and `enabled: bool` (tail offset 268),
+  validating Enabled as 0/1. Tests explicitly distinguish it from GoHome at 261.
+- `LoginError::Rejected { context, reason }` preserves a typed
+  `RejectionReason`: invalid credentials (105), already-online character (111),
+  unavailable world (326), suspended account (337), banned account (338), full
+  world (339), or `Unknown(code)`. `reason.code()` preserves the original number;
+  Display provides a useful message without private packet contents. These are
+  EQEmu `LS::ErrStr` constants plus `Client::SendFailedLogin`'s code 105.
+- Play replies must be exactly 20 bytes with complete base headers, a valid
+  success flag/string terminator, expected sequence, and the requested server
+  ID. A mismatched response cannot grant access even if its success byte is set.
+  Authentication replies must be the source-defined 90 bytes, contain a valid
+  header/decrypted base reply, a nonzero account ID, and a terminated nonempty
+  ASCII key. `Session` Debug is explicitly redacted.
+- The automatic `ConnectionConfig::connect` API remains available with the same
+  configuration format and selection behavior. It now refuses a selected
+  disabled roster entry with an actionable error. Lower-level stage API method
+  signatures remain unchanged; `characters()` already returned `Result` and now
+  propagates checked roster-decoding failures instead of accepting partial rows.
+  Both automatic and interactive entry can use the public `enter_character`
+  helper without duplicating handoff setup or exposing raw zoning credentials.
+- Portable tests cover valid empty/multiple lists, all byte-prefix truncations,
+  excessive counts, malformed fields/headers, trailers, duplicate identities,
+  disabled/instanced characters, exact/mismatched play responses, source-backed
+  and unknown rejection codes, malformed authentication identity, and debug
+  redaction. All 76 network library tests and strict all-target Clippy passed.
+
+## Verified selection-screen idle behavior
+
+The bounded `account_idle_smoke` probe used only the existing disposable recovery
+account and Reviver, with a private pre-login snapshot. It sent no invented
+application Poll, added no keepalive, changed no rules, and created no accounts.
+Its only normal login actions were authentication, server-list refresh, world
+selection, roster retrieval, and existing-character selection.
+
+`/tmp/openeq-account-idle-1.log` passed on 2026-09-29:
+
+- The initial world list contained one entry. After **35.110 seconds** without
+  another application request, refreshing returned the current list successfully
+  on the same authenticated login client. No fresh authentication was necessary.
+- World access passed the complete 20-byte reply/server-ID check. The checked
+  roster contained Reviver, `enabled=true`, zone **77**, instance **0**.
+- After **35.123 seconds** on that roster, selecting Reviver succeeded on the
+  same world connection. The zone supplied Reviver's own living spawn, profile,
+  and Ready. No outgoing movement or gameplay actions were sent.
+- The probe sent normal zone logout and verified Reviver was offline. Original
+  pose/resources were restored after logout; inventory, cash, all binds, spell
+  book/gems, buffs, corpse count, level/XP/stats, and identity matched the saved
+  state. No other character was used.
+
+```sh
+cargo run -p openeq-net --bin account_idle_smoke -- \
+  "$HOME/.config/openeq/storage2-recovery-credentials.json" \
+  /tmp/openeq-account-idle-next-run.restore.sql
+```
+
+Use a new snapshot filename each run. It is created mode 0600 before login and
+never overwritten. The probe recognizes closed-session outcomes explicitly,
+re-authenticates at most once for the server-list stage, and can verify clean
+entry through the automatic path if the world stage expires. Neither fallback
+was needed in this observed run. The test establishes that **35-second pauses
+work with this EQEmu deployment**; it does not promise indefinite idle survival
+or silently change the 30-second transport inactivity/retransmission deadlines.
+Controller cancellation is covered by the later probe below. UI Back navigation,
+longer idle periods, and other login deployments remain separate checks.
+
+## Verified interactive-controller flow
+
+`crates/openeq/src/bin/account_smoke.rs` drives only public
+`AccountController`/`Action`/`Stage` APIs. It loads the private recovery config for
+credentials and endpoint, but never calls `ConnectionConfig::connect`. The
+fixture guard requires `storage2.daeken.dev`, account `openeq_recovery`, and
+character `Reviver`; the character must start offline with no items, buffs, or
+corpses. A mode-0600, create-new restoration snapshot is written before login.
+
+`/tmp/openeq-account-controller-1.log` passed on 2026-09-29, with restoration
+snapshot `/tmp/openeq-account-controller-1.restore.sql`:
+
+- Sign-in published the world list. After **35.012 seconds**, refresh succeeded
+  on the same authenticated session and advanced the list revision. The probe
+  selected advertised world **1**, then verified enabled Reviver in Arena
+  **77**, instance **0**. After **35.006 seconds** on the character screen,
+  choosing Reviver produced controller `Ready` with the correct endpoint,
+  server ID, and character identity.
+- The probe destroyed the controller while retaining `Ready.live`. That live
+  state still received Reviver's profile, own living spawn **30**, and zone
+  Ready, then stayed healthy for another two seconds. This exercises the real
+  worker/runtime lifetime transfer. Normal live drop logged cleanup with
+  `ready=true`, sent Logout, and reached database-confirmed offline state.
+- A second controller entry waited for the `entering zone` diagnostic after
+  the world's EnterWorld reply, then cancelled without polling a foreground
+  Ready. The old token was rejected, the view stayed at Credentials, and no
+  stale Ready escaped. Cleanup started with **`ready=false`**, completed the
+  handshake, and sent Logout. Only after the completion diagnostic did the
+  probe accept the database's offline result. This covers actual server-
+  committed entry cancellation, not just discarding an unsent selection.
+- Duplicate sign-in/refresh/world/character actions, an old attempt, an old
+  list revision, unadvertised world ID, unlisted character, wrong-stage character
+  choice, and Back during entry were rejected without changing the active
+  selection. The logged session identity matched the actual chosen rows.
+- No player position or gameplay requests were sent. Reviver ended offline;
+  pose/resources were restored exactly. Level, XP, stats, inventory, cash, all
+  binds, spellbook/gems, buffs, and corpse count matched the snapshot. Neither
+  the cleanup reconnect fallback nor any other character was needed.
+
+```sh
+cargo run -p openeq --bin account_smoke -- \
+  "$HOME/.config/openeq/storage2-recovery-credentials.json" \
+  /tmp/openeq-account-controller-next-run.log
+```
+
+Use a fresh log name; the probe refuses to replace its log or restoration file.
+Strict Clippy for this binary passed. This is a live controller and protocol
+check; visual account-screen captures and keyboard/mouse behavior have separate
+UI checks. It does not claim indefinite idle, unavailable-zone recovery, or
+character creation/deletion support.
+
+## Remaining integration considerations
+
+- `Character` still omits return-home/tutorial flags, appearance, equipment,
+  and last-login fields present in the tail. Keep richer appearance and special
+  entry actions for later. No new server request is needed for these fields.
 - `EqStream` enforces 30 seconds of incoming inactivity and 30 seconds of
   unacknowledged reliable data. Its ticker retransmits/ACKs but does not generate
   outbound keepalives. Incoming valid server keepalives do refresh it. Human
@@ -216,12 +366,11 @@ separate logout/camp lifecycle that must await the existing zone logout path.
 - Original-asset captures: credentials, busy/error states, scrolled server list,
   character list, empty roster, small viewport; password text absent from draw
   commands/captures. Test focus traversal, IME, scrolling, and keyboard capture.
-- A future authorized dedicated-account smoke should pause on both selection
-  screens for longer than 30 seconds, refresh, choose the advertised world and
-  existing character, observe actual profile/Ready and correct zone, then exit
-  cleanly. Include reject/retry/cancel and unavailable-zone outcomes. Reuse
-  disposable accounts only with fixture coordination; this investigation did
-  not perform such logins or mutate any accounts.
+- The dedicated-account controller smoke above covers selection-screen pauses,
+  refresh, advertised world/character selection, identity, live profile/Ready,
+  stale/double rejection, committed-entry cancellation, and normal logout.
+  Unavailable-zone and longer-idle retry scenarios remain separate acceptance
+  checks. Reuse disposable accounts only with fixture coordination.
 
 This first slice delivers credentials → server list → existing character list →
 the current playable world. Character creation/deletion, entitlement emulation,

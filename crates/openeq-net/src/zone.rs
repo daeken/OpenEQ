@@ -188,6 +188,12 @@ impl ZoneClient {
         });
     }
 
+    /// Whether this zone handshake has sent ClientReady. EQEmu only handles
+    /// Logout after this stage, including when entry is being cancelled.
+    pub fn is_ready(&self) -> bool {
+        self.ready
+    }
+
     pub fn is_zoning(&self) -> bool {
         self.handoff.is_some()
     }

@@ -327,41 +327,22 @@ fn command_while_dead(command: &Command) -> bool {
     )
 }
 
-impl LiveWorld {
-    pub fn movement_allowed(&self) -> bool {
-        self.ready
-            && self.own_id.is_some()
-            && self.error.is_none()
-            && !self.zone_request_pending()
-            && !self.game.recovery.blocks_movement()
-            && !self.movement_authority.suspended
+pub(crate) struct NetworkIo {
+    tx: mpsc::Sender<Message>,
+    updates: tokio::sync::watch::Receiver<Option<MovementUpdate>>,
+    requests: tokio::sync::mpsc::UnboundedReceiver<NetworkCommand>,
+}
+impl NetworkIo {
+    pub(crate) fn fail(self, error: anyhow::Error) {
+        let _ = self.tx.send(Message::Error(format!("{error:#}")));
     }
-
-    fn current_zone(&self) -> Option<(u16, u16)> {
-        self.environment
-            .as_ref()
-            .map(|zone| (zone.zone_id, zone.instance_id))
-    }
-    pub fn player_gravity(&self) -> crate::movement_rules::PlayerGravity {
-        let mode = self
-            .own_id
-            .and_then(|id| self.entities.get(&id))
-            .map_or(0, |entity| entity.spawn.fly_mode);
-        crate::movement_rules::PlayerGravity::from_wire_mode(mode)
-            .with_levitation_buff(self.game.levitation_mode())
-    }
-
-    pub fn start(config: ConnectionConfig) -> Self {
-        let (tx, rx) = mpsc::channel();
-        let (movement, mut updates) = tokio::sync::watch::channel(None);
-        let (commands, mut requests) = tokio::sync::mpsc::unbounded_channel();
-        let character = config.character.clone();
-        let mut game = GameplayState::default();
-        game.commerce.shared_coin_enabled = config.host.eq_ignore_ascii_case("storage2.daeken.dev");
-        std::thread::Builder::new().name("eq-network".into()).spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("network runtime");
-            let result = rt.block_on(async {
-                let mut zone = config.connect().await?;
+    pub(crate) async fn run(self, mut zone: openeq_net::zone::ZoneClient, character: &str) {
+        let Self {
+            tx,
+            mut updates,
+            mut requests,
+        } = self;
+        let result = async {
                 let mut motion = MovementAuthority::default();
                 let mut heartbeat = tokio::time::interval(std::time::Duration::from_millis(100));
                 loop {
@@ -423,7 +404,7 @@ impl LiveWorld {
                             }
                         },
                         changed = updates.changed() => {
-                            if changed.is_err() { zone.logout().await?; break; }
+                            if changed.is_err() { logout_zone(&mut zone).await?; break; }
                         },
                         _ = heartbeat.tick() => {
                             let position = motion.position(*updates.borrow());
@@ -434,16 +415,95 @@ impl LiveWorld {
                             if let ZoneEvent::Gameplay(event) = &event {
                                 motion.gameplay(event, zone.current_zone());
                             }
-                            if let ZoneEvent::Spawn(spawn) = &event { motion.spawn(spawn, &config.character); }
-                            if tx.send(Message::Event(Box::new(event))).is_err() { zone.logout().await?; break; }
+                            if let ZoneEvent::Spawn(spawn) = &event { motion.spawn(spawn, character); }
+                            if tx.send(Message::Event(Box::new(event))).is_err() { logout_zone(&mut zone).await?; break; }
                         }
                     }
                 }
                 Ok::<_, anyhow::Error>(())
-            });
-            if let Err(error) = result { let _ = tx.send(Message::Error(format!("{error:#}"))); }
-        }).expect("network worker");
-        Self {
+        }.await;
+        if let Err(error) = result {
+            let _ = tx.send(Message::Error(format!("{error:#}")));
+        }
+    }
+}
+
+/// Entry already sent to EQEmu must reach ClientReady before Logout is valid.
+/// This also covers dropping queued foreground state before its first poll.
+pub(crate) async fn logout_zone(zone: &mut openeq_net::zone::ZoneClient) -> anyhow::Result<()> {
+    tracing::info!(target:"openeq_net::account",ready=zone.is_ready(),"starting connection cleanup");
+    if !zone.is_ready() {
+        tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            while !zone.is_ready() {
+                zone.next_event().await?;
+            }
+            Ok::<_, openeq_net::zone::ZoneError>(())
+        })
+        .await??;
+    }
+    zone.logout().await?;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    tracing::info!(target:"openeq_net::account","connection cleanup sent logout");
+    Ok(())
+}
+
+impl LiveWorld {
+    pub fn movement_allowed(&self) -> bool {
+        self.ready
+            && self.own_id.is_some()
+            && self.error.is_none()
+            && !self.zone_request_pending()
+            && !self.game.recovery.blocks_movement()
+            && !self.movement_authority.suspended
+    }
+
+    fn current_zone(&self) -> Option<(u16, u16)> {
+        self.environment
+            .as_ref()
+            .map(|zone| (zone.zone_id, zone.instance_id))
+    }
+    pub fn player_gravity(&self) -> crate::movement_rules::PlayerGravity {
+        let mode = self
+            .own_id
+            .and_then(|id| self.entities.get(&id))
+            .map_or(0, |entity| entity.spawn.fly_mode);
+        crate::movement_rules::PlayerGravity::from_wire_mode(mode)
+            .with_levitation_buff(self.game.levitation_mode())
+    }
+
+    pub fn start(config: ConnectionConfig) -> Self {
+        let (world, io) = Self::channels(
+            config.character.clone(),
+            config.host.eq_ignore_ascii_case("storage2.daeken.dev"),
+        );
+        std::thread::Builder::new()
+            .name("eq-network".into())
+            .spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("network runtime");
+                rt.block_on(async move {
+                    match config.connect().await {
+                        Ok(zone) => io.run(zone, &config.character).await,
+                        Err(error) => io.fail(error),
+                    }
+                });
+            })
+            .expect("network worker");
+        world
+    }
+
+    /// Build foreground state without moving a socket between Tokio runtimes.
+    /// Interactive selection delivers this state before serving the connected
+    /// zone on the same worker/runtime that authenticated it.
+    pub(crate) fn channels(character: String, shared_coin: bool) -> (Self, NetworkIo) {
+        let (tx, rx) = mpsc::channel();
+        let (movement, updates) = tokio::sync::watch::channel(None);
+        let (commands, requests) = tokio::sync::mpsc::unbounded_channel();
+        let mut game = GameplayState::default();
+        game.commerce.shared_coin_enabled = shared_coin;
+        let world = Self {
             entities: BTreeMap::new(),
             environment: None,
             own_id: None,
@@ -469,7 +529,15 @@ impl LiveWorld {
             movement_authority: MovementAuthority::default(),
             recovery_request: None,
             commands,
-        }
+        };
+        (
+            world,
+            NetworkIo {
+                tx,
+                updates,
+                requests,
+            },
+        )
     }
 
     pub fn poll(&mut self) {

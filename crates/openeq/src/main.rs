@@ -40,6 +40,10 @@ struct Options {
     connection: Option<ConnectionConfig>,
     model_set: CharacterModelSet,
     no_audio: bool,
+    interactive: bool,
+    login_host: Option<String>,
+    login_port: Option<u16>,
+    world_port: Option<u16>,
 }
 
 /// Main-thread presentation, with destination assets prepared by a worker.
@@ -81,11 +85,19 @@ struct Runtime {
     doors: Option<openeq_render::doors::DoorRenderer>,
     profiler: FrameProfiler,
     audio: Option<openeq::audio::AudioService>,
+    account: Option<openeq::account::AccountController>,
+    account_input: Option<openeq::account_ui::AccountInput>,
+    account_ui: Option<openeq::account_ui::AccountUi>,
+    account_ui_job: Option<loading::Job<openeq::account_ui::AccountUi>>,
+    account_preferences: Option<openeq::account::preferences::PreferenceStore>,
+    client_data: Option<zone_loading::ClientData>,
 }
 
 impl Runtime {
     fn world_ready(&self) -> bool {
         self.scene.is_some()
+            && self.account.is_none()
+            && self.client_job.is_none()
             && self.loading_error.is_none()
             && self.loading_job.is_none()
             && self.live.as_ref().is_none_or(|live| {
@@ -139,6 +151,12 @@ impl Runtime {
             profiler: FrameProfiler::default(),
             doors: None,
             audio: None,
+            account: None,
+            account_input: None,
+            account_ui: None,
+            account_ui_job: None,
+            account_preferences: None,
+            client_data: None,
         }
     }
 }
@@ -162,6 +180,39 @@ fn main() -> AppExit {
         options.dir.clone(),
         !options.no_audio,
     ));
+    if options.interactive {
+        let store = openeq::account::preferences::PreferenceStore::open()
+            .map_err(|error| {
+                tracing::warn!(%error,"connection preferences unavailable; preserving saved file");
+            })
+            .ok();
+        let preferences = store
+            .as_ref()
+            .map(|store| store.preferences.clone())
+            .unwrap_or_default();
+        let mut endpoint = preferences.endpoint;
+        if let Some(host) = &options.login_host {
+            endpoint.host.clone_from(host);
+        }
+        if let Some(port) = options.login_port {
+            endpoint.login_port = port;
+        }
+        if let Some(port) = options.world_port {
+            endpoint.world_port = port;
+        }
+        let mut account = openeq::account::AccountController::default();
+        account.view.selected_world = preferences.last_server;
+        account.view.selected_character = preferences.last_character;
+        runtime.account = Some(account);
+        runtime.account_input = Some(openeq::account_ui::AccountInput::new(endpoint));
+        runtime.account_preferences = store;
+        let dir = options.dir.clone();
+        runtime.account_ui_job = Some(loading::Job::start(move |_| {
+            Ok(openeq::account_ui::AccountUi::load(&dir))
+        }));
+        runtime.client_job = Some(zone_loading::start_client(options.dir.clone()));
+        runtime.fly = false;
+    }
     if let Some(config) = &options.connection {
         runtime.client_job = Some(zone_loading::start_client(options.dir.clone()));
         runtime.fly = false;
@@ -199,6 +250,7 @@ fn main() -> AppExit {
         .add_systems(
             Update,
             (
+                handle_account_input,
                 handle_gameplay_input,
                 handle_targeting,
                 handle_cursor_capture,
@@ -264,10 +316,33 @@ fn parse_args() -> anyhow::Result<Options> {
     let mut connection = None;
     let mut model_set = CharacterModelSet::Classic;
     let mut no_audio = false;
+    let mut login_host = None;
+    let mut login_port = None;
+    let mut world_port = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--no-audio" => no_audio = true,
+            "--login" => {
+                login_host = Some(
+                    args.next()
+                        .ok_or_else(|| anyhow::anyhow!("--login needs a hostname"))?,
+                )
+            }
+            "--login-port" => {
+                login_port = Some(
+                    args.next()
+                        .ok_or_else(|| anyhow::anyhow!("--login-port needs a port"))?
+                        .parse::<u16>()?,
+                )
+            }
+            "--world-port" => {
+                world_port = Some(
+                    args.next()
+                        .ok_or_else(|| anyhow::anyhow!("--world-port needs a port"))?
+                        .parse::<u16>()?,
+                )
+            }
             "--models" => {
                 model_set = match args.next().as_deref() {
                     Some("classic") => CharacterModelSet::Classic,
@@ -293,21 +368,32 @@ fn parse_args() -> anyhow::Result<Options> {
             }
             "-h" | "--help" => {
                 println!(
-                    "usage: openeq [zone] [--dir DIR] [--pos X,Y,Z] [--connect CONFIG] [--models classic|luclin] [--no-audio]"
+                    "usage: openeq [zone] [--dir DIR] [--pos X,Y,Z] [--connect CONFIG | --login HOST] [--login-port PORT] [--world-port PORT] [--models classic|luclin] [--no-audio]\nNo zone or --connect opens interactive sign-in."
                 );
                 std::process::exit(0);
             }
-            other if zone.is_none() => zone = Some(other.to_string()),
+            other if !other.starts_with('-') && zone.is_none() => zone = Some(other.to_string()),
             other => anyhow::bail!("unrecognised argument {other}"),
         }
     }
 
+    anyhow::ensure!(
+        connection.is_none()
+            || (login_host.is_none() && login_port.is_none() && world_port.is_none()),
+        "--connect cannot be combined with interactive login options"
+    );
+    anyhow::ensure!(
+        zone.is_none() || (login_host.is_none() && login_port.is_none() && world_port.is_none()),
+        "choose offline zone viewing or interactive login"
+    );
+    anyhow::ensure!(
+        login_port != Some(0) && world_port != Some(0),
+        "ports must be between 1 and 65535"
+    );
+    let interactive = connection.is_none() && zone.is_none();
     let zone = zone
         .or_else(|| connection.as_ref().map(|_| "poknowledge".to_string()))
-        .unwrap_or_else(|| {
-            eprintln!("usage: openeq [zone] [--dir DIR] [--pos X,Y,Z] [--connect CONFIG] [--models classic|luclin]");
-            std::process::exit(2);
-        });
+        .unwrap_or_else(|| "Sign in".into());
     let dir = match dir.or_else(loader::default_client_dir) {
         Some(dir) => dir,
         None => anyhow::bail!("no client directory; pass --dir"),
@@ -319,6 +405,10 @@ fn parse_args() -> anyhow::Result<Options> {
         connection,
         model_set,
         no_audio,
+        interactive,
+        login_host,
+        login_port,
+        world_port,
     })
 }
 
@@ -517,6 +607,11 @@ fn handle_cursor_capture(
     let Ok((entity, mut cursor)) = cursors.single_mut() else {
         return;
     };
+    if runtime.account.is_some() {
+        release_cursor(&mut cursor);
+        focus.clear();
+        return;
+    }
 
     if !runtime.world_ready() {
         release_cursor(&mut cursor);
@@ -611,12 +706,25 @@ fn handle_gameplay_input(
     let Ok((window_id, mut window, mut cursor)) = windows.single_mut() else {
         return;
     };
+    if runtime.account.is_some() {
+        events.clear();
+        wheel.clear();
+        return;
+    }
     if let Some(live) = runtime.live.as_mut() {
         live.poll();
     }
     runtime.interaction.controls_blocked = runtime.interaction.editor.active;
     runtime.interaction.escape_handled = false;
+    if let Some(input) = runtime.account_input.as_mut() {
+        input.begin_handoff_frame(&mut keys);
+    }
     if !runtime.world_ready() {
+        if let Some(input) = runtime.account_input.as_mut() {
+            for event in events.read() {
+                input.filter_handoff_event(event, window_id, &mut keys);
+            }
+        }
         if keys.just_pressed(KeyCode::Escape)
             && runtime
                 .live
@@ -649,6 +757,7 @@ fn handle_gameplay_input(
         map_open,
         third_person,
         audio,
+        account_input,
         ..
     } = &mut *runtime
     else {
@@ -667,6 +776,12 @@ fn handle_gameplay_input(
     }
     let mut chat_pointer_owned = false;
     for event in events.read() {
+        if account_input
+            .as_mut()
+            .is_some_and(|input| input.filter_handoff_event(event, window_id, &mut keys))
+        {
+            continue;
+        }
         // Use the displayed frame's original hit. Raising only changes the
         // next frame's order, so this press still activates the control seen.
         // This precedes chat's early consumption of an edit-box click.
@@ -841,6 +956,8 @@ fn handle_gameplay_input(
             } else if interaction.inspected_item.is_some() || live.game.linked_item.is_some() {
                 interaction.close_window("inspect", live);
                 interaction.escape_handled = true;
+            } else if interaction.spell_inspection.close() {
+                interaction.escape_handled = true;
             } else if live.game.trade.session.is_some() {
                 interaction.close_window("trade", live);
                 interaction.escape_handled = true;
@@ -896,6 +1013,11 @@ fn handle_gameplay_input(
         if let Some(hit) = ui_frame.hit_test(point) {
             if ui_left_click && let Some(action) = openeq::death::RecoveryAction::from_hit(hit) {
                 live.recovery_action(action);
+            }
+            if hit.window_id.as_deref() == Some("spell_inspection") {
+                for event in wheel.read() {
+                    interaction.spell_inspection.wheel(hit, event.y);
+                }
             }
             if hit.item == "game:chat_log"
                 && ui_left_click
@@ -1010,6 +1132,109 @@ fn handle_gameplay_input(
     interaction.tick(live);
 }
 
+fn handle_account_input(
+    mut events: MessageReader<WindowEvent>,
+    mut windows: Query<(Entity, &mut Window, &mut CursorOptions), With<PrimaryWindow>>,
+    mut runtime: ResMut<Runtime>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut mouse: ResMut<ButtonInput<MouseButton>>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    use openeq::account::{Action, Stage};
+    use openeq::account_ui::Intent;
+    let Ok((window_id, mut window, mut cursor)) = windows.single_mut() else {
+        events.clear();
+        return;
+    };
+    let Runtime {
+        account,
+        account_input,
+        ui_frame,
+        ..
+    } = &mut *runtime;
+    let Some(input) = account_input else {
+        events.clear();
+        return;
+    };
+    let Some(controller) = account else {
+        // Gameplay filters held account keys in native event order, before
+        // chat sees raw repeats or gameplay sees physical shortcut edges.
+        events.clear();
+        return;
+    };
+    release_cursor(&mut cursor);
+    for event in events.read() {
+        let Some(intent) = input.event(&controller.view, ui_frame, window_id, event) else {
+            continue;
+        };
+        match intent {
+            Intent::SignIn => {
+                let (endpoint, username, password) = input.take_credentials();
+                if let Err(error) = controller.sign_in(endpoint, username, password) {
+                    controller.view.notice = Some(error.to_string());
+                }
+            }
+            Intent::Cancel => {
+                controller.cancel();
+                input.reset();
+            }
+            Intent::Exit => {
+                exit.write(AppExit::Success);
+            }
+            Intent::SelectWorld { token, id }
+                if token == controller.view.token && controller.view.stage == Stage::Worlds =>
+            {
+                if controller
+                    .view
+                    .servers
+                    .iter()
+                    .any(|server| server.server_id == id)
+                {
+                    controller.view.selected_world = Some(id);
+                }
+            }
+            Intent::SelectCharacter { token, name }
+                if token == controller.view.token && controller.view.stage == Stage::Characters =>
+            {
+                if controller
+                    .view
+                    .characters
+                    .iter()
+                    .any(|character| character.name == name && character.enabled)
+                {
+                    controller.view.selected_character = Some(name);
+                }
+            }
+            Intent::Play { token } => {
+                let action = match controller.view.stage {
+                    Stage::Worlds => controller.view.selected_world.map(Action::ChooseWorld),
+                    Stage::Characters => controller
+                        .view
+                        .selected_character
+                        .clone()
+                        .map(Action::ChooseCharacter),
+                    _ => None,
+                };
+                if let Some(action) = action {
+                    controller.action(token, action);
+                }
+            }
+            Intent::Refresh { token } => {
+                controller.action(token, Action::RefreshWorlds);
+            }
+            Intent::Back { token } => {
+                controller.action(token, Action::Back);
+            }
+            _ => {}
+        }
+    }
+    window.ime_enabled = window.focused && input.ime_enabled(&controller.view);
+    // Every account event belongs to this screen. AccountInput retains held-key
+    // ownership separately until release so it cannot leak through a handoff.
+    keys.reset_all();
+    mouse.reset_all();
+}
+
 fn release_cursor(cursor: &mut CursorOptions) {
     cursor.visible = true;
     cursor.grab_mode = CursorGrabMode::None;
@@ -1075,6 +1300,10 @@ fn render_frame(
         }
     }
     if let Some(mut renderer) = runtime.renderer.take() {
+        if present_account(&mut runtime, &mut renderer, ui_size, window.scale_factor()) {
+            runtime.renderer = Some(renderer);
+            return;
+        }
         prepare_world(&mut runtime, &mut renderer, &options);
         recover_arrival_floor(&mut runtime);
         if runtime.world_ready() && runtime.live.is_some() {
@@ -1275,6 +1504,10 @@ fn render_frame(
             frame.warnings.append(&mut recovery.warnings);
             FrameSample::mark(&mut profile, "ui_build");
             renderer.set_ui_scaled(&frame, window.scale_factor());
+            runtime
+                .interaction
+                .spell_inspection
+                .update_metrics(renderer.ui_text_scroll_metrics());
             runtime.chat_link_hits = renderer.ui_link_hits().to_vec();
             runtime.ui_frame = frame;
         } else {
@@ -1362,27 +1595,103 @@ fn desired_destination(runtime: &Runtime, options: &Options) -> Option<loading::
     }
 }
 
+fn poll_client_assets(runtime: &mut Runtime) {
+    if let Some(result) = runtime.client_job.as_mut().and_then(|job| job.poll()) {
+        runtime.client_job = None;
+        match result {
+            Ok(client) => runtime.client_data = Some(client),
+            Err(error) => runtime.loading_error = Some(error),
+        }
+    }
+    if runtime.live.is_some()
+        && let Some(client) = runtime.client_data.take()
+    {
+        let live = runtime.live.as_mut().unwrap();
+        live.game.strings = client.strings;
+        live.game.spell_catalog = client.spells;
+        if let Some(effects) = client.spell_effects {
+            live.spell_effects.set_assets(effects);
+        }
+        runtime.hud = client.hud;
+    }
+}
+
+fn present_account(
+    runtime: &mut Runtime,
+    renderer: &mut Renderer,
+    viewport: [u32; 2],
+    scale: f32,
+) -> bool {
+    if runtime.account.is_none() {
+        return false;
+    }
+    poll_client_assets(runtime);
+    if let Some(result) = runtime.account_ui_job.as_mut().and_then(|job| job.poll()) {
+        runtime.account_ui_job = None;
+        match result {
+            Ok(ui) => runtime.account_ui = Some(ui),
+            Err(error) => runtime.account.as_mut().unwrap().view.notice = Some(error),
+        }
+    }
+    if let Some(ready) = runtime.account.as_mut().and_then(|account| account.poll()) {
+        runtime.account = None;
+        if let Some(store) = &mut runtime.account_preferences
+            && let Err(error) = store.save_session(&ready.identity)
+        {
+            tracing::warn!(%error,"could not save connection preferences");
+        }
+        match openeq::ui_layout::LayoutStore::open_session(&ready.identity) {
+            Ok(store) => {
+                store.layout().apply(
+                    &mut runtime.interaction.window_positions,
+                    &mut runtime.interaction.window_stack,
+                    &mut runtime.map_state,
+                );
+                runtime.layout_store = Some(store);
+            }
+            Err(error) => {
+                tracing::warn!(%error,"could not restore character layout; preserving saved file")
+            }
+        }
+        runtime.live = Some(ready.live);
+        runtime.fly = false;
+        poll_client_assets(runtime);
+        return false;
+    }
+    let controller = runtime.account.as_ref().unwrap();
+    let frame = if let (Some(ui), Some(input)) = (&runtime.account_ui, &runtime.account_input) {
+        ui.frame(
+            viewport,
+            &controller.view,
+            input,
+            runtime.started.elapsed().as_secs_f32(),
+        )
+    } else {
+        loading_ui::loading_frame(
+            viewport,
+            "Welcome to Norrath",
+            "Loading the sign-in screen",
+            None,
+            runtime.started.elapsed().as_secs_f32(),
+            controller.view.notice.as_deref(),
+        )
+    };
+    renderer.set_ui_scaled(&frame, scale);
+    runtime.ui_frame = frame;
+    renderer.render_ui();
+    true
+}
+
 /// Polling, cancellation, and installation are deliberately cheap: all asset
 /// decoding, collision building, and model/texture uploads run in the job.
 fn prepare_world(runtime: &mut Runtime, renderer: &mut Renderer, options: &Options) {
+    poll_client_assets(runtime);
     if let Some(config) = &options.connection
         && runtime.live.is_none()
     {
-        if let Some(result) = runtime.client_job.as_mut().and_then(|job| job.poll()) {
-            runtime.client_job = None;
-            match result {
-                Ok(client) => {
-                    let mut live = live::LiveWorld::start(config.clone());
-                    live.game.strings = client.strings;
-                    live.game.spell_catalog = client.spells;
-                    if let Some(effects) = client.spell_effects {
-                        live.spell_effects.set_assets(effects);
-                    }
-                    runtime.hud = client.hud;
-                    runtime.live = Some(live);
-                }
-                Err(error) => runtime.loading_error = Some(error),
-            }
+        if runtime.client_data.is_some() {
+            runtime.live = Some(live::LiveWorld::start(config.clone()));
+            poll_client_assets(runtime);
         }
         return;
     }
@@ -1757,6 +2066,10 @@ mod loading_tests {
             connection: None,
             model_set: CharacterModelSet::Classic,
             no_audio: true,
+            interactive: false,
+            login_host: None,
+            login_port: None,
+            world_port: None,
         }
     }
 

@@ -1,12 +1,13 @@
 //! The world server: character select and the handoff to a zone.
 
-use std::net::SocketAddr;
+use std::{collections::HashSet, net::SocketAddr};
 
 use tokio::time::{Duration, timeout};
 
 use crate::opcodes::WorldOp;
 use crate::packet::AppPacket;
 use crate::stream::{EqStream, StreamError};
+use crate::wire::{Reader, u16_at, u32_at};
 
 const REPLY_TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -16,6 +17,8 @@ const LOGIN_INFO_SIZE: usize = 464;
 
 /// Bytes of fixed data following a character's name in `CharacterSelectEntry`.
 const CHARACTER_TAIL: usize = 274;
+/// EQEmu common/patches/rof2_limits.h::CHARACTER_CREATION_LIMIT.
+const MAX_CHARACTERS: usize = 12;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorldError {
@@ -40,6 +43,9 @@ pub struct Character {
     pub race: u32,
     pub gender: u8,
     pub zone: u16,
+    pub instance_id: u16,
+    /// RoF2's Enabled byte, separate from the return-home/tutorial flags.
+    pub enabled: bool,
 }
 
 /// A connected world-server session.
@@ -107,7 +113,7 @@ impl WorldClient {
             let packet = self.next_packet("character list").await?;
             match packet.opcode {
                 op if op == WorldOp::SendCharInfo as u16 => {
-                    return Ok(parse_characters(&packet.data));
+                    return parse_characters(&packet.data);
                 }
                 op if op == WorldOp::MessageOfTheDay as u16 => {
                     let text: Vec<u8> = packet
@@ -184,46 +190,47 @@ impl WorldClient {
 ///
 /// Each entry is a null-terminated name, then a fixed
 /// tail matching RoF2's `CharacterSelectEntry_Struct`.
-fn parse_characters(data: &[u8]) -> Vec<Character> {
-    if data.len() < 4 {
-        return Vec::new();
+fn parse_characters(data: &[u8]) -> Result<Vec<Character>, WorldError> {
+    let invalid = || WorldError::Invalid("character roster");
+    let mut r = Reader(data);
+    let count = r.u32().ok_or_else(invalid)? as usize;
+    if count > MAX_CHARACTERS || count > r.0.len() / (CHARACTER_TAIL + 2) {
+        return Err(invalid());
     }
-    let count = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
-    let mut cursor = 4usize;
-    let mut characters = Vec::with_capacity(count.min(32));
-
-    for _ in 0..count.min(32) {
-        let name_start = cursor;
-        while cursor < data.len() && data[cursor] != 0 {
-            cursor += 1;
+    let mut characters = Vec::with_capacity(count);
+    let mut names = HashSet::with_capacity(count);
+    for _ in 0..count {
+        // Identity strings must be complete and valid, not lossy display text.
+        let length =
+            r.0.iter()
+                .take(64)
+                .position(|b| *b == 0)
+                .filter(|n| *n > 0)
+                .ok_or_else(invalid)?;
+        let name = std::str::from_utf8(r.take(length).ok_or_else(invalid)?)
+            .map_err(|_| invalid())?
+            .to_owned();
+        r.skip(1).ok_or_else(invalid)?;
+        let tail = r.take(CHARACTER_TAIL).ok_or_else(invalid)?;
+        // Enabled follows Unknown1 at tail268; GoHome at261 is independent.
+        if tail[268] > 1 || !names.insert(name.to_ascii_lowercase()) {
+            return Err(invalid());
         }
-        let name = String::from_utf8_lossy(&data[name_start..cursor]).into_owned();
-        if cursor == data.len() {
-            break;
-        }
-        cursor += 1;
-
-        if cursor + CHARACTER_TAIL > data.len() {
-            break;
-        }
-        let tail = &data[cursor..cursor + CHARACTER_TAIL];
-        let class = tail[0];
-        let race = u32::from_le_bytes(tail[1..5].try_into().unwrap());
-        let level = tail[5];
-        let zone = u16::from_le_bytes([tail[11], tail[12]]);
-        let gender = tail[15];
-        cursor += CHARACTER_TAIL;
-
         characters.push(Character {
             name,
-            level,
-            class,
-            race,
-            gender,
-            zone,
+            class: tail[0],
+            race: u32_at(tail, 1).unwrap(),
+            level: tail[5],
+            zone: u16_at(tail, 11).unwrap(),
+            instance_id: u16_at(tail, 13).unwrap(),
+            gender: tail[15],
+            enabled: tail[268] != 0,
         });
     }
-    characters
+    if !r.done() {
+        return Err(invalid());
+    }
+    Ok(characters)
 }
 
 #[cfg(test)]
@@ -241,14 +248,89 @@ mod tests {
         tail[0] = 4;
         tail[5] = 30;
         tail[15] = 1; // class
+        tail[13..15].copy_from_slice(&237u16.to_le_bytes());
+        tail[261] = 0; // GoHome must not masquerade as Enabled.
+        tail[268] = 1;
         payload.extend_from_slice(&tail);
 
-        let characters = parse_characters(&payload);
+        let characters = parse_characters(&payload).unwrap();
         assert_eq!(characters.len(), 1);
         assert_eq!(characters[0].name, "Daeken");
         assert_eq!(characters[0].level, 30);
         assert_eq!(characters[0].race, 1);
         assert_eq!(characters[0].class, 4);
         assert_eq!(characters[0].zone, 394);
+        assert_eq!(characters[0].instance_id, 237);
+        assert!(characters[0].enabled);
+    }
+
+    fn roster(names: &[&str]) -> Vec<u8> {
+        let mut out = (names.len() as u32).to_le_bytes().to_vec();
+        for (i, name) in names.iter().enumerate() {
+            out.extend_from_slice(name.as_bytes());
+            out.push(0);
+            let mut tail = vec![0; CHARACTER_TAIL];
+            tail[0] = 2;
+            tail[1..5].copy_from_slice(&1u32.to_le_bytes());
+            tail[5] = 50;
+            tail[11..13].copy_from_slice(&77u16.to_le_bytes());
+            tail[13..15].copy_from_slice(&(i as u16).to_le_bytes());
+            tail[261] = 1; // GoHome true even for the disabled second row.
+            tail[268] = u8::from(i != 1);
+            out.extend_from_slice(&tail);
+        }
+        out
+    }
+    #[test]
+    fn roster_distinguishes_empty_and_disabled_entries() {
+        assert!(parse_characters(&0u32.to_le_bytes()).unwrap().is_empty());
+        let characters = parse_characters(&roster(&["First", "Second"])).unwrap();
+        assert_eq!(characters.len(), 2);
+        assert!(characters[0].enabled);
+        assert!(!characters[1].enabled);
+        assert_eq!(characters[1].instance_id, 1);
+        let names: Vec<_> = (0..MAX_CHARACTERS)
+            .map(|i| format!("Character{i}"))
+            .collect();
+        let refs: Vec<_> = names.iter().map(String::as_str).collect();
+        assert_eq!(
+            parse_characters(&roster(&refs)).unwrap().len(),
+            MAX_CHARACTERS
+        );
+    }
+    #[test]
+    fn roster_rejects_every_truncation_excess_count_and_trailer() {
+        let data = roster(&["First", "Second"]);
+        for n in 0..data.len() {
+            assert!(
+                parse_characters(&data[..n]).is_err(),
+                "accepted partial roster {n}"
+            );
+        }
+        let mut extra = data.clone();
+        extra.push(0);
+        assert!(parse_characters(&extra).is_err());
+        for count in [MAX_CHARACTERS as u32 + 1, u32::MAX] {
+            let mut bad = data.clone();
+            bad[..4].copy_from_slice(&count.to_le_bytes());
+            assert!(parse_characters(&bad).is_err());
+        }
+        assert!(parse_characters(&[0, 0, 0, 0, 0]).is_err());
+    }
+    #[test]
+    fn roster_rejects_invalid_identity_and_enabled_byte() {
+        for names in [vec![""], vec!["Same", "sAME"], vec!["a"; 13]] {
+            assert!(parse_characters(&roster(&names)).is_err());
+        }
+        assert!(parse_characters(&roster(&[&"a".repeat(64)])).is_err());
+        let mut bad = roster(&["First"]);
+        bad[4] = 0xff;
+        assert!(parse_characters(&bad).is_err());
+        let mut bad = roster(&["First"]);
+        bad[4 + 6 + 268] = 2;
+        assert!(parse_characters(&bad).is_err());
+        let mut no_nul = 1u32.to_le_bytes().to_vec();
+        no_nul.extend_from_slice(&[b'A'; 350]);
+        assert!(parse_characters(&no_nul).is_err());
     }
 }

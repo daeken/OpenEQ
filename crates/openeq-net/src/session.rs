@@ -1,5 +1,9 @@
 //! Shared connection configuration for the game and the headless zone probe.
-use crate::{login::LoginClient, world::WorldClient, zone::ZoneClient};
+use crate::{
+    login::{LoginClient, Session},
+    world::WorldClient,
+    zone::ZoneClient,
+};
 use anyhow::{Context, bail};
 use serde::Deserialize;
 use std::{net::SocketAddr, path::Path};
@@ -23,6 +27,23 @@ fn login_port() -> u16 {
 fn world_port() -> u16 {
     9000
 }
+
+/// Enter a selected character while preserving authenticated later zoning.
+/// Keep this future and its returned ZoneClient on the same live Tokio runtime
+/// as the world connection: its UDP reader/ticker tasks belong to that runtime.
+pub async fn enter_character(
+    world: &mut WorldClient,
+    world_address: SocketAddr,
+    session: &Session,
+    character: &str,
+) -> anyhow::Result<ZoneClient> {
+    let address = world.enter_world(character).await?;
+    tracing::info!(%address, character, "entering zone");
+    let mut zone = ZoneClient::connect(address, character).await?;
+    zone.enable_zoning(world_address, session.account_id, session.key.clone());
+    Ok(zone)
+}
+
 impl ConnectionConfig {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let bytes = std::fs::read(path)
@@ -49,16 +70,16 @@ impl ConnectionConfig {
             WorldClient::connect(world_address, session.account_id, &session.key).await?;
         let characters = world.characters().await?;
         tracing::info!(names = ?characters.iter().map(|c| &c.name).collect::<Vec<_>>(), "character list");
-        if !characters
+        let selected = characters
             .iter()
-            .any(|c| c.name.eq_ignore_ascii_case(&self.character))
-        {
-            bail!("character {} is not on this account", self.character);
+            .find(|c| c.name.eq_ignore_ascii_case(&self.character))
+            .with_context(|| format!("character {} is not on this account", self.character))?;
+        if !selected.enabled {
+            bail!(
+                "character {} is currently disabled by the server",
+                selected.name
+            );
         }
-        let address = world.enter_world(&self.character).await?;
-        tracing::info!(%address, character = %self.character, "entering zone");
-        let mut zone = ZoneClient::connect(address, &self.character).await?;
-        zone.enable_zoning(world_address, session.account_id, session.key);
-        Ok(zone)
+        enter_character(&mut world, world_address, &session, &self.character).await
     }
 }

@@ -11,6 +11,65 @@ const XML: &str = r#"<XML>
 </XML>"#;
 
 #[test]
+fn readonly_stml_scrolls_with_clipped_hits_and_missing_optional_art() {
+    let xml = r#"<XML><STMLbox item="description"><ScreenID>DescriptionText</ScreenID><Size><CX>120</CX><CY>80</CY></Size><Style_VScroll>true</Style_VScroll><Text>line one</Text></STMLbox></XML>"#;
+    let document = UiDocument::from_xml(xml).unwrap();
+    let mut bindings = UiBindings::default();
+    let state = bindings.widget_mut("description");
+    state.scroll_rows = Some(usize::MAX);
+    state.scroll_id = Some("spell:200".into());
+    state.text = Some("First\n\nLast".into());
+    let frame = document
+        .window("description")
+        .unwrap()
+        .layout(Rect::new(0., 0., 110., 70.), &bindings);
+    assert!(frame.warnings.is_empty());
+    assert_eq!(
+        frame.hit_test([4., 4.]).unwrap().screen_id,
+        "DescriptionText"
+    );
+    assert_eq!(
+        frame.hit_test([108., 4.]).unwrap().item,
+        "description:scroll:-1"
+    );
+    assert!(frame.hit_test([115., 4.]).is_none());
+    let (rect, clip, thumb) = frame
+        .commands
+        .iter()
+        .find_map(|cmd| match cmd {
+            DrawCommand::TextArea {
+                id,
+                text,
+                rect,
+                clip,
+                scroll_rows,
+                thumb,
+                ..
+            } => {
+                assert_eq!(id, "spell:200");
+                assert_eq!(text, "First\n\nLast");
+                assert_eq!(*scroll_rows, usize::MAX);
+                Some((*rect, *clip, thumb.as_ref().unwrap()))
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        clip,
+        rect.intersect(frame.bounds)
+            .intersect(Rect::new(0., 0., 110., 70.))
+    );
+    assert!(thumb.images.iter().all(Option::is_none));
+    bindings.widget_mut("description").enabled = Some(false);
+    let disabled = document
+        .window("description")
+        .unwrap()
+        .layout(Rect::new(0., 0., 120., 80.), &bindings);
+    assert!(disabled.hit_test([4., 4.]).is_none());
+    assert!(disabled.hit_test([108., 4.]).is_none());
+}
+
+#[test]
 fn resolves_anchor_defaults_bindings_and_hit_order() {
     let document = UiDocument::from_xml(XML).unwrap();
     let mut bindings = UiBindings::default();
@@ -107,6 +166,7 @@ fn clipping_disabled_controls_and_window_position_are_consistent() {
         let clip = match command {
             DrawCommand::Line { clip, .. }
             | DrawCommand::TextLog { clip, .. }
+            | DrawCommand::TextArea { clip, .. }
             | DrawCommand::Fill { clip, .. }
             | DrawCommand::Image { clip, .. }
             | DrawCommand::Text { clip, .. } => clip,

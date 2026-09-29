@@ -753,6 +753,10 @@ impl Renderer {
         self.ui.as_ref().map_or(&[], |ui| ui.link_hits())
     }
 
+    pub fn ui_text_scroll_metrics(&self) -> &[openeq_ui::TextScrollMetrics] {
+        self.ui.as_ref().map_or(&[], |ui| ui.text_scroll_metrics())
+    }
+
     pub fn format(&self) -> wgpu::TextureFormat {
         self.config.format
     }

@@ -10,6 +10,8 @@ pub use crate::trade_ui::{
 pub use openeq_ui::TextLink as UiChatLink;
 use openeq_ui::{Color, DrawCommand, HitTarget, Rect, TextAlign, TextLine, UiBindings, UiFrame};
 use std::collections::{BTreeMap, BTreeSet};
+mod spell_inspection;
+pub use spell_inspection::SpellInspection;
 
 pub const MAX_SAVED_WINDOWS: usize = 256;
 
@@ -27,6 +29,7 @@ pub fn valid_window_id(id: &str) -> bool {
             | "inventory"
             | "loot"
             | "spellbook"
+            | "spell_inspection"
             | "merchant"
             | "bank"
             | "trade"
@@ -215,6 +218,8 @@ pub struct GameHudState {
     pub spellbook_open: bool,
     pub spellbook_page: usize,
     pub selected_gem: Option<u8>,
+    pub inspected_spell: Option<UiSpell>,
+    pub spell_scroll_rows: usize,
     pub casting: Option<UiCasting>,
     pub chat: Vec<ChatLine>,
     pub chat_input: String,
@@ -240,7 +245,7 @@ pub struct GameHudState {
     pub attack: bool,
     pub sitting: bool,
     /// Keys: player, target, chat, actions, inventory, loot, bag:<parent_slot>,
-    /// spellbar, spellbook, casting, buffs, merchant, bank, group, trade.
+    /// spellbar, spellbook, spell_inspection, casting, buffs, merchant, bank, group, trade.
     /// All coordinates are logical pixels.
     pub window_positions: BTreeMap<String, [f32; 2]>,
     /// Back-to-front logical IDs; used by standalone frame/capture callers.
@@ -266,6 +271,7 @@ pub enum UiAction {
     ForgetGem(u8),
     ToggleSpellbook,
     SpellbookPage(i32),
+    ScrollSpell(i32),
     InventorySlot(i32),
     LootItem(u16),
     ToggleInventory,
@@ -294,6 +300,13 @@ impl UiAction {
             return Some(Self::Social(action));
         }
         let item = hit.item.as_str();
+        if let Some(rows) = item.strip_prefix("SDW_SpellDescription:scroll:") {
+            return rows
+                .parse::<i32>()
+                .ok()
+                .filter(|rows| matches!(rows, -1 | 1))
+                .map(Self::ScrollSpell);
+        }
         if let Some(id) = item.strip_prefix("chat:link:") {
             return id.parse().ok().map(Self::ChatLink);
         }
@@ -669,6 +682,9 @@ impl Hud {
         }
         if let Some(casting) = &state.casting {
             draw.casting(state, casting);
+        }
+        if let Some(spell) = &state.inspected_spell {
+            draw.spell_inspection(state, spell);
         }
         draw.compose_windows(additional, stack);
         let hovered = state

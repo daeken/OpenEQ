@@ -2,6 +2,7 @@
 //! remains authoritative for learned spells, cast timing, costs and effects.
 use crate::gameplay_ui::UiSpell;
 use std::{collections::BTreeMap, path::Path};
+mod description;
 
 #[derive(Clone, Debug)]
 pub struct Spell {
@@ -25,6 +26,9 @@ pub struct Spell {
     pub levitation_mode: Option<u8>,
     pub water_breathing: bool,
     pub levels: [u8; 16],
+    pub description_id: u32,
+    pub landing_message: String,
+    /// Readable dbstr type-6 text, with unavailable dynamic values marked.
     pub description: String,
 }
 impl Spell {
@@ -36,8 +40,7 @@ impl Spell {
             mana: self.mana,
             cast_time: self.cast_time_ms as f32 / 1000.,
             description: format!(
-                "{}\nRange {:.0} • Recast {:.1}s",
-                self.description,
+                "Range {:.0} • Recast {:.1}s",
                 self.range,
                 self.recast_ms as f32 / 1000.
             ),
@@ -58,7 +61,11 @@ pub struct SpellCatalog {
 impl SpellCatalog {
     pub fn load(base: &Path) -> anyhow::Result<Self> {
         let bytes = std::fs::read(base.join("spells_us.txt"))?;
-        Ok(Self::parse(&encoding_rs::WINDOWS_1252.decode(&bytes).0))
+        let mut catalog = Self::parse(&encoding_rs::WINDOWS_1252.decode(&bytes).0);
+        if let Ok(bytes) = std::fs::read(base.join("dbstr_us.txt")) {
+            catalog.load_descriptions(&encoding_rs::WINDOWS_1252.decode(&bytes).0);
+        }
+        Ok(catalog)
     }
     pub fn parse(text: &str) -> Self {
         let mut result = Self::default();
@@ -81,6 +88,41 @@ impl SpellCatalog {
             },
             |spell| spell.view(class),
         )
+    }
+
+    /// A read-only presentation; effect values remain server-authoritative.
+    pub fn inspection(&self, id: u32, class: u8) -> UiSpell {
+        let mut view = self.view(id, class);
+        if !self.spells.contains_key(&id) {
+            view.description = "Description unavailable.".into();
+            return view;
+        }
+        let description = self
+            .spells
+            .get(&id)
+            .map(|spell| spell.description.as_str())
+            .filter(|text| !text.trim().is_empty())
+            .unwrap_or("Description unavailable.");
+        let level = if view.level >= 254 {
+            "—".into()
+        } else {
+            view.level.to_string()
+        };
+        view.description = format!(
+            "Level {level} · {} mana · {:.1}s cast\n{}\n\n{description}",
+            view.mana, view.cast_time, view.description
+        );
+        view
+    }
+
+    pub fn load_descriptions(&mut self, text: &str) {
+        let descriptions = description::parse(text);
+        for spell in self.spells.values_mut() {
+            spell.description = descriptions
+                .get(&spell.description_id)
+                .cloned()
+                .unwrap_or_default();
+        }
     }
 }
 fn parse_spell(fields: &[&str]) -> Option<Spell> {
@@ -161,7 +203,9 @@ fn parse_spell(fields: &[&str]) -> Option<Spell> {
         levitation_mode,
         water_breathing,
         levels,
-        description: fields.get(6).copied().unwrap_or("").to_owned(),
+        description_id: number(if compact { 95 } else { 155 }),
+        landing_message: fields.get(6).copied().unwrap_or("").to_owned(),
+        description: String::new(),
     })
 }
 
@@ -188,10 +232,12 @@ mod tests {
             fields[if compact { 60 } else { 120 }] = "43";
             fields[if compact { 62 } else { 122 }] = "3";
             fields[if compact { 93 } else { 153 }] = "1";
+            fields[if compact { 95 } else { 155 }] = "207";
             if compact {
                 fields[173] = "1|0|10|0|2|20";
             }
-            let catalog = SpellCatalog::parse(&fields.join("^"));
+            let mut catalog = SpellCatalog::parse(&fields.join("^"));
+            catalog.load_descriptions("200^6^Wrong ID.^0^\n207^6^Mends between #1 and @1 wounds.^0^\n207^7^Wrong type.^0^");
             let spell = &catalog.spells[&200];
             assert_eq!(spell.name, "Minor Healing");
             assert_eq!(spell.levels[1], 1);
@@ -204,6 +250,34 @@ mod tests {
             assert_eq!(spell.casting_animation, 43);
             assert_eq!(spell.travel_type, 3);
             assert!(spell.persistent_particles);
+            assert_eq!(spell.description_id, 207);
+            assert_eq!(spell.landing_message, "You feel a little better.");
+            assert_eq!(
+                spell.description,
+                "Mends between ? and ? wounds.\n\nSome effect values are unavailable."
+            );
+            assert!(!catalog.view(200, 2).description.contains("little better"));
+            assert!(
+                catalog
+                    .inspection(200, 2)
+                    .description
+                    .contains("Mends between ? and ? wounds.")
+            );
+            let mut second = spell.clone();
+            second.id = 201;
+            catalog.spells.insert(201, second);
+            catalog.load_descriptions("207^6^Shared description.^0^");
+            assert_eq!(
+                catalog.spells[&200].description,
+                catalog.spells[&201].description
+            );
+            catalog.load_descriptions("invalid");
+            assert!(
+                catalog
+                    .inspection(200, 2)
+                    .description
+                    .contains("Description unavailable.")
+            );
         }
     }
     #[test]
@@ -211,6 +285,10 @@ mod tests {
         let catalog = SpellCatalog::parse("not a spell\n1^truncated");
         assert_eq!(catalog.malformed_records, 2);
         assert!(catalog.spells.is_empty());
+        assert_eq!(
+            catalog.inspection(200, 2).description,
+            "Description unavailable."
+        );
     }
 
     #[test]

@@ -139,12 +139,24 @@ pub struct LayoutStore {
 }
 impl LayoutStore {
     pub fn open(config: &ConnectionConfig) -> anyhow::Result<Self> {
+        Self::open_identity(Identity::from_config(config))
+    }
+    pub fn open_session(session: &crate::account::SessionIdentity) -> anyhow::Result<Self> {
+        Self::open_identity(Identity {
+            host: session.endpoint.host.to_ascii_lowercase(),
+            login_port: session.endpoint.login_port,
+            world_port: session.endpoint.world_port,
+            server_id: Some(session.server_id),
+            character: session.character.to_ascii_lowercase(),
+        })
+    }
+    fn open_identity(identity: Identity) -> anyhow::Result<Self> {
         let base = std::env::var_os("XDG_CONFIG_HOME")
             .filter(|path| !path.is_empty())
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
             .context("no configuration directory")?;
-        Self::open_at(&base.join("openeq/layouts"), Identity::from_config(config))
+        Self::open_at(&base.join("openeq/layouts"), identity)
     }
     fn open_at(base: &Path, identity: Identity) -> anyhow::Result<Self> {
         let path = base.join(identity.filename());
@@ -201,7 +213,7 @@ impl LayoutStore {
     }
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     let parent = path.parent().context("layout parent")?;
     fs::create_dir_all(parent)?;
     let stamp = std::time::SystemTime::now()

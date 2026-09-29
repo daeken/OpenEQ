@@ -32,6 +32,7 @@ pub struct Interaction {
     pub spellbook_open: bool,
     pub spellbook_page: usize,
     pub selected_gem: Option<u8>,
+    pub spell_inspection: SpellInspection,
     pub merchant_stock: Option<u32>,
     pub merchant_sell: Option<InventorySlot>,
     pub merchant_quantity: u32,
@@ -207,6 +208,11 @@ impl Interaction {
             spellbook_open: self.spellbook_open,
             spellbook_page: self.spellbook_page,
             selected_gem: self.selected_gem,
+            inspected_spell: self
+                .spell_inspection
+                .id()
+                .map(|id| live.game.spell_catalog.inspection(id, class)),
+            spell_scroll_rows: self.spell_inspection.scroll_rows(),
             buffs: live
                 .game
                 .buffs
@@ -443,6 +449,18 @@ impl Interaction {
         live: &mut LiveWorld,
         position: [f32; 3],
     ) {
+        if right && let UiAction::MemorizeSpell { id, .. } = action {
+            if live
+                .game
+                .profile
+                .as_ref()
+                .is_some_and(|profile| profile.spell_book.contains(&id))
+            {
+                self.spell_inspection.open(id);
+                self.window_stack.raise("spell_inspection");
+            }
+            return;
+        }
         if right
             && !matches!(
                 action,
@@ -534,6 +552,7 @@ impl Interaction {
                     .saturating_add_signed(delta as isize)
                     .min(count.saturating_sub(1) / SPELLBOOK_PAGE_SIZE);
             }
+            UiAction::ScrollSpell(rows) => self.spell_inspection.scroll(rows as isize),
             UiAction::InventorySlot(id) => {
                 let Some(slot) = u32::try_from(id)
                     .ok()
@@ -647,6 +666,8 @@ impl Interaction {
             });
         } else if window == "spellbook" {
             self.spellbook_open = false;
+        } else if window == "spell_inspection" {
+            self.spell_inspection.close();
         } else if window == "inventory" {
             self.inventory_open = false;
         } else if window == "loot" {

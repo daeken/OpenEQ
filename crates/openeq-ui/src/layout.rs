@@ -77,6 +77,17 @@ pub enum DrawCommand {
         font: u32,
         scroll_rows: usize,
     },
+    /// Read-only, top-anchored text. Renderer measurements also place the thumb.
+    TextArea {
+        id: String,
+        rect: Rect,
+        clip: Rect,
+        text: String,
+        font: u32,
+        color: Color,
+        scroll_rows: usize,
+        thumb: Option<Box<ScrollThumb>>,
+    },
     Fill {
         rect: Rect,
         clip: Rect,
@@ -100,6 +111,34 @@ pub enum DrawCommand {
         vertical_center: bool,
         wrap: bool,
     },
+}
+
+#[derive(Clone, Debug)]
+pub struct ScrollImage {
+    pub texture: PathBuf,
+    pub source: Rect,
+}
+
+#[derive(Clone, Debug)]
+pub struct ScrollThumb {
+    pub track: Rect,
+    pub clip: Rect,
+    /// Original frame-template top, middle and bottom pieces.
+    pub images: [Option<ScrollImage>; 3],
+}
+
+/// Feedback from the actual font/scale/width used by the last render.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextScrollMetrics {
+    pub id: String,
+    pub total_rows: usize,
+    pub visible_rows: usize,
+    pub first_row: usize,
+}
+impl TextScrollMetrics {
+    pub fn max_scroll(&self) -> usize {
+        self.total_rows.saturating_sub(self.visible_rows)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -162,6 +201,10 @@ pub struct WidgetState {
     pub rect: Option<Rect>,
     /// Explicit animation cell/frame selection for game-controlled indicators.
     pub frame_index: Option<usize>,
+    /// Opt a read-only STMLbox into measured, top-anchored vertical scrolling.
+    pub scroll_rows: Option<usize>,
+    /// Optional content identity, used to reject stale renderer feedback.
+    pub scroll_id: Option<String>,
 }
 
 /// Dynamic values supplied by the application. Numeric EQType values are kept as
@@ -256,7 +299,9 @@ impl UiWindow<'_> {
                 | "VerticalLayoutBox"
                 | "TabBox"
         );
+        let scrolling = kind == "STMLbox" && state.scroll_rows.is_some();
         if is_container
+            || scrolling
             || matches!(
                 kind,
                 "Button" | "Editbox" | "Listbox" | "Combobox" | "InvSlot" | "Slider"
@@ -459,25 +504,43 @@ impl UiWindow<'_> {
                 } else {
                     color(element.child("DisabledColor"), [128, 128, 128, 255])
                 };
-                output.commands.push(DrawCommand::Text {
-                    rect: text_rect,
-                    clip,
-                    text,
-                    font: element.number("Font", 3.) as u32,
-                    color: text_color,
-                    align: if right {
-                        TextAlign::Right
-                    } else if center {
-                        TextAlign::Center
-                    } else {
-                        TextAlign::Left
-                    },
-                    vertical_center: element.boolean(
-                        "TextAlignVCenter",
-                        kind == "Button" || kind == "Editbox" || titlebar,
-                    ),
-                    wrap: !element.boolean("NoWrap", kind == "Editbox"),
-                });
+                if scrolling {
+                    let (text_rect, thumb) =
+                        self.scrollbar(element, text_rect, clip, bindings, enabled, output);
+                    output.commands.push(DrawCommand::TextArea {
+                        id: state
+                            .scroll_id
+                            .clone()
+                            .unwrap_or_else(|| element.item.clone()),
+                        rect: text_rect,
+                        clip: clip.intersect(text_rect),
+                        text,
+                        font: element.number("Font", 3.) as u32,
+                        color: text_color,
+                        scroll_rows: state.scroll_rows.unwrap_or(0),
+                        thumb: Some(Box::new(thumb)),
+                    });
+                } else {
+                    output.commands.push(DrawCommand::Text {
+                        rect: text_rect,
+                        clip,
+                        text,
+                        font: element.number("Font", 3.) as u32,
+                        color: text_color,
+                        align: if right {
+                            TextAlign::Right
+                        } else if center {
+                            TextAlign::Center
+                        } else {
+                            TextAlign::Left
+                        },
+                        vertical_center: element.boolean(
+                            "TextAlignVCenter",
+                            kind == "Button" || kind == "Editbox" || titlebar,
+                        ),
+                        wrap: !element.boolean("NoWrap", kind == "Editbox"),
+                    });
+                }
             }
         }
         // All references were validated when constructing the window. A TabBox
@@ -500,6 +563,119 @@ impl UiWindow<'_> {
         if let Some(page) = selected {
             self.draw(page, rect, viewport, clip, bindings, output);
         }
+    }
+
+    fn scroll_image(&self, name: &str, bindings: &UiBindings) -> Option<ScrollImage> {
+        let frame = self.animation_frame(name, bindings, None)?;
+        Some(ScrollImage {
+            texture: self.document.textures.get(&frame.texture).map_or_else(
+                || self.document.texture_path(&frame.texture),
+                |texture| texture.path.clone(),
+            ),
+            source: frame.source,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn scrollbar(
+        &self,
+        element: &Element,
+        rect: Rect,
+        clip: Rect,
+        bindings: &UiBindings,
+        enabled: bool,
+        output: &mut UiFrame,
+    ) -> (Rect, ScrollThumb) {
+        let template = element
+            .value("DrawTemplate")
+            .and_then(|name| self.document.definition(name))
+            .and_then(|template| template.child("VSBTemplate"));
+        let width = 14_f32.min(rect.width.max(0.));
+        let arrow_height = 14_f32.min((rect.height * 0.5).max(0.));
+        let track = Rect::new(
+            rect.right() - width,
+            rect.y + arrow_height,
+            width,
+            (rect.height - arrow_height * 2.).max(0.),
+        );
+        output.commands.push(DrawCommand::Fill {
+            rect: track,
+            clip,
+            color: [20, 22, 25, 255],
+        });
+        if let Some(name) = template.and_then(|template| template.value("MiddleTextureInfo")) {
+            self.texture(
+                name,
+                track,
+                clip,
+                color(template.and_then(|t| t.child("MiddleTint")), WHITE),
+                output,
+            );
+        }
+        for (part, suffix, y, text) in [
+            ("UpButton", "-1", rect.y, "▲"),
+            ("DownButton", "1", rect.bottom() - arrow_height, "▼"),
+        ] {
+            let bounds = Rect::new(track.x, y, width, arrow_height);
+            let item = format!("{}:scroll:{suffix}", element.item);
+            let hovered = bindings
+                .widgets
+                .get(&item)
+                .is_some_and(|state| state.hovered);
+            let animation = template.and_then(|t| t.child(part)).and_then(|part| {
+                part.value(if !enabled {
+                    "Disabled"
+                } else if hovered {
+                    "Flyby"
+                } else {
+                    "Normal"
+                })
+            });
+            if let Some(name) =
+                animation.filter(|name| self.animation_frame(name, bindings, None).is_some())
+            {
+                self.image(name, bounds, clip, WHITE, bindings, None, output);
+            } else {
+                output.commands.push(DrawCommand::Text {
+                    rect: bounds,
+                    clip,
+                    text: text.into(),
+                    font: 0,
+                    color: WHITE,
+                    align: TextAlign::Center,
+                    vertical_center: true,
+                    wrap: false,
+                });
+            }
+            output.hit_targets.push(HitTarget {
+                window_id: None,
+                screen_id: item.clone(),
+                item,
+                kind: "ScrollButton".into(),
+                rect: bounds.intersect(clip),
+                enabled,
+                tooltip: None,
+            });
+        }
+        let images = ["Top", "Middle", "Bottom"].map(|part| {
+            template
+                .and_then(|t| t.child("Thumb"))
+                .and_then(|thumb| thumb.value(part))
+                .and_then(|name| self.scroll_image(name, bindings))
+        });
+        (
+            Rect::new(
+                rect.x + 4.,
+                rect.y + 4.,
+                (rect.width - width - 8.).max(0.),
+                (rect.height - 8.).max(0.),
+            ),
+            ScrollThumb {
+                track,
+                clip,
+                images,
+            },
+        )
     }
 
     fn gauge(

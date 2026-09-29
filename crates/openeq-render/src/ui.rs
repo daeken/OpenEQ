@@ -4,7 +4,9 @@
 
 use bytemuck::{Pod, Zeroable};
 use font8x8::UnicodeFonts;
-use openeq_ui::{Color, DrawCommand, HitTarget, Rect, TextAlign, UiFrame};
+use openeq_ui::{
+    Color, DrawCommand, HitTarget, Rect, ScrollThumb, TextAlign, TextScrollMetrics, UiFrame,
+};
 use std::{
     collections::HashMap,
     ops::Range,
@@ -55,6 +57,7 @@ pub struct UiRenderer {
     batches: Vec<Batch>,
     scale: f32,
     link_hits: Vec<HitTarget>,
+    text_scroll_metrics: Vec<TextScrollMetrics>,
 }
 
 impl UiRenderer {
@@ -145,6 +148,7 @@ impl UiRenderer {
             batches: Vec::new(),
             scale: 1.,
             link_hits: Vec::new(),
+            text_scroll_metrics: Vec::new(),
         }
     }
 
@@ -176,6 +180,7 @@ impl UiRenderer {
         };
         self.batches.clear();
         self.link_hits.clear();
+        self.text_scroll_metrics.clear();
         if size[0] == 0 || size[1] == 0 {
             return;
         }
@@ -220,6 +225,73 @@ impl UiRenderer {
                         0,
                         size,
                     );
+                }
+
+                DrawCommand::TextArea {
+                    id,
+                    rect,
+                    clip,
+                    text,
+                    font,
+                    color,
+                    scroll_rows,
+                    thumb,
+                } => {
+                    let px = (font_size(*font) as f32 * self.scale).round().max(1.) as u32;
+                    let metrics = self
+                        .font
+                        .as_ref()
+                        .and_then(|font| font.horizontal_line_metrics(px as f32));
+                    let line_height = metrics
+                        .map_or(px as f32 * 1.2, |metrics| metrics.new_line_size)
+                        .ceil()
+                        / self.scale;
+                    let ascent = metrics.map_or(px as f32, |metrics| metrics.ascent) / self.scale;
+                    let rows = self.text_row_ranges(text, px, rect.width.max(1.));
+                    let visible_rows = (rect.height / line_height).floor().max(0.) as usize;
+                    let first_row = (*scroll_rows).min(rows.len().saturating_sub(visible_rows));
+                    let metrics = TextScrollMetrics {
+                        id: id.clone(),
+                        total_rows: rows.len(),
+                        visible_rows,
+                        first_row,
+                    };
+                    let clip = clip.intersect(*rect);
+                    for (row, range) in rows.iter().skip(first_row).take(visible_rows).enumerate() {
+                        let baseline = rect.y + row as f32 * line_height + ascent;
+                        let mut x = rect.x;
+                        for ch in text[range.clone()].chars() {
+                            let glyph = self.glyph(queue, ch, px);
+                            if !glyph.source.is_empty() {
+                                let bounds = Rect::new(
+                                    (x * self.scale + glyph.offset[0]).round() / self.scale,
+                                    (baseline * self.scale + glyph.offset[1]).round() / self.scale,
+                                    glyph.source.width / self.scale,
+                                    glyph.source.height / self.scale,
+                                );
+                                let atlas = GLYPH_ATLAS_SIZE as f32;
+                                self.quad(
+                                    &mut vertices,
+                                    bounds,
+                                    clip,
+                                    [
+                                        glyph.source.x / atlas,
+                                        glyph.source.y / atlas,
+                                        glyph.source.right() / atlas,
+                                        glyph.source.bottom() / atlas,
+                                    ],
+                                    *color,
+                                    1,
+                                    size,
+                                );
+                            }
+                            x += glyph.advance / self.scale;
+                        }
+                    }
+                    if let Some(thumb) = thumb {
+                        self.scroll_thumb(device, queue, &mut vertices, thumb, &metrics, size);
+                    }
+                    self.text_scroll_metrics.push(metrics);
                 }
 
                 DrawCommand::TextLog {
@@ -456,6 +528,93 @@ impl UiRenderer {
     /// must gate these by the topmost chat-log window hit before dispatching.
     pub fn link_hits(&self) -> &[HitTarget] {
         &self.link_hits
+    }
+
+    pub fn text_scroll_metrics(&self) -> &[TextScrollMetrics] {
+        &self.text_scroll_metrics
+    }
+
+    fn scroll_thumb(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        vertices: &mut Vec<Vertex>,
+        thumb: &ScrollThumb,
+        metrics: &TextScrollMetrics,
+        size: [u32; 2],
+    ) {
+        let track = thumb.track;
+        if track.is_empty() {
+            return;
+        }
+        let top_height = thumb.images[0]
+            .as_ref()
+            .map_or(0., |image| image.source.height);
+        let bottom_height = thumb.images[2]
+            .as_ref()
+            .map_or(0., |image| image.source.height);
+        let fraction = metrics.visible_rows as f32 / metrics.total_rows.max(1) as f32;
+        let height = (track.height * fraction)
+            .max((top_height + bottom_height).max(8.))
+            .min(track.height);
+        let offset = if metrics.max_scroll() == 0 {
+            0.
+        } else {
+            metrics.first_row as f32 / metrics.max_scroll() as f32
+        };
+        let bounds = Rect::new(
+            track.x,
+            track.y + (track.height - height) * offset,
+            track.width,
+            height,
+        );
+        self.quad(
+            vertices,
+            bounds,
+            thumb.clip,
+            [0., 0., 1., 1.],
+            [153, 139, 100, 255],
+            0,
+            size,
+        );
+        let top_height = top_height.min(height * 0.5);
+        let bottom_height = bottom_height.min(height * 0.5);
+        let parts = [
+            Rect::new(bounds.x, bounds.y, bounds.width, top_height),
+            Rect::new(
+                bounds.x,
+                bounds.y + top_height,
+                bounds.width,
+                (height - top_height - bottom_height).max(0.),
+            ),
+            Rect::new(
+                bounds.x,
+                bounds.bottom() - bottom_height,
+                bounds.width,
+                bottom_height,
+            ),
+        ];
+        for (image, rect) in thumb.images.iter().zip(parts) {
+            if let Some(image) = image {
+                let id = self.load_texture(device, queue, &image.texture);
+                let [width, height] = self.textures[id].size.map(|n| n as f32);
+                let source = image.source;
+                self.quad(
+                    vertices,
+                    rect,
+                    thumb.clip,
+                    [
+                        source.x / width,
+                        source.y / height,
+                        source.right() / width,
+                        source.bottom() / height,
+                    ],
+                    [255; 4],
+                    id,
+                    size,
+                );
+            }
+        }
     }
 
     pub fn render(&self, pass: &mut wgpu::RenderPass<'_>) {
@@ -920,6 +1079,81 @@ fn load_font() -> Option<fontdue::Font> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_area_scroll_wrap_thumb_and_clip_share_measured_rows() {
+        for scale in [1., 2.] {
+            let mut renderer =
+                crate::Renderer::new_headless((128. * scale) as u32, (96. * scale) as u32).unwrap();
+            let text =
+                "First row\n\nCafé 雪 with words and anunbrokenwordthatmustwrapcorrectly\nLast row";
+            let make_frame = |scroll_rows, width| UiFrame {
+                commands: vec![DrawCommand::TextArea {
+                    id: "test".into(),
+                    rect: Rect::new(8., 10., width, 40.),
+                    clip: Rect::new(10., 12., 90., 28.),
+                    text: text.into(),
+                    font: 2,
+                    color: [255, 0, 0, 255],
+                    scroll_rows,
+                    thumb: Some(Box::new(ScrollThumb {
+                        track: Rect::new(110., 12., 10., 60.),
+                        clip: Rect::new(0., 0., 128., 96.),
+                        images: [None, None, None],
+                    })),
+                }],
+                ..Default::default()
+            };
+            let frame = make_frame(0, 96.);
+            renderer.set_ui_scaled(&frame, scale);
+            let top = renderer.ui_text_scroll_metrics()[0].clone();
+            assert_eq!(top.first_row, 0);
+            assert!(top.total_rows > top.visible_rows);
+            let pixels = draw_scaled(&mut renderer, &frame, scale);
+            let stride = (128. * scale) as usize;
+            let pixel = |x: usize, y: usize| {
+                &pixels[((y as f32 * scale) as usize * stride + (x as f32 * scale) as usize) * 4..]
+                    [..3]
+            };
+            assert_eq!(pixel(115, 14), &[153, 139, 100]);
+            assert_eq!(pixel(115, 70), &[0, 0, 0]);
+            for (index, pixel) in pixels.chunks_exact(4).enumerate() {
+                if pixel[0] > 0 && pixel[1] == 0 {
+                    let x = (index % stride) as f32 / scale;
+                    let y = (index / stride) as f32 / scale;
+                    assert!((10.0..100.).contains(&x) && (12.0..40.).contains(&y));
+                }
+            }
+            let frame = make_frame(usize::MAX, 96.);
+            renderer.set_ui_scaled(&frame, scale);
+            let bottom = renderer.ui_text_scroll_metrics()[0].clone();
+            assert_eq!(bottom.first_row, bottom.max_scroll());
+            assert_eq!(bottom.total_rows, top.total_rows);
+            let pixels = draw_scaled(&mut renderer, &frame, scale);
+            let pixel = |x: usize, y: usize| {
+                &pixels[((y as f32 * scale) as usize * stride + (x as f32 * scale) as usize) * 4..]
+                    [..3]
+            };
+            assert_eq!(pixel(115, 14), &[0, 0, 0]);
+            assert_eq!(pixel(115, 70), &[153, 139, 100]);
+            renderer.set_ui_scaled(&make_frame(usize::MAX, 36.), scale);
+            assert!(renderer.ui_text_scroll_metrics()[0].total_rows > top.total_rows);
+
+            let ui = renderer.ui.as_ref().unwrap();
+            let px = (12. * scale) as u32;
+            let long = "é雪".repeat(40);
+            let ranges = ui.text_row_ranges(&long, px, 30.);
+            assert!(ranges.len() > 10);
+            assert_eq!(
+                ranges
+                    .iter()
+                    .map(|range| &long[range.clone()])
+                    .collect::<String>(),
+                long
+            );
+            assert_eq!(ui.text_row_ranges("A\n\nB", px, 100.).len(), 3);
+        }
+    }
 
     fn draw(renderer: &mut crate::Renderer, frame: &UiFrame) -> Vec<u8> {
         draw_scaled(renderer, frame, 1.)
