@@ -111,6 +111,8 @@ Published to `master` as **7f3eab3**. This is the next continuation's baseline.
 
 ## Second overnight batch (verified)
 
+Published to `master` as **71291ec**. This is the continuation's current baseline.
+
 - UI windows and map now share stacking. Left/right click raises the original
   hit owner before chat event consumption; whole-window pixels and hits move
   together. Saved version-1 layouts accept optional order without losing older
@@ -148,9 +150,12 @@ Published to `master` as **7f3eab3**. This is the next continuation's baseline.
 
 - **xml_ui**: first UI slice handed back. Read-only follow-up audit of highest
   impact missing original XML widget/text behavior → `UI_WIDGET_FOLLOWUP.md`.
-- **eqemu_server**: recovery work handed back. No further live mutations this
-  batch. Read-only account/server/character API and skin plan →
-  `ACCOUNT_FLOW_PLAN.md`. Existing staged sockets must retain their Tokio runtime.
+- **eqemu_server**: recovery work handed back. `ACCOUNT_FLOW_PLAN.md` research is
+  complete. Now owns login.rs/world.rs/session.rs and tests for bounded checked
+  list/reply parsing, enabled/instance roster fields, useful verified errors and
+  Session Debug redaction. Preserve direct config connection. Authorized to test
+  >30s login/roster idle on the dedicated recovery account/Reviver only; restore
+  and leave offline. No global rules/account changes or invented keepalive.
 - **npc_assets**: asset slice and runtime review handed back. Read-only XMI
   sequence/timing and available synthesis-bank research → `XMI_PLAN.md`.
   A macOS system DLS bank exists; no downloads or playback are authorized by
