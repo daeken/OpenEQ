@@ -1,7 +1,7 @@
 //! Cached character appearance batches with independent action timelines.
 //! Actors that currently share a pose are instanced; reusable pose slots grow
 //! only when a batch needs more simultaneous poses. Zone geometry is untouched.
-use crate::{GpuActor, GpuScene, Renderer, scene::Instance};
+use crate::{GpuActor, GpuScene, Renderer, scene::Instance, upload::UploadContext};
 use glam::{Mat4, Quat, Vec3};
 pub use openeq_assets::character::{CharacterAppearance, EquipmentAppearance};
 use openeq_assets::{
@@ -149,6 +149,26 @@ impl ActorRenderer {
     }
 
     pub fn update(&mut self, renderer: &Renderer, states: &[ActorState], time: f32) {
+        self.preload(&renderer.upload_context(), states, time);
+    }
+
+    /// Decodes models and uploads the initial appearances, poses and instances.
+    /// Call on an asset worker with a cloned upload context; later frame updates
+    /// reuse these batches. `time` uses the same clock as [`Self::update`].
+    pub fn preload(&mut self, upload: &UploadContext, states: &[ActorState], time: f32) {
+        self.preload_with_progress(upload, states, time, |_, _| true);
+    }
+
+    /// Reports completed/total appearance batches and checks cancellation
+    /// between batches. A false result leaves a partial snapshot: the loading
+    /// worker must discard it rather than publish it to the active renderer.
+    pub fn preload_with_progress(
+        &mut self,
+        upload: &UploadContext,
+        states: &[ActorState],
+        time: f32,
+        mut progress: impl FnMut(usize, usize) -> bool,
+    ) -> bool {
         let time = if time.is_finite() { time.max(0.) } else { 0. };
         let mut groups: BTreeMap<AppearanceKey, Vec<_>> = BTreeMap::new();
         let mut present = BTreeSet::new();
@@ -182,11 +202,15 @@ impl ActorRenderer {
         // Repeated equipment changes should not retain every old texture set.
         self.batches
             .retain(|key, batch| groups.contains_key(key) || time - batch.last_seen < 30.);
-        for key in groups.keys() {
+        let total = groups.len();
+        for (completed, key) in groups.keys().enumerate() {
+            if !progress(completed, total) {
+                return false;
+            }
             if self.batches.contains_key(key) || self.unavailable.contains(&(key.0, key.1)) {
                 continue;
             }
-            match self.build_batch(renderer, *key, time) {
+            match self.build_batch(upload, *key, time) {
                 Ok(batch) => {
                     tracing::info!(race=key.0, gender=key.1, model=%batch.model.code, "character appearance uploaded");
                     self.batches.insert(*key, batch);
@@ -200,6 +224,9 @@ impl ActorRenderer {
         self.rendered_instances = 0;
         self.bounds.clear();
         for (key, batch) in &mut self.batches {
+            if !progress(total, total) {
+                return false;
+            }
             for draw in &mut batch.actor.scene.draws {
                 draw.instance_count = 0;
             }
@@ -217,7 +244,7 @@ impl ActorRenderer {
             }
             if poses.len() > batch.capacity {
                 let capacity = poses.len().next_power_of_two();
-                match upload_actor(renderer, &self.library, &batch.model, capacity) {
+                match upload_actor(upload, &self.library, &batch.model, capacity) {
                     Ok((actor, geometry)) => {
                         batch.actor = actor;
                         batch.poses = geometry;
@@ -265,24 +292,25 @@ impl ActorRenderer {
             batch
                 .actor
                 .scene
-                .update_geometry(renderer.queue(), &batch.poses);
+                .update_geometry(upload.queue(), &batch.poses);
             batch
                 .actor
                 .scene
-                .update_instances(renderer.device(), renderer.queue(), &instances);
+                .update_instances(upload.device(), upload.queue(), &instances);
         }
+        progress(total, total)
     }
 
     fn build_batch(
         &self,
-        renderer: &Renderer,
+        upload: &UploadContext,
         key: AppearanceKey,
         time: f32,
     ) -> anyhow::Result<Batch> {
         let model = self
             .library
             .load_race_with_appearance(key.0, key.1, &key.2)?;
-        let (actor, poses) = upload_actor(renderer, &self.library, &model, 2)?;
+        let (actor, poses) = upload_actor(upload, &self.library, &model, 2)?;
         Ok(Batch {
             model,
             actor,
@@ -327,7 +355,7 @@ fn actor_instance(state: &ActorState, height: f32) -> Instance {
 }
 
 fn upload_actor(
-    renderer: &Renderer,
+    upload: &UploadContext,
     library: &CharacterLibrary,
     model: &CharacterModel,
     capacity: usize,
@@ -348,8 +376,8 @@ fn upload_actor(
         poses.clone(),
         textures,
     );
-    let gpu = GpuScene::build(renderer.device(), renderer.queue(), &scene)?;
-    Ok((renderer.prepare_actor(gpu), poses))
+    let gpu = GpuScene::build(upload.device(), upload.queue(), &scene)?;
+    Ok((upload.prepare_actor(gpu), poses))
 }
 
 fn select_pose(model: &CharacterModel, state: &ActorState, time: f32, elapsed: f32) -> Pose {

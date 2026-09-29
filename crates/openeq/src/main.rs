@@ -9,7 +9,7 @@
 //! openeq akanon --dir /path/to/EverQuest --pos 100,-200,20
 //! ```
 
-use openeq::{chat, hud, live, movement};
+use openeq::{chat, hud, live, loading, loading_ui, movement, zone_loading};
 use openeq_net::session::ConnectionConfig;
 use openeq_render::actors::ActorRenderer;
 use std::path::PathBuf;
@@ -42,7 +42,7 @@ struct Options {
     connection: Option<ConnectionConfig>,
 }
 
-/// Everything that must exist before the first frame can be drawn.
+/// Main-thread presentation, with destination assets prepared by a worker.
 #[derive(Resource)]
 struct Runtime {
     instance: Option<wgpu::Instance>,
@@ -63,6 +63,11 @@ struct Runtime {
     ground_motion: movement::GroundMotion,
     interaction: openeq::interaction::Interaction,
     loaded_zone: Option<String>,
+    loaded_destination: Option<loading::Destination>,
+    loading_destination: Option<loading::Destination>,
+    loading_job: Option<loading::Job<zone_loading::PreparedZone>>,
+    loading_error: Option<String>,
+    client_job: Option<loading::Job<zone_loading::ClientData>>,
     zone_map: Option<openeq::map::ZoneMap>,
     map_state: openeq::map::MapState,
     map_open: bool,
@@ -71,6 +76,23 @@ struct Runtime {
 }
 
 impl Runtime {
+    fn world_ready(&self) -> bool {
+        self.scene.is_some()
+            && self.loading_error.is_none()
+            && self.loading_job.is_none()
+            && self.live.as_ref().is_none_or(|live| {
+                live.ready
+                    && live.error.is_none()
+                    && self.loaded_destination.as_ref().is_some_and(|destination| {
+                        destination.generation == live.zone_generation
+                            && live
+                                .environment
+                                .as_ref()
+                                .is_some_and(|env| env.short_name == destination.zone)
+                    })
+            })
+    }
+
     fn new(camera: Camera) -> Self {
         Self {
             instance: None,
@@ -91,6 +113,11 @@ impl Runtime {
             ground_motion: movement::GroundMotion::default(),
             interaction: openeq::interaction::Interaction::default(),
             loaded_zone: None,
+            loaded_destination: None,
+            loading_destination: None,
+            loading_job: None,
+            loading_error: None,
+            client_job: None,
             zone_map: None,
             map_state: openeq::map::MapState::default(),
             map_open: false,
@@ -115,12 +142,8 @@ fn main() -> AppExit {
     };
 
     let mut runtime = Runtime::new(camera);
-    if let Some(config) = options.connection.clone() {
-        let mut live = live::LiveWorld::start(config);
-        live.game.strings = openeq::game::StringTable::load(&options.dir);
-        live.game.spell_catalog =
-            openeq::spells::SpellCatalog::load(&options.dir).unwrap_or_default();
-        runtime.live = Some(live);
+    if options.connection.is_some() {
+        runtime.client_job = Some(zone_loading::start_client(options.dir.clone()));
         runtime.fly = false;
     }
 
@@ -214,6 +237,9 @@ fn update_camera(
     mut runtime: ResMut<Runtime>,
 ) {
     runtime.moving = false;
+    if !runtime.world_ready() {
+        return;
+    }
     let online = runtime.live.is_some();
     let controls = !runtime.interaction.editor.active
         && !runtime.interaction.controls_blocked
@@ -343,6 +369,14 @@ fn handle_cursor_capture(
         return;
     };
 
+    if !runtime.world_ready() {
+        release_cursor(&mut cursor);
+        focus.clear();
+        if keys.just_pressed(KeyCode::Escape) {
+            exit.write(AppExit::Success);
+        }
+        return;
+    }
     let mut captured = is_captured(&cursor);
     for event in focus.read() {
         if event.window == entity && !event.focused && captured {
@@ -400,6 +434,21 @@ fn handle_gameplay_input(
     let Ok((window_id, mut window, mut cursor)) = windows.single_mut() else {
         return;
     };
+    if let Some(live) = runtime.live.as_mut() {
+        live.poll();
+    }
+    if !runtime.world_ready() {
+        keyboard.clear();
+        ime.clear();
+        wheel.clear();
+        window.ime_enabled = false;
+        release_cursor(&mut cursor);
+        runtime.interaction.editor.cancel();
+        runtime.interaction.ime_composing = false;
+        runtime.interaction.escape_handled = false;
+        runtime.interaction.controls_blocked = true;
+        return;
+    }
     let camera_position = runtime.camera.position;
     let Runtime {
         live: Some(live),
@@ -418,7 +467,6 @@ fn handle_gameplay_input(
         wheel.clear();
         return;
     };
-    live.poll();
     if let Some(environment) = &live.environment {
         let title = format!("OpenEQ - {}", environment.short_name);
         if window.title != title {
@@ -790,20 +838,13 @@ fn render_frame(
     if let Some(live) = runtime.live.as_mut() {
         live.poll();
     }
-    if runtime.renderer.is_none() && runtime.live.as_ref().is_some_and(|live| !live.ready) {
-        if let Some(error) = runtime.live.as_ref().and_then(|live| live.error.as_ref()) {
-            eprintln!("Unable to enter world: {error}");
-            std::process::exit(1);
-        }
-        return;
-    }
     if runtime.renderer.is_none() {
         let window_ready =
             WINIT_WINDOWS.with(|cell| cell.borrow().get_window(window_entity).is_some());
         if !window_ready {
             return;
         }
-        if let Err(error) = initialise(&mut runtime, window_entity, &options) {
+        if let Err(error) = initialise(&mut runtime, window_entity) {
             tracing::error!(%error, "renderer or asset initialization failed");
             std::process::exit(1);
         }
@@ -835,27 +876,21 @@ fn render_frame(
             runtime.ground_motion = movement::GroundMotion::default();
         }
     }
-    // `Camera` is `Copy`, and the renderer is taken out and put back so the
-    // borrow checker can see the two accesses as disjoint.
-    let player_camera = runtime.camera;
-    let camera = view_camera(&runtime);
     if let Some(mut renderer) = runtime.renderer.take() {
-        let new_zone = runtime
-            .live
-            .as_ref()
-            .filter(|live| live.ready)
-            .and_then(|live| live.environment.as_ref())
-            .map(|env| env.short_name.as_str());
-        if new_zone.is_some()
-            && new_zone != runtime.loaded_zone.as_deref()
-            && let Err(error) = load_world_scene(&mut runtime, &mut renderer, &options, false)
-        {
-            tracing::error!(%error,"zone asset loading failed");
-            if let Some(live) = &mut runtime.live {
-                live.game.error(format!("Unable to load zone: {error}"));
-                live.ready = false;
-            }
+        prepare_world(&mut runtime, &mut renderer, &options);
+        if !runtime.world_ready() {
+            draw_loading_screen(
+                &mut runtime,
+                &mut renderer,
+                &options,
+                ui_size,
+                window.scale_factor(),
+            );
+            runtime.renderer = Some(renderer);
+            return;
         }
+        let player_camera = runtime.camera;
+        let camera = view_camera(&runtime);
         if let Some(live) = runtime.live.as_ref() {
             live.camera_position(&player_camera, runtime.moving);
         }
@@ -864,15 +899,7 @@ fn render_frame(
         {
             let desired = (env.short_name.clone(), live.hour);
             if runtime.atmosphere_zone.as_ref() != Some(&desired) {
-                let settings = openeq_render::environment::EnvironmentSettings {
-                    fog_color: env.fog_color[0],
-                    fog_start: env.fog_start[0],
-                    fog_end: env.fog_end[0],
-                    fog_density: env.fog_density,
-                    fog_enabled: env.fog_end[0] > env.fog_start[0],
-                    sky_enabled: !matches!(env.zone_type, 0 | 3 | 4) && env.sky != 0,
-                    ..Default::default()
-                };
+                let settings = zone_environment(env);
                 let sky = openeq_assets::environment::load_sky(
                     &options.dir,
                     &env.short_name,
@@ -901,23 +928,7 @@ fn render_frame(
         if let (Some(actors), Some(states)) = (runtime.actors.as_mut(), states) {
             actors.update(&renderer, &states, elapsed);
         }
-        let doors = runtime.live.as_ref().map(|live| {
-            live.doors
-                .values()
-                .map(|door| openeq_render::doors::DoorState {
-                    id: door.id,
-                    name: door.name.clone(),
-                    position: door.position,
-                    heading: door.heading,
-                    incline: door.incline,
-                    size: door.size,
-                    open_type: door.open_type,
-                    state: door.state,
-                    inverted: door.inverted,
-                    parameter: door.parameter,
-                })
-                .collect::<Vec<_>>()
-        });
+        let doors = runtime.live.as_ref().map(door_states);
         if let (Some(renderer_doors), Some(states)) = (runtime.doors.as_mut(), doors) {
             renderer_doors.update(&renderer, &states, elapsed);
         }
@@ -996,11 +1007,7 @@ fn render_frame(
     }
 }
 
-fn initialise(
-    runtime: &mut Runtime,
-    window_entity: Entity,
-    options: &Options,
-) -> anyhow::Result<()> {
+fn initialise(runtime: &mut Runtime, window_entity: Entity) -> anyhow::Result<()> {
     // The window lives in bevy_winit's thread-local; take its raw handles.
     let (window_handle, display_handle) = WINIT_WINDOWS.with(|cell| {
         let windows = cell.borrow();
@@ -1028,77 +1035,224 @@ fn initialise(
     } else {
         (1280, 720)
     };
-    let mut renderer =
-        pollster::block_on(Renderer::new_surface(&instance, surface, width, height))?;
-
-    load_world_scene(runtime, &mut renderer, options, true)?;
+    let renderer = pollster::block_on(Renderer::new_surface(&instance, surface, width, height))?;
     runtime.size = (width, height);
     runtime.instance = Some(instance);
     runtime.renderer = Some(renderer);
     Ok(())
 }
 
-fn load_world_scene(
+fn desired_destination(runtime: &Runtime, options: &Options) -> Option<loading::Destination> {
+    if let Some(live) = &runtime.live {
+        if !live.ready || live.error.is_some() {
+            return None;
+        }
+        live.environment.as_ref().map(|env| loading::Destination {
+            zone: env.short_name.clone(),
+            generation: live.zone_generation,
+        })
+    } else {
+        Some(loading::Destination {
+            zone: options.zone.clone(),
+            generation: 0,
+        })
+    }
+}
+
+/// Polling, cancellation, and installation are deliberately cheap: all asset
+/// decoding, collision building, and model/texture uploads run in the job.
+fn prepare_world(runtime: &mut Runtime, renderer: &mut Renderer, options: &Options) {
+    if let Some(config) = &options.connection
+        && runtime.live.is_none()
+    {
+        if let Some(result) = runtime.client_job.as_mut().and_then(|job| job.poll()) {
+            runtime.client_job = None;
+            match result {
+                Ok(client) => {
+                    let mut live = live::LiveWorld::start(config.clone());
+                    live.game.strings = client.strings;
+                    live.game.spell_catalog = client.spells;
+                    runtime.hud = client.hud;
+                    runtime.live = Some(live);
+                }
+                Err(error) => runtime.loading_error = Some(error),
+            }
+        }
+        return;
+    }
+    let desired = desired_destination(runtime, options);
+    if desired != runtime.loading_destination {
+        runtime.loading_job = None; // Cancels at the worker's next checkpoint.
+        runtime.loading_error = None;
+        runtime.loading_destination.clone_from(&desired);
+    }
+    let Some(destination) = desired else {
+        return;
+    };
+    if runtime.loaded_destination.as_ref() == Some(&destination) {
+        return;
+    }
+    if runtime.loading_job.is_none() && runtime.loading_error.is_none() {
+        let (actors, doors, time_of_day) = runtime.live.as_ref().map_or_else(
+            || (Vec::new(), Vec::new(), 0.5),
+            |live| {
+                (
+                    live.actor_states(runtime.camera.position, None),
+                    door_states(live),
+                    (live.hour as f32 + live.minute as f32 / 60.) / 24.,
+                )
+            },
+        );
+        runtime.loading_job = Some(zone_loading::start(
+            zone_loading::Request {
+                dir: options.dir.clone(),
+                zone: destination.zone.clone(),
+                online: runtime.live.is_some(),
+                time_of_day,
+                actors,
+                doors,
+            },
+            renderer.upload_context(),
+        ));
+    }
+    let Some(result) = runtime.loading_job.as_mut().and_then(|job| job.poll()) else {
+        return;
+    };
+    runtime.loading_job = None;
+    match result {
+        Err(error) => {
+            tracing::error!(%error, zone = %destination.zone, "zone asset loading failed");
+            runtime.loading_error = Some(error);
+        }
+        Ok(prepared) => {
+            // Offline viewing and a missing XML skin have no HUD to replace
+            // the opaque loading overlay on the first world frame.
+            runtime.ui_frame = openeq_ui::UiFrame::default();
+            runtime.chat_link_hits.clear();
+            renderer.set_ui(&runtime.ui_frame);
+            renderer.set_scene(&prepared.scene);
+            let settings = runtime
+                .live
+                .as_ref()
+                .and_then(|live| live.environment.as_ref())
+                .map(zone_environment)
+                .unwrap_or_else(|| {
+                    openeq_render::environment::EnvironmentSettings::for_zone(&destination.zone)
+                });
+            renderer.set_environment(settings, prepared.sky.as_ref());
+            if runtime.live.is_none() && runtime.scene.is_none() && options.position.is_none() {
+                let center = (prepared.scene.bounds_min + prepared.scene.bounds_max) * 0.5;
+                runtime.camera.position = [center.x, center.y, center.z + 80.];
+            }
+            runtime.scene = Some(prepared.scene);
+            runtime.collision = prepared.collision;
+            runtime.actors = prepared.actors;
+            runtime.doors = prepared.doors;
+            runtime.zone_map = prepared.map;
+            runtime.map_state.waypoints.clear();
+            runtime.map_state.center = None;
+            runtime.map_open = false;
+            runtime.ground_motion = movement::GroundMotion::default();
+            runtime.loaded_zone = Some(destination.zone.clone());
+            runtime.loaded_destination = Some(destination);
+            runtime.atmosphere_zone = runtime
+                .live
+                .as_ref()
+                .map(|live| (runtime.loaded_zone.clone().unwrap(), live.hour));
+            runtime.interaction.controls_blocked = false;
+        }
+    }
+}
+
+fn zone_environment(
+    env: &openeq_net::zone::Environment,
+) -> openeq_render::environment::EnvironmentSettings {
+    openeq_render::environment::EnvironmentSettings {
+        fog_color: env.fog_color[0],
+        fog_start: env.fog_start[0],
+        fog_end: env.fog_end[0],
+        fog_density: env.fog_density,
+        fog_enabled: env.fog_end[0] > env.fog_start[0],
+        sky_enabled: !matches!(env.zone_type, 0 | 3 | 4) && env.sky != 0,
+        ..Default::default()
+    }
+}
+
+fn door_states(live: &live::LiveWorld) -> Vec<openeq_render::doors::DoorState> {
+    live.doors
+        .values()
+        .map(|door| openeq_render::doors::DoorState {
+            id: door.id,
+            name: door.name.clone(),
+            position: door.position,
+            heading: door.heading,
+            incline: door.incline,
+            size: door.size,
+            open_type: door.open_type,
+            state: door.state,
+            inverted: door.inverted,
+            parameter: door.parameter,
+        })
+        .collect()
+}
+
+fn draw_loading_screen(
     runtime: &mut Runtime,
     renderer: &mut Renderer,
     options: &Options,
-    initial: bool,
-) -> anyhow::Result<()> {
-    let zone = runtime
-        .live
-        .as_ref()
+    viewport: [u32; 2],
+    scale: f32,
+) {
+    let live = runtime.live.as_ref();
+    let error = runtime
+        .loading_error
+        .as_deref()
+        .or_else(|| live.and_then(|live| live.error.as_deref()));
+    let title = live
         .and_then(|live| live.environment.as_ref())
-        .map_or(options.zone.as_str(), |env| env.short_name.as_str())
-        .to_owned();
-    tracing::info!(zone = %zone, dir = %options.dir.display(), "loading zone");
-    let started = std::time::Instant::now();
-    let scene = loader::load_zone(&options.dir, &zone)?;
-    tracing::info!(
-        materials = scene.materials.len(),
-        triangles = scene.triangle_count(),
-        instances = scene.instances.len(),
-        lights = scene.lights.len(),
-        elapsed_ms = started.elapsed().as_millis() as u64,
-        "zone loaded"
+        .map(|env| {
+            if env.long_name.is_empty() {
+                env.short_name.as_str()
+            } else {
+                env.long_name.as_str()
+            }
+        })
+        .unwrap_or(if options.connection.is_none() {
+            &options.zone
+        } else {
+            "Norrath"
+        });
+    let job_progress = runtime
+        .client_job
+        .as_ref()
+        .map(|job| &job.progress)
+        .or_else(|| runtime.loading_job.as_ref().map(|job| &job.progress));
+    let detail = job_progress.map_or_else(
+        || {
+            if runtime.loaded_zone.is_some() {
+                "Traveling to your next zone…"
+            } else if options.connection.is_some() {
+                "Connecting to the world…"
+            } else {
+                "Preparing your journey…"
+            }
+        },
+        |progress| progress.detail.as_str(),
     );
-
-    if runtime.live.is_some() {
-        runtime.collision = Some(openeq_assets::collision::CollisionWorld::build(&scene));
-    }
-    let gpu_scene = GpuScene::build(renderer.device(), renderer.queue(), &scene)?;
-    renderer.set_scene(&gpu_scene);
-    if let Ok(sky) = openeq_assets::environment::load_sky(&options.dir, &zone, 0.5) {
-        renderer.set_environment(
-            openeq_render::environment::EnvironmentSettings::for_zone(&zone),
-            Some(&sky),
-        );
-    }
-    if runtime.live.is_some() && runtime.hud.is_none() {
-        match hud::Hud::load(&options.dir) {
-            Ok(hud) => runtime.hud = Some(hud),
-            Err(error) => tracing::warn!(%error, "XML HUD unavailable"),
-        }
-    }
-
-    // Drop the camera into the middle of the zone unless the user said otherwise.
-    if initial && options.position.is_none() {
-        let center = (gpu_scene.bounds_min + gpu_scene.bounds_max) * 0.5;
-        runtime.camera.position = [center.x, center.y, center.z + 80.0];
-    }
-    runtime.scene = Some(gpu_scene);
-    if runtime.live.is_some() {
-        runtime.actors = Some(ActorRenderer::load(&options.dir, &zone)?);
-        runtime.doors = Some(openeq_render::doors::DoorRenderer::load(
-            &options.dir,
-            &zone,
-        )?);
-    }
-    runtime.zone_map = openeq::map::ZoneMap::load(&options.dir, &zone).ok();
-    runtime.map_state.waypoints.clear();
-    runtime.map_state.center = None;
-    runtime.loaded_zone = Some(zone);
-    runtime.atmosphere_zone = None;
-    Ok(())
+    let progress = job_progress.and_then(|progress| progress.fraction);
+    let frame = loading_ui::loading_frame(
+        viewport,
+        title,
+        detail,
+        progress,
+        runtime.started.elapsed().as_secs_f32(),
+        error,
+    );
+    renderer.set_ui_scaled(&frame, scale);
+    renderer.render_ui();
+    runtime.ui_frame = frame;
+    runtime.chat_link_hits.clear();
+    runtime.moving = false;
 }
 
 fn display_name(name: &str) -> String {
@@ -1191,6 +1345,9 @@ fn handle_targeting(
     windows: Query<(&Window, &CursorOptions), With<PrimaryWindow>>,
     mut runtime: ResMut<Runtime>,
 ) {
+    if !runtime.world_ready() {
+        return;
+    }
     if runtime.interaction.controls_blocked || runtime.interaction.editor.active {
         return;
     }
@@ -1249,5 +1406,174 @@ fn handle_targeting(
     }
     if clicked && point.is_some() {
         live.set_target(picked);
+    }
+}
+
+#[cfg(test)]
+mod loading_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    fn options(zone: &str) -> Options {
+        Options {
+            zone: zone.into(),
+            dir: loader::default_client_dir().unwrap(),
+            position: Some([123., 456., 789.]),
+            connection: None,
+        }
+    }
+
+    #[test]
+    #[ignore = "requires original zone assets and a GPU"]
+    fn startup_and_zone_replacement_keep_presenting_loading_frames() {
+        let mut renderer = Renderer::new_headless(640, 360).unwrap();
+        let mut runtime = Runtime::new(Camera {
+            position: [123., 456., 789.],
+            ..Default::default()
+        });
+        let mut client_job = zone_loading::start_client(loader::default_client_dir().unwrap());
+        let client_started = Instant::now();
+        loop {
+            if let Some(client) = client_job.poll() {
+                runtime.hud = client.unwrap().hud;
+                break;
+            }
+            assert!(client_started.elapsed() < Duration::from_secs(30));
+            let frame = loading_ui::loading_frame(
+                [640, 360],
+                "Norrath",
+                &client_job.progress.detail,
+                client_job.progress.fraction,
+                client_started.elapsed().as_secs_f32(),
+                None,
+            );
+            renderer.set_ui(&frame);
+            renderer.render_ui();
+            std::thread::sleep(Duration::from_millis(8));
+        }
+        for zone in ["gfaydark", "poknowledge"] {
+            let options = options(zone);
+            // Exercise online preparation without displacing a player's live
+            // session: character libraries and collision, plus metadata above.
+            runtime.loading_destination = desired_destination(&runtime, &options);
+            runtime.loading_job = Some(zone_loading::start(
+                zone_loading::Request {
+                    dir: options.dir.clone(),
+                    zone: zone.into(),
+                    online: true,
+                    time_of_day: 0.5,
+                    actors: [112, 367, 34]
+                        .into_iter()
+                        .map(|race| openeq_render::actors::ActorState {
+                            id: race,
+                            race,
+                            gender: if race == 112 { 0 } else { 2 },
+                            size: 6.,
+                            ..Default::default()
+                        })
+                        .collect(),
+                    doors: Vec::new(),
+                },
+                renderer.upload_context(),
+            ));
+            let before = runtime.camera.position;
+            let started = Instant::now();
+            let mut frames = 0;
+            loop {
+                prepare_world(&mut runtime, &mut renderer, &options);
+                if runtime.world_ready() {
+                    break;
+                }
+                assert!(
+                    runtime.loading_error.is_none(),
+                    "{:?}",
+                    runtime.loading_error
+                );
+                assert!(started.elapsed() < Duration::from_secs(120));
+                draw_loading_screen(&mut runtime, &mut renderer, &options, [640, 360], 1.);
+                frames += 1;
+                if frames == 5 {
+                    let (width, height, rgba) = renderer.read_rgba().unwrap();
+                    assert!(rgba.chunks_exact(4).any(|p| p[0] > 150));
+                    image::save_buffer(
+                        format!("/tmp/openeq-loading-{zone}.png"),
+                        &rgba,
+                        width,
+                        height,
+                        image::ColorType::Rgba8,
+                    )
+                    .unwrap();
+                    // Resize during a real texture upload, including HiDPI UI.
+                    renderer.resize(1280, 720);
+                    draw_loading_screen(&mut runtime, &mut renderer, &options, [640, 360], 2.);
+                    renderer.resize(640, 360);
+                }
+                std::thread::sleep(Duration::from_millis(8));
+            }
+            assert!(frames > 5, "no loading frames were drawn");
+            assert_eq!(
+                runtime.camera.position, before,
+                "explicit position overwritten"
+            );
+            assert_eq!(runtime.loaded_zone.as_deref(), Some(zone));
+            assert!(runtime.collision.is_some());
+            assert!(runtime.hud.is_some());
+            assert!(runtime.actors.as_ref().unwrap().rendered_instances > 0);
+            assert!(runtime.doors.is_some());
+            // The UI-only pass never needed a scene; now the full world can draw.
+            assert!(runtime.ui_frame.commands.is_empty());
+            renderer.render_ui();
+            let (_, _, pixels) = renderer.read_rgba().unwrap();
+            assert!(
+                pixels.chunks_exact(4).all(|p| p[..3] == [0, 0, 0]),
+                "the renderer retained the opaque loading overlay"
+            );
+            renderer.render(runtime.scene.as_ref().unwrap(), &runtime.camera);
+            eprintln!(
+                "{zone}: {frames} responsive loading frames in {:?}",
+                started.elapsed()
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a GPU"]
+    fn superseded_job_and_error_never_install_a_world() {
+        let mut renderer = Renderer::new_headless(320, 240).unwrap();
+        let mut runtime = Runtime::new(Camera::default());
+        let (release, wait) = std::sync::mpsc::channel();
+        runtime.loading_destination = Some(loading::Destination {
+            zone: "old".into(),
+            generation: 0,
+        });
+        runtime.loading_job = Some(loading::Job::start(move |_| {
+            wait.recv().unwrap();
+            anyhow::bail!("old failure must not appear in the new destination")
+        }));
+        let options = options("missing-zone-for-loading-regression");
+        prepare_world(&mut runtime, &mut renderer, &options);
+        // Dropping an obsolete worker must not wait for this release.
+        release.send(()).unwrap();
+        let started = Instant::now();
+        while runtime.loading_error.is_none() {
+            prepare_world(&mut runtime, &mut renderer, &options);
+            assert!(started.elapsed() < Duration::from_secs(10));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            !runtime
+                .loading_error
+                .as_ref()
+                .unwrap()
+                .contains("old failure")
+        );
+        assert!(!runtime.world_ready());
+        assert!(runtime.scene.is_none());
+        // Keep drawing the error without automatically respawning failed work.
+        for _ in 0..3 {
+            prepare_world(&mut runtime, &mut renderer, &options);
+            draw_loading_screen(&mut runtime, &mut renderer, &options, [320, 240], 1.);
+            assert!(runtime.loading_job.is_none());
+        }
     }
 }

@@ -16,6 +16,7 @@ mod shadow;
 #[cfg(test)]
 mod tests;
 pub mod ui;
+pub mod upload;
 
 use bytemuck::{Pod, Zeroable};
 use environment::{EnvironmentSettings, EnvironmentUniform, SkyResources};
@@ -667,6 +668,15 @@ impl Renderer {
         &self.queue
     }
 
+    /// Cloned handles for background asset uploads on this renderer's device.
+    pub fn upload_context(&self) -> upload::UploadContext {
+        upload::UploadContext::new(
+            self.device.clone(),
+            self.queue.clone(),
+            self.atlas_layout.clone(),
+        )
+    }
+
     /// Builds the bind groups that depend on the scene (shadow map, lights, atlas).
     pub fn set_scene(&mut self, scene: &GpuScene) {
         let make_scene_group = |label: &str, shadow: &wgpu::TextureView| {
@@ -731,38 +741,7 @@ impl Renderer {
     }
 
     fn make_atlas_group(&self, scene: &GpuScene) -> wgpu::BindGroup {
-        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("atlas sampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            ..Default::default()
-        });
-        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("atlas bind group"),
-            layout: &self.atlas_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&scene.atlas_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: scene.water_materials.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&scene.atlas_linear_view),
-                },
-            ],
-        })
+        self.upload_context().make_atlas_group(scene)
     }
 
     pub fn prepare_actor(&self, scene: GpuScene) -> GpuActor {
@@ -807,6 +786,58 @@ impl Renderer {
     /// Renders one frame of `scene` from `camera`.
     pub fn render(&mut self, scene: &GpuScene, camera: &Camera) {
         self.render_with_actors(scene, camera, &[]);
+    }
+
+    /// Present UI before a world exists, or while a replacement loads.
+    pub fn render_ui(&mut self) {
+        let frame = match &self.target {
+            Target::Surface(surface) => match surface.get_current_texture() {
+                wgpu::CurrentSurfaceTexture::Success(frame)
+                | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => Some(frame),
+                other => {
+                    tracing::warn!(?other, "dropping UI frame: surface not ready");
+                    return;
+                }
+            },
+            Target::Offscreen { .. } => None,
+        };
+        let view = frame
+            .as_ref()
+            .map(|f| f.texture.create_view(&Default::default()));
+        let view = match (&view, &self.target) {
+            (Some(view), _) | (None, Target::Offscreen { view, .. }) => view,
+            _ => unreachable!("surface frames always yield a view"),
+        };
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("loading screen"),
+            });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("loading UI"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            if let Some(ui) = &self.ui {
+                ui.render(&mut pass);
+            }
+        }
+        self.queue.submit(Some(encoder.finish()));
+        if let Some(frame) = frame {
+            frame.present();
+        }
     }
 
     pub fn render_with_actors(&mut self, scene: &GpuScene, camera: &Camera, actors: &[&GpuActor]) {

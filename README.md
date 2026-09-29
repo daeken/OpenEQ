@@ -21,6 +21,11 @@ The default lookup includes `~/EverQuest`. Connection files contain `host`,
 defaults to 9000 and `server_id` selects a particular world. Keep these files
 private and outside the repository.
 
+Startup and zone travel show an animated loading screen while world, character,
+and interface assets load in the background. The window remains responsive;
+movement resumes once the destination is ready. Loading or connection errors
+stay visible, and Escape exits the loading screen and client.
+
 Controls:
 
 | Input | Action |

@@ -186,6 +186,8 @@ pub struct LiveWorld {
     pub initial_position: Option<Position>,
     pub character: String,
     pub ready: bool,
+    /// Advances even when the server transfers us back to the same zone.
+    pub zone_generation: u64,
     pub error: Option<String>,
     pub moves: u64,
     pub hour: u8,
@@ -268,6 +270,7 @@ impl LiveWorld {
             initial_position: None,
             character,
             ready: false,
+            zone_generation: 0,
             error: None,
             moves: 0,
             hour: 12,
@@ -715,7 +718,9 @@ impl LiveWorld {
         }
         match &event {
             GameplayEvent::ZoneTransition { zone_id, .. } => {
+                self.zone_generation = self.zone_generation.wrapping_add(1);
                 self.ready = false;
+                self.environment = None;
                 self.entities.clear();
                 self.doors.clear();
                 self.door_return_deadlines.clear();
@@ -1030,6 +1035,7 @@ pub(crate) mod tests {
             initial_position: Some(Position::default()),
             character: "Player".into(),
             ready: true,
+            zone_generation: 0,
             error: None,
             moves: 0,
             hour: 12,
@@ -1093,6 +1099,41 @@ pub(crate) mod tests {
             weight: 10,
             size: 1,
             children: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn every_zone_transition_invalidates_the_loaded_destination() {
+        let (mut live, _) = command_world(1, 10.);
+        let environment = Environment {
+            short_name: "gfaydark".into(),
+            long_name: "Greater Faydark".into(),
+            zone_id: 54,
+            fog_color: [[0.; 3]; 4],
+            fog_start: [0.; 4],
+            fog_end: [1000.; 4],
+            fog_density: 0.,
+            min_clip: 1.,
+            max_clip: 1000.,
+            sky: 1,
+            zone_type: 1,
+            safe_position: [0.; 3],
+        };
+        live.environment = Some(environment.clone());
+        live.camera_position(&openeq_render::Camera::default(), true);
+        for generation in 1..=2 {
+            live.gameplay_event(GameplayEvent::ZoneTransition {
+                zone_id: 54,
+                instance_id: 0,
+            });
+            assert_eq!(live.zone_generation, generation);
+            assert!(!live.ready);
+            assert!(live.environment.is_none());
+            assert!(live.movement.borrow().is_none());
+            assert!(live.initial_position.is_none());
+            // Re-entering the same zone must also require a new presentation.
+            live.environment = Some(environment.clone());
+            live.ready = true;
         }
     }
 
@@ -2003,6 +2044,7 @@ pub(crate) mod tests {
             initial_position: None,
             character: "Player".into(),
             ready: true,
+            zone_generation: 0,
             error: None,
             moves: 0,
             hour: 12,

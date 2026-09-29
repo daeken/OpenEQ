@@ -1,6 +1,6 @@
 //! Server-placed doors, lifts and props. Model buffers are shared by name;
 //! opening updates only an instance transform around the authored hinge.
-use crate::{GpuActor, GpuScene, Renderer, scene::Instance};
+use crate::{GpuActor, GpuScene, Renderer, scene::Instance, upload::UploadContext};
 use glam::{Mat4, Quat, Vec3};
 use openeq_assets::{Scene, collision::CollisionWorld, loader, mesh::Geometry};
 use std::collections::{BTreeMap, BTreeSet};
@@ -74,6 +74,26 @@ impl DoorRenderer {
         })
     }
     pub fn update(&mut self, renderer: &Renderer, states: &[DoorState], time: f32) {
+        self.preload(&renderer.upload_context(), states, time);
+    }
+
+    /// Decodes and uploads the initial doors, instance transforms and collision.
+    /// May run on an asset worker; [`Self::update`] reuses the uploaded models.
+    /// `time` uses the same clock as ordinary frame updates.
+    pub fn preload(&mut self, upload: &UploadContext, states: &[DoorState], time: f32) {
+        self.preload_with_progress(upload, states, time, |_, _| true);
+    }
+
+    /// Reports completed/total door model batches and checks cancellation
+    /// between models and collision work. Discard this partial snapshot if
+    /// false is returned; it must not be installed in the active renderer.
+    pub fn preload_with_progress(
+        &mut self,
+        upload: &UploadContext,
+        states: &[DoorState],
+        time: f32,
+        mut progress: impl FnMut(usize, usize) -> bool,
+    ) -> bool {
         let time = if time.is_finite() { time.max(0.) } else { 0. };
         let mut groups: BTreeMap<String, Vec<&DoorState>> = BTreeMap::new();
         let ids: BTreeSet<_> = states.iter().map(|state| state.id).collect();
@@ -87,7 +107,11 @@ impl DoorRenderer {
                 .or_default()
                 .push(state);
         }
-        for name in groups.keys() {
+        let total = groups.len();
+        for (completed, name) in groups.keys().enumerate() {
+            if !progress(completed, total) {
+                return false;
+            }
             if self.batches.contains_key(name) || self.missing.contains(name) {
                 continue;
             }
@@ -100,7 +124,7 @@ impl DoorRenderer {
                     })
                     .cloned()
                     .collect();
-                GpuScene::build(renderer.device(), renderer.queue(), &model)
+                GpuScene::build(upload.device(), upload.queue(), &model)
                     .map(|scene| (scene, collision))
                     .map_err(|error| openeq_assets::Error::Format(error.to_string()))
             });
@@ -115,7 +139,7 @@ impl DoorRenderer {
                     self.batches.insert(
                         name.clone(),
                         Batch {
-                            actor: renderer.prepare_actor(scene),
+                            actor: upload.prepare_actor(scene),
                             extent,
                             collision,
                             local_collision,
@@ -133,6 +157,9 @@ impl DoorRenderer {
         self.platform_steps.clear();
         let mut platforms_changed = false;
         for (name, batch) in &mut self.batches {
+            if !progress(total, total) {
+                return false;
+            }
             let mut instances = Vec::new();
             for state in groups.get(name).into_iter().flatten() {
                 let duration = duration(state);
@@ -193,13 +220,16 @@ impl DoorRenderer {
                 batch
                     .actor
                     .scene
-                    .update_instances(renderer.device(), renderer.queue(), &instances);
+                    .update_instances(upload.device(), upload.queue(), &instances);
             }
             self.rendered_instances += instances.len();
         }
         if states != self.collision_states || platforms_changed {
             let mut collision = CollisionWorld::default();
             for state in states {
+                if !progress(total, total) {
+                    return false;
+                }
                 if matches!(state.open_type, 50 | 53 | 54) {
                     continue;
                 }
@@ -222,6 +252,7 @@ impl DoorRenderer {
             self.collision_states = states.to_vec();
         }
         self.platform_poses = platform_poses;
+        progress(total, total)
     }
     /// Lifts collide at their animated pose; other doors retain final-pose
     /// collision. Updating a lift never rebuilds the static zone collision.

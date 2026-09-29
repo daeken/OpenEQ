@@ -9,6 +9,8 @@ pub mod group;
 pub mod hud;
 pub mod interaction;
 pub mod live;
+pub mod loading;
+pub mod loading_ui;
 pub mod movement;
 mod social_interaction;
 pub mod spells;
@@ -27,3 +29,5 @@ mod item_use_interaction;
 pub mod item_use_state;
 pub mod trade;
 mod trade_interaction;
+
+pub mod zone_loading;
