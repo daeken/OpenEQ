@@ -277,7 +277,15 @@ gravity is 128 units/s²: a standing jump rises about 3.9 units, reaches its ape
 in 0.25 seconds and lands in about 0.5 seconds. A spatial grid indexes collidable
 triangles from the drawable zone and placed objects; floor selection handles
 stacked decks and slopes, and ceiling checks limit upward motion. Invisible
-collision-only geometry and swimming remain unsupported. A second collision
+collision-only geometry remains unsupported. Authored WLD BSP liquid regions
+drive swimming at the player's center; the actual view camera independently
+selects underwater fog. Swimming uses the same body collision against floors,
+walls, ceilings and doors, follows look pitch, and supports Space/Ctrl ascent
+and descent. Server spawn/buff state enables flight, floating and levitation.
+Speeds and fog palettes are documented client tuning, while health and buff
+outcomes remain server-owned. EQG liquid volumes and environmental damage
+remain unsupported; see [movement notes](MOVEMENT_PROTOCOL.md) and
+[liquid decoding](LIQUID_REGIONS.md). A second collision
 world contains server-owned doors. Ordinary door collision uses the final pose;
 lift collision follows the animated platform. Standing passengers receive the
 platform displacement once per update, checked against the original mesh and
@@ -415,11 +423,11 @@ PNG that can be inspected directly.
 
 ## Remaining work
 
-- Player trading, augmentation, quest journals, raid/guild management and UCS.
+- Augmentation, quest journals, raid/guild management and UCS.
 - Interactive login/character creation and complete XML/STML widgets.
 - EQG/absolute-destination zone triggers and exact special door/platform motion.
-- Luclin replacements, modular modern appearance, item/AA casting, particles/audio.
-- Full original collision volumes and movement rules, including swimming.
+- Remaining Luclin appearance details, animated equipment, AA casting and audio.
+- Full original collision volumes, EQG liquids and environmental damage rules.
 - Cascaded shadows, animated sun, complete weather and water refraction.
 - Remaining terrain ecosystem effects, procedural vegetation and tile water.
 

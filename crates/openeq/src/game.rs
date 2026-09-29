@@ -347,6 +347,7 @@ pub struct ActiveCast {
 
 #[derive(Default)]
 pub struct GameplayState {
+    pub recovery: crate::death::RecoveryState,
     pub inventory: Inventory,
     pub commerce: crate::commerce::CommerceState,
     pub trade: crate::trade::TradeState,
@@ -375,6 +376,26 @@ pub struct GameplayState {
     buff_updated: BTreeMap<u32, Instant>,
 }
 impl GameplayState {
+    /// The authoritative buff list, not its display countdown, grants flight.
+    /// Wait for the server to fade a buff rather than expiring it locally.
+    pub fn levitation_mode(&self) -> Option<u8> {
+        self.buffs
+            .values()
+            .filter_map(|buff| self.spell_catalog.spells.get(&buff.spell_id))
+            .filter_map(|spell| spell.levitation_mode)
+            // Ordinary levitation is unrestricted by movement, so prefer it
+            // when the server has sent both kinds of active effect.
+            .min()
+    }
+
+    /// Buff contribution only; racial/item water breathing is not decoded yet.
+    pub fn has_water_breathing_buff(&self) -> bool {
+        self.buffs
+            .values()
+            .filter_map(|buff| self.spell_catalog.spells.get(&buff.spell_id))
+            .any(|spell| spell.water_breathing)
+    }
+
     pub fn buff_seconds(&self, slot: u32) -> Option<u32> {
         let buff = self.buffs.get(&slot)?;
         // Permanent buffs use an unsigned -1 duration. Ordinary durations are
@@ -1032,6 +1053,8 @@ mod tests {
                 casting_animation: 43,
                 travel_type: 0,
                 persistent_particles: false,
+                levitation_mode: None,
+                water_breathing: false,
                 levels: [1; 16],
                 description: String::new(),
             },

@@ -23,24 +23,43 @@ and persistent effects to server events. Support bone attachment points,
 bounded particle lifetimes, cancellation, and cleanup on zoning/despawn.
 Verify recognizable effects from several different spell families.
 
-## 3. Movement and liquids — queued
+## 3. Movement and liquids — first pass implemented
 
 Identify liquid volumes, support swimming and underwater movement, apply
 server levitation/gravity rules, and strengthen slopes and moving-platform
 transitions. Test forest floors, Kelethin ramp/lift seams, stacked platforms,
 water entry/exit, and zoning without compromising server authority.
 
-## 4. Death and recovery — queued
+Classic WLD regions, collision-aware swimming, underwater camera fog and
+server-granted gravity modes now pass synthetic/original-asset tests. A live PoK
+pool test confirmed horizontal movement, depth hold, surfacing and descent using
+ordinary position packets, then restored the dedicated fixture. EQG liquids,
+environmental damage and native movement-rate parity remain open; see
+[liquid notes](LIQUID_REGIONS.md) and [movement notes](MOVEMENT_PROTOCOL.md).
+
+## 4. Death and recovery — first pass complete
 
 Complete the player death → respawn/bind → corpse → resurrection loop and
 recover cleanly from disconnects during it. Use a dedicated test character;
 verify inventories, experience, corpse identity, and server-confirmed outcomes.
 
-## 5. UI compatibility — queued
+Recovery packets, generation-bound choices, original XML dialogs, corpse-safe
+player identity and forced same-zone re-entry are integrated. Portable/GPU tests
+pass; a disposable character proved actual death, forced same-zone re-entry,
+new player identity, preserved corpse and post-recovery movement. Live hover,
+resurrection and item/XP recovery tests remain open. Unsupported cross-zone hover
+resurrection remains decline-only; see [recovery notes](DEATH_RECOVERY_PLAN.md).
+
+## 5. UI compatibility — in progress
 
 Expand original XML widgets and rich text, consistent focus/window stacking,
 saved window positions and layouts, and scaling on small and high-density
 screens. Verify with actual client layouts and interactive controls.
+
+Window positions and map preferences now save per world/character using atomic
+replacement. Focused tests cover restart, corrupt-file preservation, character
+isolation and resizing without losing access to map controls. Movable stacking
+and broader widgets remain open.
 
 ## 6. Audio — queued
 
@@ -73,6 +92,12 @@ hotbuttons. Show server-confirmed gains and costs and persist user controls.
 Verify ordinary play and reconnect without altering the user's character.
 
 ## Discoveries
+
+- 2026-09-29, PoK sky: native 32×32 color tables include auxiliary swatches
+  outside the 31×30 dome data. Sampling the full DDS produced the rainbow wedge;
+  unused colors around a pole produced the overhead pinwheel. The renderer now
+  respects the original domain and pole colors. Exact celestial orientation is
+  a separate remaining task; see [sky evidence](SKY_COLORMAPS.md).
 
 - 2026-09-28, PoK profiling: the shared surface shader checked all 620 zone
   lights for every shaded pixel. At the Mac's scaled maximized resolution

@@ -31,6 +31,7 @@ pub use opcodes::{LoginOp, SessionOp, WorldOp, ZoneOp};
 pub use packet::{AppPacket, crc16};
 pub use stream::{EqStream, StreamError};
 
+pub mod death;
 pub mod item_use;
 pub mod session;
 pub mod social;

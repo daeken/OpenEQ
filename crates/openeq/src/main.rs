@@ -63,6 +63,7 @@ struct Runtime {
     /// Resolve only an authoritative arrival, after its own zone assets load.
     spawn_needs_recovery: bool,
     interaction: openeq::interaction::Interaction,
+    layout_store: Option<openeq::ui_layout::LayoutStore>,
     loaded_zone: Option<String>,
     loaded_destination: Option<loading::Destination>,
     loading_destination: Option<loading::Destination>,
@@ -70,6 +71,7 @@ struct Runtime {
     loading_error: Option<String>,
     client_job: Option<loading::Job<zone_loading::ClientData>>,
     zone_lines: openeq_assets::zone_lines::ZoneLines,
+    liquids: openeq_assets::liquid_regions::LiquidRegions,
     zone_travel: openeq::zone_travel::ZoneTravel,
     zone_map: Option<openeq::map::ZoneMap>,
     map_state: openeq::map::MapState,
@@ -118,6 +120,7 @@ impl Runtime {
             ground_motion: movement::GroundMotion::default(),
             spawn_needs_recovery: false,
             interaction: openeq::interaction::Interaction::default(),
+            layout_store: None,
             loaded_zone: None,
             loaded_destination: None,
             loading_destination: None,
@@ -125,6 +128,7 @@ impl Runtime {
             loading_error: None,
             client_job: None,
             zone_lines: Default::default(),
+            liquids: Default::default(),
             zone_travel: Default::default(),
             zone_map: None,
             map_state: openeq::map::MapState::default(),
@@ -151,9 +155,21 @@ fn main() -> AppExit {
     };
 
     let mut runtime = Runtime::new(camera);
-    if options.connection.is_some() {
+    if let Some(config) = &options.connection {
         runtime.client_job = Some(zone_loading::start_client(options.dir.clone()));
         runtime.fly = false;
+        match openeq::ui_layout::LayoutStore::open(config) {
+            Ok(store) => {
+                store.layout().apply(
+                    &mut runtime.interaction.window_positions,
+                    &mut runtime.map_state,
+                );
+                runtime.layout_store = Some(store);
+            }
+            Err(error) => eprintln!(
+                "Could not restore UI layout; using defaults and preserving saved file: {error}"
+            ),
+        }
     }
 
     App::new()
@@ -182,8 +198,32 @@ fn main() -> AppExit {
             )
                 .chain(),
         )
-        .add_systems(Last, render_frame)
+        .add_systems(Last, (render_frame, persist_ui_layout).chain())
         .run()
+}
+
+fn persist_ui_layout(
+    mut runtime: ResMut<Runtime>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    mut exits: MessageReader<AppExit>,
+) {
+    let flush = exits.read().next().is_some() || mouse.just_released(MouseButton::Left);
+    if runtime.layout_store.is_none() {
+        return;
+    }
+    let layout = openeq::ui_layout::Layout::capture(
+        &runtime.interaction.window_positions,
+        &runtime.map_state,
+    );
+    if let Err(error) =
+        runtime
+            .layout_store
+            .as_mut()
+            .unwrap()
+            .update(layout, std::time::Instant::now(), flush)
+    {
+        tracing::warn!(%error, "could not save UI layout");
+    }
 }
 
 fn parse_args() -> anyhow::Result<Options> {
@@ -264,6 +304,15 @@ fn update_camera(
     if !runtime.world_ready() {
         return;
     }
+    if runtime
+        .live
+        .as_ref()
+        .is_some_and(|live| !live.movement_allowed())
+    {
+        runtime.ground_motion = movement::GroundMotion::default();
+        runtime.fly = false;
+        return;
+    }
     let online = runtime.live.is_some();
     let focused = windows.single().is_ok_and(|(window, _)| window.focused);
     let controls = focused
@@ -272,7 +321,7 @@ fn update_camera(
         && runtime
             .live
             .as_ref()
-            .is_none_or(|live| live.ready && live.error.is_none());
+            .is_none_or(|live| live.movement_allowed());
     if online && controls && keys.just_pressed(KeyCode::KeyF) {
         runtime.fly = !runtime.fly;
         runtime.ground_motion = movement::GroundMotion::default();
@@ -315,7 +364,7 @@ fn update_camera(
     if controls && keys.pressed(KeyCode::Space) {
         lift += 1.0;
     }
-    if controls && keys.pressed(KeyCode::ControlLeft) {
+    if controls && (keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight)) {
         lift -= 1.0;
     }
     let horizontal_length = (forward * forward + strafe * strafe).sqrt().max(1.);
@@ -338,6 +387,17 @@ fn update_camera(
         (heading[0] * forward + right[0] * strafe) * speed,
         (heading[1] * forward + right[1] * strafe) * speed,
     ];
+    let (sin_pitch, cos_pitch) = camera.pitch.sin_cos();
+    let volume_direction = Vec3::new(
+        heading[0] * forward * cos_pitch + right[0] * strafe,
+        heading[1] * forward * cos_pitch + right[1] * strafe,
+        forward * sin_pitch + lift,
+    )
+    .clamp_length_max(1.);
+    let gravity = runtime
+        .live
+        .as_ref()
+        .map_or(Default::default(), |live| live.player_gravity());
     let mut position = camera.position;
     position[0] += velocity_xy[0] * dt;
     position[1] += velocity_xy[1] * dt;
@@ -347,7 +407,27 @@ fn update_camera(
         camera.position[2] - 6.,
     ];
     let jump = controls && keys.just_pressed(KeyCode::Space);
-    let allow_carry = !runtime.fly && runtime.ground_motion.velocity_z <= 0. && !jump;
+    let motion_input = movement::MotionInput {
+        walk_velocity: velocity_xy,
+        volume_velocity: (volume_direction * speed).to_array(),
+        jump,
+        gravity,
+    };
+    let mode = runtime.collision.as_ref().map(|collision| {
+        movement::MotionWorld {
+            collision,
+            dynamic: None,
+            liquids: Some(&runtime.liquids),
+        }
+        .mode(feet, &motion_input)
+    });
+    let allow_carry = !runtime.fly
+        && runtime.ground_motion.velocity_z <= 0.
+        && !jump
+        && matches!(
+            mode,
+            Some(movement::MotionMode::Ground | movement::MotionMode::Levitating)
+        );
     let platform_displacement = runtime.doors.as_mut().map_or([0.; 3], |doors| {
         doors.take_platform_displacement(feet, allow_carry)
     });
@@ -364,18 +444,26 @@ fn update_camera(
             0.,
         );
         let mut motion = std::mem::take(&mut runtime.ground_motion);
-        let moved = motion.step_with_dynamic(
-            runtime.collision.as_ref().unwrap(),
-            runtime.doors.as_ref().map(|doors| doors.collision_world()),
+        let moved = motion.step_in_world(
+            movement::MotionWorld {
+                collision: runtime.collision.as_ref().unwrap(),
+                dynamic: runtime.doors.as_ref().map(|doors| doors.collision_world()),
+                liquids: Some(&runtime.liquids),
+            },
             feet,
-            velocity_xy,
-            jump,
+            motion_input,
             dt,
         );
         runtime.ground_motion = motion;
         position = [moved[0], moved[1], moved[2] + 6.];
     }
-    runtime.moving = forward != 0. || strafe != 0.;
+    runtime.moving = forward != 0.
+        || strafe != 0.
+        || (lift != 0.
+            && matches!(
+                mode,
+                Some(movement::MotionMode::Swimming | movement::MotionMode::Flying)
+            ));
     camera.position = position;
     runtime.camera = camera;
 }
@@ -400,9 +488,23 @@ fn handle_cursor_capture(
     if !runtime.world_ready() {
         release_cursor(&mut cursor);
         focus.clear();
-        if keys.just_pressed(KeyCode::Escape) {
+        if keys.just_pressed(KeyCode::Escape)
+            && runtime
+                .live
+                .as_ref()
+                .is_none_or(|live| !live.game.recovery.blocks_movement())
+        {
             exit.write(AppExit::Success);
         }
+        return;
+    }
+    if runtime
+        .live
+        .as_ref()
+        .is_some_and(|live| live.game.recovery.blocks_movement())
+    {
+        release_cursor(&mut cursor);
+        focus.clear();
         return;
     }
     let mut captured = is_captured(&cursor);
@@ -482,7 +584,12 @@ fn handle_gameplay_input(
     runtime.interaction.controls_blocked = runtime.interaction.editor.active;
     runtime.interaction.escape_handled = false;
     if !runtime.world_ready() {
-        if keys.just_pressed(KeyCode::Escape) {
+        if keys.just_pressed(KeyCode::Escape)
+            && runtime
+                .live
+                .as_ref()
+                .is_none_or(|live| !live.game.recovery.blocks_movement())
+        {
             exit.write(AppExit::Success);
         }
         events.clear();
@@ -579,6 +686,9 @@ fn handle_gameplay_input(
         }
     }
     interaction.chat_input.suppress_captured_keys(&mut keys);
+    if live.game.recovery.blocks_movement() && keys.just_pressed(KeyCode::Escape) {
+        interaction.escape_handled = true;
+    }
     if window.focused && !interaction.controls_blocked && !interaction.editor.active {
         if keys.just_pressed(KeyCode::KeyM) {
             if zone_map.is_some() {
@@ -733,6 +843,9 @@ fn handle_gameplay_input(
             interaction.drag = None;
         }
         if let Some(hit) = ui_frame.hit_test(point) {
+            if ui_left_click && let Some(action) = openeq::death::RecoveryAction::from_hit(hit) {
+                live.recovery_action(action);
+            }
             if hit.item == "game:chat_log"
                 && ui_left_click
                 && let Some(link) = chat_link_hits
@@ -943,6 +1056,7 @@ fn render_frame(
         }
         let player_camera = runtime.camera;
         let camera = view_camera(&runtime);
+        renderer.set_view_liquid(runtime.liquids.at(camera.position));
         if let Some(live) = runtime.live.as_ref() {
             live.camera_position(&player_camera, runtime.moving);
         }
@@ -964,7 +1078,7 @@ fn render_frame(
         }
         FrameSample::mark(&mut profile, "setup");
         let states = runtime.live.as_ref().map(|live| {
-            live.actor_states_with_terrain(
+            let mut states = live.actor_states_with_terrain(
                 camera.position,
                 runtime
                     .third_person
@@ -975,7 +1089,22 @@ fn render_frame(
                         runtime.doors.as_ref().map(|doors| doors.collision_world()),
                     )
                 }),
-            )
+            );
+            if !runtime.fly && runtime.ground_motion.mode == movement::MotionMode::Swimming {
+                for state in &mut states {
+                    if Some(state.id) == live.own_id
+                        && matches!(
+                            state.action,
+                            openeq_render::actors::ActorAction::Auto
+                                | openeq_render::actors::ActorAction::Walk
+                                | openeq_render::actors::ActorAction::Run
+                        )
+                    {
+                        state.action = openeq_render::actors::ActorAction::Swim;
+                    }
+                }
+            }
+            states
         });
         let elapsed = runtime.started.elapsed().as_secs_f32();
         FrameSample::mark(&mut profile, "terrain_states");
@@ -1051,8 +1180,14 @@ fn render_frame(
                 feedback.commands.append(&mut frame.commands);
                 frame.commands = feedback.commands;
             }
+            let mut recovery = hud.recovery_frame(
+                ui_size,
+                runtime.interaction.pointer,
+                &live.game.recovery.view(std::time::Instant::now()),
+            );
             if runtime.map_open {
                 let mut map_state = runtime.map_state.clone();
+                map_state.fit_viewport(ui_size);
                 map_state.player_position = [
                     player_camera.position[0],
                     player_camera.position[1],
@@ -1075,6 +1210,9 @@ fn render_frame(
                 }
                 runtime.map_state = map_state;
             }
+            frame.commands.append(&mut recovery.commands);
+            frame.hit_targets.append(&mut recovery.hit_targets);
+            frame.warnings.append(&mut recovery.warnings);
             FrameSample::mark(&mut profile, "ui_build");
             renderer.set_ui_scaled(&frame, window.scale_factor());
             runtime.chat_link_hits = renderer.ui_link_hits().to_vec();
@@ -1259,6 +1397,7 @@ fn prepare_world(runtime: &mut Runtime, renderer: &mut Renderer, options: &Optio
             runtime.doors = prepared.doors;
             runtime.zone_map = prepared.map;
             runtime.zone_lines = prepared.zone_lines;
+            runtime.liquids = prepared.liquids;
             runtime.zone_travel.reset([
                 runtime.camera.position[0],
                 runtime.camera.position[1],
@@ -1475,7 +1614,13 @@ fn handle_targeting(
     if !runtime.world_ready() {
         return;
     }
-    if runtime.interaction.controls_blocked || runtime.interaction.editor.active {
+    if runtime.interaction.controls_blocked
+        || runtime.interaction.editor.active
+        || runtime
+            .live
+            .as_ref()
+            .is_some_and(|live| !live.movement_allowed())
+    {
         return;
     }
     let Ok((window, cursor)) = windows.single() else {

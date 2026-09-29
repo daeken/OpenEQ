@@ -2,7 +2,9 @@
 //! Presentation applies the eye offset; protocol serialization applies the
 //! separate server center offset. Neither offset belongs in the physics state.
 
+use crate::movement_rules::PlayerGravity;
 use openeq_assets::collision::CollisionWorld;
+use openeq_assets::liquid_regions::LiquidRegions;
 
 const STEP: f64 = 1.0 / 120.0;
 // A roughly four-unit hop reaches its apex in a quarter second and lands in
@@ -12,6 +14,59 @@ const GRAVITY: f32 = 128.0;
 const JUMP_SPEED: f32 = 32.0;
 const RADIUS: f32 = 1.0;
 const HEIGHT: f32 = 6.0;
+const SWIM_SPEED_SCALE: f32 = 0.6;
+const LEVITATION_FALL_SPEED: f32 = 2.;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MotionMode {
+    #[default]
+    Ground,
+    Swimming,
+    Flying,
+    Levitating,
+    Floating,
+}
+
+pub struct MotionWorld<'a> {
+    pub collision: &'a CollisionWorld,
+    pub dynamic: Option<&'a CollisionWorld>,
+    pub liquids: Option<&'a LiquidRegions>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MotionInput {
+    /// Full-speed horizontal walking velocity, unaffected by look pitch.
+    pub walk_velocity: [f32; 2],
+    /// Full-speed 3D swim/fly direction, including pitch and up/down input.
+    pub volume_velocity: [f32; 3],
+    pub jump: bool,
+    pub gravity: PlayerGravity,
+}
+
+impl MotionWorld<'_> {
+    pub fn mode(&self, feet: [f32; 3], input: &MotionInput) -> MotionMode {
+        match input.gravity {
+            PlayerGravity::Flying => return MotionMode::Flying,
+            PlayerGravity::Floating => return MotionMode::Floating,
+            _ => {}
+        }
+        let center = [feet[0], feet[1], feet[2] + HEIGHT * 0.5];
+        if self
+            .liquids
+            .is_some_and(|regions| regions.at(center).is_some())
+        {
+            return MotionMode::Swimming;
+        }
+        if input.gravity == PlayerGravity::Levitating
+            || (input.gravity == PlayerGravity::LevitateWhileRunning
+                && input.walk_velocity.iter().any(|v| v.abs() > 0.001))
+        {
+            MotionMode::Levitating
+        } else {
+            MotionMode::Ground
+        }
+    }
+}
 
 /// Corrects a small floor penetration once when installing an authoritative
 /// spawn. Some EQEmu safe points place the server center too low for our body
@@ -26,6 +81,7 @@ pub fn recover_spawn(world: &CollisionWorld, feet: [f32; 3]) -> [f32; 3] {
 #[derive(Clone, Debug, Default)]
 pub struct GroundMotion {
     pub velocity_z: f32,
+    pub mode: MotionMode,
     /// Unsimulated time in seconds, normally less than one 1/120s step.
     pub accumulator: f64,
     jump_pending: bool,
@@ -56,9 +112,38 @@ impl GroundMotion {
         &mut self,
         world: &CollisionWorld,
         dynamic: Option<&CollisionWorld>,
-        mut feet: [f32; 3],
+        feet: [f32; 3],
         velocity_xy: [f32; 2],
         jump: bool,
+        elapsed: f32,
+    ) -> [f32; 3] {
+        self.step_in_world(
+            MotionWorld {
+                collision: world,
+                dynamic,
+                liquids: None,
+            },
+            feet,
+            MotionInput {
+                walk_velocity: velocity_xy,
+                volume_velocity: [velocity_xy[0], velocity_xy[1], 0.],
+                jump,
+                gravity: PlayerGravity::Grounded,
+            },
+            elapsed,
+        )
+    }
+
+    /// Samples the authored medium every physics tick, so entry/exit and
+    /// gravity changes behave equally at low and high rendering frame rates.
+    /// Swimming and server flight still use the normal body collision solver.
+    /// Swim speed and levitation fall speed are explicitly client tuning;
+    /// health, buffs, breath damage and other outcomes remain server-owned.
+    pub fn step_in_world(
+        &mut self,
+        world: MotionWorld<'_>,
+        mut feet: [f32; 3],
+        mut input: MotionInput,
         elapsed: f32,
     ) -> [f32; 3] {
         if !feet.iter().all(|value| value.is_finite()) {
@@ -70,25 +155,56 @@ impl GroundMotion {
         if !self.velocity_z.is_finite() {
             self.velocity_z = 0.0;
         }
-        self.jump_pending |= jump;
+        self.jump_pending |= input.jump;
         if elapsed.is_finite() && elapsed > 0.0 {
             self.accumulator += f64::from(elapsed.min(0.25));
         }
-        let velocity_xy = velocity_xy.map(|value| if value.is_finite() { value } else { 0.0 });
+        let finite = |value: f32| if value.is_finite() { value } else { 0.0 };
+        input.walk_velocity = input.walk_velocity.map(finite);
+        input.volume_velocity = input.volume_velocity.map(finite);
         let dt = STEP as f32;
         // The tiny tolerance absorbs f32 render-clock rounding, not missing
         // simulation time. Keeping the accumulator in f64 avoids further drift.
         while self.accumulator + 1e-7 >= STEP {
             self.accumulator = (self.accumulator - STEP).max(0.0);
-            let grounded =
-                on_ground(world, feet) || dynamic.is_some_and(|world| on_ground(world, feet));
+            self.mode = world.mode(feet, &input);
+            let grounded = on_ground(world.collision, feet)
+                || world.dynamic.is_some_and(|world| on_ground(world, feet));
             if grounded && self.velocity_z < 0.0 {
                 self.velocity_z = 0.0;
             }
-            if std::mem::take(&mut self.jump_pending) && grounded {
+            let jump = std::mem::take(&mut self.jump_pending);
+            if jump && grounded && matches!(self.mode, MotionMode::Ground | MotionMode::Levitating)
+            {
                 self.velocity_z = JUMP_SPEED;
             }
-            self.velocity_z = (self.velocity_z - GRAVITY * dt).max(-80.0);
+            let velocity_xy = match self.mode {
+                MotionMode::Swimming | MotionMode::Flying => {
+                    let scale = if self.mode == MotionMode::Swimming {
+                        SWIM_SPEED_SCALE
+                    } else {
+                        1.
+                    };
+                    self.velocity_z = input.volume_velocity[2] * scale;
+                    [
+                        input.volume_velocity[0] * scale,
+                        input.volume_velocity[1] * scale,
+                    ]
+                }
+                MotionMode::Floating => {
+                    self.velocity_z = 0.;
+                    input.walk_velocity
+                }
+                MotionMode::Ground | MotionMode::Levitating => {
+                    let terminal = if self.mode == MotionMode::Levitating {
+                        LEVITATION_FALL_SPEED
+                    } else {
+                        80.
+                    };
+                    self.velocity_z = (self.velocity_z - GRAVITY * dt).max(-terminal);
+                    input.walk_velocity
+                }
+            };
             let displacement = [
                 velocity_xy[0] * dt,
                 velocity_xy[1] * dt,
@@ -96,13 +212,16 @@ impl GroundMotion {
             ];
             // Stair following is a grounded behavior. Giving an airborne body
             // a two-unit step range snaps the last two units of a fall/jump.
-            let step_height = if grounded && self.velocity_z <= 0.0 {
+            let step_height = if grounded
+                && self.velocity_z <= 0.0
+                && !matches!(self.mode, MotionMode::Flying | MotionMode::Floating)
+            {
                 2.0
             } else {
                 0.0
             };
-            let moved = world.move_player_with_dynamic(
-                dynamic,
+            let moved = world.collision.move_player_with_dynamic(
+                world.dynamic,
                 feet,
                 displacement,
                 RADIUS,
@@ -171,6 +290,422 @@ mod tests {
             feet = motion.step(&world, feet, [40., 0.], jump && frame == 0, 1. / fps as f32);
         }
         (feet, motion.velocity_z)
+    }
+
+    fn water(center: [f32; 3], half_extents: [f32; 3]) -> LiquidRegions {
+        use openeq_assets::liquid_regions::{LiquidBox, LiquidKind};
+        LiquidRegions::from_boxes([LiquidBox {
+            kind: LiquidKind::Water,
+            center,
+            half_extents,
+            rotation: [0., 0., 0., 1.],
+        }])
+        .unwrap()
+    }
+
+    fn input(velocity: [f32; 3], gravity: PlayerGravity) -> MotionInput {
+        MotionInput {
+            walk_velocity: [velocity[0], velocity[1]],
+            volume_velocity: velocity,
+            jump: false,
+            gravity,
+        }
+    }
+
+    fn advance(
+        motion: &mut GroundMotion,
+        collision: &CollisionWorld,
+        liquids: &LiquidRegions,
+        feet: [f32; 3],
+        input: MotionInput,
+        dt: f32,
+    ) -> [f32; 3] {
+        motion.step_in_world(
+            MotionWorld {
+                collision,
+                liquids: Some(liquids),
+                dynamic: None,
+            },
+            feet,
+            input,
+            dt,
+        )
+    }
+
+    #[test]
+    fn land_water_land_crossing_preserves_time_at_low_and_high_fps() {
+        let collision = flat();
+        let liquid = water([20., 0., 10.], [10., 100., 10.]);
+        let mut results = Vec::new();
+        for fps in [10, 30, 60, 120, 240] {
+            let mut motion = GroundMotion::default();
+            let mut feet = [0.; 3];
+            let mut swam = false;
+            for _ in 0..fps * 2 {
+                feet = advance(
+                    &mut motion,
+                    &collision,
+                    &liquid,
+                    feet,
+                    input([40., 0., 0.], PlayerGravity::Grounded),
+                    1. / fps as f32,
+                );
+                swam |= motion.mode == MotionMode::Swimming;
+            }
+            assert!(swam);
+            assert_eq!(motion.mode, MotionMode::Ground);
+            assert!((feet[0] - 66.67).abs() < 0.4, "{fps}fps: {feet:?}");
+            near(feet[2], 0.);
+            results.push(feet);
+        }
+        for feet in &results[1..] {
+            near(feet[0], results[0][0]);
+        }
+    }
+
+    #[test]
+    fn swimming_holds_depth_and_can_ascend_descend_and_exit_surface() {
+        let collision = flat();
+        let liquid = water([0., 0., 10.], [100., 100., 10.]);
+        let mut motion = GroundMotion {
+            velocity_z: -80.,
+            ..Default::default()
+        };
+        let mut feet = advance(
+            &mut motion,
+            &collision,
+            &liquid,
+            [0., 0., 10.],
+            input([0.; 3], PlayerGravity::Grounded),
+            0.25,
+        );
+        near(feet[2], 10.);
+        feet = advance(
+            &mut motion,
+            &collision,
+            &liquid,
+            feet,
+            input([0., 0., -40.], PlayerGravity::Grounded),
+            0.25,
+        );
+        near(feet[2], 4.);
+        feet = advance(
+            &mut motion,
+            &collision,
+            &liquid,
+            feet,
+            input([0., 0., 40.], PlayerGravity::Grounded),
+            0.25,
+        );
+        near(feet[2], 10.);
+        let mut highest = feet[2];
+        let mut surfaced = false;
+        for _ in 0..120 {
+            feet = advance(
+                &mut motion,
+                &collision,
+                &liquid,
+                feet,
+                input([0., 0., 40.], PlayerGravity::Grounded),
+                1. / 120.,
+            );
+            highest = highest.max(feet[2]);
+            surfaced |= motion.mode == MotionMode::Ground;
+        }
+        assert!(
+            surfaced && highest > 18. && highest < 21.,
+            "surface exit apex {highest}"
+        );
+    }
+
+    #[test]
+    fn swimming_cannot_pass_through_pool_floor_ceiling_or_wall() {
+        let collision = world(&[
+            [
+                [-100., -100., 0.],
+                [100., -100., 0.],
+                [100., 100., 0.],
+                [-100., 100., 0.],
+            ],
+            [
+                [-100., -100., 50.],
+                [-100., 100., 50.],
+                [100., 100., 50.],
+                [100., -100., 50.],
+            ],
+            [
+                [-100., 10., 0.],
+                [100., 10., 0.],
+                [100., 10., 50.],
+                [-100., 10., 50.],
+            ],
+        ]);
+        let liquid = water([0., 0., 50.], [100., 100., 50.]);
+        for (velocity, axis, expected) in [
+            ([0., 0., -40.], 2, 0.),
+            ([0., 0., 40.], 2, 44.),
+            ([0., 40., 0.], 1, 9.),
+        ] {
+            let mut motion = GroundMotion::default();
+            let mut feet = [0., 0., 20.];
+            for _ in 0..20 {
+                feet = advance(
+                    &mut motion,
+                    &collision,
+                    &liquid,
+                    feet,
+                    input(velocity, PlayerGravity::Grounded),
+                    0.1,
+                );
+            }
+            near(feet[axis], expected);
+        }
+    }
+
+    #[test]
+    fn swimming_can_walk_out_up_a_shore_ramp() {
+        let collision = world(&[
+            [
+                [-100., -100., 0.],
+                [0., -100., 0.],
+                [0., 100., 0.],
+                [-100., 100., 0.],
+            ],
+            [
+                [0., -100., 0.],
+                [20., -100., 10.],
+                [20., 100., 10.],
+                [0., 100., 0.],
+            ],
+            [
+                [20., -100., 10.],
+                [100., -100., 10.],
+                [100., 100., 10.],
+                [20., 100., 10.],
+            ],
+        ]);
+        let liquid = water([0., 0., 4.], [100., 100., 4.]);
+        let mut motion = GroundMotion::default();
+        let mut feet = [-5., 0., 0.];
+        for _ in 0..120 {
+            feet = advance(
+                &mut motion,
+                &collision,
+                &liquid,
+                feet,
+                input([40., 0., 0.], PlayerGravity::Grounded),
+                1. / 120.,
+            );
+        }
+        assert!(feet[0] > 20., "failed shore exit: {feet:?}");
+        near(feet[2], 10.);
+        assert_eq!(motion.mode, MotionMode::Ground);
+    }
+
+    #[test]
+    fn underwater_dynamic_door_blocks_swimming_until_opened() {
+        let collision = flat();
+        let closed = world(&[[
+            [-20., 10., 0.],
+            [20., 10., 0.],
+            [20., 10., 50.],
+            [-20., 10., 50.],
+        ]]);
+        let liquid = water([0., 0., 25.], [100., 100., 25.]);
+        let mut motion = GroundMotion::default();
+        let mut feet = [0., 0., 10.];
+        for _ in 0..120 {
+            feet = motion.step_in_world(
+                MotionWorld {
+                    collision: &collision,
+                    dynamic: Some(&closed),
+                    liquids: Some(&liquid),
+                },
+                feet,
+                input([0., 40., 0.], PlayerGravity::Grounded),
+                1. / 120.,
+            );
+        }
+        near(feet[1], 9.);
+        near(feet[2], 10.);
+        for _ in 0..120 {
+            feet = advance(
+                &mut motion,
+                &collision,
+                &liquid,
+                feet,
+                input([0., 40., 0.], PlayerGravity::Grounded),
+                1. / 120.,
+            );
+        }
+        near(feet[1], 33.);
+        near(feet[2], 10.);
+    }
+
+    #[test]
+    #[ignore = "requires original Plane of Knowledge assets"]
+    fn authored_pok_pool_supports_swimming_without_sinking_or_leaving_its_bounds() {
+        let base = openeq_assets::loader::default_client_dir().expect("original assets");
+        let scene = openeq_assets::loader::load_zone(&base, "poknowledge").unwrap();
+        let collision = CollisionWorld::build(&scene);
+        let liquid = LiquidRegions::load(&base, "poknowledge").unwrap();
+        let start = [15., 1455., -134.];
+        let mut motion = GroundMotion::default();
+        let mut feet = start;
+        for _ in 0..120 {
+            feet = advance(
+                &mut motion,
+                &collision,
+                &liquid,
+                feet,
+                input([0.; 3], PlayerGravity::Grounded),
+                1. / 120.,
+            );
+        }
+        near(feet[2], start[2]);
+        assert_eq!(motion.mode, MotionMode::Swimming);
+        for _ in 0..60 {
+            feet = advance(
+                &mut motion,
+                &collision,
+                &liquid,
+                feet,
+                input([-40., 0., 0.], PlayerGravity::Grounded),
+                1. / 120.,
+            );
+        }
+        near(feet[0], 3.);
+        near(feet[2], start[2]);
+        assert!(liquid.at([feet[0], feet[1], feet[2] + 6.]).is_some());
+        let mut surfaced = false;
+        for _ in 0..120 {
+            feet = advance(
+                &mut motion,
+                &collision,
+                &liquid,
+                feet,
+                input([0., 0., 40.], PlayerGravity::Grounded),
+                1. / 120.,
+            );
+            surfaced |= liquid.at([feet[0], feet[1], feet[2] + 6.]).is_none();
+        }
+        assert!(
+            surfaced,
+            "could not raise eyes above the authored surface: {feet:?}"
+        );
+        assert!(
+            feet[2] >= start[2] && feet[2] < -124.,
+            "invalid pool position: {feet:?}"
+        );
+    }
+
+    #[test]
+    fn server_flight_and_float_override_water_and_end_when_removed() {
+        let collision = flat();
+        let liquid = water([0., 0., 50.], [100., 100., 50.]);
+        for gravity in [PlayerGravity::Flying, PlayerGravity::Floating] {
+            let mut motion = GroundMotion::default();
+            let feet = advance(
+                &mut motion,
+                &collision,
+                &liquid,
+                [0., 0., 20.],
+                input([0., 0., 40.], gravity),
+                0.25,
+            );
+            near(
+                feet[2],
+                if gravity == PlayerGravity::Flying {
+                    30.
+                } else {
+                    20.
+                },
+            );
+            let stayed = advance(
+                &mut motion,
+                &collision,
+                &liquid,
+                feet,
+                input([0.; 3], PlayerGravity::Grounded),
+                0.25,
+            );
+            near(stayed[2], feet[2]);
+            assert_eq!(motion.mode, MotionMode::Swimming);
+            let fell = advance(
+                &mut motion,
+                &collision,
+                &LiquidRegions::default(),
+                stayed,
+                input([0.; 3], PlayerGravity::Grounded),
+                0.25,
+            );
+            assert!(fell[2] < stayed[2] - 3.);
+        }
+    }
+
+    #[test]
+    fn levitation_slows_falling_but_does_not_inflate_jumps() {
+        let collision = flat();
+        let liquid = LiquidRegions::default();
+        let mut motion = GroundMotion::default();
+        let feet = advance(
+            &mut motion,
+            &collision,
+            &liquid,
+            [0., 0., 20.],
+            input([0.; 3], PlayerGravity::Levitating),
+            0.25,
+        );
+        assert!(
+            (19.49..19.52).contains(&feet[2]),
+            "levitation drift: {feet:?}"
+        );
+        let fell = advance(
+            &mut motion,
+            &collision,
+            &liquid,
+            feet,
+            input([0.; 3], PlayerGravity::Grounded),
+            0.25,
+        );
+        assert!(fell[2] < feet[2] - 4.);
+        let mut motion = GroundMotion::default();
+        let mut feet = [0.; 3];
+        let mut apex = 0_f32;
+        for tick in 0..120 {
+            let mut keys = input([0.; 3], PlayerGravity::Levitating);
+            keys.jump = tick == 0;
+            feet = advance(&mut motion, &collision, &liquid, feet, keys, 1. / 120.);
+            apex = apex.max(feet[2]);
+        }
+        assert!((3.7..4.1).contains(&apex), "levitation jump apex {apex}");
+        assert!(feet[2] > 2., "levitation fall too fast: {feet:?}");
+    }
+
+    #[test]
+    fn running_only_levitation_stops_when_player_stops() {
+        let collision = flat();
+        let liquid = LiquidRegions::default();
+        let mut motion = GroundMotion::default();
+        let feet = advance(
+            &mut motion,
+            &collision,
+            &liquid,
+            [0., 0., 20.],
+            input([40., 0., 0.], PlayerGravity::LevitateWhileRunning),
+            0.25,
+        );
+        assert_eq!(motion.mode, MotionMode::Levitating);
+        let fell = advance(
+            &mut motion,
+            &collision,
+            &liquid,
+            feet,
+            input([0.; 3], PlayerGravity::LevitateWhileRunning),
+            0.25,
+        );
+        assert_eq!(motion.mode, MotionMode::Ground);
+        assert!(fell[2] < feet[2] - 4.);
     }
 
     #[test]

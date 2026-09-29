@@ -38,6 +38,7 @@ pub struct PreparedZone {
     pub map: Option<ZoneMap>,
     pub sky: Option<SkyAssets>,
     pub zone_lines: openeq_assets::zone_lines::ZoneLines,
+    pub liquids: openeq_assets::liquid_regions::LiquidRegions,
 }
 
 pub fn start(request: Request, upload: UploadContext) -> Job<PreparedZone> {
@@ -71,6 +72,11 @@ fn prepare(
     let zone_lines =
         openeq_assets::zone_lines::ZoneLines::load(&dir, &zone).unwrap_or_else(|error| {
             tracing::warn!(%zone, %error, "authored zone borders unavailable");
+            Default::default()
+        });
+    let liquids =
+        openeq_assets::liquid_regions::LiquidRegions::load(&dir, &zone).unwrap_or_else(|error| {
+            tracing::warn!(%zone, %error, "authored liquid regions unavailable");
             Default::default()
         });
     report.stage("Loading characters", Some(0.60))?;
@@ -119,6 +125,7 @@ fn prepare(
         map,
         sky,
         zone_lines,
+        liquids,
     })
 }
 

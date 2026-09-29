@@ -1,17 +1,51 @@
 //! Zone sky definitions from the original client's Resources/sky INI files.
 //!
-//! These are sky domes, not cubemaps: weather patterns select a two-dimensional
-//! color lookup and cloud sprites. The loader resolves the authored chain and
-//! samples its day cycle at a supplied fraction of an EverQuest day.
+//! These are sky domes, not cubemaps: weather patterns select a color table and
+//! cloud sprites. The native 32x32 table includes non-dome entries; its layout
+//! must stay distinct from a generic texture. The loader resolves the authored
+//! chain and samples its day cycle at a supplied fraction of an EverQuest day.
 use crate::{Error, Result, texture::Texture};
 use std::{collections::HashMap, path::Path};
+
+/// Identifies usable sky colors without discarding the original source pixels.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SkyColorMapLayout {
+    /// Generic or synthetic lookup texture; every source texel is usable.
+    #[default]
+    FullTexture,
+    /// Native EQ 32x32 vertex-color table. The dome uses columns 0..=30 and
+    /// rows 0..=29, with the two poles reading column zero of rows 0 and 29.
+    /// Column 31 and rows 30/31 contain other colors and must not be sampled
+    /// as sky. This describes the data domain, not its celestial orientation.
+    OriginalDome,
+}
+
+impl SkyColorMapLayout {
+    pub fn usable_size(self, texture: &Texture) -> [u32; 2] {
+        match self {
+            Self::FullTexture => [texture.width, texture.height],
+            Self::OriginalDome => [31, 30],
+        }
+    }
+
+    /// Source texels for the positive and negative native dome-axis poles.
+    /// They are not necessarily the world zenith and nadir.
+    pub fn pole_texels(self) -> Option<[[u32; 2]; 2]> {
+        match self {
+            Self::FullTexture => None,
+            Self::OriginalDome => Some([[0, 0], [0, 29]]),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct SkyAssets {
     pub weather: String,
     pub color_map: Texture,
+    pub color_map_layout: SkyColorMapLayout,
     pub cloud_texture: Option<Texture>,
     pub cloud_color_map: Option<Texture>,
+    pub cloud_color_map_layout: SkyColorMapLayout,
     /// Texture-space movement per second (the INI expresses it per millisecond).
     pub cloud_velocity: f32,
 }
@@ -76,6 +110,16 @@ fn read_texture(directory: &Path, file: &str) -> Result<Texture> {
     }
     Texture::decode(file, &bytes)
 }
+
+fn original_color_map(texture: Texture) -> Result<Texture> {
+    if texture.width != 32 || texture.height != 32 {
+        return Err(Error::Format(format!(
+            "original sky color map must be 32x32: {} ({}x{})",
+            texture.name, texture.width, texture.height
+        )));
+    }
+    Ok(texture)
+}
 fn color_map_file(ini: &Ini, color_set: &str, day_fraction: f32) -> Result<String> {
     let section = format!("ColorSet-{color_set}");
     let mut frames: Vec<(f32, &str)> = (0..32)
@@ -119,12 +163,13 @@ pub fn load_sky(client_directory: &Path, zone: &str, day_fraction: f32) -> Resul
     let section = format!("WeatherPattern-{pattern}");
     let color_set = value(&weather, &section, "ColorSet")
         .ok_or_else(|| Error::Format(format!("missing sky weather pattern: {pattern}")))?;
-    let color_map = read_texture(
+    let color_map = original_color_map(read_texture(
         &directory,
         &color_map_file(&weather, color_set, day_fraction)?,
-    )?;
+    )?)?;
     let mut cloud_texture = None;
     let mut cloud_color_map = None;
+    let mut cloud_color_map_layout = SkyColorMapLayout::FullTexture;
     let mut cloud_velocity = 0.001;
     if let Some(cloud) = value(&weather, &section, "Cloud0") {
         let cloud = format!("Cloud-{cloud}");
@@ -132,10 +177,11 @@ pub fn load_sky(client_directory: &Path, zone: &str, day_fraction: f32) -> Resul
             cloud_texture = Some(read_texture(&directory, &format!("cloud-{texture}.dds"))?);
         }
         if let Some(set) = value(&weather, &cloud, "ColorSet") {
-            cloud_color_map = Some(read_texture(
+            cloud_color_map = Some(original_color_map(read_texture(
                 &directory,
                 &color_map_file(&weather, set, day_fraction)?,
-            )?);
+            )?)?);
+            cloud_color_map_layout = SkyColorMapLayout::OriginalDome;
         }
         cloud_velocity = value(&weather, &cloud, "VelocityMin")
             .and_then(|s| s.parse::<f32>().ok())
@@ -145,8 +191,10 @@ pub fn load_sky(client_directory: &Path, zone: &str, day_fraction: f32) -> Resul
     Ok(SkyAssets {
         weather: pattern.to_owned(),
         color_map,
+        color_map_layout: SkyColorMapLayout::OriginalDome,
         cloud_texture,
         cloud_color_map,
+        cloud_color_map_layout,
         cloud_velocity,
     })
 }
@@ -154,6 +202,37 @@ pub fn load_sky(client_directory: &Path, zone: &str, day_fraction: f32) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_color_table_domain_excludes_helper_entries_and_preserves_source() {
+        let mut texture = Texture {
+            name: "synthetic native color table".into(),
+            width: 32,
+            height: 32,
+            rgba: vec![0; 32 * 32 * 4],
+        };
+        for (index, pixel) in texture.rgba.chunks_exact_mut(4).enumerate() {
+            pixel.copy_from_slice(&[(index % 32) as u8, (index / 32) as u8, 123, 255]);
+        }
+        let original = texture.rgba.clone();
+        let texture = original_color_map(texture).unwrap();
+        assert_eq!(texture.rgba, original);
+        let layout = SkyColorMapLayout::OriginalDome;
+        assert_eq!(layout.usable_size(&texture), [31, 30]);
+        for [x, y] in layout.pole_texels().unwrap() {
+            let offset = ((y * texture.width + x) * 4) as usize;
+            assert_eq!(&texture.rgba[offset..offset + 4], &[0, y as u8, 123, 255]);
+        }
+        let generic = Texture {
+            width: 2,
+            height: 3,
+            ..texture
+        };
+        assert_eq!(SkyColorMapLayout::FullTexture.usable_size(&generic), [2, 3]);
+        assert_eq!(SkyColorMapLayout::FullTexture.pole_texels(), None);
+        assert!(original_color_map(generic).is_err());
+    }
+
     #[test]
     fn day_cycle_wraps_to_previous_night_and_ini_is_case_insensitive() {
         let ini = parse_ini(
@@ -197,12 +276,21 @@ mod tests {
         );
         let pok = load_sky(&directory, "poknowledge", 0.5).unwrap();
         assert_eq!(pok.weather, "DefaultClear");
+        assert_eq!(pok.color_map_layout, SkyColorMapLayout::OriginalDome);
+        assert_eq!(pok.cloud_color_map_layout, SkyColorMapLayout::OriginalDome);
         assert!(
             pok.color_map
                 .name
                 .to_ascii_lowercase()
                 .contains("defaultday")
         );
+        let pixel = |x: usize, y: usize| &pok.color_map.rgba[(y * 32 + x) * 4..][..4];
+        // This neon green exists in the original source. A full-width sky
+        // lookup paints it across the sky; the dome domain excludes it.
+        assert_eq!(pixel(31, 23), &[0, 255, 30, 255]);
+        assert_eq!(pixel(0, 0), &[206, 209, 233, 0]);
+        assert_eq!(pixel(0, 29), &[204, 208, 233, 0]);
+        assert_eq!(pok.color_map_layout.usable_size(&pok.color_map), [31, 30]);
     }
 }
 

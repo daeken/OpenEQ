@@ -476,6 +476,8 @@ pub(crate) mod tests {
                 casting_animation: 43,
                 travel_type: 0,
                 persistent_particles: false,
+                levitation_mode: None,
+                water_breathing: false,
                 levels,
                 description: String::new(),
             },

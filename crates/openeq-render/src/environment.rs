@@ -1,6 +1,10 @@
 //! Renderer-neutral zone atmosphere settings and original-client sky textures.
 use bytemuck::{Pod, Zeroable};
-use openeq_assets::{environment::SkyAssets, texture::Texture};
+use openeq_assets::liquid_regions::LiquidKind;
+use openeq_assets::{
+    environment::{SkyAssets, SkyColorMapLayout},
+    texture::Texture,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct EnvironmentSettings {
@@ -55,6 +59,28 @@ fn linear(v: f32) -> f32 {
     }
 }
 impl EnvironmentSettings {
+    /// Presentation defaults for a camera inside a verified liquid volume.
+    /// These palettes are client tuning, not authored zone fog or damage rules.
+    /// Return a copy so resurfacing restores the exact server atmosphere/sky.
+    pub fn with_view_liquid(mut self, liquid: Option<LiquidKind>) -> Self {
+        let Some(liquid) = liquid else {
+            return self;
+        };
+        let (color, distance) = match liquid {
+            LiquidKind::Water => ([0.08, 0.22, 0.30], 100.),
+            LiquidKind::FreezingWater => ([0.20, 0.32, 0.40], 72.),
+            LiquidKind::OpaqueWater => ([0.08, 0.16, 0.09], 24.),
+            LiquidKind::Lava => ([0.50, 0.12, 0.015], 24.),
+        };
+        self.fog_color = color;
+        self.fog_start = 0.;
+        self.fog_end = distance;
+        self.fog_density = 0.;
+        self.fog_enabled = true;
+        self.sky_enabled = false;
+        self
+    }
+
     /// Offline PEQ snapshot; live clients replace this with OP_NewZone values.
     pub fn for_zone(name: &str) -> Self {
         let Some(zone) = openeq_assets::environment::load_zone_environment(name) else {
@@ -124,6 +150,31 @@ pub struct SkyResources {
     pub layout: wgpu::BindGroupLayout,
     pub group: wgpu::BindGroup,
 }
+
+/// The native 32px sky color table stores a 31-sector, 29-step dome plus
+/// auxiliary color swatches. Those swatches must never become sky pixels.
+/// Native pole vertices use column zero; duplicating that color around the
+/// pole prevents an azimuth-dependent pinwheel under bilinear sampling.
+fn color_map_upload(texture: &Texture, layout: SkyColorMapLayout) -> std::borrow::Cow<'_, Texture> {
+    if layout != SkyColorMapLayout::OriginalDome {
+        return std::borrow::Cow::Borrowed(texture);
+    }
+    debug_assert_eq!((texture.width, texture.height), (32, 32));
+    let mut rgba = Vec::with_capacity(31 * 30 * 4);
+    for y in 0..30 {
+        for x in 0..31 {
+            let column = if y == 0 || y == 29 { 0 } else { x };
+            let offset = (y * 32 + column) * 4;
+            rgba.extend_from_slice(&texture.rgba[offset..offset + 4]);
+        }
+    }
+    std::borrow::Cow::Owned(Texture {
+        name: texture.name.clone(),
+        width: 31,
+        height: 30,
+        rgba,
+    })
+}
 impl SkyResources {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, assets: Option<&SkyAssets>) -> Self {
         let entries = (0..3)
@@ -163,7 +214,13 @@ impl SkyResources {
                 .and_then(|a| a.cloud_color_map.as_ref())
                 .unwrap_or(&fallback),
         ];
-        let views = textures.map(|texture| {
+        let layouts = [
+            assets.map_or(SkyColorMapLayout::default(), |a| a.color_map_layout),
+            SkyColorMapLayout::FullTexture,
+            assets.map_or(SkyColorMapLayout::default(), |a| a.cloud_color_map_layout),
+        ];
+        let views = std::array::from_fn::<_, 3, _>(|index| {
+            let texture = color_map_upload(textures[index], layouts[index]);
             let size = wgpu::Extent3d {
                 width: texture.width,
                 height: texture.height,
@@ -200,6 +257,8 @@ impl SkyResources {
             label: Some("sky lookup sampler"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
             ..Default::default()
         });
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {

@@ -20,6 +20,10 @@ pub struct Spell {
     pub casting_animation: u8,
     pub travel_type: u32,
     pub persistent_particles: bool,
+    /// Gameplay effect 57: 2 = levitate, 5 = levitate while running.
+    /// This is separate from the particle `effect_id` above.
+    pub levitation_mode: Option<u8>,
+    pub water_breathing: bool,
     pub levels: [u8; 16],
     pub description: String,
 }
@@ -110,6 +114,34 @@ fn parse_spell(fields: &[&str]) -> Option<Spell> {
             .and_then(|value| value.parse().ok())
             .unwrap_or(255)
     });
+    let mut levitation_mode = None;
+    let mut water_breathing = false;
+    let mut effect = |id: i32, limit: i32| match id {
+        57 => levitation_mode = Some(if limit == 1 { 5 } else { 2 }),
+        14 => water_breathing = true,
+        _ => {}
+    };
+    if compact {
+        // slot|effect|base|limit|formula|max, with $ between occupied slots.
+        for slot in fields.last()?.split('$') {
+            let values: Vec<_> = slot.split('|').collect();
+            if values.len() != 6 {
+                continue;
+            }
+            if let (Ok(id), Ok(limit)) = (values[1].parse(), values[3].parse()) {
+                effect(id, limit);
+            }
+        }
+    } else {
+        for slot in 0..12 {
+            if let (Some(id), Some(limit)) = (
+                fields.get(86 + slot).and_then(|value| value.parse().ok()),
+                fields.get(32 + slot).and_then(|value| value.parse().ok()),
+            ) {
+                effect(id, limit);
+            }
+        }
+    }
     Some(Spell {
         id,
         name: fields[1].into(),
@@ -126,6 +158,8 @@ fn parse_spell(fields: &[&str]) -> Option<Spell> {
         casting_animation: number(if compact { 60 } else { 120 }).min(255) as u8,
         travel_type: number(if compact { 62 } else { 122 }),
         persistent_particles: number(if compact { 93 } else { 153 }) != 0,
+        levitation_mode,
+        water_breathing,
         levels,
         description: fields.get(6).copied().unwrap_or("").to_owned(),
     })
@@ -178,6 +212,27 @@ mod tests {
         assert_eq!(catalog.malformed_records, 2);
         assert!(catalog.spells.is_empty());
     }
+
+    #[test]
+    fn gameplay_levitation_and_breathing_effects_use_both_spell_layouts() {
+        for compact in [false, true] {
+            for (limit, expected) in [(0, 2), (1, 5), (2, 2)] {
+                let mut fields = vec!["0".to_owned(); if compact { 174 } else { 220 }];
+                fields[0] = "261".into();
+                fields[1] = "Test levitation".into();
+                if compact {
+                    fields[173] = format!("1|14|1|0|100|0$3|57|1|{limit}|100|0");
+                } else {
+                    fields[86] = "14".into();
+                    fields[88] = "57".into();
+                    fields[34] = limit.to_string();
+                }
+                let spell = SpellCatalog::parse(&fields.join("^"));
+                assert_eq!(spell.spells[&261].levitation_mode, Some(expected));
+                assert!(spell.spells[&261].water_breathing);
+            }
+        }
+    }
     #[test]
     fn actual_client_spell_metadata_is_consistent() {
         let Some(base) = openeq_assets::loader::default_client_dir() else {
@@ -196,5 +251,11 @@ mod tests {
         assert_eq!(catalog.spells[&54].effect_id, 179);
         assert_eq!(catalog.spells[&54].travel_type, 3);
         assert_eq!(catalog.spells[&288].effect_id, 220);
+        assert_eq!(catalog.spells[&261].levitation_mode, Some(2));
+        assert_eq!(catalog.spells[&457].levitation_mode, Some(2));
+        assert!(catalog.spells[&457].water_breathing);
+        assert!(catalog.spells[&86].water_breathing);
+        assert_eq!(catalog.spells[&86].levitation_mode, None);
+        assert_eq!(catalog.spells[&288].levitation_mode, None);
     }
 }

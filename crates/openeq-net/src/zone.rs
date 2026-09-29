@@ -66,6 +66,7 @@ pub struct Environment {
     pub short_name: String,
     pub long_name: String,
     pub zone_id: u16,
+    pub instance_id: u16,
     pub fog_color: [[f32; 3]; 4],
     pub fog_start: [f32; 4],
     pub fog_end: [f32; 4],
@@ -75,6 +76,17 @@ pub struct Environment {
     pub sky: u8,
     pub zone_type: u8,
     pub safe_position: [f32; 3],
+    /// Raw zone gravity coefficient from OP_NewZone (normally 0.4).
+    pub gravity: f32,
+    pub underworld: f32,
+    pub underworld_teleport_index: u32,
+    pub lava_damage: u32,
+    pub min_lava_damage: u32,
+    /// Wire flag; EQEmu's RoF2 encoder currently always sends false.
+    pub fall_damage_disabled: bool,
+    /// Wire flag; EQEmu's RoF2 encoder currently always sends false,
+    /// even when the zone database forbids levitation.
+    pub levitation_disabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -99,6 +111,35 @@ struct WorldHandoff {
 }
 type PendingHandoff = Pin<Box<dyn Future<Output = Result<ZoneClient, ZoneError>> + Send>>;
 
+#[derive(Default)]
+struct RecoveryTransfer {
+    requested: Option<(u16, u16)>,
+}
+
+impl RecoveryTransfer {
+    fn request(&mut self, current: Option<(u16, u16)>, target: (u16, u16)) -> bool {
+        if target.0 != 0 && current == Some(target) {
+            return false; // Hover revival stays on the current zone socket.
+        }
+        if self.requested == Some(target) {
+            return false;
+        }
+        self.requested = Some(target);
+        true
+    }
+
+    fn accepted(&mut self, destination: (u16, u16), success: i32) -> bool {
+        let Some(requested) = self.requested else {
+            return false;
+        };
+        if requested.0 != 0 && requested != destination {
+            return false;
+        }
+        self.requested = None;
+        success == 1 && requested.0 == 0
+    }
+}
+
 pub struct ZoneClient {
     stream: EqStream,
     requested_spawns: bool,
@@ -110,6 +151,7 @@ pub struct ZoneClient {
     current_zone: Option<(u16, u16)>,
     world: Option<WorldHandoff>,
     handoff: Option<PendingHandoff>,
+    recovery_transfer: RecoveryTransfer,
 }
 
 impl ZoneClient {
@@ -134,6 +176,7 @@ impl ZoneClient {
             current_zone: None,
             world: None,
             handoff: None,
+            recovery_transfer: RecoveryTransfer::default(),
         })
     }
 
@@ -147,6 +190,10 @@ impl ZoneClient {
 
     pub fn is_zoning(&self) -> bool {
         self.handoff.is_some()
+    }
+
+    pub fn current_zone(&self) -> Option<(u16, u16)> {
+        self.current_zone
     }
 
     fn begin_handoff(&mut self) -> Result<(), ZoneError> {
@@ -223,6 +270,23 @@ impl ZoneClient {
                     }));
             }
             match &event {
+                GameplayEvent::Recovery(crate::death::DeathEvent::BindTransfer(destination)) => {
+                    tracing::info!(target: "openeq_net::recovery", zone_id = destination.zone_id,
+                        instance_id = destination.instance_id, "received bind transfer");
+                    if self.recovery_transfer.request(
+                        self.current_zone,
+                        (destination.zone_id, destination.instance_id),
+                    ) {
+                        self.control
+                            .push_back(gameplay::encode_command(Command::ZoneChange {
+                                character: self.character.clone(),
+                                zone_id: destination.zone_id,
+                                instance_id: destination.instance_id,
+                                position: destination.position,
+                                reason: 0,
+                            })?);
+                    }
+                }
                 GameplayEvent::ZoneChangeRequested(destination) => {
                     if self.current_zone != Some((destination.zone_id, destination.instance_id)) {
                         self.control
@@ -240,14 +304,20 @@ impl ZoneClient {
                     instance_id,
                     success,
                     ..
-                } if *success == 1 && self.current_zone != Some((*zone_id, *instance_id)) => {
-                    let transition = GameplayEvent::ZoneTransition {
-                        zone_id: *zone_id,
-                        instance_id: *instance_id,
-                    };
-                    self.begin_handoff()?;
-                    self.pending.push_back(ZoneEvent::Gameplay(event));
-                    return Ok(ZoneEvent::Gameplay(transition));
+                } => {
+                    let destination = (*zone_id, *instance_id);
+                    let forced = self.recovery_transfer.accepted(destination, *success);
+                    if *success == 1 && (forced || self.current_zone != Some(destination)) {
+                        tracing::info!(target: "openeq_net::recovery", zone_id, instance_id,
+                            forced_reentry = forced, "starting authenticated zone handoff");
+                        let transition = GameplayEvent::ZoneTransition {
+                            zone_id: *zone_id,
+                            instance_id: *instance_id,
+                        };
+                        self.begin_handoff()?;
+                        self.pending.push_back(ZoneEvent::Gameplay(event));
+                        return Ok(ZoneEvent::Gameplay(transition));
+                    }
                 }
                 _ => {}
             }
@@ -274,7 +344,7 @@ impl ZoneClient {
             }
             op if op == ZoneOp::NewZone as u16 => {
                 let env = parse_environment(data).ok_or(ZoneError::Malformed("environment"))?;
-                self.current_zone = Some((env.zone_id, u16::from_le_bytes([data[854], data[855]])));
+                self.current_zone = Some((env.zone_id, env.instance_id));
                 if !self.requested_spawns {
                     self.stream
                         .send(&AppPacket::empty(ZoneOp::ReqClientSpawn as u16))
@@ -528,7 +598,7 @@ pub fn parse_spawn(data: &[u8]) -> Option<Spawn> {
 }
 
 pub fn parse_environment(data: &[u8]) -> Option<Environment> {
-    if data.len() < 920 {
+    if data.len() < 948 {
         return None;
     }
     let f = |offset| Cursor(&data[offset..]).float();
@@ -548,6 +618,7 @@ pub fn parse_environment(data: &[u8]) -> Option<Environment> {
         short_name: Cursor(&data[64..192]).string()?,
         long_name: Cursor(&data[192..320]).string()?,
         zone_id: Cursor(&data[852..]).u16()?,
+        instance_id: Cursor(&data[854..]).u16()?,
         fog_color,
         fog_start,
         fog_end,
@@ -557,6 +628,13 @@ pub fn parse_environment(data: &[u8]) -> Option<Environment> {
         sky: data[570],
         zone_type: data[520],
         safe_position: [f(592)?, f(588)?, f(596)?],
+        gravity: f(516)?,
+        underworld: f(608)?,
+        underworld_teleport_index: Cursor(&data[868..]).u32()?,
+        lava_damage: Cursor(&data[880..]).u32()?,
+        min_lava_damage: Cursor(&data[884..]).u32()?,
+        fall_damage_disabled: data[894] != 0,
+        levitation_disabled: Cursor(&data[940..]).u32()? != 0,
     })
 }
 
@@ -594,6 +672,30 @@ impl<'a> Cursor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn forced_bind_zero_reenters_same_zone_once_but_hover_does_not() {
+        let mut recovery = RecoveryTransfer::default();
+        assert!(!recovery.accepted((202, 0), 1)); // Normal cancelled border.
+        assert!(!recovery.request(Some((202, 0)), (202, 0))); // Local hover.
+        assert!(recovery.request(Some((202, 0)), (0, 0)));
+        assert!(!recovery.request(Some((202, 0)), (0, 0))); // Duplicate packet.
+        assert!(recovery.accepted((202, 0), 1));
+        assert!(!recovery.accepted((202, 0), 1));
+        assert!(recovery.request(Some((202, 0)), (0, 0)));
+        assert!(!recovery.accepted((202, 0), -1));
+        assert!(!recovery.accepted((202, 0), 1)); // Failure consumes the intent.
+    }
+
+    #[test]
+    fn recovery_transfer_compares_instances_and_retains_unmatched_request() {
+        let mut recovery = RecoveryTransfer::default();
+        assert!(recovery.request(Some((202, 0)), (202, 9)));
+        assert!(!recovery.accepted((202, 0), 1));
+        assert_eq!(recovery.requested, Some((202, 9)));
+        assert!(!recovery.accepted((202, 9), 1)); // Ordinary changed-instance handoff.
+        assert!(recovery.requested.is_none());
+    }
 
     // Field order from EQEmu common/patches/rof2.cpp's OP_ZoneSpawns encoder.
     // Nonzero adjacent fields and a position after equipment catch accidental
@@ -714,5 +816,28 @@ mod tests {
         }
         assert!(parse_spawn(&[0; 20]).is_none());
         assert!(parse_environment(&[0; 919]).is_none());
+        assert!(parse_environment(&[0; 947]).is_none());
+    }
+
+    #[test]
+    fn zone_motion_fields_follow_the_rof2_new_zone_encoder() {
+        let mut data = vec![0; 948];
+        data[516..520].copy_from_slice(&0.4f32.to_le_bytes());
+        data[608..612].copy_from_slice(&(-3000f32).to_le_bytes());
+        data[868..872].copy_from_slice(&u32::MAX.to_le_bytes());
+        data[880..884].copy_from_slice(&50u32.to_le_bytes());
+        data[884..888].copy_from_slice(&10u32.to_le_bytes());
+        data[894] = 1;
+        data[940..944].copy_from_slice(&1u32.to_le_bytes());
+        let environment = parse_environment(&data).unwrap();
+        assert_eq!(environment.gravity, 0.4);
+        assert_eq!(environment.underworld, -3000.);
+        assert_eq!(environment.underworld_teleport_index, u32::MAX);
+        assert_eq!(environment.lava_damage, 50);
+        assert_eq!(environment.min_lava_damage, 10);
+        assert!(environment.fall_damage_disabled);
+        assert!(environment.levitation_disabled);
+        data[516..520].copy_from_slice(&f32::NAN.to_le_bytes());
+        assert!(parse_environment(&data).is_none());
     }
 }

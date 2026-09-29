@@ -138,7 +138,10 @@ fn parse_known(opcode: u16, data: &[u8]) -> Option<TradeEvent> {
         0x69e2 | 0x354c => {
             let player_id = r.u32()?;
             let action = r.u32()?;
-            (player_id != 0).then_some(())?;
+            // Client::SendLogoutPackets also runs after death has transferred
+            // the old entity ID to its corpse. That cancellation has ID zero
+            // and groupActUpdate (7); it is not a malformed trade participant.
+            (player_id != 0 || (opcode == 0x354c && action == 7)).then_some(())?;
             if opcode == 0x69e2 {
                 TradeEvent::Accepted { player_id }
             } else {
@@ -174,6 +177,25 @@ fn parse_known(opcode: u16, data: &[u8]) -> Option<TradeEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn death_logout_cancellation_allows_zero_id_only_for_group_update() {
+        let data = [0u32, 7]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            parse_packet(0x354c, &data).unwrap().unwrap(),
+            TradeEvent::Cancelled {
+                player_id: 0,
+                action: 7
+            }
+        );
+        assert!(parse_packet(0x69e2, &data).unwrap().is_err());
+        assert!(parse_packet(0x354c, &[0; 8]).unwrap().is_err());
+        for n in 0..8 {
+            assert!(parse_packet(0x354c, &data[..n]).unwrap().is_err());
+        }
+    }
     #[test]
     fn handshakes_have_exact_sizes_and_ids() {
         for (command, event) in [

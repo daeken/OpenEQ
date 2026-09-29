@@ -112,6 +112,21 @@ impl MapAction {
 }
 
 impl MapState {
+    /// Keep saved/dragged controls reachable after a window or display resize.
+    /// Retain the preferred 340px map size when growing the viewport again.
+    pub fn fit_viewport(&mut self, viewport: [u32; 2]) {
+        self.rect.width = 340_f32.min(viewport[0] as f32);
+        self.rect.height = 340_f32.min(viewport[1] as f32);
+        self.rect.x = self
+            .rect
+            .x
+            .clamp(0., (viewport[0] as f32 - self.rect.width).max(0.));
+        self.rect.y = self
+            .rect
+            .y
+            .clamp(0., (viewport[1] as f32 - self.rect.height).max(0.));
+    }
+
     pub fn canvas(&self) -> Rect {
         Rect::new(
             self.rect.x + 8.,
@@ -713,6 +728,35 @@ fn hit(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resized_saved_map_keeps_controls_reachable_and_waypoints_aligned() {
+        let map = ZoneMap::default();
+        let mut state = MapState {
+            rect: Rect::new(2400., 1400., 340., 340.),
+            ..Default::default()
+        };
+        for viewport in [[320, 240], [1280, 720]] {
+            state.fit_viewport(viewport);
+            let frame = map.frame(viewport, &state);
+            for name in ["map:close", "map:zoom_in", "map:zoom_out", "map:recenter"] {
+                let hit = frame
+                    .hit_targets
+                    .iter()
+                    .find(|hit| hit.item == name)
+                    .unwrap();
+                assert!(!hit.rect.is_empty(), "invisible {name} at {viewport:?}");
+                let point = [
+                    hit.rect.x + hit.rect.width / 2.,
+                    hit.rect.y + hit.rect.height / 2.,
+                ];
+                assert_eq!(frame.hit_test(point).unwrap().item, name);
+            }
+            let point = state.screen_at([12., 24., 0.]);
+            assert_eq!(state.world_at(point), Some([12., 24., 0.]));
+        }
+        assert_eq!(state.rect.width, 340.);
+    }
 
     #[test]
     fn parses_lines_labels_layers_and_rejects_invalid_numbers() {

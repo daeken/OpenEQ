@@ -14,6 +14,14 @@
 @group(3) @binding(2) var sky_cloud_color: texture_2d<f32>;
 @group(3) @binding(3) var sky_sampler: sampler;
 
+fn sky_lookup_uv(point: vec2<f32>, dimensions: vec2<u32>) -> vec2<f32> {
+    // Color tables address discrete vertex colors: include the endpoint texel
+    // centers without sampling across the texture border. Cloud sprites use
+    // the repeat sampler directly so their bilinear seam also wraps correctly.
+    let size = vec2<f32>(dimensions);
+    return (vec2<f32>(0.5) + clamp(point, vec2<f32>(0.0), vec2<f32>(1.0)) * (size - 1.0)) / size;
+}
+
 fn sky_color(ray: vec3<f32>) -> vec3<f32> {
     let env = globals.environment;
     if (env.sky_params.z < 0.5) {
@@ -26,14 +34,14 @@ fn sky_color(ray: vec3<f32>) -> vec3<f32> {
         let sun_horizontal = globals.sun_direction.xz / max(length(globals.sun_direction.xz), 0.001);
         let facing_sun = clamp(dot(horizontal, sun_horizontal) * 0.5 + 0.5, 0.0, 1.0);
         let lookup = vec2<f32>(facing_sun, elevation);
-        color = textureSampleLevel(sky_color_map, sky_sampler, lookup, 0.0).rgb;
+        color = textureSampleLevel(sky_color_map, sky_sampler, sky_lookup_uv(lookup, textureDimensions(sky_color_map)), 0.0).rgb;
         if (env.sky_zenith.w > 0.0 && ray.y > 0.0) {
             // A dome follows orientation but never camera translation. Cloud
             // drift uses the authored velocity, expressed in UV units/ms.
             let drift = globals.params.x * 0.001 * env.sky_params.x;
             let cloud_uv = fract(ray.xz / max(ray.y, 0.08) * env.sky_params.y + vec2<f32>(drift, drift * 0.37));
             let cloud = textureSampleLevel(sky_cloud, sky_sampler, cloud_uv, 0.0);
-            let tint = textureSampleLevel(sky_cloud_color, sky_sampler, lookup, 0.0).rgb;
+            let tint = textureSampleLevel(sky_cloud_color, sky_sampler, sky_lookup_uv(lookup, textureDimensions(sky_cloud_color)), 0.0).rgb;
             let opacity = cloud.a * env.sky_zenith.w * smoothstep(0.03, 0.2, ray.y);
             color = mix(color, cloud.rgb * tint, opacity);
         }

@@ -19,6 +19,7 @@ pub enum ActorAction {
     Stand,
     Walk,
     Run,
+    Swim,
     Sit,
     Duck,
     Dead,
@@ -594,6 +595,7 @@ fn select_pose(model: &CharacterModel, state: &ActorState, time: f32, elapsed: f
         ActorAction::Stand => 32,
         ActorAction::Walk => 17,
         ActorAction::Run => 18,
+        ActorAction::Swim => 37,
         ActorAction::Sit => 38,
         ActorAction::Duck => 24,
         ActorAction::Dead => 16,
@@ -700,6 +702,7 @@ mod tests {
         assert_eq!(animation_code(12), Some("D01"));
         assert_eq!(animation_code(16), Some("D05"));
         assert_eq!(animation_code(38), Some("P07"));
+        assert_eq!(animation_code(37), Some("P06"));
         assert_eq!(animation_code(43), Some("T05"));
         assert_eq!(animation_code(255), None);
     }

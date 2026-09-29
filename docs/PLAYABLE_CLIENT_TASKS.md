@@ -137,9 +137,10 @@ These are intentionally separate parity milestones:
 - [ ] EQG/absolute-destination border triggers and complete special door/lift behavior.
 - [x] Kelethin button/lift cycles, animated collision and passenger carrying.
 - [x] Item casting and spell scroll scribing ([milestone](TRADE_ITEM_USE_TASKS.md)).
-- [ ] Spell particles/audio and AA casting.
-- [ ] Luclin replacements and modern modular armor/hair/equipment assemblies.
-- [ ] Full swimming, water rules and invisible collision-volume behavior.
+- [x] First-pass authored spell particles ([notes](SPELL_EFFECT_RENDERING.md)).
+- [ ] Spell audio and AA casting.
+- [x] Luclin replacements and modern modular armor/hair/equipment assemblies ([notes](CHARACTER_RENDERING.md)).
+- [ ] Complete liquid formats, environmental damage and invisible collision-volume behavior.
 - [ ] Remaining XML widgets, saved window positions and movable stacking order.
 - [ ] Complete weather, ecosystem vegetation, terrain water and sky transitions.
 - [ ] Character/audio effects, combat feedback polish and broader compatibility.

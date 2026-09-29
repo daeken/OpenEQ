@@ -151,6 +151,7 @@ pub struct Renderer {
     height: u32,
     ui: Option<ui::UiRenderer>,
     environment: EnvironmentSettings,
+    view_liquid: Option<openeq_assets::liquid_regions::LiquidKind>,
     sky: SkyResources,
 }
 
@@ -650,6 +651,7 @@ impl Renderer {
             profiler: None,
             ui: None,
             environment: EnvironmentSettings::default(),
+            view_liquid: None,
             sky,
             start: std::time::Instant::now(),
             width,
@@ -667,6 +669,12 @@ impl Renderer {
             self.environment.apply_sky(assets);
             self.sky = SkyResources::new(&self.device, &self.queue, Some(assets));
         }
+    }
+
+    /// Camera-medium changes only affect uniforms, preserving the authored sky
+    /// resources and server atmosphere for the next frame above the surface.
+    pub fn set_view_liquid(&mut self, liquid: Option<openeq_assets::liquid_regions::LiquidKind>) {
+        self.view_liquid = liquid;
     }
 
     /// Replaces live spell billboards. Reuse the frame's texture Arc to retain
@@ -987,7 +995,10 @@ impl Renderer {
             ambient: Vec4::new(0.22, 0.24, 0.30, 1.0).into(),
             sun_direction: Vec4::new(sun.x, sun.y, sun.z, 1.0).into(),
             sun_color: Vec4::new(1.0, 0.96, 0.86, 1.0).into(),
-            environment: self.environment.uniform(),
+            environment: self
+                .environment
+                .with_view_liquid(self.view_liquid)
+                .uniform(),
             params: [
                 elapsed,
                 scene.light_count as f32,

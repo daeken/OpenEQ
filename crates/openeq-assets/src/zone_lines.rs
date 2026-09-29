@@ -13,9 +13,12 @@
 //! points: those packets contain destination positions, not source volumes.
 use std::{collections::BTreeMap, path::Path};
 
-use crate::{Error, Result, pfs::Archive, read::Reader, wld::WLD_MAGIC};
+use crate::{
+    Error, Result,
+    bsp_regions::{BspRegions, Node},
+    pfs::Archive,
+};
 
-const STRING_KEY: [u8; 8] = [0x95, 0x3a, 0xc5, 0x2a, 0x95, 0x7a, 0x95, 0x6a];
 // Limits the expanded representation even for a malicious, extremely deep BSP.
 const MAX_CELL_PLANES: usize = 1_000_000;
 
@@ -23,13 +26,6 @@ const MAX_CELL_PLANES: usize = 1_000_000;
 pub struct ZoneLine {
     /// Exact server zone-point number. Resolve only against this zone's list.
     pub number: u32,
-}
-
-#[derive(Clone, Debug)]
-struct Node {
-    plane: [f64; 4],
-    region: u32,
-    children: [u32; 2],
 }
 
 #[derive(Clone, Debug)]
@@ -59,105 +55,32 @@ impl ZoneLines {
 
     /// Reads bounded fragment payloads independently of visual mesh decoding.
     pub fn from_wld(data: &[u8]) -> Result<Self> {
-        let mut reader = Reader::new(data);
-        let magic = reader.u32()?;
-        if magic != WLD_MAGIC {
-            return Err(Error::BadMagic {
-                found: magic,
-                expected: WLD_MAGIC,
-            });
-        }
-        reader.u32()?; // Version does not change these two fragment layouts.
-        let fragment_count = reader.bounded_count()?;
-        reader.skip(8)?;
-        let string_size = reader.bounded_count()?;
-        reader.skip(4)?;
-        let strings = decode(reader.take(string_size)?);
-        reader.align4()?;
-        if fragment_count > reader.remaining() / 12 {
-            return Err(invalid("fragment count exceeds WLD data"));
-        }
-        let mut nodes = None;
+        let metadata = BspRegions::parse(data)?;
         let mut regions = BTreeMap::new();
-        let mut region_count = 0;
-        for _ in 0..fragment_count {
-            let size = reader.u32()? as usize;
-            let kind = reader.u32()?;
-            let mut fragment = Reader::new(reader.take(size)?);
-            let name_ref = fragment.i32()?;
-            match kind {
-                0x21 => {
-                    if nodes.is_some() {
-                        return Err(invalid("multiple BSP trees in zone"));
-                    }
-                    let count = fragment.bounded_count()?;
-                    if count > fragment.remaining() / 28 {
-                        return Err(invalid("BSP node count exceeds fragment"));
-                    }
-                    let mut tree = Vec::with_capacity(count);
-                    for _ in 0..count {
-                        let normal = fragment.vec3()?;
-                        let distance = fragment.f32()?;
-                        let plane = [normal[0], normal[1], normal[2], distance].map(f64::from);
-                        if !plane.iter().all(|v| v.is_finite()) {
-                            return Err(invalid("non-finite BSP plane"));
-                        }
-                        tree.push(Node {
-                            plane,
-                            region: fragment.u32()?,
-                            children: [fragment.u32()?, fragment.u32()?],
-                        });
-                    }
-                    nodes = Some(tree);
-                }
-                0x22 => region_count += 1,
-                0x29 => {
-                    fragment.u32()?; // Flags.
-                    let count = fragment.bounded_count()?;
-                    if count > fragment.remaining().saturating_sub(4) / 4 {
-                        return Err(invalid("region count exceeds fragment"));
-                    }
-                    let mut indices = Vec::with_capacity(count);
-                    for _ in 0..count {
-                        indices.push(fragment.u32()?);
-                    }
-                    let length = fragment.bounded_count()?;
-                    let declaration = if length == 0 {
-                        if name_ref > 0 {
-                            return Err(invalid("region name is not a string reference"));
-                        }
-                        let start = name_ref.unsigned_abs() as usize;
-                        strings
-                            .get(start..)
-                            .ok_or_else(|| invalid("region name outside string table"))?
-                            .to_vec()
-                    } else {
-                        decode(fragment.take(length)?)
-                    };
-                    if let Some(line) = reference_line(&declaration) {
-                        for region in indices {
-                            let region = region
-                                .checked_add(1)
-                                .ok_or_else(|| invalid("region index overflow"))?;
-                            if let Some(previous) = regions.insert(region, line)
-                                && previous != line
-                            {
-                                return Err(invalid("conflicting zone lines in one BSP region"));
-                            }
-                        }
+        for declaration in &metadata.declarations {
+            if let Some(line) = reference_line(&declaration.declaration) {
+                for &region in &declaration.indices {
+                    let region = region
+                        .checked_add(1)
+                        .ok_or_else(|| invalid("region index overflow"))?;
+                    if let Some(previous) = regions.insert(region, line)
+                        && previous != line
+                    {
+                        return Err(invalid("conflicting zone lines in one BSP region"));
                     }
                 }
-                _ => {}
             }
         }
         if regions.is_empty() {
             return Ok(Self::default());
         }
-        if regions.keys().any(|index| *index > region_count) {
+        if regions.keys().any(|index| *index > metadata.region_count) {
             return Err(invalid("zone line references a missing BSP region"));
         }
         Self::compile(
-            &nodes.ok_or_else(|| invalid("zone-line regions have no BSP tree"))?,
+            &metadata
+                .nodes
+                .ok_or_else(|| invalid("zone-line regions have no BSP tree"))?,
             &regions,
         )
     }
@@ -279,14 +202,6 @@ impl ZoneLines {
     }
 }
 
-fn decode(bytes: &[u8]) -> Vec<u8> {
-    bytes
-        .iter()
-        .enumerate()
-        .map(|(i, byte)| byte ^ STRING_KEY[i % STRING_KEY.len()])
-        .collect()
-}
-
 fn reference_line(declaration: &[u8]) -> Option<ZoneLine> {
     let text = declaration.split(|byte| *byte == 0).next()?;
     let prefix = text.get(..5)?;
@@ -318,6 +233,7 @@ fn invalid(detail: &str) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{bsp_regions::decode, wld::WLD_MAGIC};
 
     fn fixture(payload_name: bool) -> Vec<u8> {
         let declaration = b"DRNTP00255000004_ZONE\0";

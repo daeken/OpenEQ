@@ -18,11 +18,23 @@ pub enum Message {
     Event(Box<ZoneEvent>),
     Error(String),
     CommandSent(Command),
-    CommandRejected { command: Command, notice: String },
+    CommandRejected {
+        command: Command,
+        notice: String,
+    },
+    RecoverySent(crate::death::RecoveryToken),
+    RecoveryRejected {
+        token: crate::death::RecoveryToken,
+        notice: String,
+    },
 }
 pub(crate) enum NetworkCommand {
     Target(u32),
     Gameplay(Command),
+    Recovery {
+        request: crate::death::RecoveryRequest,
+        motion_revision: u64,
+    },
 }
 // EQEmu sends NPC walking corrections every five seconds. Predict only a little
 // beyond that interval, and converge small network corrections without a jump.
@@ -184,6 +196,91 @@ struct PendingZoneRequest {
     heading: f32,
 }
 
+#[derive(Clone, Copy)]
+struct MovementUpdate {
+    id: u32,
+    revision: u64,
+    position: Position,
+}
+
+/// Shared by foreground and worker: a camera pose belongs to one authoritative
+/// player/arrival revision. A queued old pose cannot move a new spawn or corpse.
+#[derive(Default)]
+struct MovementAuthority {
+    own_id: Option<u32>,
+    corpse_id: Option<u32>,
+    revision: u64,
+    suspended: bool,
+    awaiting_spawn: bool,
+}
+
+impl MovementAuthority {
+    fn suspend(&mut self) {
+        if self.corpse_id.is_none() {
+            self.corpse_id = self.own_id;
+        }
+        self.own_id = None;
+        self.revision = self.revision.wrapping_add(1);
+        self.suspended = true;
+        self.awaiting_spawn = true;
+    }
+
+    fn gameplay(&mut self, event: &GameplayEvent, current_zone: Option<(u16, u16)>) {
+        match event {
+            GameplayEvent::Death(death) if self.own_id == Some(death.id) => {
+                self.corpse_id = self.own_id.take();
+                self.suspend();
+            }
+            GameplayEvent::Recovery(
+                openeq_net::death::DeathEvent::RespawnWindow(_)
+                | openeq_net::death::DeathEvent::BindTransfer(_),
+            ) => {
+                self.suspend();
+            }
+            GameplayEvent::ZoneTransition { .. } => {
+                self.own_id = None;
+                self.corpse_id = None; // Entity IDs may be reused in another zone.
+                self.suspend();
+            }
+            GameplayEvent::ZoneChangeRequested(destination) => {
+                self.revision = self.revision.wrapping_add(1);
+                self.suspended = self.awaiting_spawn
+                    || current_zone != Some((destination.zone_id, destination.instance_id));
+            }
+            GameplayEvent::ZoneChangeResult { success: 1, .. } => {
+                // A cancelled boundary can rewind the player in the same zone.
+                self.revision = self.revision.wrapping_add(1);
+            }
+            GameplayEvent::Recovery(openeq_net::death::DeathEvent::ResurrectionOffer(_)) => {
+                // A queued reply to an older offer must fail even if the UI
+                // has not yet consumed the replacement offer from the worker.
+                self.revision = self.revision.wrapping_add(1);
+            }
+            _ => {}
+        }
+    }
+
+    fn spawn(&mut self, spawn: &Spawn, character: &str) -> bool {
+        if !is_own_spawn(spawn, character)
+            || self.corpse_id == Some(spawn.id)
+            || (self.suspended && !self.awaiting_spawn && self.own_id == Some(spawn.id))
+        {
+            return false;
+        }
+        self.own_id = Some(spawn.id);
+        self.revision = self.revision.wrapping_add(1);
+        self.suspended = false;
+        self.awaiting_spawn = false;
+        true
+    }
+
+    fn position(&self, update: Option<MovementUpdate>) -> Option<(u32, Position)> {
+        let update = update?;
+        (!self.suspended && self.own_id == Some(update.id) && self.revision == update.revision)
+            .then_some((update.id, update.position))
+    }
+}
+
 pub struct LiveWorld {
     pub entities: BTreeMap<u32, Entity>,
     pub environment: Option<Environment>,
@@ -207,11 +304,53 @@ pub struct LiveWorld {
     door_return_deadlines: BTreeMap<u8, Instant>,
     pending_destination: Option<ZoneDestination>,
     rx: Mutex<mpsc::Receiver<Message>>,
-    movement: tokio::sync::watch::Sender<Option<Position>>,
+    movement: tokio::sync::watch::Sender<Option<MovementUpdate>>,
+    movement_authority: MovementAuthority,
+    recovery_request: Option<crate::death::RecoveryRequest>,
     commands: tokio::sync::mpsc::UnboundedSender<NetworkCommand>,
 }
 
+fn is_own_spawn(spawn: &Spawn, character: &str) -> bool {
+    !spawn.npc && !spawn.is_corpse && spawn.name.eq_ignore_ascii_case(character)
+}
+
+fn command_while_dead(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Chat { .. }
+            | Command::Death(_)
+            | Command::AutoAttack(false)
+            | Command::InterruptSpell
+            | Command::MerchantClose
+            | Command::EndLoot(_)
+            | Command::Trade(openeq_net::trade::TradeCommand::Cancel { .. })
+    )
+}
+
 impl LiveWorld {
+    pub fn movement_allowed(&self) -> bool {
+        self.ready
+            && self.own_id.is_some()
+            && self.error.is_none()
+            && !self.zone_request_pending()
+            && !self.game.recovery.blocks_movement()
+            && !self.movement_authority.suspended
+    }
+
+    fn current_zone(&self) -> Option<(u16, u16)> {
+        self.environment
+            .as_ref()
+            .map(|zone| (zone.zone_id, zone.instance_id))
+    }
+    pub fn player_gravity(&self) -> crate::movement_rules::PlayerGravity {
+        let mode = self
+            .own_id
+            .and_then(|id| self.entities.get(&id))
+            .map_or(0, |entity| entity.spawn.fly_mode);
+        crate::movement_rules::PlayerGravity::from_wire_mode(mode)
+            .with_levitation_buff(self.game.levitation_mode())
+    }
+
     pub fn start(config: ConnectionConfig) -> Self {
         let (tx, rx) = mpsc::channel();
         let (movement, mut updates) = tokio::sync::watch::channel(None);
@@ -223,27 +362,55 @@ impl LiveWorld {
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("network runtime");
             let result = rt.block_on(async {
                 let mut zone = config.connect().await?;
-                let mut own = None;
-                let mut movement_ready = false;
+                let mut motion = MovementAuthority::default();
                 let mut heartbeat = tokio::time::interval(std::time::Duration::from_millis(100));
                 loop {
                     tokio::select! {
                         Some(request) = requests.recv() => {
                             match request {
-                                NetworkCommand::Target(id) => { if !zone.is_zoning() { zone.target(id).await?; } },
+                                NetworkCommand::Recovery { request, motion_revision } => {
+                                    if motion_revision != motion.revision {
+                                        let _ = tx.send(Message::RecoveryRejected { token: request.token, notice: "That recovery choice is no longer current.".into() });
+                                        continue;
+                                    }
+                                    let accepting = matches!(&request.command, openeq_net::death::DeathCommand::AnswerResurrection { accept: true, .. });
+                                    match zone.command(Command::Death(request.command)).await {
+                                        Ok(()) => {
+                                            if accepting { motion.suspended = true; }
+                                            let _ = tx.send(Message::RecoverySent(request.token));
+                                        }
+                                        Err(openeq_net::zone::ZoneError::Malformed(what)) => {
+                                            let _ = tx.send(Message::RecoveryRejected { token: request.token, notice: format!("Invalid {what}; recovery was not sent.") });
+                                        }
+                                        Err(openeq_net::zone::ZoneError::Zoning) => {
+                                            let _ = tx.send(Message::RecoveryRejected { token: request.token, notice: "Zone travel has already started.".into() });
+                                        }
+                                        Err(error) => return Err(error.into()),
+                                    }
+                                }
+                                NetworkCommand::Target(id) => { if !zone.is_zoning() && !motion.suspended { zone.target(id).await?; } },
                                 NetworkCommand::Gameplay(command) => {
+                                    if motion.suspended && !command_while_dead(&command) {
+                                        let _ = tx.send(Message::CommandRejected { command, notice: "Wait for your character to recover before doing that.".into() });
+                                        continue;
+                                    }
                                     let mut wire_command = command.clone();
                                     if let Command::ZoneChange { position, .. } = &mut wire_command {
                                         *position = coordinates::scene_point_to_server(*position);
                                         // The server validates borders against its last player
                                         // position, not the destination in the zone request.
-                                        let current = *updates.borrow();
-                                        if !zone.is_zoning() && let (Some(id), Some(current)) = (own, current) {
+                                        let current = motion.position(*updates.borrow());
+                                        if !zone.is_zoning() && let Some((id, current)) = current {
                                             zone.send_position(id, coordinates::scene_to_server(current)).await?;
                                         }
                                     }
                                     match zone.command(wire_command).await {
-                                        Ok(()) => { let _ = tx.send(Message::CommandSent(command)); }
+                                        Ok(()) => {
+                                            if matches!(&command, Command::Death(openeq_net::death::DeathCommand::AnswerResurrection { accept: true, .. })) {
+                                                motion.suspended = true;
+                                            }
+                                            let _ = tx.send(Message::CommandSent(command));
+                                        }
                                         Err(openeq_net::zone::ZoneError::Malformed(what)) => {
                                             let _ = tx.send(Message::CommandRejected { command, notice: format!("Invalid {what}; action was not sent.") });
                                         }
@@ -257,19 +424,17 @@ impl LiveWorld {
                         },
                         changed = updates.changed() => {
                             if changed.is_err() { zone.logout().await?; break; }
-                            movement_ready = own.is_some() && !zone.is_zoning();
                         },
                         _ = heartbeat.tick() => {
-                            let position = *updates.borrow();
-                            if movement_ready && let (Some(id), Some(position)) = (own, position) { zone.send_position(id, coordinates::scene_to_server(position)).await?; }
+                            let position = motion.position(*updates.borrow());
+                            if let Some((id, position)) = position { zone.send_position(id, coordinates::scene_to_server(position)).await?; }
                         }
                         event = zone.next_event() => {
                             let event = event?;
-                            if matches!(&event, ZoneEvent::Gameplay(GameplayEvent::ZoneTransition { .. })) {
-                                own = None; movement_ready = false;
+                            if let ZoneEvent::Gameplay(event) = &event {
+                                motion.gameplay(event, zone.current_zone());
                             }
-                            if let ZoneEvent::Spawn(spawn) = &event
-                                && spawn.name.eq_ignore_ascii_case(&config.character) { own = Some(spawn.id); }
+                            if let ZoneEvent::Spawn(spawn) = &event { motion.spawn(spawn, &config.character); }
                             if tx.send(Message::Event(Box::new(event))).is_err() { zone.logout().await?; break; }
                         }
                     }
@@ -301,6 +466,8 @@ impl LiveWorld {
             pending_destination: None,
             rx: Mutex::new(rx),
             movement,
+            movement_authority: MovementAuthority::default(),
+            recovery_request: None,
             commands,
         }
     }
@@ -314,6 +481,9 @@ impl LiveWorld {
                     tracing::error!(%error, "live connection failed");
                     self.error = Some(error);
                     self.ready = false;
+                    self.game.recovery.disconnect();
+                    self.recovery_request = None;
+                    self.movement.send_replace(None);
                     self.zone_request = None;
                     self.combat_feedback.clear();
                     self.spell_effects.clear();
@@ -332,21 +502,60 @@ impl LiveWorld {
                     self.command_rejected(command, notice)
                 }
                 Message::CommandSent(command) => self.command_sent(command),
+                Message::RecoverySent(token) => {
+                    self.game.recovery.request_sent(token);
+                    if self
+                        .recovery_request
+                        .as_ref()
+                        .is_some_and(|request| request.token == token)
+                    {
+                        self.recovery_request = None;
+                    }
+                }
+                Message::RecoveryRejected { token, notice } => {
+                    if self.game.recovery.request_pending(token) {
+                        self.game.recovery.request_failed(token);
+                        if !self.game.recovery.blocks_movement()
+                            && !self.movement_authority.awaiting_spawn
+                        {
+                            self.movement_authority.suspended = false;
+                        }
+                        self.game.error(notice);
+                    }
+                    if self
+                        .recovery_request
+                        .as_ref()
+                        .is_some_and(|request| request.token == token)
+                    {
+                        self.recovery_request = None;
+                    }
+                }
                 Message::Event(event) => {
                     match *event {
                         ZoneEvent::Spawn(mut spawn) => {
                             spawn.position = coordinates::server_to_scene(spawn.position);
-                            if spawn.name.eq_ignore_ascii_case(&self.character) {
+                            if self.movement_authority.corpse_id == Some(spawn.id)
+                                && is_own_spawn(&spawn, &self.character)
+                            {
+                                continue;
+                            }
+                            if self.movement_authority.spawn(&spawn, &self.character) {
+                                let recovering = self.game.recovery.blocks_movement();
+                                self.game.recovery.own_spawn(self.zone_generation, spawn.id);
+                                if recovering {
+                                    self.zone_request = None;
+                                }
                                 self.own_id = Some(spawn.id);
+                                self.movement.send_replace(None);
                                 self.initial_position = Some(spawn.position);
-                                if let Some(profile) = &self.game.profile {
+                                if !self.game.buffs.is_empty() {
                                     self.spell_effects.event(
                                         &GameplayEvent::Buffs {
                                             id: spawn.id,
                                             all: true,
                                             tick_timer: 0,
                                             kind: 0,
-                                            buffs: profile.buffs.clone(),
+                                            buffs: self.game.buffs.values().cloned().collect(),
                                         },
                                         &self.game.spell_catalog,
                                         self.own_id,
@@ -443,11 +652,7 @@ impl LiveWorld {
     /// Use only a server-advertised destination for an authored boundary number.
     /// The server retains control over access checks and the final arrival pose.
     pub fn cross_zone_line(&mut self, number: u32, camera: &openeq_render::Camera) -> bool {
-        if !self.ready
-            || self.error.is_some()
-            || self.zone_request.is_some()
-            || self.own_id.is_none()
-        {
+        if !self.movement_allowed() || self.own_id.is_none() {
             return false;
         }
         let Some(point) = self.zone_points.get(&number).cloned() else {
@@ -500,7 +705,7 @@ impl LiveWorld {
 
     pub fn player_position(&self) -> Option<[f32; 3]> {
         self.initial_position
-            .or(*self.movement.borrow())
+            .or(self.movement.borrow().map(|update| update.position))
             .or_else(|| {
                 self.own_id
                     .and_then(|id| self.entities.get(&id))
@@ -510,7 +715,7 @@ impl LiveWorld {
     }
 
     pub fn service_available(&self, id: u32, class: u8) -> bool {
-        self.ready
+        self.movement_allowed()
             && self.error.is_none()
             && self.entities.get(&id).is_some_and(|entity| {
                 entity.spawn.npc
@@ -522,9 +727,56 @@ impl LiveWorld {
             })
     }
 
+    pub fn recovery_action(&mut self, action: crate::death::RecoveryAction) -> bool {
+        if !self.ready || self.error.is_some() {
+            self.game.error("You are not connected to the zone.");
+            return false;
+        }
+        let request = match self.game.recovery.act(action, Instant::now()) {
+            Ok(Some(request)) => request,
+            Ok(None) => return true,
+            Err(error) => {
+                self.game.error(error.to_string());
+                return false;
+            }
+        };
+        if !self.game.recovery.request_pending(request.token) {
+            return false;
+        }
+        if self
+            .commands
+            .send(NetworkCommand::Recovery {
+                request: request.clone(),
+                motion_revision: self.movement_authority.revision,
+            })
+            .is_err()
+        {
+            self.game.recovery.request_failed(request.token);
+            self.game
+                .error("The connection closed before recovery was sent.");
+            return false;
+        }
+        self.recovery_request = Some(request);
+        if self.game.recovery.blocks_movement() {
+            self.movement_authority.suspended = true;
+            self.movement.send_replace(None);
+        }
+        true
+    }
+
     pub fn command(&mut self, command: Command) -> bool {
         if !self.ready || self.error.is_some() {
             self.game.error("You are not connected to the zone.");
+            return false;
+        }
+        if matches!(command, Command::Death(_)) {
+            self.game
+                .error("Use the current recovery choices to respond.");
+            return false;
+        }
+        if !self.movement_allowed() && !command_while_dead(&command) {
+            self.game
+                .error("Wait for your character to recover before doing that.");
             return false;
         }
         if !self.trade_command_allowed(&command) || !self.item_use_command_allowed(&command) {
@@ -797,6 +1049,8 @@ impl LiveWorld {
     }
 
     pub(crate) fn gameplay_event(&mut self, mut event: GameplayEvent) {
+        self.movement_authority
+            .gameplay(&event, self.current_zone());
         self.trade_event(&event);
         self.item_use_event(&event);
         if let GameplayEvent::Damage(damage) = &event {
@@ -847,6 +1101,8 @@ impl LiveWorld {
         match &event {
             GameplayEvent::ZoneTransition { zone_id, .. } => {
                 self.zone_generation = self.zone_generation.wrapping_add(1);
+                self.game.recovery.begin_zone(self.zone_generation);
+                self.recovery_request = None;
                 self.ready = false;
                 self.environment = None;
                 self.zone_points.clear();
@@ -881,11 +1137,10 @@ impl LiveWorld {
                 self.game.notice(format!("Traveling to zone {zone_id}…"));
             }
             GameplayEvent::ZoneChangeRequested(destination) => {
-                if self
-                    .environment
-                    .as_ref()
-                    .is_some_and(|environment| environment.zone_id == destination.zone_id)
-                {
+                if self.environment.as_ref().is_some_and(|environment| {
+                    (environment.zone_id, environment.instance_id)
+                        == (destination.zone_id, destination.instance_id)
+                }) {
                     self.initial_position = Some(Position {
                         x: destination.position[0],
                         y: destination.position[1],
@@ -893,21 +1148,24 @@ impl LiveWorld {
                         heading: destination.heading,
                         ..Default::default()
                     });
+                    self.game.recovery.relocated(self.zone_generation);
+                    self.movement.send_replace(None);
                 }
                 self.pending_destination = Some(destination.clone());
             }
             GameplayEvent::ZoneChangeResult {
                 zone_id,
+                instance_id,
                 position,
                 success,
                 ..
             } => {
                 let request = self.zone_request.take();
                 if *success == 1
-                    && self
-                        .environment
-                        .as_ref()
-                        .is_some_and(|env| env.zone_id == *zone_id)
+                    && !self.game.recovery.blocks_movement()
+                    && self.environment.as_ref().is_some_and(|env| {
+                        (env.zone_id, env.instance_id) == (*zone_id, *instance_id)
+                    })
                 {
                     self.initial_position = Some(Position {
                         x: position[0],
@@ -928,8 +1186,18 @@ impl LiveWorld {
                         self.game.notice("Zone travel was cancelled. Back away from the exit before trying again.");
                     }
                 } else if *success != 1 {
-                    self.game
-                        .error(format!("Zone travel was rejected ({success})."));
+                    if self.game.recovery.blocks_movement() {
+                        let error = format!(
+                            "Recovery transfer was rejected ({success}). Please reconnect."
+                        );
+                        self.ready = false;
+                        self.error = Some(error.clone());
+                        self.movement.send_replace(None);
+                        self.game.error(error);
+                    } else {
+                        self.game
+                            .error(format!("Zone travel was rejected ({success})."));
+                    }
                 }
             }
             GameplayEvent::ZonePoints(points) => {
@@ -1069,12 +1337,25 @@ impl LiveWorld {
             }
             GameplayEvent::Death(death) => {
                 if Some(death.id) == self.own_id {
+                    self.game.recovery.own_death(self.zone_generation, death.id);
+                    self.movement.send_replace(None);
+                    self.initial_position = None;
+                    self.zone_request = None;
+                    self.pending_destination = None;
                     self.item_use_reset();
                     if self.game.trade.engaged() {
                         self.command(Command::Trade(openeq_net::trade::TradeCommand::Cancel {
                             player_id: death.id,
                         }));
                     }
+                    self.game.attack = false;
+                    self.game.casting = None;
+                    self.game.cast_pending_until = None;
+                    self.game.loot = None;
+                    self.game.commerce.close_services();
+                    self.game.trade = Default::default();
+                    self.game.inventory.clear_trade();
+                    self.game.inventory_command_pending = false;
                 } else {
                     self.trade_partner_gone(death.id);
                 }
@@ -1091,6 +1372,38 @@ impl LiveWorld {
                     entity.spawn.position.animation = 0;
                 }
             }
+            GameplayEvent::Recovery(event) => {
+                self.game.recovery.event(
+                    self.zone_generation,
+                    &self.character,
+                    self.current_zone(),
+                    event,
+                    Instant::now(),
+                );
+                if matches!(
+                    event,
+                    openeq_net::death::DeathEvent::BindTransfer(_)
+                        | openeq_net::death::DeathEvent::RespawnWindow(_)
+                ) {
+                    self.movement.send_replace(None);
+                    self.initial_position = None;
+                    self.game.attack = false;
+                    self.game.casting = None;
+                    self.game.cast_pending_until = None;
+                    self.item_use_reset();
+                    self.game.loot = None;
+                    self.game.commerce.close_services();
+                    self.game.trade = Default::default();
+                    self.game.inventory.clear_trade();
+                    self.game.inventory_command_pending = false;
+                    if let openeq_net::death::DeathEvent::BindTransfer(bind) = event {
+                        self.zone_request = Some(PendingZoneRequest {
+                            started: Instant::now(),
+                            heading: coordinates::server_heading_to_scene(bind.heading),
+                        });
+                    }
+                }
+            }
             _ => {}
         }
         let entities = &self.entities;
@@ -1102,16 +1415,24 @@ impl LiveWorld {
     }
 
     pub fn camera_position(&self, camera: &openeq_render::Camera, moving: bool) {
-        if !self.ready || self.zone_request_pending() {
+        if !self.movement_allowed() {
             return;
         }
-        self.movement.send_replace(Some(Position {
-            x: camera.position[0],
-            y: camera.position[1],
-            z: camera.position[2] - 3.,
-            heading: camera.yaw.rem_euclid(std::f32::consts::TAU) * 512. / std::f32::consts::TAU,
-            animation: if moving { 12 } else { 0 },
-            ..Position::default()
+        let Some(id) = self.own_id else {
+            return;
+        };
+        self.movement.send_replace(Some(MovementUpdate {
+            id,
+            revision: self.movement_authority.revision,
+            position: Position {
+                x: camera.position[0],
+                y: camera.position[1],
+                z: camera.position[2] - 3.,
+                heading: camera.yaw.rem_euclid(std::f32::consts::TAU) * 512.
+                    / std::f32::consts::TAU,
+                animation: if moving { 12 } else { 0 },
+                ..Position::default()
+            },
         }));
     }
 
@@ -1192,12 +1513,12 @@ impl LiveWorld {
         self.entities
             .values()
             .filter(|e| {
-                (Some(e.spawn.id) != self.own_id || player.is_some())
+                (e.spawn.is_corpse || Some(e.spawn.id) != self.own_id || player.is_some())
                     && e.spawn.race != 127
                     && e.spawn.body_type < 66
             })
             .filter_map(|e| {
-                let own = (Some(e.spawn.id) == self.own_id)
+                let own = (!e.spawn.is_corpse && Some(e.spawn.id) == self.own_id)
                     .then_some(player)
                     .flatten();
                 let p = own.map_or_else(
@@ -1319,6 +1640,11 @@ pub(crate) mod tests {
             pending_destination: None,
             rx: Mutex::new(events),
             movement,
+            movement_authority: MovementAuthority {
+                own_id: Some(1),
+                ..Default::default()
+            },
+            recovery_request: None,
             commands,
         };
         live.game.currency = Currency {
@@ -1379,6 +1705,7 @@ pub(crate) mod tests {
             short_name: "gfaydark".into(),
             long_name: "Greater Faydark".into(),
             zone_id: 54,
+            instance_id: 0,
             fog_color: [[0.; 3]; 4],
             fog_start: [0.; 4],
             fog_end: [1000.; 4],
@@ -1388,6 +1715,13 @@ pub(crate) mod tests {
             sky: 1,
             zone_type: 1,
             safe_position: [0.; 3],
+            gravity: 0.4,
+            underworld: -3000.,
+            underworld_teleport_index: 0,
+            lava_damage: 50,
+            min_lava_damage: 10,
+            fall_damage_disabled: false,
+            levitation_disabled: false,
         }
     }
 
@@ -1428,8 +1762,8 @@ pub(crate) mod tests {
         assert_eq!(zone_id, 58);
         assert_eq!(position, [2616., -55., 19.]);
         assert_eq!(reason, 0);
-        assert_eq!(live.movement.borrow().unwrap().x, 2616.);
-        assert_eq!(live.movement.borrow().unwrap().animation, 0);
+        assert_eq!(live.movement.borrow().unwrap().position.x, 2616.);
+        assert_eq!(live.movement.borrow().unwrap().position.animation, 0);
         assert!(wire.try_recv().is_err());
         live.gameplay_event(GameplayEvent::ZoneChangeResult {
             zone_id: 54,
@@ -1520,6 +1854,7 @@ pub(crate) mod tests {
             short_name: "gfaydark".into(),
             long_name: "Greater Faydark".into(),
             zone_id: 54,
+            instance_id: 0,
             fog_color: [[0.; 3]; 4],
             fog_start: [0.; 4],
             fog_end: [1000.; 4],
@@ -1529,6 +1864,13 @@ pub(crate) mod tests {
             sky: 1,
             zone_type: 1,
             safe_position: [0.; 3],
+            gravity: 0.4,
+            underworld: -3000.,
+            underworld_teleport_index: 0,
+            lava_damage: 50,
+            min_lava_damage: 10,
+            fall_damage_disabled: false,
+            levitation_disabled: false,
         };
         live.environment = Some(environment.clone());
         live.camera_position(&openeq_render::Camera::default(), true);
@@ -1926,6 +2268,7 @@ pub(crate) mod tests {
         };
         let mut spawn = npc(server, Instant::now()).spawn;
         spawn.name = "Player".into();
+        spawn.npc = false;
         events
             .send(Message::Event(Box::new(ZoneEvent::Spawn(spawn))))
             .unwrap();
@@ -1935,6 +2278,7 @@ pub(crate) mod tests {
                     short_name: "poknowledge".into(),
                     long_name: "Plane of Knowledge".into(),
                     zone_id: 202,
+                    instance_id: 0,
                     fog_color: [[0.; 3]; 4],
                     fog_start: [0.; 4],
                     fog_end: [1000.; 4],
@@ -1944,6 +2288,13 @@ pub(crate) mod tests {
                     sky: 1,
                     zone_type: 0,
                     safe_position: [944., -305., -90.],
+                    gravity: 0.4,
+                    underworld: -3000.,
+                    underworld_teleport_index: 0,
+                    lava_damage: 50,
+                    min_lava_damage: 10,
+                    fall_damage_disabled: false,
+                    levitation_disabled: false,
                 },
             ))))
             .unwrap();
@@ -2219,6 +2570,57 @@ pub(crate) mod tests {
         assert!(!live.game.commerce.merchant_closing);
     }
 
+    #[test]
+    fn same_name_corpse_does_not_replace_new_player_identity() {
+        let (mut live, _) = command_world(1, 10.);
+        let (events, rx) = mpsc::channel();
+        live.rx = Mutex::new(rx);
+        live.own_id = None;
+        live.initial_position = None;
+        let mut corpse = npc(Position::default(), Instant::now()).spawn;
+        corpse.id = 41;
+        corpse.name = "Player".into();
+        corpse.is_corpse = true;
+        events
+            .send(Message::Event(Box::new(ZoneEvent::Spawn(corpse.clone()))))
+            .unwrap();
+        live.poll();
+        assert_eq!(live.own_id, None);
+        assert!(live.initial_position.is_none());
+
+        let mut player = corpse.clone();
+        player.id = 42;
+        player.npc = false;
+        player.is_corpse = false;
+        player.name = "pLaYeR".into();
+        player.position.x = 123.;
+        player.position.y = -456.;
+        assert!(is_own_spawn(&player, "Player"));
+        events
+            .send(Message::Event(Box::new(ZoneEvent::Spawn(player))))
+            .unwrap();
+        live.poll();
+        assert_eq!(live.own_id, Some(42));
+        let position = live.initial_position.take().unwrap();
+        assert_eq!([position.x, position.y], [-456., 123.]);
+
+        // A later corpse refresh must not reclaim the network movement ID or
+        // teleport the camera back to the death location.
+        events
+            .send(Message::Event(Box::new(ZoneEvent::Spawn(corpse.clone()))))
+            .unwrap();
+        live.poll();
+        assert_eq!(live.own_id, Some(42));
+        assert!(live.initial_position.is_none());
+        assert!(live.entities[&41].spawn.is_corpse);
+        assert!(!live.entities[&42].spawn.is_corpse);
+        corpse.is_corpse = false;
+        assert!(
+            !is_own_spawn(&corpse, "Player"),
+            "same-name NPC is not our character"
+        );
+    }
+
     fn npc(position: Position, now: Instant) -> Entity {
         Entity::new(
             Spawn {
@@ -2455,6 +2857,363 @@ pub(crate) mod tests {
         }
     }
 
+    fn player_death(id: u32) -> GameplayEvent {
+        GameplayEvent::Death(openeq_net::gameplay::Death {
+            id,
+            killer_id: 99,
+            corpse_id: id,
+            skill: 0,
+            spell_id: u32::MAX,
+            damage: 100,
+        })
+    }
+
+    fn bind_transfer(zone_id: u16, instance_id: u16) -> GameplayEvent {
+        GameplayEvent::Recovery(openeq_net::death::DeathEvent::BindTransfer(
+            openeq_net::death::BindTransfer {
+                zone_id,
+                instance_id,
+                position: [1455., 15., -131.],
+                heading: 64.,
+                label: "Bind Location".into(),
+                save_items: 1,
+                resources: [0; 3],
+            },
+        ))
+    }
+
+    #[test]
+    fn worker_death_invalidates_populated_and_late_camera_poses_until_a_new_owner() {
+        let mut authority = MovementAuthority::default();
+        let mut player = npc(Position::default(), Instant::now()).spawn;
+        player.npc = false;
+        player.name = "Player".into();
+        player.id = 10;
+        assert!(authority.spawn(&player, "Player"));
+        let old = MovementUpdate {
+            id: 10,
+            revision: authority.revision,
+            position: Position::default(),
+        };
+        assert!(authority.position(Some(old)).is_some());
+        authority.gameplay(&player_death(20), Some((202, 0)));
+        assert!(authority.position(Some(old)).is_some()); // Unrelated NPC.
+        authority.gameplay(&player_death(10), Some((202, 0)));
+        let death_revision = authority.revision;
+        assert!(authority.position(Some(old)).is_none());
+        authority.gameplay(&player_death(10), Some((202, 0)));
+        assert_eq!(authority.revision, death_revision);
+        player.is_corpse = true;
+        assert!(!authority.spawn(&player, "Player"));
+        player.is_corpse = false;
+        assert!(!authority.spawn(&player, "Player")); // Stale old living spawn.
+        authority.gameplay(&bind_transfer(202, 0), Some((202, 0)));
+        player.id = 11;
+        assert!(authority.spawn(&player, "Player"));
+        assert!(authority.position(Some(old)).is_none());
+        let wrong_revision = MovementUpdate { id: 11, ..old };
+        assert!(authority.position(Some(wrong_revision)).is_none());
+        let fresh = MovementUpdate {
+            id: 11,
+            revision: authority.revision,
+            ..old
+        };
+        assert!(authority.position(Some(fresh)).is_some());
+        authority.gameplay(
+            &GameplayEvent::ZoneTransition {
+                zone_id: 202,
+                instance_id: 1,
+            },
+            Some((202, 0)),
+        );
+        assert!(authority.position(Some(fresh)).is_none());
+        player.id = 10; // IDs are scoped to a zone, and can be reused on re-entry.
+        assert!(authority.spawn(&player, "Player"));
+    }
+
+    #[test]
+    fn local_hover_revival_waits_for_new_living_spawn_and_preserves_corpse_and_items() {
+        let (mut live, mut commands) = command_world(1, 10.);
+        let (tx, rx) = mpsc::channel();
+        live.rx = Mutex::new(rx);
+        live.environment = Some(zone_test_environment());
+        let mut player = npc(Position::default(), Instant::now()).spawn;
+        player.npc = false;
+        player.name = "Player".into();
+        player.id = 1;
+        live.entities
+            .insert(1, Entity::new(player.clone(), Instant::now()));
+        live.game
+            .inventory
+            .insert(carried_item(InventorySlot::possessions(23)));
+        live.game.hp.current = Some(123);
+        live.camera_position(&openeq_render::Camera::default(), true);
+        assert!(live.movement.borrow().is_some());
+        live.gameplay_event(player_death(1));
+        assert!(!live.movement_allowed());
+        assert!(live.movement.borrow().is_none());
+        assert!(live.entities[&1].spawn.is_corpse);
+        live.camera_position(&openeq_render::Camera::default(), true);
+        assert!(live.movement.borrow().is_none());
+        assert!(!live.command(Command::AutoAttack(true)));
+        assert!(commands.try_recv().is_err());
+        live.gameplay_event(bind_transfer(54, 0));
+        assert!(live.initial_position.is_none());
+        assert_eq!(live.game.hp.current, Some(123)); // Zero footer is not HP.
+        let mut corpse = player.clone();
+        corpse.is_corpse = true;
+        tx.send(Message::Event(Box::new(ZoneEvent::Spawn(corpse))))
+            .unwrap();
+        live.poll();
+        assert!(!live.movement_allowed());
+        player.id = 3;
+        player.position = Position {
+            x: 1455.,
+            y: 15.,
+            z: -130.25,
+            heading: 32.,
+            ..Default::default()
+        };
+        tx.send(Message::Event(Box::new(ZoneEvent::Spawn(player))))
+            .unwrap();
+        live.poll();
+        assert!(live.movement_allowed()); // No full profile/Ready resend needed.
+        assert_eq!(live.own_id, Some(3));
+        let position = live.initial_position.unwrap();
+        assert_eq!(
+            [position.x, position.y, position.z, position.heading],
+            [15., 1455., -130.25, 96.]
+        );
+        assert!(live.entities[&1].spawn.is_corpse);
+        assert!(
+            live.game
+                .inventory
+                .items
+                .contains_key(&InventorySlot::possessions(23))
+        );
+        live.camera_position(&openeq_render::Camera::default(), false);
+        assert_eq!(live.movement.borrow().unwrap().id, 3);
+    }
+
+    #[test]
+    fn forced_bind_success_never_installs_the_zeroed_response_as_an_arrival() {
+        let (mut live, _) = command_world(1, 10.);
+        live.environment = Some(zone_test_environment());
+        live.gameplay_event(player_death(1));
+        live.gameplay_event(bind_transfer(0, 0));
+        assert!(live.initial_position.is_none());
+        // ZoneClient emits transition before the successful bind reply.
+        live.gameplay_event(GameplayEvent::ZoneTransition {
+            zone_id: 54,
+            instance_id: 0,
+        });
+        live.gameplay_event(GameplayEvent::ZoneChangeResult {
+            zone_id: 54,
+            instance_id: 0,
+            position: [0.; 3],
+            success: 1,
+        });
+        assert_eq!(live.zone_generation, 1);
+        assert!(!live.movement_allowed());
+        assert!(live.initial_position.is_none());
+        assert!(live.environment.is_none());
+        assert!(live.movement.borrow().is_none());
+    }
+
+    #[test]
+    fn own_corpse_renders_at_server_pose_in_first_and_third_person() {
+        let (mut live, _) = command_world(1, 10.);
+        let mut player = npc(
+            Position {
+                x: 25.,
+                y: -40.,
+                z: 10.,
+                heading: 173.,
+                ..Default::default()
+            },
+            Instant::now(),
+        )
+        .spawn;
+        player.npc = false;
+        player.name = "Player".into();
+        player.id = 1;
+        live.entities.insert(1, Entity::new(player, Instant::now()));
+        let camera = openeq_render::Camera {
+            position: [100., 200., 300.],
+            yaw: 1.5,
+            ..Default::default()
+        };
+        assert!(
+            live.actor_states(camera.position, None)
+                .iter()
+                .all(|actor| actor.id != 1)
+        );
+        live.gameplay_event(player_death(1));
+        assert_eq!(live.own_id, Some(1)); // Hover still awaits the new player ID.
+        for player_view in [None, Some((&camera, true))] {
+            let actors = live.actor_states(camera.position, player_view);
+            let corpse = actors
+                .iter()
+                .find(|actor| actor.id == 1)
+                .expect("visible own corpse");
+            assert_eq!(corpse.position, [25., -40., 10.]);
+            assert_eq!(corpse.heading, 173.);
+            assert_eq!(corpse.action, ActorAction::Dead);
+            assert!(!corpse.moving);
+        }
+    }
+
+    #[test]
+    fn recovery_actions_send_one_validated_command_and_only_matching_rejection_retries() {
+        use crate::death::{RecoveryAction, RecoveryIntent};
+        let (mut live, mut wire) = command_world(1, 10.);
+        let (tx, rx) = mpsc::channel();
+        live.rx = Mutex::new(rx);
+        live.environment = Some(zone_test_environment());
+        live.gameplay_event(player_death(1));
+        live.gameplay_event(GameplayEvent::Recovery(
+            openeq_net::death::DeathEvent::RespawnWindow(openeq_net::death::RespawnWindow {
+                initial_selection: 17,
+                remaining_ms: 60_000,
+                options: vec![openeq_net::death::RespawnOption {
+                    id: 17,
+                    zone_id: 54,
+                    position: [5., 6., 7.],
+                    heading: 32.,
+                    label: "Quest bind".into(),
+                    requires_resurrection: false,
+                }],
+            }),
+        ));
+        let action = RecoveryAction {
+            token: live.game.recovery.token(),
+            intent: RecoveryIntent::Respawn(17),
+        };
+        assert!(live.recovery_action(action));
+        let NetworkCommand::Recovery {
+            request,
+            motion_revision,
+        } = wire.try_recv().unwrap()
+        else {
+            panic!("missing recovery command");
+        };
+        assert!(matches!(
+            request.command,
+            openeq_net::death::DeathCommand::SelectRespawn { option_id: 17 }
+        ));
+        assert_eq!(motion_revision, live.movement_authority.revision);
+        assert!(!live.recovery_action(action));
+        assert!(wire.try_recv().is_err());
+        tx.send(Message::RecoveryRejected {
+            token: request.token,
+            notice: "Not transmitted".into(),
+        })
+        .unwrap();
+        live.poll();
+        assert!(!live.game.recovery.request_pending(request.token));
+        assert!(!live.movement_allowed());
+        assert!(live.recovery_action(RecoveryAction {
+            token: live.game.recovery.token(),
+            intent: RecoveryIntent::Respawn(17)
+        }));
+        let NetworkCommand::Recovery { request: next, .. } = wire.try_recv().unwrap() else {
+            panic!("missing retry");
+        };
+        tx.send(Message::RecoveryRejected {
+            token: request.token,
+            notice: "Stale failure".into(),
+        })
+        .unwrap();
+        live.poll();
+        assert!(live.game.recovery.request_pending(next.token));
+    }
+
+    #[test]
+    fn rejected_recovery_and_instance_changes_cannot_resume_dead_movement() {
+        let (mut live, _) = command_world(1, 10.);
+        live.environment = Some(zone_test_environment());
+        live.gameplay_event(player_death(1));
+        live.gameplay_event(bind_transfer(54, 9));
+        live.gameplay_event(GameplayEvent::ZoneChangeRequested(ZoneDestination {
+            zone_id: 54,
+            instance_id: 9,
+            position: [4., 5., 6.],
+            heading: 32.,
+        }));
+        assert!(live.initial_position.is_none());
+        live.gameplay_event(GameplayEvent::ZoneChangeResult {
+            zone_id: 54,
+            instance_id: 9,
+            position: [0.; 3],
+            success: -1,
+        });
+        assert!(!live.ready);
+        assert!(!live.movement_allowed());
+        assert!(live.error.as_deref().unwrap().contains("reconnect"));
+        assert!(live.movement.borrow().is_none());
+    }
+
+    #[test]
+    fn own_levitation_follows_server_buffs_and_explicit_appearance_changes() {
+        use crate::movement_rules::PlayerGravity;
+        let (mut live, _) = command_world(1, 10.);
+        let mut player = npc(Position::default(), Instant::now());
+        player.spawn.id = 1;
+        player.spawn.npc = false;
+        player.spawn.fly_mode = 3;
+        live.entities.insert(1, player);
+        let mut fields = vec!["0"; 174];
+        fields[0] = "261";
+        fields[1] = "Levitate";
+        fields[173] = "3|57|1|0|100|0$4|14|1|0|100|0";
+        live.game.spell_catalog = crate::spells::SpellCatalog::parse(&fields.join("^"));
+        let buff = openeq_net::gameplay::Buff {
+            slot: 0,
+            spell_id: 261,
+            ticks_remaining: 0,
+            num_hits: 0,
+            caster: "Caster".into(),
+        };
+        assert_eq!(live.player_gravity(), PlayerGravity::Grounded);
+        live.gameplay_event(GameplayEvent::Buffs {
+            id: 2,
+            all: true,
+            tick_timer: 0,
+            kind: 0,
+            buffs: vec![buff.clone()],
+        });
+        assert_eq!(live.player_gravity(), PlayerGravity::Grounded);
+        live.gameplay_event(GameplayEvent::Buffs {
+            id: 1,
+            all: true,
+            tick_timer: 0,
+            kind: 0,
+            buffs: vec![buff.clone()],
+        });
+        // An expired presentation countdown is not an authoritative buff fade.
+        assert_eq!(live.game.buff_seconds(0), Some(0));
+        assert_eq!(live.player_gravity(), PlayerGravity::Levitating);
+        assert!(live.game.has_water_breathing_buff());
+        live.gameplay_event(GameplayEvent::SpawnAppearance {
+            id: 1,
+            kind: 19,
+            parameter: 1,
+        });
+        assert_eq!(live.player_gravity(), PlayerGravity::Flying);
+        live.gameplay_event(GameplayEvent::SpawnAppearance {
+            id: 1,
+            kind: 19,
+            parameter: 0,
+        });
+        live.gameplay_event(GameplayEvent::BuffChanged {
+            id: 1,
+            buff,
+            removed: true,
+        });
+        assert_eq!(live.player_gravity(), PlayerGravity::Grounded);
+        assert!(!live.game.has_water_breathing_buff());
+    }
+
     #[test]
     #[ignore = "requires original Greater Faydark assets"]
     fn actual_kelethin_guard_climbs_the_ramp_without_height_corrections() {
@@ -2525,6 +3284,11 @@ pub(crate) mod tests {
             pending_destination: None,
             rx: Mutex::new(events),
             movement,
+            movement_authority: MovementAuthority {
+                own_id: Some(1),
+                ..Default::default()
+            },
+            recovery_request: None,
             commands,
         };
         live.game.attack = true;

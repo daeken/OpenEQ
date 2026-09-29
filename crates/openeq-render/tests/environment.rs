@@ -1,7 +1,8 @@
 //! Atmosphere tests use synthetic scenes so they do not require client assets.
 use openeq_assets::{
     Scene,
-    environment::SkyAssets,
+    environment::{SkyAssets, SkyColorMapLayout},
+    liquid_regions::LiquidKind,
     mesh::{Geometry, Material},
     texture::Texture,
 };
@@ -110,8 +111,10 @@ fn sky_is_attached_to_world_direction_not_screen_or_camera_position() {
                 255, 0, 0, 255, 255, 0, 0, 255, 0, 0, 255, 255, 0, 0, 255, 255,
             ],
         },
+        color_map_layout: SkyColorMapLayout::FullTexture,
         cloud_texture: None,
         cloud_color_map: None,
+        cloud_color_map_layout: SkyColorMapLayout::FullTexture,
         cloud_velocity: 0.,
     };
     renderer.set_environment(EnvironmentSettings::default(), Some(&assets));
@@ -148,4 +151,168 @@ fn sky_is_attached_to_world_direction_not_screen_or_camera_position() {
         elevated[2] > original[2] + 30 && elevated[0] + 30 < original[0],
         "camera pitch did not change sampled sky elevation: {original:?} vs {elevated:?}"
     );
+}
+
+#[test]
+fn liquid_fog_replaces_distant_world_and_sky_then_restores_zone_settings() {
+    let Ok(mut renderer) = Renderer::new_headless(64, 64) else {
+        eprintln!("no GPU; skipping liquid fog pixel test");
+        return;
+    };
+    let scene = wall(180.);
+    let gpu = GpuScene::build(renderer.device(), renderer.queue(), &scene).unwrap();
+    let settings = EnvironmentSettings {
+        fog_color: [0.7, 0.3, 0.5],
+        fog_start: 90.,
+        fog_end: 300.,
+        fog_enabled: true,
+        ..Default::default()
+    };
+    renderer.set_environment(settings, None);
+    let camera = Camera {
+        pitch: 0.,
+        ..Default::default()
+    };
+    renderer.render(&gpu, &camera);
+    let original_world = center(&mut renderer);
+    let sky_camera = Camera {
+        yaw: std::f32::consts::PI,
+        pitch: 0.6,
+        ..camera
+    };
+    renderer.render(&gpu, &sky_camera);
+    let original_sky = center(&mut renderer);
+    for (liquid, expected) in [
+        (LiquidKind::Water, [20_u8, 56, 77]),
+        (LiquidKind::FreezingWater, [51, 82, 102]),
+        (LiquidKind::OpaqueWater, [20, 41, 23]),
+        (LiquidKind::Lava, [128, 31, 4]),
+    ] {
+        renderer.set_view_liquid(Some(liquid));
+        for view in [camera, sky_camera] {
+            renderer.render(&gpu, &view);
+            let actual = center(&mut renderer);
+            assert!(
+                actual.iter().zip(expected).all(|(a, b)| a.abs_diff(b) <= 2),
+                "{liquid:?}: expected {expected:?}, got {actual:?}"
+            );
+        }
+        renderer.set_view_liquid(None);
+        renderer.render(&gpu, &camera);
+        assert_eq!(
+            center(&mut renderer),
+            original_world,
+            "zone fog failed to restore"
+        );
+        renderer.render(&gpu, &sky_camera);
+        assert_eq!(
+            center(&mut renderer),
+            original_sky,
+            "zone sky failed to restore"
+        );
+    }
+}
+
+#[test]
+fn native_sky_helper_swatches_and_pole_ring_colors_never_reach_sky_pixels() {
+    let Ok(mut renderer) = Renderer::new_headless(96, 96) else {
+        return;
+    };
+    let scene = Scene::from_geometry("sky only".into(), vec![], vec![], vec![]);
+    let gpu = GpuScene::build(renderer.device(), renderer.queue(), &scene).unwrap();
+    let expected = [40_u8, 90, 170];
+    let mut rgba = Vec::new();
+    for y in 0..32 {
+        for x in 0..32 {
+            let valid = x < 31 && y < 30 && ((y != 0 && y != 29) || x == 0);
+            rgba.extend_from_slice(if valid {
+                &[40, 90, 170, 255]
+            } else {
+                &[255, 0, 255, 255]
+            });
+        }
+    }
+    let table = Texture {
+        name: "native sky color fixture".into(),
+        width: 32,
+        height: 32,
+        rgba,
+    };
+    let mut assets = SkyAssets {
+        weather: "fixture".into(),
+        color_map: table.clone(),
+        color_map_layout: SkyColorMapLayout::OriginalDome,
+        cloud_texture: None,
+        cloud_color_map: None,
+        cloud_color_map_layout: SkyColorMapLayout::FullTexture,
+        cloud_velocity: 0.,
+    };
+    for clouds in [false, true] {
+        if clouds {
+            assets.cloud_texture = Some(Texture {
+                name: "opaque cloud".into(),
+                width: 1,
+                height: 1,
+                rgba: vec![255; 4],
+            });
+            assets.cloud_color_map = Some(table.clone());
+            assets.cloud_color_map_layout = SkyColorMapLayout::OriginalDome;
+        }
+        renderer.set_environment(EnvironmentSettings::default(), Some(&assets));
+        for pitch in [0.4_f32, 1.0, std::f32::consts::FRAC_PI_2 - 0.0001] {
+            for yaw in [0_f32, 0.8, 2.0, 3.5, 5.0] {
+                renderer.render(
+                    &gpu,
+                    &Camera {
+                        pitch,
+                        yaw,
+                        ..Default::default()
+                    },
+                );
+                let (_, _, pixels) = renderer.read_rgba().unwrap();
+                for actual in pixels.chunks_exact(4) {
+                    assert!(
+                        actual[..3]
+                            .iter()
+                            .zip(expected)
+                            .all(|(a, b)| a.abs_diff(b) <= 1),
+                        "reserved sky color leaked at pitch={pitch} yaw={yaw} clouds={clouds}: {actual:?}"
+                    );
+                }
+            }
+        }
+    }
+    // Upload processing must preserve the original source asset for inspection.
+    assert_eq!(&assets.color_map.rgba[31 * 4..32 * 4], &[255, 0, 255, 255]);
+}
+
+#[test]
+#[ignore = "requires original Plane of Knowledge sky assets and GPU"]
+fn original_pok_sky_has_no_rainbow_wedge_when_looking_up() {
+    let base = openeq_assets::loader::default_client_dir().expect("original assets");
+    let sky = openeq_assets::environment::load_sky(&base, "poknowledge", 0.5).unwrap();
+    let mut renderer = Renderer::new_headless(160, 120).unwrap();
+    let scene = Scene::from_geometry("sky only".into(), vec![], vec![], vec![]);
+    let gpu = GpuScene::build(renderer.device(), renderer.queue(), &scene).unwrap();
+    renderer.set_environment(EnvironmentSettings::for_zone("poknowledge"), Some(&sky));
+    for pitch in [45_f32, 70., 89.99] {
+        for yaw in [0_f32, 90., 180., 270.] {
+            renderer.render(
+                &gpu,
+                &Camera {
+                    pitch: pitch.to_radians(),
+                    yaw: yaw.to_radians(),
+                    ..Default::default()
+                },
+            );
+            let (_, _, pixels) = renderer.read_rgba().unwrap();
+            let rainbow = pixels
+                .chunks_exact(4)
+                .filter(|p| {
+                    (p[1] > 180 && p[0] < 60 && p[2] < 90) || (p[0] > 180 && p[1] > 90 && p[2] < 50)
+                })
+                .count();
+            assert_eq!(rainbow, 0, "PoK rainbow at pitch={pitch} yaw={yaw}");
+        }
+    }
 }

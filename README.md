@@ -37,6 +37,7 @@ Controls:
 | Input | Action |
 | --- | --- |
 | W/A/S/D, Shift, Space | Move, run, jump |
+| W/A/S/D, Space/Ctrl in water | Swim toward the view direction; rise/sink |
 | Right-click world, Escape | Mouse look; release mouse / close current panel |
 | Left-click NPC, Tab, F1 | Select target, cycle nearby targets, target self |
 | Enter or / | Chat; Up/Down recall history; Escape cancels |
@@ -68,6 +69,12 @@ withdraw; shared coin controls move platinum on the configured Storage2 server.
 Groups support `/invite [NAME]`, `/accept`, `/decline`, `/leavegroup` (or
 `/disband`) and `/makeleader NAME`, with invitation/member controls in the group
 window. `/group` sends to the current group.
+
+Dragged window positions and map position/zoom are saved per world and character
+under `~/.config/openeq/layouts` (or `$XDG_CONFIG_HOME/openeq/layouts`). Windows
+stay within reach after resizing. Removing that character's layout file restores
+the default arrangement; original UI assets are never modified.
+
 Use `/trade` with a nearby player selected, then accept the invitation on the
 other client. Pick up an inventory item and click an empty slot in your offer;
 choose a denomination and amount to add coins. Both players must accept the
@@ -121,6 +128,7 @@ you up and automatically returns, following the default five-second cycle.
 - Natural border travel through authored classic WLD reference volumes, including
   Greater Faydark's four exits; authenticated handoffs use server destination data.
 - Kelethin lift buttons, moving platform collision and passenger carrying.
+- Authored classic liquid volumes, swimming, underwater fog and server-granted levitation.
 - Original XML artwork and layout definitions for gameplay windows, with sharp
   high-density text and correctly scaled mouse hit testing.
 - Deferred sun and authored zone lights, stable shadows, server-dependent fog,
@@ -130,8 +138,8 @@ you up and automatically returns, following the default five-second cycle.
 This is a playable development milestone, with substantial parity work remaining:
 NPC quest hand-ins, augmentation, raid and guild management, quest journals,
 interactive account/character creation, EQG/absolute-destination border
-triggers, audio, advanced XML widgets and full swimming/movement
-rules. Luclin hair/beard colors, Hero's Forge, animated equipment, weather,
+triggers, audio, advanced XML widgets, EQG liquid volumes and environmental
+damage rules. Luclin hair/beard colors, Hero's Forge, animated equipment, weather,
 terrain ecosystem effects and water refraction remain incomplete. Door motion
 classes include approximations; ordinary door collision switches to the final
 pose, while lifts collide throughout their motion. Lift timing is approximate.
@@ -211,6 +219,16 @@ cargo run -p openeq --bin item_use_smoke -- \
 # Actual Kelethin buttons, animated lift collision and rider physics.
 cargo run -p openeq --bin lift_smoke -- \
   "$HOME/.config/openeq/storage2-commerce-credentials.json"
+
+# Real PoK swimming, with Mechanic's pose and persistent state restored.
+cargo run -p openeq --bin swimming_smoke -- \
+  "$HOME/.config/openeq/storage2-gameplay-credentials.json"
+
+# Real same-zone death/bind recovery, restricted to disposable Reviver.
+# Choose a fresh log name for each run; see docs/DEATH_RECOVERY_PLAN.md.
+cargo run -p openeq --bin death_smoke -- \
+  "$HOME/.config/openeq/storage2-recovery-credentials.json" \
+  /tmp/openeq-death-next-run.log
 
 cargo test --workspace
 cargo test --workspace -- --ignored
