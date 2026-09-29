@@ -10,6 +10,9 @@ use bevy::{
 use openeq_ui::{Color, DrawCommand, HitTarget, Rect, TextAlign, UiBindings, UiDocument, UiFrame};
 use std::{collections::HashSet, path::Path};
 
+mod menu;
+use menu::{Navigation, Page};
+
 const MAX_SERVERS: usize = 2048;
 const MAX_CHARACTERS: usize = 256;
 const VISIBLE_ROWS: usize = 8;
@@ -38,6 +41,7 @@ enum Focus {
     Password,
     List,
     Primary,
+    Connection,
     Refresh,
     Back,
     Exit,
@@ -192,6 +196,7 @@ pub struct AccountInput {
     notice: Option<&'static str>,
     cancelled_composition: bool,
     composition_field: Option<usize>,
+    navigation: Option<Navigation>,
 }
 impl AccountInput {
     pub fn new(endpoint: Endpoint) -> Self {
@@ -215,6 +220,16 @@ impl AccountInput {
             notice: None,
             cancelled_composition: false,
             composition_field: None,
+            navigation: None,
+        }
+    }
+    /// Starts at the local main menu. The controller remains idle until the
+    /// existing credentials page emits SignIn; no connection starts here.
+    pub fn with_main_menu(endpoint: Endpoint) -> Self {
+        Self {
+            navigation: Some(Navigation::default()),
+            focus: Focus::Primary,
+            ..Self::new(endpoint)
         }
     }
     /// Moves the secret to the connection controller and immediately clears the
@@ -240,6 +255,9 @@ impl AccountInput {
         self.modifiers.reset_all();
         self.captured.clear();
         self.handoff_replay.clear();
+        if let Some(navigation) = &mut self.navigation {
+            navigation.held_keys.clear();
+        }
         self.pressed = None;
         self.pointer = None;
         self.notice = None;
@@ -251,7 +269,7 @@ impl AccountInput {
         }
     }
     pub fn ime_enabled(&self, view: &View) -> bool {
-        self.focused && view.stage == Stage::Credentials && self.focus.field().is_some()
+        self.focused && self.editable_field(view).is_some()
     }
     /// Begin exactly once before routing a gameplay frame's raw events. Bevy's
     /// ButtonInput already describes the entire batch, so clear both held state
@@ -316,7 +334,11 @@ impl AccountInput {
             self.pressed = None;
             self.notice = None;
             self.focus = match view.stage {
-                Stage::Credentials => Focus::Username,
+                Stage::Credentials => match self.page(view) {
+                    Page::Welcome => Focus::Primary,
+                    Page::Connection => Focus::Host,
+                    Page::Credentials => Focus::Username,
+                },
                 Stage::Worlds | Stage::Characters => Focus::List,
                 _ => Focus::Back,
             };
@@ -348,6 +370,9 @@ impl AccountInput {
                 if !event.focused {
                     self.modifiers.reset_all();
                     self.captured.clear();
+                    if let Some(navigation) = &mut self.navigation {
+                        navigation.held_keys.clear();
+                    }
                     self.pressed = None;
                     self.pointer = None;
                     self.cancel_composition();
@@ -364,6 +389,9 @@ impl AccountInput {
                 if event.state == ButtonState::Released {
                     self.modifiers.release(event.key_code);
                     self.captured.remove(&event.key_code);
+                    if let Some(navigation) = &mut self.navigation {
+                        navigation.held_keys.remove(&event.key_code);
+                    }
                     return None;
                 }
                 self.captured.insert(event.key_code);
@@ -371,7 +399,14 @@ impl AccountInput {
                     return None;
                 }
                 self.modifiers.press(event.key_code);
-                if !current_frame(view, frame) {
+                if self
+                    .navigation
+                    .as_ref()
+                    .is_some_and(|navigation| navigation.held_keys.contains(&event.key_code))
+                {
+                    return None;
+                }
+                if !current_frame(view, self, frame) {
                     return None;
                 }
                 let command = [
@@ -389,7 +424,7 @@ impl AccountInput {
                         self.cancel_composition();
                         return None;
                     }
-                    return Some(self.back(view));
+                    return self.back(view);
                 }
                 if event.key_code == KeyCode::Tab && !event.repeat {
                     if self.composition_field.is_some() {
@@ -397,17 +432,13 @@ impl AccountInput {
                         // late password commit must never reach another field.
                         return None;
                     }
-                    let order = focus_order(view.stage);
+                    let order = self.focus_order(view);
                     let index = order.iter().position(|f| *f == self.focus).unwrap_or(0);
                     self.focus =
                         order[(index + if shift { order.len() - 1 } else { 1 }) % order.len()];
                     return None;
                 }
-                if let Some(index) = self
-                    .focus
-                    .field()
-                    .filter(|_| view.stage == Stage::Credentials)
-                {
+                if let Some(index) = self.editable_field(view) {
                     if !self.edits[index].preedit.is_empty() {
                         return None;
                     }
@@ -415,7 +446,7 @@ impl AccountInput {
                     let edit = &mut self.edits[index];
                     match event.key_code {
                         KeyCode::Enter | KeyCode::NumpadEnter if !event.repeat => {
-                            return self.sign_in();
+                            return self.primary(view);
                         }
                         KeyCode::Enter | KeyCode::NumpadEnter => {}
                         KeyCode::Backspace => edit.backspace(),
@@ -454,7 +485,11 @@ impl AccountInput {
                                 Focus::Refresh if view.stage == Stage::Worlds => {
                                     Some(Intent::Refresh { token: view.token })
                                 }
-                                Focus::Back => Some(self.back(view)),
+                                Focus::Back => self.back(view),
+                                Focus::Connection if self.page(view) == Page::Welcome => {
+                                    self.navigate(Page::Connection);
+                                    None
+                                }
                                 Focus::Exit => {
                                     self.reset();
                                     Some(Intent::Exit)
@@ -468,8 +503,8 @@ impl AccountInput {
             }
             WindowEvent::Ime(Ime::Preedit {
                 window: id, value, ..
-            }) if *id == window && self.focused && view.stage == Stage::Credentials => {
-                if let Some(index) = self.focus.field() {
+            }) if *id == window && self.focused && current_frame(view, self, frame) => {
+                if let Some(index) = self.editable_field(view) {
                     if !value.is_empty() {
                         self.cancelled_composition = false;
                         self.composition_field = Some(index);
@@ -478,7 +513,7 @@ impl AccountInput {
                 }
             }
             WindowEvent::Ime(Ime::Commit { window: id, value })
-                if *id == window && self.focused && view.stage == Stage::Credentials =>
+                if *id == window && self.focused && current_frame(view, self, frame) =>
             {
                 if self.cancelled_composition {
                     self.cancelled_composition = false;
@@ -489,7 +524,7 @@ impl AccountInput {
                 {
                     return None;
                 }
-                if let Some(index) = self.focus.field() {
+                if let Some(index) = self.editable_field(view) {
                     self.edits[index].preedit.clear();
                     self.edits[index].insert(value, field_limit(index), index == 1 || index == 2);
                     self.notice = None;
@@ -499,7 +534,7 @@ impl AccountInput {
                 self.cancel_composition();
             }
             WindowEvent::MouseWheel(event)
-                if event.window == window && self.focused && current_frame(view, frame) =>
+                if event.window == window && self.focused && current_frame(view, self, frame) =>
             {
                 if self.pointer.is_some_and(|point| {
                     frame
@@ -520,13 +555,13 @@ impl AccountInput {
                 if event.window == window
                     && event.button == MouseButton::Left
                     && self.focused
-                    && current_frame(view, frame) =>
+                    && current_frame(view, self, frame) =>
             {
                 let hit = self.pointer.and_then(|point| frame.hit_test(point));
                 if event.state == ButtonState::Pressed {
                     self.pressed = hit.map(|h| h.item.clone());
                     if let Some(hit) = hit
-                        && let Some(action) = action_suffix(view, &hit.item)
+                        && let Some(action) = action_suffix(view, self, &hit.item)
                         && let Some(field) = action
                             .strip_prefix("field:")
                             .and_then(|s| s.parse::<usize>().ok())
@@ -540,7 +575,7 @@ impl AccountInput {
                 } else if let Some(pressed) = self.pressed.take()
                     && let Some(hit) = hit.filter(|h| h.item == pressed)
                 {
-                    let action = action_suffix(view, &hit.item)?;
+                    let action = action_suffix(view, self, &hit.item)?;
                     if let Some(index) = action
                         .strip_prefix("row:")
                         .and_then(|s| s.parse::<usize>().ok())
@@ -559,7 +594,11 @@ impl AccountInput {
                         }
                         "back" => {
                             self.focus = Focus::Back;
-                            Some(self.back(view))
+                            self.back(view)
+                        }
+                        "connection" if self.page(view) == Page::Welcome => {
+                            self.navigate(Page::Connection);
+                            None
                         }
                         "exit" => {
                             self.reset();
@@ -590,20 +629,48 @@ impl AccountInput {
     }
     fn primary(&mut self, view: &View) -> Option<Intent> {
         match view.stage {
-            Stage::Credentials => self.sign_in(),
+            Stage::Credentials => match self.page(view) {
+                Page::Welcome => {
+                    self.navigate(Page::Credentials);
+                    None
+                }
+                Page::Connection => {
+                    if self.composition_field.is_some() {
+                        return None;
+                    }
+                    if self.endpoint().validate().is_err() {
+                        self.notice = Some("Enter a hostname and ports between 1 and 65535.");
+                    } else {
+                        if let Some(navigation) = &mut self.navigation {
+                            navigation.connection_snapshot = None;
+                        }
+                        self.navigate(Page::Welcome);
+                    }
+                    None
+                }
+                Page::Credentials => self.sign_in(),
+            },
             Stage::Worlds | Stage::Characters if playable(view) => {
                 Some(Intent::Play { token: view.token })
             }
             _ => None,
         }
     }
-    fn back(&mut self, view: &View) -> Intent {
+    fn back(&mut self, view: &View) -> Option<Intent> {
+        if view.stage == Stage::Credentials
+            && self.navigation.is_some()
+            && self.page(view) != Page::Welcome
+        {
+            self.restore_connection();
+            self.navigate(Page::Welcome);
+            return None;
+        }
         self.reset();
-        match view.stage {
+        Some(match view.stage {
             Stage::Credentials => Intent::Exit,
             Stage::Characters => Intent::Back { token: view.token },
             _ => Intent::Cancel,
-        }
+        })
     }
     fn scroll(&mut self, view: &View, amount: isize) {
         self.first = self
@@ -719,20 +786,26 @@ fn row_intent(view: &View, index: usize) -> Option<Intent> {
         _ => None,
     }
 }
-fn prefix(view: &View) -> String {
+fn prefix(view: &View, input: &AccountInput) -> String {
     format!(
-        "account:{}:{}:{}:",
-        view.token.attempt, view.token.revision, view.stage as u8
+        "account:{}:{}:{}:{}:",
+        view.token.attempt,
+        view.token.revision,
+        view.stage as u8,
+        input
+            .navigation
+            .as_ref()
+            .map_or(0, |navigation| navigation.revision),
     )
 }
-fn action_suffix<'a>(view: &View, id: &'a str) -> Option<&'a str> {
-    id.strip_prefix(&prefix(view))
+fn action_suffix<'a>(view: &View, input: &AccountInput, id: &'a str) -> Option<&'a str> {
+    id.strip_prefix(&prefix(view, input))
 }
-fn current_frame(view: &View, frame: &UiFrame) -> bool {
+fn current_frame(view: &View, input: &AccountInput, frame: &UiFrame) -> bool {
     frame
         .hit_targets
         .first()
-        .is_some_and(|h| h.item == format!("{}frame", prefix(view)))
+        .is_some_and(|h| h.item == format!("{}frame", prefix(view, input)))
 }
 
 #[derive(Default)]
@@ -781,6 +854,7 @@ impl AccountUi {
             screen,
             ui: self,
             view,
+            prefix: prefix(view, input),
         };
         paint.hit("frame", "AccountCapture", screen, true);
         if screen.is_empty() {
@@ -800,6 +874,8 @@ impl AccountUi {
             "CharacterListWnd"
         } else if matches!(view.stage, Stage::Worlds | Stage::JoiningWorld) {
             "serverselect"
+        } else if input.page(view) == Page::Welcome {
+            "main"
         } else {
             "connect"
         };
@@ -816,7 +892,7 @@ impl AccountUi {
         paint.fill(inner, [9, 13, 20, 205]);
         paint.text(
             Rect::new(inner.x + 14., inner.y + 8., inner.width - 28., 32.),
-            view.stage.label(),
+            input.title(view),
             5,
             GOLD,
             false,
@@ -845,13 +921,27 @@ impl AccountUi {
                 input,
             );
         } else if view.stage == Stage::Credentials {
-            paint.credentials(inner, input, time);
+            match input.page(view) {
+                Page::Welcome => paint.welcome(inner, input),
+                Page::Connection => paint.connection(inner, input, time),
+                Page::Credentials => paint.credentials(inner, input, time),
+            }
         } else {
             paint.list(inner, input);
         }
-        if let Some(notice) = input.notice.or(view.notice.as_deref()) {
+        if let Some(notice) = input.notice.or_else(|| {
+            (input.page(view) == Page::Credentials)
+                .then_some(view.notice.as_deref())
+                .flatten()
+        }) {
+            let compact_connection = input.page(view) == Page::Connection && inner.height < 300.;
             paint.text(
-                Rect::new(inner.x + 14., inner.bottom() - 88., inner.width - 28., 32.),
+                Rect::new(
+                    inner.x + 14.,
+                    inner.bottom() - if compact_connection { 64. } else { 88. },
+                    inner.width - 28.,
+                    if compact_connection { 20. } else { 32. },
+                ),
                 &bounded_text(notice, 512),
                 2,
                 [244, 185, 155, 255],
@@ -860,7 +950,11 @@ impl AccountUi {
         }
         paint.text(
             Rect::new(inner.x + 14., inner.bottom() - 15., inner.width - 28., 15.),
-            "Tab to move · Enter to continue · Escape to go back",
+            if input.page(view) == Page::Welcome {
+                "Tab to move · Enter to choose · Escape to exit"
+            } else {
+                "Tab to move · Enter to continue · Escape to go back"
+            },
             1,
             MUTED,
             false,
@@ -876,6 +970,7 @@ struct Paint<'a> {
     screen: Rect,
     ui: &'a AccountUi,
     view: &'a View,
+    prefix: String,
 }
 impl Paint<'_> {
     fn fill(&mut self, rect: Rect, color: Color) {
@@ -903,7 +998,7 @@ impl Paint<'_> {
     }
     fn hit(&mut self, action: &str, kind: &str, rect: Rect, enabled: bool) {
         self.frame.hit_targets.push(HitTarget {
-            item: format!("{}{action}", prefix(self.view)),
+            item: format!("{}{action}", self.prefix),
             screen_id: action.into(),
             window_id: Some("account".into()),
             kind: kind.into(),
@@ -977,7 +1072,7 @@ impl Paint<'_> {
         input: &AccountInput,
     ) {
         let hovered = input.pointer.is_some_and(|point| rect.contains(point));
-        let pressed = input.pressed.as_deref() == Some(&format!("{}{action}", prefix(self.view)));
+        let pressed = input.pressed.as_deref() == Some(&format!("{}{action}", self.prefix));
         if !self.skin(template, rect, label, enabled, hovered, pressed, false) {
             self.fill(
                 rect,
@@ -999,6 +1094,68 @@ impl Paint<'_> {
             self.outline(rect, GOLD);
         }
         self.hit(action, "AccountButton", rect, enabled);
+    }
+    fn edit_field(
+        &mut self,
+        index: usize,
+        label: &str,
+        rect: Rect,
+        input: &AccountInput,
+        time: f32,
+    ) {
+        self.text(
+            Rect::new(rect.x, rect.y - 22., rect.width, 20.),
+            label,
+            2,
+            WHITE,
+            false,
+        );
+        self.fill(rect, [8, 13, 20, 245]);
+        self.skin(
+            if index == 4 {
+                "LOGIN_PasswordEdit"
+            } else {
+                "LOGIN_UsernameEdit"
+            },
+            rect,
+            "",
+            true,
+            false,
+            false,
+            false,
+        );
+        let focused = input.focus.field() == Some(index) && input.focused;
+        if focused {
+            self.outline(rect, GOLD);
+        }
+        if focused && input.edits[index].all_selected {
+            self.fill(
+                Rect::new(
+                    rect.x + 5.,
+                    rect.y + 5.,
+                    rect.width - 10.,
+                    rect.height - 10.,
+                ),
+                [61, 66, 92, 255],
+            );
+        }
+        let capacity = ((rect.width - 24.) / 10.).max(1.) as usize;
+        let display =
+            input.edits[index].display(index == 4, focused, time.rem_euclid(1.2) < 0.7, capacity);
+        let compact = rect.height < 32.;
+        self.text(
+            Rect::new(
+                rect.x + 8.,
+                rect.y + if compact { 3. } else { 8. },
+                rect.width - 16.,
+                rect.height - if compact { 6. } else { 12. },
+            ),
+            &display,
+            3,
+            WHITE,
+            false,
+        );
+        self.hit(&format!("field:{index}"), "AccountEdit", rect, true);
     }
     fn credentials(&mut self, inner: Rect, input: &AccountInput, time: f32) {
         let gap = 22.;
@@ -1022,62 +1179,7 @@ impl Paint<'_> {
             (4, "Password", Rect::new(right, y + 77., col, 36.)),
         ];
         for (index, label, rect) in fields {
-            self.text(
-                Rect::new(rect.x, rect.y - 22., rect.width, 20.),
-                label,
-                2,
-                WHITE,
-                false,
-            );
-            self.fill(rect, [8, 13, 20, 245]);
-            self.skin(
-                if index == 4 {
-                    "LOGIN_PasswordEdit"
-                } else {
-                    "LOGIN_UsernameEdit"
-                },
-                rect,
-                "",
-                true,
-                false,
-                false,
-                false,
-            );
-            let focused = input.focus.field() == Some(index) && input.focused;
-            if focused {
-                self.outline(rect, GOLD);
-            }
-            if focused && input.edits[index].all_selected {
-                self.fill(
-                    Rect::new(
-                        rect.x + 5.,
-                        rect.y + 5.,
-                        rect.width - 10.,
-                        rect.height - 10.,
-                    ),
-                    [61, 66, 92, 255],
-                );
-            }
-            let capacity = ((rect.width - 24.) / 10.).max(1.) as usize;
-            let display = input.edits[index].display(
-                index == 4,
-                focused,
-                time.rem_euclid(1.2) < 0.7,
-                capacity,
-            );
-            self.text(
-                Rect::new(
-                    rect.x + 8.,
-                    rect.y + 8.,
-                    rect.width - 16.,
-                    rect.height - 12.,
-                ),
-                &display,
-                3,
-                WHITE,
-                false,
-            );
-            self.hit(&format!("field:{index}"), "AccountEdit", rect, true);
+            self.edit_field(index, label, rect, input, time);
         }
         let button_y = inner.bottom() - 54.;
         self.button(
@@ -1091,11 +1193,24 @@ impl Paint<'_> {
         );
         self.button(
             "LOGIN_CancelButton",
-            "exit",
+            if input.navigation.is_some() {
+                "back"
+            } else {
+                "exit"
+            },
             Rect::new(left, button_y, col.min(120.), 32.),
-            "Exit",
+            if input.navigation.is_some() {
+                "Back"
+            } else {
+                "Exit"
+            },
             true,
-            input.focus == Focus::Exit,
+            input.focus
+                == if input.navigation.is_some() {
+                    Focus::Back
+                } else {
+                    Focus::Exit
+                },
             input,
         );
     }
@@ -1294,7 +1409,7 @@ mod tests {
     };
     use openeq_net::{login::ServerEntry, world::Character};
 
-    fn window() -> Entity {
+    pub(super) fn window() -> Entity {
         Entity::from_raw_u32(1).unwrap()
     }
     fn key(code: KeyCode, state: ButtonState, text: Option<&str>, repeat: bool) -> WindowEvent {
@@ -1307,10 +1422,10 @@ mod tests {
             repeat,
         })
     }
-    fn press(code: KeyCode, text: Option<&str>) -> WindowEvent {
+    pub(super) fn press(code: KeyCode, text: Option<&str>) -> WindowEvent {
         key(code, ButtonState::Pressed, text, false)
     }
-    fn release(code: KeyCode) -> WindowEvent {
+    pub(super) fn release(code: KeyCode) -> WindowEvent {
         key(code, ButtonState::Released, None, false)
     }
     fn focus(focused: bool) -> WindowEvent {
@@ -1319,13 +1434,17 @@ mod tests {
             focused,
         })
     }
-    fn frame(view: &View, input: &AccountInput) -> UiFrame {
+    pub(super) fn frame(view: &View, input: &AccountInput) -> UiFrame {
         AccountUi::default().frame([640, 480], view, input, 0.)
     }
-    fn send(input: &mut AccountInput, view: &View, event: WindowEvent) -> Option<Intent> {
+    pub(super) fn send(
+        input: &mut AccountInput,
+        view: &View,
+        event: WindowEvent,
+    ) -> Option<Intent> {
         input.event(view, &frame(view, input), window(), &event)
     }
-    fn click(
+    pub(super) fn click(
         input: &mut AccountInput,
         view: &View,
         frame: &UiFrame,
@@ -1334,7 +1453,7 @@ mod tests {
         let hit = frame
             .hit_targets
             .iter()
-            .find(|h| action_suffix(view, &h.item) == Some(suffix))
+            .find(|h| action_suffix(view, input, &h.item) == Some(suffix))
             .unwrap();
         let position = bevy::math::Vec2::new(
             hit.rect.x + hit.rect.width * 0.5,
@@ -1647,7 +1766,7 @@ mod tests {
             .iter()
             .find(|h| h.screen_id == "row:2")
             .unwrap();
-        assert!(action_suffix(&view, &old.item).is_none());
+        assert!(action_suffix(&view, &input, &old.item).is_none());
         assert_eq!(input.first, 0);
     }
     #[test]

@@ -204,7 +204,7 @@ fn main() -> AppExit {
         account.view.selected_world = preferences.last_server;
         account.view.selected_character = preferences.last_character;
         runtime.account = Some(account);
-        runtime.account_input = Some(openeq::account_ui::AccountInput::new(endpoint));
+        runtime.account_input = Some(openeq::account_ui::AccountInput::with_main_menu(endpoint));
         runtime.account_preferences = store;
         let dir = options.dir.clone();
         runtime.account_ui_job = Some(loading::Job::start(move |_| {
@@ -376,7 +376,7 @@ fn parse_args() -> anyhow::Result<Options> {
             }
             "-h" | "--help" => {
                 println!(
-                    "usage: openeq [zone] [--dir DIR] [--pos X,Y,Z] [--connect CONFIG | --login HOST] [--login-port PORT] [--world-port PORT] [--models classic|luclin] [--no-audio]\nNo zone or --connect opens interactive sign-in."
+                    "usage: openeq [zone] [--dir DIR] [--pos X,Y,Z] [--connect CONFIG | --login HOST] [--login-port PORT] [--world-port PORT] [--models classic|luclin] [--no-audio]\nNo zone or --connect opens the main menu."
                 );
                 std::process::exit(0);
             }
@@ -401,7 +401,7 @@ fn parse_args() -> anyhow::Result<Options> {
     let interactive = connection.is_none() && zone.is_none();
     let zone = zone
         .or_else(|| connection.as_ref().map(|_| "poknowledge".to_string()))
-        .unwrap_or_else(|| "Sign in".into());
+        .unwrap_or_else(|| "Main menu".into());
     let dir = match dir.or_else(loader::default_client_dir) {
         Some(dir) => dir,
         None => anyhow::bail!("no client directory; pass --dir"),
@@ -1855,7 +1855,7 @@ fn present_account(
         loading_ui::loading_frame(
             viewport,
             "Welcome to Norrath",
-            "Loading the sign-in screen",
+            "Loading the main menu",
             None,
             runtime.started.elapsed().as_secs_f32(),
             controller.view.notice.as_deref(),

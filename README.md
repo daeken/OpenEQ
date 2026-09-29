@@ -8,14 +8,15 @@ protocol. The previous C# mainline is preserved on branch
 ## Play on the development server
 
 The populated EQEmu world on `storage2.daeken.dev` is running with PEQ NPCs,
-patrols, quests and navigation data. Open the sign-in screen, enter an existing
-account, then choose a world and character:
+patrols, quests and navigation data. Open the main menu, choose Play, sign in
+with an existing account, then choose a world and character:
 
 ```sh
 cargo run -p openeq -- --login storage2.daeken.dev
 ```
 
-Running without arguments opens the same screen with your last server address.
+Running without arguments opens the same main menu with your last server address.
+Connection settings lets you edit the login server and ports before signing in.
 Passwords are never saved by this flow; only the server address and last
 world/character choices are saved in `~/.config/openeq/connection.json` (or under
 `$XDG_CONFIG_HOME`). Account and character creation are not implemented yet.
@@ -152,7 +153,7 @@ you up and automatically returns, following the default five-second cycle.
 
 ## Working now
 
-- Interactive sign-in, world/character selection, live NPC movement and
+- Main menu, interactive sign-in, world/character selection, live NPC movement and
   authenticated zone handoffs, with safe connection cancellation.
 - Inventory, bags, equipment, stack moves, item inspection and cursor items,
   using original icons and real server item records.
