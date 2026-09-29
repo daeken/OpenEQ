@@ -58,6 +58,8 @@ smaller verified fixes under the appropriate item.
 
 First verified overnight batch:
 
+Published to `master` as **7f3eab3**. This is the next continuation's baseline.
+
 - Classic WLD water/lava/freezing/opaque-water queries with shared BSP parser;
   synthetic and original-zone fixtures pass. EQG rotation evidence conflicts,
   so those liquid volumes remain explicitly unsupported.
@@ -102,5 +104,26 @@ First verified overnight batch:
   ID becomes zero. Treating that logout cleanup as malformed disconnected the
   client before bind transfer. Narrow compatibility fix is covered by tests.
 - Follow-up research is in `UI_LAYOUT_PLAN.md` (click-to-front/persisted stacking)
-  and `AUDIO_PLAN.md` (authored sound assets). UI agent is holding code for first
-  publication; npc_assets is writing audio research only.
+  and `AUDIO_PLAN.md` (authored sound assets).
+
+## Active follow-up ownership after 7f3eab3
+
+- **xml_ui**: implement click-to-front/shared map window stacking. Owns
+  gameplay_ui/hud/openeq-ui layer metadata, main.rs input/composition hooks,
+  ui_layout.rs persistent order (version1 with serde defaults), tests/docs.
+  Preserve existing chat event ordering and death gates. No fixture login.
+- **eqemu_server**: live resurrection coverage with Reviver and a new disposable
+  caster: decline, fresh offer, accept, stale/double clicks, actual relocation,
+  corpse state and restoration. Owns live/net recovery code, smoke probe, docs.
+  Do not toggle global rules or reboot occupied zones; no existing-fixture use.
+- **npc_assets**: authored audio asset parser/index slice only, after research.
+  Owns openeq-assets audio module/lib/tests and AUDIO_PLAN.md. Classic84-byte EFF,
+  flexible EMT versions, correct sound/MP3 resolution; no playback or client
+  runtime/dependency changes yet. Installed EMTs have19–22fields, not only20.
+- Agents must not commit/push. Root reviews completed work, resolves integration,
+  runs appropriate checks, and publishes the next coherent batch. Read their
+  messages/status before starting overlapping work. Main/UI/prefs are now owned
+  by xml_ui until it hands them back.
+- Root should revisit native sky celestial orientation, thin liquid crossings,
+  NPC swimming projection, and complete live hover/rez scenarios later; do not
+  confuse first-pass completion with full original-client parity.
