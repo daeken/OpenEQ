@@ -121,6 +121,7 @@ fn nonaligned_q24_surface_preserves_quantized_uvs_and_ignores_terrain() {
         placements: vec![],
         lights: vec![],
         groups: vec![],
+        regions: Vec::new(),
         region_count: 0,
         tiles: vec![TerrainTile {
             longitude: -3,

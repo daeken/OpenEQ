@@ -83,7 +83,7 @@ fn rendered_eqg_and_heightmap_water_never_invent_swimming_volumes() {
         let regions = LiquidRegions::load(&base, zone).unwrap();
         assert!(
             regions.is_empty(),
-            "{zone} has no verified liquid transform yet"
+            "{zone} has unresolved binary transforms or embedded group regions"
         );
         assert_eq!(regions.at([0., 0., -10000.]), None);
         assert!(

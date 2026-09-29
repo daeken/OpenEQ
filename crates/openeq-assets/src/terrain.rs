@@ -17,6 +17,8 @@ use crate::{Error, Result};
 mod bake;
 pub use bake::{BakedTerrain, bake};
 pub mod indexed_water;
+pub mod regions;
+pub use regions::TerrainRegion;
 
 #[derive(Debug, Clone)]
 pub struct TerrainOptions {
@@ -176,6 +178,9 @@ pub struct Heightmap {
     pub placements: Vec<TerrainPlacement>,
     pub lights: Vec<TerrainLight>,
     pub groups: Vec<TerrainPlacement>,
+    /// Top-level DAT records in file order. Embedded group regions are not
+    /// decoded here; liquid queries reject unresolved groups and transforms.
+    pub regions: Vec<TerrainRegion>,
     pub region_count: usize,
 }
 
@@ -195,6 +200,7 @@ impl Heightmap {
             placements: Vec::new(),
             lights: Vec::new(),
             groups: Vec::new(),
+            regions: Vec::new(),
             region_count: 0,
         };
         for _ in 0..count {
@@ -292,11 +298,13 @@ impl Heightmap {
             }
             let regions = reader.bounded_count()?;
             map.region_count += regions;
-            for _ in 0..regions {
-                cstring(&mut reader)?;
-                reader.u32()?;
-                cstring(&mut reader)?;
-                reader.skip(8 + 12 * 4)?;
+            for index in 0..regions {
+                map.regions.push(TerrainRegion::read(
+                    &mut reader,
+                    map.tiles.len(),
+                    index,
+                    [longitude, latitude],
+                )?);
             }
             let lights = reader.bounded_count()?;
             for _ in 0..lights {

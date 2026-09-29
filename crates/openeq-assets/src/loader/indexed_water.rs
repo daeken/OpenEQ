@@ -169,6 +169,7 @@ mod tests {
             placements: vec![],
             lights: vec![],
             groups: vec![],
+            regions: Vec::new(),
             region_count: 0,
         };
         (scene, map)

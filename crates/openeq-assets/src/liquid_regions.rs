@@ -1,6 +1,6 @@
 //! Authored liquid volumes in asset/scene coordinates (Z up).
 //!
-//! These queries use explicit WLD region tags and bounded volume geometry.
+//! These queries use explicit WLD / heightmap DAT region tags and bounded geometry.
 //! Rendered water materials alone never establish a swimming volume.
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 
@@ -9,7 +9,9 @@ use glam::{DQuat, DVec3};
 use crate::{
     Error, Result,
     bsp_regions::{BspRegions, Node},
+    loader::{read_eqg_declaration, read_heightmap},
     pfs::Archive,
+    terrain::{Heightmap, regions::NativeTopLevelRegions},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +60,9 @@ enum Volumes {
         wet: Vec<bool>,
     },
     Boxes(Vec<OrientedBox>),
+    /// Every native record is retained: a dry/unknown winner masks later water.
+    /// Unknown means unsupported evidence, not a recovered dry classification.
+    NativeTerrain(NativeTopLevelRegions),
 }
 
 /// Cheaply cloned, immutable metadata. An empty set means no supported liquid
@@ -73,10 +78,20 @@ impl LiquidRegions {
     pub fn load(base: &Path, zone: &str) -> Result<Self> {
         let zone = zone.to_ascii_lowercase();
         if base.join(format!("{zone}.eqg")).is_file() {
-            // EQG .zon regions are finite boxes, but existing readers disagree
-            // on their orientation. Until verified, retain an empty supported
-            // set; never substitute a potentially stale S3D or a water plane.
-            return Ok(Self::default());
+            let archive = Archive::open(base.join(format!("{zone}.eqg")))?;
+            let declaration = read_eqg_declaration(base, &zone, &archive)?;
+            if !declaration.trim_ascii_start().starts_with(b"EQTZP") {
+                tracing::debug!(zone, "liquid regions unsupported for binary EQGZ zones");
+                return Ok(Self::default());
+            }
+            let map = read_heightmap(&archive, &declaration)?;
+            return match Self::from_heightmap(&map) {
+                Ok(regions) => Ok(regions),
+                Err(error) => {
+                    tracing::warn!(zone, %error, "heightmap liquid regions unsupported; no volumes enabled");
+                    Ok(Self::default())
+                }
+            };
         }
         let archive = Archive::open(base.join(format!("{zone}.s3d")))?;
         Self::from_wld(&archive.read(&format!("{zone}.wld"))?)
@@ -111,6 +126,27 @@ impl LiquidRegions {
             .nodes
             .ok_or_else(|| invalid("liquid regions have no BSP tree"))?;
         Self::from_bsp(nodes, metadata.region_count, labels)
+    }
+
+    /// Builds the verified top-level DAT subset, preserving native registration
+    /// order, startup height anchors, quantized yaw and dry/unknown winners.
+    /// Unsupported records or unresolved object groups reject the whole set.
+    /// Only explicit AWT/ALV/AVW names establish a known liquid; numeric unnamed
+    /// types and classic-name semantics are not inferred. An unsupported winner
+    /// suppresses liquid evidence without claiming a native dry classification.
+    pub fn from_heightmap(map: &Heightmap) -> Result<Self> {
+        let regions = NativeTopLevelRegions::from_heightmap(map)?;
+        let has_liquid = regions
+            .boxes
+            .iter()
+            .any(|volume| terrain_kind(&volume.name).is_some());
+        Ok(Self {
+            volumes: Arc::new(if has_liquid {
+                Volumes::NativeTerrain(regions)
+            } else {
+                Volumes::Empty
+            }),
+        })
     }
 
     fn from_bsp(
@@ -220,6 +256,9 @@ impl LiquidRegions {
         let point = DVec3::from_array(point.map(f64::from));
         match &*self.volumes {
             Volumes::Empty => None,
+            Volumes::NativeTerrain(regions) => regions
+                .at(point.to_array(), None)
+                .and_then(|volume| terrain_kind(&volume.name)),
             Volumes::Boxes(boxes) => boxes
                 .iter()
                 .find(|volume| {
@@ -304,26 +343,26 @@ impl LiquidRegions {
             }
             Volumes::Boxes(boxes) => {
                 let mut candidates = Vec::new();
-                let mut boundaries = Vec::new();
                 for volume in boxes {
                     let a = volume.inverse_rotation * (from - volume.center);
                     let b = volume.inverse_rotation * (to - volume.center);
                     if let Some((enter, exit)) = clip_box(a, b, volume.half_extents) {
-                        candidates.push((enter, exit, volume.kind));
-                        boundaries.extend([enter, exit]);
+                        candidates.push((enter, exit, Some(volume.kind)));
                     }
                 }
-                boundaries.sort_by(f64::total_cmp);
-                boundaries.dedup();
-                for pair in boundaries.windows(2) {
-                    let middle = (pair[0] + pair[1]) * 0.5;
-                    if let Some((_, _, kind)) = candidates
-                        .iter()
-                        .find(|(enter, exit, _)| *enter < middle && middle < *exit)
-                    {
-                        spans.push((pair[0], pair[1], *kind));
-                    }
-                }
+                spans.extend(ordered_spans(&candidates));
+            }
+            Volumes::NativeTerrain(regions) => {
+                let candidates: Vec<_> = regions
+                    .boxes
+                    .iter()
+                    .filter(|volume| !volume.name.starts_with("APV"))
+                    .filter_map(|volume| {
+                        let [enter, exit] = volume.segment(from.to_array(), to.to_array())?;
+                        Some((enter, exit, terrain_kind(&volume.name)))
+                    })
+                    .collect();
+                spans.extend(ordered_spans(&candidates));
             }
         }
         spans.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -346,6 +385,39 @@ impl LiquidRegions {
                 exit: exit as f32,
             })
             .collect()
+    }
+}
+
+/// Candidate order is region precedence, independent of intersection order.
+/// Selecting an unknown/dry candidate ends the search and leaves a dry gap.
+fn ordered_spans(candidates: &[(f64, f64, Option<LiquidKind>)]) -> Vec<(f64, f64, LiquidKind)> {
+    let mut boundaries: Vec<_> = candidates
+        .iter()
+        .flat_map(|&(enter, exit, _)| [enter, exit])
+        .collect();
+    boundaries.sort_by(f64::total_cmp);
+    boundaries.dedup();
+    boundaries
+        .windows(2)
+        .filter_map(|pair| {
+            let middle = (pair[0] + pair[1]) * 0.5;
+            let (_, _, kind) = candidates
+                .iter()
+                .find(|(enter, exit, _)| *enter < middle && middle < *exit)?;
+            kind.map(|kind| (pair[0], pair[1], kind))
+        })
+        .collect()
+}
+
+fn terrain_kind(name: &str) -> Option<LiquidKind> {
+    if name.len() < 4 {
+        return None;
+    }
+    match name.as_bytes().get(..3)? {
+        b"AWT" => Some(LiquidKind::Water),
+        b"ALV" => Some(LiquidKind::Lava),
+        b"AVW" => Some(LiquidKind::FreezingWater),
+        _ => None,
     }
 }
 

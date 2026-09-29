@@ -1,8 +1,10 @@
 # Newer liquid regions: native transform evidence
 
-Research checkpoint, 2026-09-29. **This does not enable EQG swimming volumes.**
-`LiquidRegions::load` remains conservative for both binary EQGZ and heightmap
-EQTZP zones. Water surfaces are not used to invent a volume or a lower bound.
+Research and bounded runtime checkpoint, 2026-09-29. `LiquidRegions::load` now
+supports the verified top-level heightmap DAT subset, including original
+Maiden's Grave. Binary EQGZ and heightmaps with any unresolved groups or
+transforms remain unsupported. Water surfaces are not used to invent a volume
+or a lower bound.
 
 The heightmap DAT path is now traced from the original client's reader through
 terrain-height anchoring and registered box containment. It differs from the
@@ -18,6 +20,10 @@ boundary; the shared box constructor alone does not resolve that format.
   Addresses below are virtual addresses at that image base. `.text` begins at
   VA `0x10001000` / file offset `0x400`; `.rdata` begins at VA `0x10133000` /
   file offset `0x131600`.
+- Installed `eqgame.exe`, PE i386 preferred image base `0x00400000`,
+  11,678,208 bytes, SHA-256
+  `bab4ee0bd724b80c85de7df7020e7049a2bedaa1eca65b1abc59294c472cd593`.
+  Its `.text` begins at VA `0x00401000` / file offset `0x400`.
 - [EQEmu zone-utilities at
   b361e63dd067e8959f5bf2341579f481d2374fd5](https://github.com/EQEmu/zone-utilities/tree/b361e63dd067e8959f5bf2341579f481d2374fd5),
   particularly `src/common/eqg_v4_loader.cpp`, `eqg_loader.cpp`,
@@ -33,12 +39,13 @@ rotation expression was checked against the builder's x87 operations at five
 nontrivial XYZ angle combinations. Reported coordinates are rounded and should
 be checked with a tolerance; they are not byte-exact CPU emulation fixtures.
 
-**The quad-diagonal finding below is proved for the native CPU height sampler.**
-Visible terrain index generation has not been traced in this investigation.
-Whether rendered native terrain uses the same diagonal remains unverified.
-Do not silently change visible terrain triangulation on the strength of this
-sampling evidence. OpenEQ's current fixed-diagonal `TerrainTile::height_at` and
-terrain mesh construction need a separate review.
+**The quad-diagonal finding now reaches visible native terrain indices.**
+The renderer rebuilds bit `0x80` from generated triangle edges, then uploads
+those indices to D3D. This establishes a link to visible topology, but not that
+the original on-disk cache always equals the live tessellator's result. OpenEQ's
+fixed-diagonal `TerrainTile::height_at` and full-resolution terrain construction
+need an explicit compatibility decision; the evidence does not justify claiming
+native adaptive tessellation or LOD parity.
 
 ## Heightmap DAT record grammar
 
@@ -137,6 +144,46 @@ The final authored offset addition is in registered-region construction
 convention is already X/Y horizontal, Z up; server X/Y exchange belongs at the
 protocol boundary.
 
+## Visible triangles and the diagonal cache
+
+Client tile method `0x100a9560` calls base index generation `0x100f6550` at
+`0x100a962c`. The latter calls terrain tessellator `0x101077d0` or
+`0x10107760`, depending on terrain vtable slot `+0x244`. Both pass through
+`0x101064f0`, `0x10106970` and `0x10106a80`. The `0x101077d0` path remaps
+generated vertex indices to grid indices `y * (quads_per_tile + 1) + x`
+at `0x10107810..0x10107840`.
+
+The generated index array is tile field `+0x90`, with triangle count at
+`+0x84`. `0x100f6550` copies it into the DAT tile's cached array/count
+(`+0x0c`, `+0x10`) at `0x100f6676..0x100f6699`, then:
+
+1. Calls `0x100fe660`, which clears bit `0x80` in every quad flag
+   (`and byte ptr [flags + i], 0x7f` at `0x100fe693`).
+2. Visits every generated triangle and calls `0x100f4060` on its three edges
+   at `0x100f66d0..0x100f675a`.
+3. The edge helper skips horizontal/vertical edges and accepts negative-slope
+   edges. Its slope threshold at `0x10133498` is float zero. For cells crossed
+   by those edges, `0x100fe6a0` computes `row * q + col` and sets `0x80`
+   (`or byte ptr [flags + i], 0x80` at `0x100fe6bf`).
+
+Back in the client method, the D3D index buffer at tile `+0x104` is locked at
+`0x100a9815`. The **same tile `+0x90` index array** is copied into it at
+`0x100a9817..0x100a982f`, then unlocked at `0x100a9843`. D3D buffer creation
+uses format `0x65` (`D3DFMT_INDEX16`); the draw triangle count is copied from
+`+0x84` to `+0x100` at `0x100a97ef..0x100a97f5`.
+
+Thus `0x80` records the negative diagonal of generated visible geometry, rather
+than indicating collision-only or hidden geometry. The native terrain collision
+routine also selects its quad triangles using `flags & 0x80` at `0x100cbcf4`;
+it separately excludes hidden quads using bit `0x01` at `0x100cbc1e`.
+
+Region anchoring happens in base tile initialization `0x100f4360` before this
+later index-generation path. A full-grid decoder can use the authored cache for
+the recorded anchor contract without reproducing live LOD. Rendering the same
+full-grid diagonal would be a defensible bounded approximation, but is a
+separate change from metadata retention. The normal client's tessellator-mode
+selection and later re-anchoring schedule are not recovered here.
+
 ## Native DAT rotation, extent and containment
 
 The registered-region path `0x100a6baa..0x100a6c5b` reads full size and multiplies
@@ -205,10 +252,89 @@ The pinned map writer classifies the first three name characters as follows:
 | `APV` | Generic area, not liquid |
 
 These same prefix strings occur together at native VA `0x10135940..0x10135958`.
-The constructor compares them to assign debug colors. That color dispatch alone
-does not prove gameplay classification. Native region query `0x100bcf60` calls
-box containment and performs prefix selection with a secondary non-`APV`
-fallback. Full native overlap/type precedence is not yet specified here.
+The graphics constructor uses them for debug colors; the following independent
+trace reaches the gameplay callback.
+
+### Native gameplay type callback
+
+`eqgame.exe` registers callback `0x004a98a0` at `0x004b9bf5`, through graphics
+vtable slot `+0x2c`. The matching DLL vtable is `0x1013becc`; that slot is
+`0x1006b2d0`, which adjusts `this` by four and jumps to callback setter
+`0x100bb4e0`. Getter `0x100bb4d0` reads the same pointer.
+
+Generic graphics environment query `0x10069b00` passes a **null preferred
+prefix** to region-name/type query `0x100bd020` at `0x10069b47`, then calls the
+registered callback with that name and raw type at `0x10069b5d`. It returns its
+caller-supplied default when the region or callback is missing. The zone-line
+query `0x10068e20` instead explicitly prefers `ATP`.
+
+For a name of at least four bytes beginning with uppercase `A`, the gameplay
+callback produces these words (`t` is the original type):
+
+| Prefix | Returned word | Native address |
+| --- | --- | --- |
+| `AWT` | `(t & 0xffffff00) \| 5` | `0x004a98e2` |
+| `ALV` | `(t & 0xffffff00) \| 7` | `0x004a9908` |
+| `AVW` | `(t & 0xffffff00) \| 8` | `0x004a992e` |
+| `APK` | `t \| 0x40000000` | `0x004a9954` |
+| `ATP` | `t \| 0x80000000` | `0x004a9977` |
+| `ASL` | `t \| 0x10000000` | `0x004a99b3` |
+| Other uppercase `A...` | `t` | `0x004a9b42` |
+
+`ATP` also parses zone-line metadata from the name. Null/short names return the
+original type at `0x004a9b47`; non-`A` names enter a separate classic-name
+decoder. The prefix helpers, DLL `0x1011068d` and EXE `0x00935cf7`, perform
+**case-sensitive byte comparisons** (`strncmp`), with no case conversion.
+Do not normalize the authored name before applying these rules.
+
+This is why `AWT` type 0 is water and `AWT` type 10 does not mean a distinct
+liquid kind. Conversely, `APK`, `ATP` and `ASL` do **not** force a dry low byte:
+they preserve it and add independent flags. Every audited `ATP` has type 0 and
+is dry, but a hypothetical `ATP` type 5 cannot be treated as dry on its name
+alone. Unrecognized names/types must not become automatic water or silently
+vanish from overlap precedence.
+
+### Native region order and overlap precedence
+
+`0x100bcf60` searches the registered array at terrain `+0x74` with count
+`+0x6c`. Its complete selection rule is:
+
+```text
+if preferred_prefix is present:
+    return the first containing region matching its first three bytes, if any
+return the first containing region whose first three bytes are not "APV"
+return no region if neither pass found one
+```
+
+The preferred pass is `0x100bcf6a..0x100bcfaf`; generic fallback is
+`0x100bcfb1..0x100bcffe`. Explicit `APV` preference can select an `APV` box;
+only the generic fallback excludes it. `0x100bd020` forwards the chosen name
+and raw type without first filtering for liquids. Consequently, a dry selected
+region blocks a later overlapping wet one. A union of liquid boxes is wrong.
+
+Registration order is **not global DAT file order**. Client region name setter
+`0x100a0bd0` sets region byte `+0x9c` for prefix `ATP`, and loader `0x100a6880`
+registers regions in two passes:
+
+1. All top-level `ATP` regions, longitude ascending, latitude ascending, then
+   source order within each tile (`0x100a6ae5..0x100a6ca3`).
+2. The other top-level regions in that same grid order, followed by embedded
+   group regions for each tile (`0x100a6ca9..0x100a7023`).
+
+The grid bounds at `+0x04/+0x08/+0x0c/+0x10` are longitude/latitude minima and
+maxima. Inner traversal increments latitude at `0x100a6c86`; outer traversal
+increments longitude at `0x100a6c9b`. The DAT reader appends region list nodes
+to the tile tail at `0x10101640..0x10101667`; getters `0x100f5ae0` and
+`0x100f5b70` count and index that list from its head. `0x100bbe80` stores each
+constructed region at the supplied sequential array index (`0x100bbec5`).
+
+For top-level records with no embedded-region interference, the ordering key is
+therefore `(not ATP, tile longitude, tile latitude, index within tile)`.
+This gives `ATP` priority even in the generic, null-prefix query. Do not extend
+that simple sort key to embedded groups without retaining the two-pass/group
+insertion structure. Original file order demonstrably differs: Dead Hills'
+first DAT region is `AWT_dh_pools_3F` at `[-9,0]`, whereas native top-level
+registration begins with `AWT_dh_ocean_sidebay` at `[-15,-1]`.
 
 **Do not copy the map writer's unknown-name fallback.** For heightmap records it
 maps numeric types 1, 10, 9 and 5 to water, 7 to lava, 0 to zone line, and any
@@ -334,21 +460,104 @@ fixtures are recovered. DAT evidence must not be transplanted into EQGZ.
    names to fill missing metadata.
 2. Add CPU-only tests for the native DAT anchoring and angle contract, including
    both quad diagonals, all six finite faces, swept crossings with dry endpoints,
-   the original fixtures above, adjacent-pool overlap, and explicit dry `ATP`,
-   `APK`, `ASL`, `APV`, and unknown-name records. Synthetic `ALV` and `AVW` must
-   stay distinct kinds; original lava/freezing fixtures are still desirable.
+   the original fixtures above, adjacent-pool overlap, and explicit type-zero
+   `ATP`, `APK`, `ASL`, `APV`, and unknown-name records. Test type preservation
+   for modifiers, case-sensitive/short names, native registration order, dry
+   overrides and generic `APV` exclusion. Synthetic `ALV` and `AVW` must stay
+   distinct kinds; original lava/freezing fixtures are still desirable.
 3. Before enabling volumes, review the intended compatibility target explicitly:
    native-authored geometry versus the generated EQEmu WTR map. Do not combine
    the native angle/scale interpretation with an unlabelled server-derived
    anchor. Start with audited top-level DAT regions, unit stored scale,
    yaw-only rotations and strict interior anchors if narrower support is wanted.
-4. Resolve overlap precedence and non-liquid exclusions before converting to a
-   liquid-only list. The current first-liquid-box API cannot automatically
-   reproduce a first-region query where an overlapping dry region wins.
+4. Preserve the recovered region precedence before converting anything to a
+   liquid-only query. The current first-liquid-box API cannot automatically
+   reproduce a first-region query where an overlapping dry region wins. An
+   initial supported subset can require only top-level records, no embedded
+   regions, matching enclosing/repeated grids, unique tiles, unit stored scale,
+   yaw-only rotation, strictly interior anchors, and positive finite dimensions.
+   Retain unsupported metadata and report its limits; do not silently drop a
+   potentially winning unknown region and expose liquid behind it.
 5. Keep binary EQGZ volumes unsupported until its reader-to-constructor path is
    verified. Handle instanced regions, nonunit stored scale, tilted boxes,
    mismatched repeated grids and exact tile-edge anchors as separately evidenced
    extensions rather than extrapolating from the original 66 records.
 
-No runtime files, server state, live sessions, renderer/GPU checks, or audio were
-changed for this investigation.
+## Implemented CPU checkpoint
+
+`Heightmap::regions` now retains each top-level DAT record, its original source
+offset, tile/index order, names, raw type, repeated biased grid and four authored
+vec3s. The parser rejects truncation, invalid strings and non-finite transforms;
+finite unsupported transforms remain available as metadata.
+
+The separate `terrain::regions` module provides `native_type_word`,
+`top_level_registration_order`, `native_anchor_height`, `NativeRegionBox`, and
+`NativeTopLevelRegions`. `LiquidRegions` now uses the whole-set helper for the
+bounded runtime subset below. These helpers do not alter visible terrain,
+object placement or collision geometry.
+The box helper accepts original-fixture DAT versions 20/21, matching grids,
+strict interior anchors, unit stored scale, yaw-only rotation and positive
+dimensions. It rounds the sampled height and world center to their native
+float32 storage points. Table trig values are approximated using float32
+samples; CPU results are not promised bit-identical to the old x87 process.
+
+The set helper retains every region in the recovered order and selects it
+before interpreting its type. Unrecognized classic names yield an explicit
+unsupported classification (`None`) while still occupying their precedence
+position. Unknown uppercase `A...` names preserve their raw type, as native does.
+Unsupported records fail construction. The helper also rejects duplicate tiles
+and any object-group placements: their embedded region content is unresolved,
+so their absence cannot be assumed. Individual top-level boxes can still be
+studied in such zones without claiming a complete zone environment query.
+
+`tests/terrain_regions.rs` checks all four height planes, grammar/truncation,
+name/type behavior, native ordering, APV preference/fallback, dry and unknown
+overrides, six finite faces, swept crossings, quantized nonsquare rotation,
+unsupported paths and all 66 original records. The Feerrott2/Dead Hills fixtures
+above now pass those isolated box tests, including the adjacent-pool overlap.
+The unsupported original zones retain their empty gameplay-volume behavior.
+
+## Bounded runtime integration
+
+`LiquidRegions::from_heightmap` retains the complete native ordered set when
+there is explicit liquid evidence. Point queries use generic native selection
+(no preferred prefix, skipping APV), then classify only case-sensitive names
+of at least four bytes starting `AWT`, `ALV`, or `AVW`. These select water,
+lava and freezing water respectively. Numeric unnamed types, classic names,
+unknown `A...` names, and modifier-only `ATP`/`APK`/`ASL` records do not establish
+liquid evidence. They still occupy their native precedence position. A winning
+unsupported record suppresses liquid evidence; this is not a claim that the
+native environment type is dry. For example, an `ATP` with low byte 5 remains
+unsupported rather than being labelled water or intrinsically dry.
+
+Segment queries intersect every non-APV region and partition the path at all
+entry/exit fractions before choosing its first region. Thus a known dry or
+unsupported winner subtracts its span from underlying water, and overlapping
+liquid kinds retain native order. The swept path is OpenEQ movement geometry,
+not a reverse-engineered original-client movement algorithm. Finite faces are
+inclusive in point queries; zero-length and point-only tangencies produce no
+positive-length liquid span. Public f32 query coordinates may round a computed
+face outwards; the box itself is not expanded with an epsilon.
+
+The archive loader shares exact declaration and DAT selection with rendering:
+EQG precedes S3D, exact archived ZON precedes the case-insensitive loose ZON,
+and a renamed/internal fallback requires an unambiguous actual archived
+declaration naming its own DAT. It never guesses a DAT filename or falls back
+to an obsolete S3D after finding EQG. Unsupported native transform/group sets
+return empty volumes with a warning; malformed archive/declaration/DAT data
+remain load errors. Binary EQGZ returns empty volumes with a diagnostic.
+
+Tests cover rotation, liquid kinds, dry/unsupported overlap winners, ATP/grid
+order, swept crossings, declaration precedence, ambiguity and absence of S3D
+fallback. The original Maiden's Grave fixture checks its finite bounds and
+depth through the public runtime API. Offline movement tests use both its
+actual scene collision for idle/swimming/surfacing and an isolated collision
+world for entering/leaving its finite side at 10, 30 and 120 FPS.
+
+This compatibility target is the native startup-authored DAT volume, not the
+generated EQEmu WTR interpretation. Server-map equality, damage/drowning,
+region-trigger side effects, later height edits, embedded group areas and
+binary EQGZ transforms are not established by this slice.
+
+No server state, live sessions, renderer/GPU checks, or audio were changed for
+this investigation.

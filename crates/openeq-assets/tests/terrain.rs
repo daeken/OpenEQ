@@ -202,6 +202,7 @@ fn terrain_holes_are_not_drawn_and_visible_triangles_face_up() {
         placements: vec![],
         lights: vec![],
         groups: vec![],
+        regions: Vec::new(),
         region_count: 0,
     };
     let texture = |_: &str| {

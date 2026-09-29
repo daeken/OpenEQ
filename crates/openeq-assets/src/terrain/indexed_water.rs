@@ -421,6 +421,7 @@ mod tests {
             placements: Vec::new(),
             lights: Vec::new(),
             groups: Vec::new(),
+            regions: Vec::new(),
             region_count: 0,
         }
     }

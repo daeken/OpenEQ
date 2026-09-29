@@ -527,7 +527,7 @@ fn load_eqg_archive(base: &Path, name: &str, archive: Archive) -> Result<Scene> 
 /// Exact archive and loose declarations keep their existing precedence. Some
 /// heightmap archives use an older internal name (feerrott2 -> feerrott); accept
 /// that only when an actual, unambiguous declaration names an archived DAT.
-fn read_eqg_declaration(base: &Path, name: &str, archive: &Archive) -> Result<Vec<u8>> {
+pub(crate) fn read_eqg_declaration(base: &Path, name: &str, archive: &Archive) -> Result<Vec<u8>> {
     let zon_name = format!("{name}.zon");
     if archive.contains(&zon_name) {
         return archive.read(&zon_name);
@@ -883,19 +883,23 @@ fn case_insensitive_file(base: &Path, name: &str) -> PathBuf {
         .unwrap_or(direct)
 }
 
-fn load_heightmap(base: &Path, name: &str, archive: Archive, zon: &[u8]) -> Result<Scene> {
+/// Shared terrain metadata selection for rendering and environment queries.
+/// An alternate DAT is accepted only through its actual archived declaration.
+pub(crate) fn read_heightmap(archive: &Archive, zon: &[u8]) -> Result<terrain::Heightmap> {
     let mut options = terrain::TerrainOptions::parse(zon)?;
     if !archive.contains(&format!("{}.dat", options.name)) {
         // oldcommons ships a renamed ZON alongside commonlands.zon/DAT.
         // Resolve an actual terrain declaration, rather than guessing a DAT.
-        if let Some((_, candidate)) = unique_heightmap_declaration(&archive)? {
+        if let Some((_, candidate)) = unique_heightmap_declaration(archive)? {
             options = candidate;
         }
     }
-    let map = terrain::Heightmap::parse(
-        options.clone(),
-        &archive.read(&format!("{}.dat", options.name))?,
-    )?;
+    let data = archive.read(&format!("{}.dat", options.name))?;
+    terrain::Heightmap::parse(options, &data)
+}
+
+fn load_heightmap(base: &Path, name: &str, archive: Archive, zon: &[u8]) -> Result<Scene> {
+    let map = read_heightmap(&archive, zon)?;
     let mut ecosystems = terrain::Ecosystems::new();
     for tile in &map.tiles {
         for layer in &tile.layers {
