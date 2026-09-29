@@ -20,7 +20,7 @@ fn main() -> anyhow::Result<()> {
         eprintln!(
             "usage: renderzone <zone> [--dir DIR] [--out FILE] [--width N] [--height N] \
              [--pos X,Y,Z] [--yaw DEG] [--pitch DEG] [--profile FRAMES] \
-             [--brute-lights] [--no-lights]"
+             [--brute-lights] [--no-lights] [--baked-terrain]"
         );
         std::process::exit(2);
     };
@@ -36,6 +36,7 @@ fn main() -> anyhow::Result<()> {
     let mut profile_frames = 0usize;
     let mut no_lights = false;
     let mut brute_lights = false;
+    let mut terrain_mode = openeq_render::terrain::TerrainMode::Direct;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -57,6 +58,7 @@ fn main() -> anyhow::Result<()> {
             "--only-material" => only_material = args.next(),
             "--no-lights" => no_lights = true,
             "--brute-lights" => brute_lights = true,
+            "--baked-terrain" => terrain_mode = openeq_render::terrain::TerrainMode::Baked,
             "--profile" => {
                 profile_frames = args
                     .next()
@@ -74,7 +76,12 @@ fn main() -> anyhow::Result<()> {
     let dir = dir.context("no client directory (pass --dir)")?;
 
     println!("loading {} from {}", zone, dir.display());
+    let load_start = std::time::Instant::now();
     let mut scene = loader::load_zone(&dir, &zone)?;
+    println!(
+        "  asset preparation: {:.1}ms",
+        load_start.elapsed().as_secs_f64() * 1000.
+    );
     if no_lights {
         scene.lights.clear();
     }
@@ -97,6 +104,17 @@ fn main() -> anyhow::Result<()> {
         let materials = kept
             .iter()
             .map(|geometry| scene.materials[geometry.material].clone())
+            .collect();
+        scene.terrain_materials = kept
+            .iter()
+            .enumerate()
+            .filter_map(|(index, geometry)| {
+                scene
+                    .terrain_materials
+                    .get(&geometry.material)
+                    .cloned()
+                    .map(|recipe| (index, recipe))
+            })
             .collect();
         scene.meshes = kept
             .into_iter()
@@ -122,7 +140,34 @@ fn main() -> anyhow::Result<()> {
     let settings = openeq_render::environment::EnvironmentSettings::for_zone(&zone);
     let sky = openeq_assets::environment::load_sky(&dir, &zone, 0.5).ok();
     renderer.set_environment(settings, sky.as_ref());
-    let gpu_scene = GpuScene::build(renderer.device(), renderer.queue(), &scene)?;
+    let upload_start = std::time::Instant::now();
+    let gpu_scene =
+        GpuScene::build_with_terrain(renderer.device(), renderer.queue(), &scene, terrain_mode)?;
+    println!(
+        "  GPU preparation/upload: {:.1}ms; terrain {:?}",
+        upload_start.elapsed().as_secs_f64() * 1000.,
+        gpu_scene.terrain_stats()
+    );
+    let mut side = openeq_render::scene::ATLAS_SIZE;
+    let mut atlas_bytes = 0u64;
+    loop {
+        atlas_bytes += u64::from(side)
+            * u64::from(side)
+            * 4
+            * u64::from(gpu_scene.atlas.depth_or_array_layers());
+        if side == 1 {
+            break;
+        }
+        side /= 2;
+    }
+    println!(
+        "  scene material GPU bytes: {} (atlas {} + terrain {})",
+        atlas_bytes
+            + gpu_scene.terrain_stats().texture_bytes
+            + gpu_scene.terrain_stats().buffer_bytes,
+        atlas_bytes,
+        gpu_scene.terrain_stats().texture_bytes + gpu_scene.terrain_stats().buffer_bytes
+    );
     gpu_scene.set_light_grid_enabled(renderer.queue(), !brute_lights);
     println!(
         "  uploaded {} draw calls, {} lights, bounds {:?}..{:?}",

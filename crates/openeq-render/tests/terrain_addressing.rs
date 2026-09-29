@@ -131,7 +131,13 @@ fn original_feerrott_tile_edges_change_without_moving_geometry_or_interior_uvs()
         ..Default::default()
     };
     let mut draw = |scene: &Scene| {
-        let gpu = GpuScene::build(renderer.device(), renderer.queue(), scene).unwrap();
+        let gpu = GpuScene::build_with_terrain(
+            renderer.device(),
+            renderer.queue(),
+            scene,
+            openeq_render::terrain::TerrainMode::Baked,
+        )
+        .unwrap();
         renderer.set_scene(&gpu);
         renderer.render_at(&gpu, &camera, Duration::from_secs(12));
         (gpu, renderer.read_rgba().unwrap().2)

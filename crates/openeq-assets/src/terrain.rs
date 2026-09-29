@@ -365,6 +365,31 @@ pub struct EcoLayer {
     pub slope_tolerance: f32,
 }
 
+/// Direct terrain texture recipe, keyed by an emitted scene material. This
+/// preserves the compatibility baker's ordered detail/range inputs; it does
+/// not claim to reproduce the native coverage, blend or normal-map shader.
+#[derive(Debug, Clone)]
+pub struct TerrainMaterial {
+    /// Identity of the original compatibility material. Consumers must check
+    /// this against the current material before applying an indexed recipe.
+    pub fallback_texture: String,
+    /// Present only when the source image actually decoded. A valid first
+    /// ecosystem can replace an absent base (original Dead Hills uses `None`).
+    pub base_texture: Option<String>,
+    pub layers: Vec<MaterialLayer>,
+}
+
+/// One DAT ecosystem application, kept in source order. The first tile layer
+/// has no mask; later layers contain square, row-major opacity bytes.
+#[derive(Debug, Clone)]
+pub struct MaterialLayer {
+    pub mask_size: usize,
+    pub mask: Vec<u8>,
+    /// Original ECO order, including references whose image did not decode.
+    /// Consumers must validate the whole recipe before replacing its bake.
+    pub layers: Vec<EcoLayer>,
+}
+
 pub fn parse_ecosystem(data: &[u8]) -> Result<Vec<EcoLayer>> {
     let text = std::str::from_utf8(data).map_err(|_| Error::Format("ECO is not text".into()))?;
     let mut layers = Vec::new();

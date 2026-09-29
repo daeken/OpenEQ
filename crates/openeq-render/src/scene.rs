@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 
+use crate::terrain::{GpuTerrain, TerrainMode, TerrainStats};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3};
 use openeq_assets::Scene;
@@ -21,6 +22,7 @@ pub const FLAG_TRANSPARENT: u32 = 2;
 pub const FLAG_EMISSIVE: u32 = 4;
 pub const FLAG_WATER: u32 = 8;
 pub const FLAG_CLAMP_UV: u32 = 16;
+pub const FLAG_TERRAIN: u32 = 32;
 
 /// Additional parameters for EQG water, indexed by the vertex's material ID.
 #[repr(C)]
@@ -103,6 +105,7 @@ pub struct GpuScene {
     pub atlas_view: wgpu::TextureView,
     pub atlas_linear_view: wgpu::TextureView,
     pub water_materials: wgpu::Buffer,
+    pub(crate) terrain: GpuTerrain,
     pub lights: wgpu::Buffer,
     pub(crate) light_grid: wgpu::Buffer,
     light_grid_dimensions: [u32; 2],
@@ -113,6 +116,9 @@ pub struct GpuScene {
 }
 
 impl GpuScene {
+    pub fn terrain_stats(&self) -> &TerrainStats {
+        &self.terrain.stats
+    }
     /// Diagnostic A/B switch: disabling spatial lookup evaluates every zone
     /// light, retaining the same lights and shading. No scene rebuild needed.
     pub fn set_light_grid_enabled(&self, queue: &wgpu::Queue, enabled: bool) {
@@ -175,7 +181,18 @@ impl GpuScene {
         queue: &wgpu::Queue,
         scene: &Scene,
     ) -> anyhow::Result<Self> {
-        let atlas = build_atlas(device, queue, scene)?;
+        Self::build_with_terrain(device, queue, scene, TerrainMode::Direct)
+    }
+
+    /// Diagnostic comparison and bounded compatibility path for terrain.
+    pub fn build_with_terrain(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scene: &Scene,
+        mode: TerrainMode,
+    ) -> anyhow::Result<Self> {
+        let terrain = GpuTerrain::build(device, queue, scene, mode);
+        let atlas = build_atlas(device, queue, scene, &terrain)?;
         let water: Vec<WaterParams> = scene
             .materials
             .iter()
@@ -253,7 +270,11 @@ impl GpuScene {
 
         for (mesh_index, geometry) in scene.meshes.iter().enumerate() {
             let material = &scene.materials[geometry.material];
-            let (layer, frame_count) = atlas.materials[&material_layer_key(material)];
+            let (layer, frame_count) = if terrain.contains(geometry.material) {
+                (0, 1) // Opaque terrain never samples the fallback atlas.
+            } else {
+                atlas.materials[&material_layer_key(material)]
+            };
             let mut flags = 0u32;
             if material.alpha_mask {
                 flags |= FLAG_ALPHA_MASK;
@@ -269,6 +290,9 @@ impl GpuScene {
             }
             if material.water.is_some() {
                 flags |= FLAG_WATER;
+            }
+            if terrain.contains(geometry.material) {
+                flags |= FLAG_TERRAIN;
             }
 
             let base_vertex = vertices.len() as i32;
@@ -397,6 +421,7 @@ impl GpuScene {
             atlas_view: atlas.view,
             atlas_linear_view: atlas.linear_view,
             water_materials,
+            terrain,
             lights: light_buffer,
             light_grid,
             light_grid_dimensions,
@@ -431,13 +456,23 @@ struct Atlas {
     environments: HashMap<String, u32>,
 }
 
-fn build_atlas(device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene) -> anyhow::Result<Atlas> {
+fn build_atlas(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    scene: &Scene,
+    terrain: &GpuTerrain,
+) -> anyhow::Result<Atlas> {
     let mut layers: Vec<image::RgbaImage> = Vec::new();
     let mut mapping: HashMap<MaterialKey, (u32, u32)> = HashMap::new();
     let mut layer_of_name: HashMap<String, u32> = HashMap::new();
     let mut environments = HashMap::new();
 
-    for material in &scene.materials {
+    // Direct terrain never samples a baked atlas layer. Do not insert a dummy
+    // material-key mapping: an ordinary material may share its fallback image.
+    for (index, material) in scene.materials.iter().enumerate() {
+        if terrain.contains(index) {
+            continue;
+        }
         let key = material_layer_key(material);
         if mapping.contains_key(&key) {
             continue;

@@ -15,7 +15,7 @@
 //! of placeable objects, their instances, and static lights. Textures are
 //! decoded lazily through [`Scene::texture`].
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use crate::mesh::{self, CollisionGeometry, Geometry, Material, WaterMaterial};
@@ -59,6 +59,10 @@ pub struct SceneObject {
 pub struct Scene {
     pub name: String,
     pub materials: Vec<Material>,
+    /// Direct terrain recipes keyed by the current material index. Material
+    /// replacement/remapping must clear or remap these keys too; ordinary
+    /// object extraction starts with an empty map.
+    pub terrain_materials: BTreeMap<usize, terrain::TerrainMaterial>,
     pub meshes: Vec<Geometry>,
     /// Physical geometry independent of drawable materials, never uploaded for
     /// drawing. Includes hidden WLD faces and EQG's separate physical bake.
@@ -88,6 +92,7 @@ impl Scene {
         Self {
             name,
             materials,
+            terrain_materials: BTreeMap::new(),
             meshes,
             collision_meshes: Vec::new(),
             objects: Vec::new(),
@@ -240,6 +245,7 @@ pub fn load_object_library(base: impl AsRef<Path>, zone: &str) -> Result<Scene> 
     let mut scene = Scene {
         name: format!("{zone} object library"),
         materials: Vec::new(),
+        terrain_materials: BTreeMap::new(),
         meshes: Vec::new(),
         collision_meshes: Vec::new(),
         objects: Vec::new(),
@@ -336,6 +342,7 @@ fn load_wld(base: &Path, name: &str) -> Result<Scene> {
     let mut scene = Scene {
         name: name.to_owned(),
         materials: Vec::new(),
+        terrain_materials: BTreeMap::new(),
         meshes: Vec::new(),
         collision_meshes: Vec::new(),
         objects: Vec::new(),
@@ -486,6 +493,7 @@ fn load_eqg_archive(base: &Path, name: &str, archive: Archive) -> Result<Scene> 
     let mut scene = Scene {
         name: name.to_owned(),
         materials: Vec::new(),
+        terrain_materials: BTreeMap::new(),
         meshes: Vec::new(),
         collision_meshes: Vec::new(),
         objects: Vec::new(),
@@ -926,6 +934,7 @@ fn load_heightmap(base: &Path, name: &str, archive: Archive, zon: &[u8]) -> Resu
         baked.meshes,
         baked.textures,
     );
+    scene.terrain_materials = baked.terrain_materials;
     scene.archives.push(archive);
     scene.loose_textures = loose;
     let mut placements = map.placements.clone();

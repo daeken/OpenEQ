@@ -20,6 +20,7 @@ pub mod profiling;
 pub mod projectiles;
 pub mod scene;
 mod shadow;
+pub mod terrain;
 #[cfg(test)]
 mod tests;
 mod transparency;
@@ -36,6 +37,19 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const ALBEDO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const SHADOW_SIZE: u32 = 2048;
+
+fn terrain_storage_binding(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
 
 /// Uniform block shared by every pass.
 #[repr(C)]
@@ -378,6 +392,19 @@ impl Renderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                terrain_storage_binding(5),
+                terrain_storage_binding(6),
+                terrain_storage_binding(7),
             ],
         });
 
@@ -493,7 +520,13 @@ impl Renderer {
         });
         let geometry_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("gbuffer"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/gbuffer.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                concat!(
+                    include_str!("shaders/terrain.wgsl"),
+                    include_str!("shaders/gbuffer.wgsl")
+                )
+                .into(),
+            ),
         });
         let lighting_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("lighting"),

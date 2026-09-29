@@ -146,6 +146,12 @@ fn fs_main(in: Fragment) -> Targets {
     let water_dy = dpdy(in.world.xz / 80.0);
     let asset_dx = dpdx(in.uv);
     let asset_dy = dpdy(in.uv);
+    if ((in.flags & FLAG_TERRAIN) != 0u) {
+        var out: Targets;
+        out.albedo = vec4<f32>(terrain_albedo(in.material, in.uv, in.world.y, in.normal, asset_dx, asset_dy), 0.0);
+        out.normal = vec4<f32>(normalize(in.normal) * 0.5 + 0.5, f32(in.flags) / 255.0);
+        return out;
+    }
     if ((in.flags & FLAG_WATER) != 0u) {
         let water = water_materials[in.material];
         let seconds = globals.params.x * 0.001;

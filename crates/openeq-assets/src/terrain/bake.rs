@@ -2,7 +2,7 @@
 //! existing single-diffuse material interface; a future GPU terrain material can
 //! consume the preserved heightfield, ECO layers and masks at full resolution.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use glam::Vec3;
 
@@ -10,7 +10,7 @@ use crate::Result;
 use crate::mesh::{Geometry, Material};
 use crate::texture::Texture;
 
-use super::{EcoLayer, Ecosystems, Heightmap, TerrainTile};
+use super::{EcoLayer, Ecosystems, Heightmap, MaterialLayer, TerrainMaterial, TerrainTile};
 
 /// Keep per-zone memory bounded: oldcommons has over 1,500 tiles. This is a
 /// compatibility bake, not a reproduction of the client's detail shader.
@@ -20,24 +20,27 @@ pub struct BakedTerrain {
     pub materials: Vec<Material>,
     pub meshes: Vec<Geometry>,
     pub textures: Vec<Texture>,
+    pub terrain_materials: BTreeMap<usize, TerrainMaterial>,
 }
 
 pub fn bake<F>(map: &Heightmap, ecosystems: &Ecosystems, mut texture: F) -> Result<BakedTerrain>
 where
     F: FnMut(&str) -> Option<Texture>,
 {
+    let mut names: Vec<_> = ecosystems
+        .values()
+        .flatten()
+        .map(|layer| layer.detail_map.to_ascii_lowercase())
+        .chain(std::iter::once(map.base_texture.to_ascii_lowercase()))
+        .collect();
+    names.sort();
+    names.dedup();
     let mut source_textures = HashMap::new();
-    for layers in ecosystems.values() {
-        for layer in layers {
-            if let Some(value) = texture(&layer.detail_map) {
-                source_textures
-                    .entry(layer.detail_map.to_ascii_lowercase())
-                    .or_insert(value);
-            }
+    for name in names {
+        if let Some(mut value) = texture(&name) {
+            value.name.clone_from(&name);
+            source_textures.insert(name, value);
         }
-    }
-    if let Some(value) = texture(&map.base_texture) {
-        source_textures.insert(map.base_texture.to_ascii_lowercase(), value);
     }
     let q = map.options.quads_per_tile;
     let step = map.options.units_per_vertex;
@@ -60,6 +63,7 @@ where
         materials: Vec::new(),
         meshes: Vec::new(),
         textures: Vec::new(),
+        terrain_materials: BTreeMap::new(),
     };
     for (tile_id, tile) in map.tiles.iter().enumerate() {
         // Client files sometimes retain unpainted editor tiles without any
@@ -129,6 +133,27 @@ where
             rgba,
         });
         let material = result.materials.len();
+        result.terrain_materials.insert(
+            material,
+            TerrainMaterial {
+                fallback_texture: name.clone(),
+                base_texture: source_textures
+                    .contains_key(&map.base_texture.to_ascii_lowercase())
+                    .then(|| map.base_texture.to_ascii_lowercase()),
+                layers: tile
+                    .layers
+                    .iter()
+                    .map(|layer| MaterialLayer {
+                        mask_size: layer.mask_size,
+                        mask: layer.mask.clone(),
+                        layers: ecosystems
+                            .get(&layer.ecosystem.to_ascii_lowercase())
+                            .cloned()
+                            .unwrap_or_default(),
+                    })
+                    .collect(),
+            },
+        );
         result.materials.push(Material {
             textures: vec![name],
             normal_map: None,
@@ -147,6 +172,12 @@ where
             collidable: true,
         });
     }
+    // Move each successfully decoded native source into Scene once. Keeping
+    // the baked tile images alongside them lets the renderer decline a recipe
+    // without decoding another source or manufacturing a placeholder image.
+    let mut sources: Vec<_> = source_textures.into_values().collect();
+    sources.sort_by(|a, b| a.name.cmp(&b.name));
+    result.textures.extend(sources);
     Ok(result)
 }
 

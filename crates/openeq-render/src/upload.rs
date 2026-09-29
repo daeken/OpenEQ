@@ -62,6 +62,22 @@ impl UploadContext {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(&scene.atlas_linear_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&scene.terrain.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: scene.terrain.headers.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: scene.terrain.layers.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: scene.terrain.masks.as_entire_binding(),
+                },
             ],
         })
     }
