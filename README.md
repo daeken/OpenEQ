@@ -80,7 +80,7 @@ Controls:
 | F; Space/Ctrl in flight | Development free flight; rise/sink |
 
 Chat supports `/say`, `/tell NAME`, `/reply`, `/group`, `/guild`, `/ooc`,
-`/shout`, `/auction`, `/emote`, `/attack [on|off]`, `/sit`, `/stand`, `/hail`,
+`/shout`, `/auction`, `/rsay` (or `/rs`), `/emote`, `/attack [on|off]`, `/sit`, `/stand`, `/hail`,
 `/con`, `/assist [NAME]`, `/target NAME`, `/loot`, `/inventory`, `/loc`, `/help`
 and `/quit`. Use `/cast 1` through `/cast 12`, `/book` and `/stopcast` for spells.
 Use `/merchant`, `/bank` or `/use` for NPC services. Select merchant stock to buy;
@@ -90,6 +90,15 @@ withdraw; shared coin controls move platinum on the configured Storage2 server.
 Groups support `/invite [NAME]`, `/accept`, `/decline`, `/leavegroup` (or
 `/disband`) and `/makeleader NAME`, with invitation/member controls in the group
 window. `/group` sends to the current group.
+
+Use `/raid` to open the raid window and `/raidinvite [NAME]` to invite another
+player in the same zone. Accept or dismiss the received invitation in the
+window (or `/raidaccept` / `/raiddecline`). Dismissal is local. The roster shows
+server-supplied members, classes, levels, subgroups, leader and MOTD; wheel and
+arrow controls scroll longer rosters. `/rsay MESSAGE` sends raid chat.
+`/raidleave` leaves only your character; `/raidleader NAME` transfers leadership
+to a current member when you are the raid leader. Joining, leaving and leadership
+changes wait for server confirmation. Closing the window does not leave the raid.
 
 Clicking a window brings it forward, including its blank background. Window
 positions, stacking order and map position/zoom are saved per world and character
@@ -135,6 +144,8 @@ you up and automatically returns, following the default five-second cycle.
   cancellation/refunds and server-confirmed termination.
 - Clickable quest and item links; group invitations, acceptance/decline, member
   health/targeting, group chat, leaving and leadership transfer.
+- Raid invitations, incremental rosters, self-leave, leadership transfer and
+  raid chat, with the original raid window and MOTD view.
 - Target/assist/consider, autoattack, damage, deaths, corpse loot and Loot All.
 - Floating combat feedback: gold outgoing hits, red incoming hits, misses and
   named avoidance outcomes, with short lifetimes and bounded stacking.
@@ -162,7 +173,8 @@ you up and automatically returns, following the default five-second cycle.
 - Classic WLD zones, binary EQGZ v1/v2 zones and EQTZP heightmap terrain.
 
 This is a playable development milestone, with substantial parity work remaining:
-NPC quest hand-ins, augmentation, raid and guild management, quest journals,
+NPC quest hand-ins, augmentation, raid subgroup/loot administration, guild
+management, quest journals,
 account/character creation, 3D character previews, camp-to-roster,
 EQG/absolute-destination border
 triggers, XMI music and event sounds, advanced XML widgets, EQG liquid volumes and environmental

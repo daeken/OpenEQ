@@ -49,6 +49,10 @@ pub struct ChatInput {
     // Physical keys belong to chat until released, even after submission.
     // Keeping this separate from Bevy's held state also catches OS repeats.
     captured_keys: HashSet<KeyCode>,
+    // Only the current editor session may accept repeats from its held keys.
+    session_keys: HashSet<KeyCode>,
+    // Keys whose whole-frame physical state needs ordered reconstruction.
+    handoff_replay: HashSet<KeyCode>,
 }
 
 #[derive(Default, Debug)]
@@ -63,12 +67,64 @@ impl ChatInput {
     pub fn reset(&mut self, editor: &mut ChatEditor) {
         self.modifiers.reset_all();
         self.captured_keys.clear();
+        self.session_keys.clear();
+        self.handoff_replay.clear();
         editor.cancel();
+    }
+
+    fn retire_session(&mut self) {
+        for key in self.session_keys.drain() {
+            self.modifiers.reset(key);
+        }
+    }
+
+    /// Begin once before routing a frame's native events. Bevy has already
+    /// applied the entire batch, including releases after old chat repeats.
+    pub fn begin_handoff_frame(&mut self, keys: &mut ButtonInput<KeyCode>) {
+        self.handoff_replay.clone_from(&self.captured_keys);
+        self.suppress_captured_keys(keys);
+    }
+
+    /// Route ordered input and rebuild physical state only for chat-owned
+    /// keys. A release removes ownership but cannot leave a gameplay edge;
+    /// a subsequent fresh press in the same batch can enter gameplay normally.
+    /// Call after account-UI filtering, once for each remaining native event.
+    pub fn route_event(
+        &mut self,
+        editor: &mut ChatEditor,
+        window: Entity,
+        event: &WindowEvent,
+        keys: &mut ButtonInput<KeyCode>,
+    ) -> ChatInputResult {
+        let owned_before = matches!(event, WindowEvent::KeyboardInput(event)
+            if event.window == window && self.captured_keys.contains(&event.key_code));
+        let result = self.event(editor, window, event);
+        match event {
+            WindowEvent::KeyboardInput(event) if event.window == window => {
+                if owned_before || self.captured_keys.contains(&event.key_code) {
+                    self.handoff_replay.insert(event.key_code);
+                    keys.reset(event.key_code);
+                } else if self.handoff_replay.contains(&event.key_code) {
+                    match event.state {
+                        ButtonState::Pressed => keys.press(event.key_code),
+                        ButtonState::Released => keys.release(event.key_code),
+                    }
+                }
+            }
+            WindowEvent::WindowFocused(event) if event.window == window && !event.focused => {
+                for key in &self.handoff_replay {
+                    keys.reset(*key);
+                }
+            }
+            _ => {}
+        }
+        result
     }
 
     /// Run after routing this frame's window events and before gameplay reads
     /// physical keys. Only keys still owned by chat lose their held/edge state;
-    /// unrelated fresh movement keys remain available immediately.
+    /// unrelated fresh movement keys remain available immediately. Pair this
+    /// with begin_handoff_frame/route_event to handle keys released this frame.
     pub fn suppress_captured_keys(&self, keys: &mut ButtonInput<KeyCode>) {
         for key in &self.captured_keys {
             keys.reset(*key);
@@ -84,10 +140,15 @@ impl ChatInput {
         event: &WindowEvent,
     ) -> ChatInputResult {
         let mut result = ChatInputResult::default();
+        // Pointer handlers can cancel the editor before forwarding this event.
+        if !editor.active {
+            self.retire_session();
+        }
         match event {
             WindowEvent::WindowFocused(event) if event.window == window && !event.focused => {
                 self.modifiers.reset_all();
                 self.captured_keys.clear();
+                self.session_keys.clear();
                 editor.preedit.clear();
             }
             WindowEvent::Ime(Ime::Preedit {
@@ -107,6 +168,14 @@ impl ChatInput {
                 editor.preedit.clear();
             }
             WindowEvent::KeyboardInput(event) if event.window == window => {
+                if event.state == ButtonState::Pressed
+                    && self.captured_keys.contains(&event.key_code)
+                    && !self.session_keys.contains(&event.key_code)
+                {
+                    // A previous editor's key remains owned until release,
+                    // including when a different editor session is now open.
+                    return result;
+                }
                 if matches!(
                     event.key_code,
                     KeyCode::ControlLeft
@@ -121,15 +190,12 @@ impl ChatInput {
                 }
                 if event.state != ButtonState::Pressed {
                     self.captured_keys.remove(&event.key_code);
-                    return result;
-                }
-                if !editor.active && self.captured_keys.contains(&event.key_code) {
-                    // Suppress this held key without globally capturing the
-                    // frame: unrelated gameplay input can arrive alongside it.
+                    self.session_keys.remove(&event.key_code);
                     return result;
                 }
                 if editor.active {
                     self.captured_keys.insert(event.key_code);
+                    self.session_keys.insert(event.key_code);
                 }
                 let command = self.modifiers.get_pressed().next().is_some();
                 let enter = matches!(event.key_code, KeyCode::Enter | KeyCode::NumpadEnter);
@@ -148,12 +214,14 @@ impl ChatInput {
                         return result;
                     }
                     self.captured_keys.insert(event.key_code);
+                    self.session_keys.insert(event.key_code);
                     result.captured = true;
                     return result;
                 }
                 result.captured = true;
                 if event.key_code == KeyCode::Escape {
                     editor.cancel();
+                    self.retire_session();
                     result.escape_handled = true;
                     return result;
                 }
@@ -182,6 +250,9 @@ impl ChatInput {
                         }
                     }
                     _ => {}
+                }
+                if !editor.active {
+                    self.retire_session();
                 }
             }
             _ => {}
@@ -277,9 +348,11 @@ mod tests {
                 }
             }
         }
+        recover_focus_loss(window, events, keys, &mut ButtonInput::default());
+        input.begin_handoff_frame(keys);
         let results = events
             .iter()
-            .map(|event| input.event(editor, window, event))
+            .map(|event| input.route_event(editor, window, event, keys))
             .collect();
         input.suppress_captured_keys(keys);
         results
@@ -403,6 +476,227 @@ mod tests {
         assert!(!keys.pressed(KeyCode::KeyW));
         assert!(!keys.pressed(KeyCode::Escape));
         assert!(!keys.just_pressed(KeyCode::Escape));
+    }
+
+    #[test]
+    fn submitted_chat_repeat_then_release_has_no_gameplay_edge() {
+        let primary = window(1);
+        let mut input = ChatInput::default();
+        let mut editor = ChatEditor::default();
+        let mut keys = ButtonInput::default();
+        editor.open("");
+        route_keyboard_frame(
+            &mut input,
+            &mut editor,
+            primary,
+            &mut keys,
+            &[
+                press(primary, KeyCode::KeyQ, Some("q")),
+                press(primary, KeyCode::Enter, None),
+            ],
+        );
+        let results = route_keyboard_frame(
+            &mut input,
+            &mut editor,
+            primary,
+            &mut keys,
+            &[
+                keyboard(
+                    primary,
+                    KeyCode::KeyQ,
+                    ButtonState::Pressed,
+                    Some("q"),
+                    true,
+                ),
+                release(primary, KeyCode::KeyQ),
+                press(primary, KeyCode::KeyD, Some("d")),
+            ],
+        );
+        assert!(results.iter().all(|result| !result.captured));
+        assert!(!keys.pressed(KeyCode::KeyQ));
+        assert!(!keys.just_pressed(KeyCode::KeyQ));
+        assert!(!keys.just_released(KeyCode::KeyQ));
+        assert!(keys.pressed(KeyCode::KeyD));
+        assert!(keys.just_pressed(KeyCode::KeyD));
+    }
+
+    #[test]
+    fn reopened_chat_rejects_previous_session_repeats_until_release() {
+        let primary = window(1);
+        let mut input = ChatInput::default();
+        let mut editor = ChatEditor::default();
+        let mut keys = ButtonInput::default();
+        editor.open("");
+        route_keyboard_frame(
+            &mut input,
+            &mut editor,
+            primary,
+            &mut keys,
+            &[
+                press(primary, KeyCode::KeyW, Some("w")),
+                press(primary, KeyCode::Enter, None),
+            ],
+        );
+        route_keyboard_frame(
+            &mut input,
+            &mut editor,
+            primary,
+            &mut keys,
+            &[
+                release(primary, KeyCode::Enter),
+                press(primary, KeyCode::Enter, None),
+                keyboard(
+                    primary,
+                    KeyCode::KeyW,
+                    ButtonState::Pressed,
+                    Some("w"),
+                    true,
+                ),
+                press(primary, KeyCode::KeyA, Some("a")),
+            ],
+        );
+        assert!(editor.active);
+        assert_eq!(editor.text, "a");
+        route_keyboard_frame(
+            &mut input,
+            &mut editor,
+            primary,
+            &mut keys,
+            &[
+                release(primary, KeyCode::KeyW),
+                press(primary, KeyCode::KeyW, Some("w")),
+                keyboard(
+                    primary,
+                    KeyCode::KeyW,
+                    ButtonState::Pressed,
+                    Some("w"),
+                    true,
+                ),
+            ],
+        );
+        assert_eq!(editor.text, "aww");
+        assert!(!keys.pressed(KeyCode::KeyW));
+    }
+
+    #[test]
+    fn chat_handoff_replays_fresh_keys_around_focus_loss_in_native_order() {
+        let primary = window(1);
+        let mut input = ChatInput::default();
+        let mut editor = ChatEditor::default();
+        let mut keys = ButtonInput::default();
+        editor.open("");
+        route_keyboard_frame(
+            &mut input,
+            &mut editor,
+            primary,
+            &mut keys,
+            &[
+                press(primary, KeyCode::KeyQ, Some("q")),
+                press(primary, KeyCode::Enter, None),
+            ],
+        );
+        route_keyboard_frame(&mut input, &mut editor, primary, &mut keys, &[]);
+        assert!(!keys.pressed(KeyCode::KeyQ));
+        let results = route_keyboard_frame(
+            &mut input,
+            &mut editor,
+            primary,
+            &mut keys,
+            &[
+                keyboard(
+                    primary,
+                    KeyCode::KeyQ,
+                    ButtonState::Pressed,
+                    Some("q"),
+                    true,
+                ),
+                release(primary, KeyCode::KeyQ),
+                press(primary, KeyCode::KeyQ, Some("q")),
+                press(primary, KeyCode::KeyA, Some("a")),
+                focus(primary, false),
+                focus(primary, true),
+                press(primary, KeyCode::KeyQ, Some("q")),
+                release(primary, KeyCode::KeyQ),
+                press(primary, KeyCode::KeyD, Some("d")),
+            ],
+        );
+        assert!(results.iter().all(|result| !result.captured));
+        assert!(!keys.pressed(KeyCode::KeyQ));
+        assert!(keys.just_pressed(KeyCode::KeyQ));
+        assert!(keys.just_released(KeyCode::KeyQ));
+        assert!(!keys.pressed(KeyCode::KeyA));
+        assert!(!keys.just_pressed(KeyCode::KeyA));
+        assert!(keys.pressed(KeyCode::KeyD));
+        assert!(keys.just_pressed(KeyCode::KeyD));
+        assert!(!editor.active);
+        assert!(editor.text.is_empty());
+    }
+
+    #[test]
+    fn pointer_closed_chat_does_not_transfer_held_text_or_modifiers_to_next_editor() {
+        let primary = window(1);
+        let mut input = ChatInput::default();
+        let mut editor = ChatEditor::default();
+        let mut keys = ButtonInput::default();
+        editor.open("");
+        route_keyboard_frame(
+            &mut input,
+            &mut editor,
+            primary,
+            &mut keys,
+            &[
+                press(primary, KeyCode::KeyW, Some("w")),
+                press(primary, KeyCode::SuperLeft, None),
+            ],
+        );
+        // Main's pointer handler closes or opens before forwarding the click.
+        editor.cancel();
+        route_keyboard_frame(
+            &mut input,
+            &mut editor,
+            primary,
+            &mut keys,
+            &[mouse_button(
+                primary,
+                MouseButton::Left,
+                ButtonState::Pressed,
+            )],
+        );
+        editor.open("");
+        route_keyboard_frame(
+            &mut input,
+            &mut editor,
+            primary,
+            &mut keys,
+            &[
+                mouse_button(primary, MouseButton::Left, ButtonState::Pressed),
+                keyboard(
+                    primary,
+                    KeyCode::SuperLeft,
+                    ButtonState::Pressed,
+                    None,
+                    true,
+                ),
+                keyboard(
+                    primary,
+                    KeyCode::KeyW,
+                    ButtonState::Pressed,
+                    Some("w"),
+                    true,
+                ),
+                press(primary, KeyCode::KeyA, Some("a")),
+                keyboard(
+                    primary,
+                    KeyCode::KeyA,
+                    ButtonState::Pressed,
+                    Some("a"),
+                    true,
+                ),
+            ],
+        );
+        assert_eq!(editor.text, "aa");
+        assert!(!keys.pressed(KeyCode::KeyW));
+        assert!(!keys.pressed(KeyCode::SuperLeft));
     }
 
     #[test]

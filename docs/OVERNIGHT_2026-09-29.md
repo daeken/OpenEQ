@@ -148,7 +148,7 @@ Published to `master` as **71291ec**. This is the continuation's current baselin
 
 ## Third overnight batch (verified)
 
-Baseline: `d8fb83d` (plan), with runtime baseline `71291ec`.
+Published to `master` as **08afb0d**. This is the current verified baseline.
 
 - Interactive original-skinned credentials → world list → character list →
   playable world is integrated. No-argument startup opens sign-in; `--login`
@@ -191,18 +191,71 @@ Baseline: `d8fb83d` (plan), with runtime baseline `71291ec`.
   existing macOS system DLS bank are understood, but EQ selector-to-sequence
   mapping remains unresolved. No synthesis/playback/download was attempted.
 
+## Fourth overnight batch (verified)
+
+- Source-backed raid events/commands, bounded incremental RaidState and original
+  raid UI are integrated. `/raid`, `/raidinvite`, `/raidaccept`, `/raiddecline`,
+  `/raidleave`, `/raidleader` and `/rsay` are wired. Decline is local; no guessed
+  raid-decline packet. Closing the window does not leave. Subgroup/loot controls,
+  leadership abilities and guild mutation remain unsupported.
+- Raid rows display received class/level/subgroup/leader data; roster/MOTD
+  scrolling, selection, window persistence/stacking, narrow and Retina layouts
+  have original-art GPU coverage. Four UI behavior tests and14 captures passed
+  under `/tmp/openeq-raid-ui`. No complete-roster or offline-state guesses.
+- Independent review caught and fixed delayed invitation status, stale worker
+  rejection affecting a newer request, a replacement invite dropping an in-flight
+  accept, unconfirmed rosters after travel, and queued commands crossing a
+  same-zone raid rebuild. Internal request tokens and a shared server-event
+  membership generation now guard transmission and replies. Only acknowledged
+  sends start request timeouts. Old roster snapshots remain explicitly unconfirmed
+  after travel until the destination sends a rebuild; no invented absence event.
+- Chat had the same held-key lifecycle bug as account UI: a submitted key's
+  repeat/release could trigger a shortcut, or its repeat could enter newly opened
+  chat. Native-order routing now suppresses old-session keys while preserving
+  same-session repeats and fresh input. Both core bugs were reproduced before
+  fixes; all16 input tests, including four new regressions, pass.
+- The dedicated live `raid_smoke` passed invite → local dismiss → reinvite →
+  accept, duplicate/stale action rejection, matching two-member rosters, actual
+  raid chat delivery in both directions, leadership transfer with SQL agreement,
+  reconnect roster rebuild, and both normal self-leaves. Fellowship/Companion
+  are offline with exact pose/resources restored and gameplay invariants intact;
+  only the recorded fixture raid IDs3003/3004 had leftover metadata cleaned.
+  No movement packets, Explorer, or other characters were involved. Evidence:
+  `/tmp/openeq-raid-foreground-4.log`; details in `SOCIAL_PARITY_PLAN.md`.
+- Live testing corrected two source assumptions: zone-entry action10 uses the
+  unchanged136-byte ZoneInSendName structure, while ordinary raid records use
+  140 bytes; the decoder now handles that exact case with a regression. EQEmu
+  excludes the sender from raid chat broadcasts; the client displays its own
+  line only after the worker acknowledges transmission. A regression verifies
+  no local line on queue/rejection and no duplicate local echo for other channels.
+  Local display is not proof of delivery; the live probe verifies the recipient.
+- Normal login/logout regenerates inventory GUID serials. Actual inventory
+  fields are compared unchanged; private baseline journals preserve complete
+  rows while invariant equality excludes only those serials. Fixture restoration
+  is attempted independently for both characters, including on test failure.
+- Combined verification: **527 workspace tests passed**, zero failures/ignored,
+  including original assets and GPU tests. Strict Clippy, format, client build
+  and playback-disabled all-target check passed. Logs:
+  `/tmp/openeq-overnight-raid-publish-{tests,clippy,build,headless}.log`.
+- `SOCIAL_PARITY_PLAN.md` and `SOCIAL_UI_PLAN.md` document guild receive formats
+  and unresolved invitation packet size. Guild controls are still plans, not
+  implemented features. `COMPATIBILITY_SWEEP_PLAN.md` records high-value original
+  asset gaps: invisible collidable Timorous WLD faces, Feerrott2 tiled water and
+  Bloodfields flags/LIT coverage. Original collision is the next priority if
+  evidence supports a narrow verified fix.
+
 ## Active follow-up ownership
 
-- **eqemu_server**: account protocol and live controller probe handed back.
-  Read-only raid/guild protocol and fixture research → `SOCIAL_PARITY_PLAN.md`.
-  No protocol/runtime edits or server mutations in this assignment.
-- **xml_ui**: spell slice and account handoff review handed back. Read-only
-  original raid/guild UI audit → `SOCIAL_UI_PLAN.md`, coordinated with protocol.
-- **npc_assets**: account UI and handoff fix handed back. Read-only representative
-  compatibility gap assessment → `COMPATIBILITY_SWEEP_PLAN.md`; no GPU work during
-  root's full suite, no runtime edits.
+- **eqemu_server**: raid protocol/probe files handed back; root owns them. New
+  bounded read-only task: NPC quest hand-in source/client gap analysis and a
+  dedicated-fixture plan in `QUEST_HANDIN_PLAN.md`. No login or mutation.
+- **xml_ui**: raid presentation handed back; four pure tests +14 original GPU
+  captures passed. Idle; root owns integration files again.
+- **npc_assets**: Timorous read-only original hidden-wall audit found a dry
+  reproducible walking fixture. Finishing exact collision-channel design and
+  evidence in `COMPATIBILITY_SWEEP_PLAN.md`; runtime changes held for publication.
 - Root owns runtime integration, combined validation and publication. Agents
-  must not commit/push. Preserve their research files until reviewed.
+  must not commit/push. Preserve in-progress work. Original collision is next.
 - Root should revisit native sky celestial orientation, thin liquid crossings,
   NPC swimming projection, hover/cross-zone resurrection and XP/item recovery;
   do not confuse first-pass completion with full original-client parity.

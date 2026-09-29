@@ -173,6 +173,12 @@ pub enum Action {
     DeclineInvite,
     LeaveGroup,
     MakeLeader(String),
+    Raid,
+    RaidInvite(Option<String>),
+    RaidAccept,
+    RaidDismiss,
+    RaidLeave,
+    RaidLeader(String),
     Spellbook,
     Cast(u8),
     StopCast,
@@ -181,7 +187,7 @@ pub enum Action {
     Quit,
 }
 
-pub const HELP: &str = "Enter: chat • /say /tell NAME /reply /group /guild /ooc /shout /auction /emote\n/attack [on|off] /sit /stand /hail /con /assist [NAME] /target NAME /loot /inventory /cast 1–12 /book /stopcast /loc /quit\n/trade /canceltrade /scribe /useitem (inspected item)\n/audio [mute|unmute] /audio master|music|ambience 0–100\n/use /merchant /bank /invite [NAME] /accept /decline /leavegroup /makeleader NAME\nI inventory • Q attack • H hail • X sit/stand • L loot • C consider • V assist • Tab target • B spellbook • Alt+1–0 spell gems • M map • F9 camera • E door • R NPC service";
+pub const HELP: &str = "Enter: chat • /say /tell NAME /reply /group /guild /rsay /ooc /shout /auction /emote\n/attack [on|off] /sit /stand /hail /con /assist [NAME] /target NAME /loot /inventory /cast 1–12 /book /stopcast /loc /quit\n/trade /canceltrade /scribe /useitem (inspected item)\n/audio [mute|unmute] /audio master|music|ambience 0–100\n/raid /raidinvite [NAME] /raidaccept /raiddecline /raidleave /raidleader NAME\n/use /merchant /bank /invite [NAME] /accept /decline /leavegroup /makeleader NAME\nI inventory • Q attack • H hail • X sit/stand • L loot • C consider • V assist • Tab target • B spellbook • Alt+1–0 spell gems • M map • F9 camera • E door • R NPC service";
 
 pub fn parse(line: &str) -> Result<Action, String> {
     let line = line.trim();
@@ -206,6 +212,7 @@ pub fn parse(line: &str) -> Result<Action, String> {
         "say" | "s" => return message(8),
         "group" | "g" | "gsay" => return message(2),
         "guild" | "gu" => return message(0),
+        "rsay" | "rs" => return message(15),
         "ooc" => return message(5),
         "shout" | "sh" => return message(3),
         "auction" | "auc" => return message(4),
@@ -265,6 +272,17 @@ pub fn parse(line: &str) -> Result<Action, String> {
                 return Err("Usage: /makeleader NAME".into());
             }
             Action::MakeLeader(rest.into())
+        }
+        "raid" => Action::Raid,
+        "raidinvite" => Action::RaidInvite((!rest.is_empty()).then(|| rest.to_owned())),
+        "raidaccept" => Action::RaidAccept,
+        "raiddecline" => Action::RaidDismiss,
+        "raidleave" => Action::RaidLeave,
+        "raidleader" => {
+            if rest.is_empty() {
+                return Err("Usage: /raidleader NAME".into());
+            }
+            Action::RaidLeader(rest.into())
         }
         "book" | "spellbook" => Action::Spellbook,
         "stopcast" => Action::StopCast,
@@ -368,6 +386,8 @@ mod tests {
             parse("/gu guild message").unwrap(),
             chat(0, "", "guild message")
         );
+        assert_eq!(parse("/rs rally here").unwrap(), chat(15, "", "rally here"));
+        assert!(parse("/rsay").is_err());
         assert_eq!(parse("/em waves").unwrap(), Action::Emote("waves".into()));
         assert!(parse("/tell Explorer").is_err());
         assert!(parse("/say").is_err());

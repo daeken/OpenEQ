@@ -353,6 +353,7 @@ pub struct GameplayState {
     pub trade: crate::trade::TradeState,
     pub item_use: crate::item_use_state::ItemUseState,
     pub group: crate::group::GroupState,
+    pub raid: crate::raid::RaidState,
     pub chat: VecDeque<ChatLine>,
     pub chat_links: BTreeMap<u64, openeq_net::social::LinkPayload>,
     next_chat_link: u64,
@@ -413,6 +414,12 @@ impl GameplayState {
         )
     }
 
+    /// EQEmu excludes the sender from raid-channel broadcasts. This is only a
+    /// local transcript entry after transmission, not confirmation of delivery.
+    pub(crate) fn sent_raid_chat(&mut self, speaker: &str, text: &str) {
+        self.line(format!("[Raid] {speaker}: {text}"), chat_color(15));
+    }
+
     pub fn line(&mut self, text: impl Into<String>, color: [u8; 4]) {
         let parsed = crate::chat_links::parse_chat(&text.into());
         if parsed.text.is_empty() {
@@ -459,6 +466,14 @@ impl GameplayState {
         name: impl Fn(u32) -> String,
     ) {
         match event {
+            GameplayEvent::Raid(event) => {
+                let own_name = self
+                    .profile
+                    .as_ref()
+                    .map(|profile| profile.name.clone())
+                    .unwrap_or_else(|| own.map(&name).unwrap_or_default());
+                self.raid.apply(event, &own_name);
+            }
             GameplayEvent::Social(event) => {
                 self.group.apply(event, &own.map(&name).unwrap_or_default());
             }

@@ -20,6 +20,7 @@ pub mod loading_ui;
 pub mod movement;
 pub mod movement_rules;
 pub mod profiling;
+pub mod raid;
 mod social_interaction;
 pub mod spell_effects;
 pub mod spells;
@@ -31,6 +32,8 @@ pub mod map;
 
 pub mod commerce_ui;
 
+mod raid_interaction;
+pub mod raid_ui;
 pub mod social_ui;
 pub mod trade_ui;
 

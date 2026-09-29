@@ -775,6 +775,11 @@ fn handle_gameplay_input(
         interaction.pointer = window.cursor_position().map(|p| [p.x, p.y]);
     }
     let mut chat_pointer_owned = false;
+    interaction.raid_visible_rows = openeq::raid_ui::raid_visible_rows(
+        window.height() as u32,
+        live.game.raid.invitation.is_some(),
+    );
+    interaction.chat_input.begin_handoff_frame(&mut keys);
     for event in events.read() {
         if account_input
             .as_mut()
@@ -826,9 +831,12 @@ fn handle_gameplay_input(
             }
             _ => {}
         }
-        let result = interaction
-            .chat_input
-            .event(&mut interaction.editor, window_id, event);
+        let result = interaction.chat_input.route_event(
+            &mut interaction.editor,
+            window_id,
+            event,
+            &mut keys,
+        );
         interaction.controls_blocked |= result.captured;
         interaction.escape_handled |= result.escape_handled;
         interaction.chat_scroll = interaction
@@ -958,6 +966,9 @@ fn handle_gameplay_input(
                 interaction.escape_handled = true;
             } else if interaction.spell_inspection.close() {
                 interaction.escape_handled = true;
+            } else if interaction.raid_open {
+                interaction.raid_open = false;
+                interaction.escape_handled = true;
             } else if live.game.trade.session.is_some() {
                 interaction.close_window("trade", live);
                 interaction.escape_handled = true;
@@ -1017,6 +1028,11 @@ fn handle_gameplay_input(
             if hit.window_id.as_deref() == Some("spell_inspection") {
                 for event in wheel.read() {
                     interaction.spell_inspection.wheel(hit, event.y);
+                }
+            }
+            if hit.window_id.as_deref() == Some("raid") {
+                for event in wheel.read() {
+                    interaction.raid_wheel(live, event.y);
                 }
             }
             if hit.item == "game:chat_log"
@@ -1508,6 +1524,11 @@ fn render_frame(
                 .interaction
                 .spell_inspection
                 .update_metrics(renderer.ui_text_scroll_metrics());
+            if let Some(revision) = runtime.live.as_ref().map(|live| live.game.raid.revision) {
+                runtime
+                    .interaction
+                    .raid_text_metrics(revision, renderer.ui_text_scroll_metrics());
+            }
             runtime.chat_link_hits = renderer.ui_link_hits().to_vec();
             runtime.ui_frame = frame;
         } else {

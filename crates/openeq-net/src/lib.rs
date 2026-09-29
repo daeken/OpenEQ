@@ -33,6 +33,7 @@ pub use stream::{EqStream, StreamError};
 
 pub mod death;
 pub mod item_use;
+pub mod raid;
 pub mod session;
 pub mod social;
 pub mod trade;

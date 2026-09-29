@@ -23,6 +23,11 @@ pub enum Message {
         notice: String,
     },
     RecoverySent(crate::death::RecoveryToken),
+    RaidSent(u64),
+    RaidRejected {
+        token: u64,
+        notice: String,
+    },
     RecoveryRejected {
         token: crate::death::RecoveryToken,
         notice: String,
@@ -31,6 +36,11 @@ pub enum Message {
 pub(crate) enum NetworkCommand {
     Target(u32),
     Gameplay(Command),
+    Raid {
+        request: crate::raid::QueuedRequest,
+        motion_revision: u64,
+        raid_generation: u64,
+    },
     Recovery {
         request: crate::death::RecoveryRequest,
         motion_revision: u64,
@@ -344,11 +354,28 @@ impl NetworkIo {
         } = self;
         let result = async {
                 let mut motion = MovementAuthority::default();
+                let mut raid_generation = 0u64;
                 let mut heartbeat = tokio::time::interval(std::time::Duration::from_millis(100));
                 loop {
                     tokio::select! {
                         Some(request) = requests.recv() => {
                             match request {
+                                NetworkCommand::Raid { request, motion_revision, raid_generation: requested_generation } => {
+                                    if motion_revision != motion.revision || motion.suspended || requested_generation != raid_generation {
+                                        let _ = tx.send(Message::RaidRejected { token: request.token, notice: "That raid choice is no longer current.".into() });
+                                        continue;
+                                    }
+                                    match zone.command(Command::Raid(request.command)).await {
+                                        Ok(()) => { let _ = tx.send(Message::RaidSent(request.token)); }
+                                        Err(openeq_net::zone::ZoneError::Malformed(what)) => {
+                                            let _ = tx.send(Message::RaidRejected { token: request.token, notice: format!("Invalid {what}; raid request was not sent.") });
+                                        }
+                                        Err(openeq_net::zone::ZoneError::Zoning) => {
+                                            let _ = tx.send(Message::RaidRejected { token: request.token, notice: "Zone travel has already started.".into() });
+                                        }
+                                        Err(error) => return Err(error.into()),
+                                    }
+                                }
                                 NetworkCommand::Recovery { request, motion_revision } => {
                                     if motion_revision != motion.revision {
                                         let _ = tx.send(Message::RecoveryRejected { token: request.token, notice: "That recovery choice is no longer current.".into() });
@@ -414,6 +441,9 @@ impl NetworkIo {
                             let event = event?;
                             if let ZoneEvent::Gameplay(event) = &event {
                                 motion.gameplay(event, zone.current_zone());
+                                if let GameplayEvent::Raid(event) = event && crate::raid::changes_membership(event) {
+                                    raid_generation = raid_generation.wrapping_add(1);
+                                }
                             }
                             if let ZoneEvent::Spawn(spawn) = &event { motion.spawn(spawn, character); }
                             if tx.send(Message::Event(Box::new(event))).is_err() { logout_zone(&mut zone).await?; break; }
@@ -558,6 +588,7 @@ impl LiveWorld {
                     self.game.attack = false;
                     self.game.commerce.close_services();
                     self.game.trade = Default::default();
+                    self.game.raid.begin_zone();
                     self.game.inventory.clear_trade();
                     self.item_use_reset();
                     self.game.inventory_command_pending = false;
@@ -570,6 +601,12 @@ impl LiveWorld {
                     self.command_rejected(command, notice)
                 }
                 Message::CommandSent(command) => self.command_sent(command),
+                Message::RaidSent(token) => self.game.raid.sent(token, now),
+                Message::RaidRejected { token, notice } => {
+                    if self.game.raid.rejected(token) {
+                        self.game.error(notice);
+                    }
+                }
                 Message::RecoverySent(token) => {
                     self.game.recovery.request_sent(token);
                     if self
@@ -677,6 +714,7 @@ impl LiveWorld {
             }
         }
         self.check_zone_request_timeout(now);
+        self.game.raid.tick(now);
         self.combat_feedback.prune(now);
         self.advance_door_cycles(now);
     }
@@ -832,6 +870,22 @@ impl LiveWorld {
         true
     }
 
+    pub(crate) fn queue_raid(&mut self, request: crate::raid::QueuedRequest) -> bool {
+        if self
+            .commands
+            .send(NetworkCommand::Raid {
+                request,
+                motion_revision: self.movement_authority.revision,
+                raid_generation: self.game.raid.generation,
+            })
+            .is_err()
+        {
+            self.game.error("The network worker has stopped.");
+            return false;
+        }
+        true
+    }
+
     pub fn command(&mut self, command: Command) -> bool {
         if !self.ready || self.error.is_some() {
             self.game.error("You are not connected to the zone.");
@@ -840,6 +894,11 @@ impl LiveWorld {
         if matches!(command, Command::Death(_)) {
             self.game
                 .error("Use the current recovery choices to respond.");
+            return false;
+        }
+        if matches!(command, Command::Raid(_)) {
+            self.game
+                .error("Use the current raid choices to send that request.");
             return false;
         }
         if !self.movement_allowed() && !command_while_dead(&command) {
@@ -1060,6 +1119,11 @@ impl LiveWorld {
                     self.game.error(error);
                 }
             }
+            Command::Chat {
+                channel: openeq_net::gameplay::ChatChannel::Raid,
+                text,
+                ..
+            } => self.game.sent_raid_chat(&self.character, &text),
             Command::AutoAttack(active) => self.game.attack = active,
             Command::Posture { player_id, posture } => {
                 self.game.sitting = posture == 1;
@@ -1170,6 +1234,7 @@ impl LiveWorld {
             GameplayEvent::ZoneTransition { zone_id, .. } => {
                 self.zone_generation = self.zone_generation.wrapping_add(1);
                 self.game.recovery.begin_zone(self.zone_generation);
+                self.game.raid.begin_zone();
                 self.recovery_request = None;
                 self.ready = false;
                 self.environment = None;
@@ -1766,6 +1831,46 @@ pub(crate) mod tests {
             size: 1,
             children: Vec::new(),
         }
+    }
+
+    #[test]
+    fn raid_chat_local_transcript_waits_for_successful_send() {
+        use openeq_net::gameplay::ChatChannel;
+
+        let (mut live, mut wire) = command_world(1, 10.);
+        let chat = |channel, text: &str| Command::Chat {
+            channel,
+            target: String::new(),
+            text: text.into(),
+            language: 0,
+        };
+        assert!(live.command(chat(ChatChannel::Raid, "Ready here")));
+        assert!(live.game.chat.is_empty());
+        let NetworkCommand::Gameplay(sent) = wire.try_recv().unwrap() else {
+            panic!("expected chat command");
+        };
+        live.command_sent(sent);
+        assert_eq!(live.game.chat.len(), 1);
+        assert_eq!(live.game.chat[0].text, "[Raid] Player: Ready here");
+
+        assert!(live.command(chat(ChatChannel::Raid, "Not sent")));
+        let NetworkCommand::Gameplay(rejected) = wire.try_recv().unwrap() else {
+            panic!("expected chat command");
+        };
+        live.command_rejected(rejected, "Zone travel has already started.".into());
+        assert_eq!(live.game.chat.len(), 2);
+        assert_eq!(live.game.chat[1].text, "Zone travel has already started.");
+        assert!(
+            !live
+                .game
+                .chat
+                .iter()
+                .any(|line| line.text.contains("Not sent"))
+        );
+
+        // Other channels already receive server echoes and must not duplicate.
+        live.command_sent(chat(ChatChannel::Say, "Server echoes this"));
+        assert_eq!(live.game.chat.len(), 2);
     }
 
     fn zone_test_environment() -> Environment {

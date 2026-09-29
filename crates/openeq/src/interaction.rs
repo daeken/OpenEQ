@@ -33,6 +33,15 @@ pub struct Interaction {
     pub spellbook_page: usize,
     pub selected_gem: Option<u8>,
     pub spell_inspection: SpellInspection,
+    pub raid_open: bool,
+    pub raid_scroll: usize,
+    pub raid_selection: Option<String>,
+    pub raid_page: crate::raid_ui::UiRaidPage,
+    pub raid_motd_scroll: usize,
+    pub raid_motd_max_scroll: usize,
+    pub raid_visible_rows: usize,
+    pub raid_seen_invitation: Option<u64>,
+    pub raid_was_active: bool,
     pub merchant_stock: Option<u32>,
     pub merchant_sell: Option<InventorySlot>,
     pub merchant_quantity: u32,
@@ -227,6 +236,7 @@ impl Interaction {
         };
         self.commerce_view(live, &mut view);
         self.social_view(live, &mut view);
+        self.raid_view(live, &mut view);
         self.trade_view(live, &mut view);
         self.item_use_view(live, &mut view);
         view
@@ -259,6 +269,7 @@ impl Interaction {
                     5 => ChatChannel::Ooc,
                     7 => ChatChannel::Tell,
                     8 => ChatChannel::Say,
+                    15 => ChatChannel::Raid,
                     _ => return false,
                 };
                 live.command(Command::Chat {
@@ -395,6 +406,18 @@ impl Interaction {
             Action::Merchant => self.open_service(live, Some(crate::commerce::MERCHANT_CLASS)),
             Action::Bank => self.open_service(live, Some(crate::commerce::BANKER_CLASS)),
             Action::Invite(name) => self.invite(live, name),
+            Action::Raid => self.raid_open = !self.raid_open,
+            Action::RaidInvite(name) => self.raid_invite(live, name),
+            Action::RaidAccept => self.raid_answer(live, true),
+            Action::RaidDismiss => self.raid_answer(live, false),
+            Action::RaidLeave => {
+                let revision = live.game.raid.revision;
+                live.raid_request(crate::raid::Request::Leave { revision });
+            }
+            Action::RaidLeader(leader) => {
+                let revision = live.game.raid.revision;
+                live.raid_request(crate::raid::Request::MakeLeader { revision, leader });
+            }
             Action::AcceptInvite => self.answer_invite(live, true),
             Action::DeclineInvite => self.answer_invite(live, false),
             Action::LeaveGroup => {
@@ -477,6 +500,7 @@ impl Interaction {
             UiAction::ItemUse(action) => self.item_use_action(live, action),
             UiAction::Commerce(action) => self.commerce_action(action, live),
             UiAction::Social(action) => self.social_action(action, live),
+            UiAction::Raid(action) => self.raid_action(action, live),
             UiAction::ChatLink(id) => {
                 if let Some(link) = live.game.chat_links.get(&id).cloned() {
                     self.inspected_item = None;
@@ -668,6 +692,8 @@ impl Interaction {
             self.spellbook_open = false;
         } else if window == "spell_inspection" {
             self.spell_inspection.close();
+        } else if window == "raid" {
+            self.raid_open = false;
         } else if window == "inventory" {
             self.inventory_open = false;
         } else if window == "loot" {
@@ -687,6 +713,7 @@ impl Interaction {
     }
 
     pub fn tick(&mut self, live: &mut LiveWorld) {
+        self.raid_tick(live);
         live.trade_tick();
         self.item_use_tick(live);
         if live

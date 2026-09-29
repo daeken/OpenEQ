@@ -38,6 +38,7 @@ pub enum CoinType {
 pub enum Command {
     Death(crate::death::DeathCommand),
     Social(crate::social::SocialCommand),
+    Raid(crate::raid::RaidCommand),
     Trade(crate::trade::TradeCommand),
     ItemUse(crate::item_use::ItemUseCommand),
     MerchantOpen {
@@ -361,6 +362,7 @@ pub struct ZonePoint {
 pub enum GameplayEvent {
     Recovery(crate::death::DeathEvent),
     Social(crate::social::SocialEvent),
+    Raid(crate::raid::RaidEvent),
     Trade(crate::trade::TradeEvent),
     ItemUse(crate::item_use::ItemUseEvent),
     MerchantOpened {
@@ -569,6 +571,7 @@ pub fn encode_command(command: Command) -> Result<AppPacket, ZoneError> {
     let opcode = match command {
         Command::Death(command) => return crate::death::encode_command(command),
         Command::Social(command) => return crate::social::encode_command(command),
+        Command::Raid(command) => return crate::raid::encode_command(command),
         Command::Trade(command) => return crate::trade::encode_command(command),
         Command::ItemUse(command) => return crate::item_use::encode_command(command),
         Command::MerchantOpen {
@@ -834,6 +837,9 @@ pub fn parse_packet(opcode: u16, data: &[u8]) -> Option<Result<GameplayEvent, Zo
     }
     if let Some(event) = crate::social::parse_packet(opcode, data) {
         return Some(event.map(GameplayEvent::Social));
+    }
+    if let Some(event) = crate::raid::parse_packet(opcode, data) {
+        return Some(event.map(GameplayEvent::Raid));
     }
     if !matches!(
         opcode,
@@ -2376,6 +2382,7 @@ mod tests {
             ChatChannel::Tell,
             ChatChannel::Group,
             ChatChannel::Guild,
+            ChatChannel::Raid,
             ChatChannel::Ooc,
             ChatChannel::Shout,
         ] {
