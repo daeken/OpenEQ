@@ -30,6 +30,9 @@ const TICK: Duration = Duration::from_millis(100);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Bound both silent connections and reliable packets that never get acknowledged.
 const SESSION_TIMEOUT: Duration = Duration::from_secs(30);
+/// EQEmu's reliable stream manager sends an idle keepalive every nine seconds.
+const KEEPALIVE_AFTER: Duration = Duration::from_secs(9);
+const OUTBOUND_PING: u16 = 0x001c;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StreamError {
@@ -84,12 +87,14 @@ struct Inner {
     connected: bool,
     closing: bool,
     last_received: Instant,
+    last_sent: Instant,
     assembly: Option<(usize, Vec<u8>)>,
     close_reason: Option<CloseReason>,
 }
 
 impl Inner {
     fn new(crc_key: u32, crc_bytes: u8, compressing: bool) -> Self {
+        let now = Instant::now();
         Self {
             connect_code: 0,
             crc_key,
@@ -104,7 +109,8 @@ impl Inner {
             resend_ack: false,
             connected: true,
             closing: false,
-            last_received: Instant::now(),
+            last_received: now,
+            last_sent: now,
             assembly: None,
             close_reason: None,
         }
@@ -197,6 +203,7 @@ impl EqStream {
                 inner.out_sequence = inner.out_sequence.wrapping_add(1);
                 outgoing.push(bytes);
             }
+            inner.last_sent = Instant::now();
         }
         for bytes in outgoing {
             self.socket.send(&bytes).await?;
@@ -348,10 +355,36 @@ fn process_incoming(
     dispatcher: &mpsc::UnboundedSender<AppPacket>,
     outgoing: &mut Vec<Vec<u8>>,
 ) {
+    process_incoming_at(inner, data, dispatcher, outgoing, Instant::now());
+}
+
+fn process_incoming_at(
+    inner: &mut Inner,
+    data: &[u8],
+    dispatcher: &mpsc::UnboundedSender<AppPacket>,
+    outgoing: &mut Vec<Vec<u8>>,
+    now: Instant,
+) {
     if !inner.connected || data.len() < 2 {
         return;
     }
-    let opcode = SessionOp::from_u16(u16::from_be_bytes([data[0], data[1]]));
+    let wire_opcode = u16::from_be_bytes([data[0], data[1]]);
+    // EQEmu ProcessPacket recognizes these before CRC/decompression. Its
+    // sender uses either a raw empty header or the negotiated empty encoding;
+    // Compress never uses zlib for an empty body. Reject all other shapes,
+    // rather than letting a zlib decoder ignore trailing bytes as activity.
+    if wire_opcode == SessionOp::KeepAlive as u16 || wire_opcode == OUTBOUND_PING {
+        if data.len() == 2 {
+            inner.last_received = now;
+            return;
+        }
+        if data.len() != 2 + usize::from(inner.compressing) + usize::from(inner.crc_bytes)
+            || (inner.compressing && data.get(2) != Some(&0xa5))
+        {
+            return;
+        }
+    }
+    let opcode = SessionOp::from_u16(wire_opcode);
     let prefix = if data[0] == 0 { 2 } else { 1 };
     let is_protected = !matches!(
         opcode,
@@ -394,7 +427,7 @@ fn process_incoming(
     };
 
     if process_decoded(inner, body, dispatcher, outgoing) {
-        inner.last_received = Instant::now();
+        inner.last_received = now;
     }
 }
 
@@ -406,6 +439,9 @@ fn process_decoded(
 ) -> bool {
     if body.len() < 2 {
         return false;
+    }
+    if body.starts_with(&OUTBOUND_PING.to_be_bytes()) {
+        return body.len() == 2;
     }
     let Some(opcode) = SessionOp::from_u16(u16::from_be_bytes([body[0], body[1]])) else {
         dispatch_application(body, dispatcher);
@@ -473,9 +509,9 @@ fn process_decoded(
             inner.close(CloseReason::PeerDisconnect);
         }
         SessionOp::OutOfSession => inner.close(CloseReason::OutOfSession),
+        SessionOp::KeepAlive => return body.len() == 2,
         SessionOp::Request
         | SessionOp::Response
-        | SessionOp::KeepAlive
         | SessionOp::StatRequest
         | SessionOp::StatResponse => {}
     }
@@ -618,6 +654,7 @@ fn tick_at(inner: &mut Inner, outgoing: &mut Vec<Vec<u8>>, now: Instant) {
         inner.close(CloseReason::Unacknowledged);
         return;
     }
+    let queued = outgoing.len();
     let stale: Vec<u16> = inner
         .sent
         .iter()
@@ -641,6 +678,27 @@ fn tick_at(inner: &mut Inner, outgoing: &mut Vec<Vec<u8>>, now: Instant) {
         inner.last_ack_sent = inner.in_sequence;
         inner.resend_ack = false;
     }
+    if outgoing.len() == queued && now.saturating_duration_since(inner.last_sent) >= KEEPALIVE_AFTER
+    {
+        outgoing.push(encode_keepalive(inner));
+    }
+    if outgoing.len() != queued {
+        inner.last_sent = now;
+    }
+}
+
+fn encode_keepalive(inner: &Inner) -> Vec<u8> {
+    // SendKeepAlive builds only ReliableStreamHeader; InternalSend then adds
+    // the negotiated compression marker and CRC. There is no sequence, ACK,
+    // reliable queue entry, connect-code payload, or application packet.
+    let mut bytes = (SessionOp::KeepAlive as u16).to_be_bytes().to_vec();
+    if inner.compressing {
+        bytes.push(0xa5);
+    }
+    if inner.crc_bytes == 2 {
+        bytes.extend(crc16(&bytes, inner.crc_key).to_be_bytes());
+    }
+    bytes
 }
 
 fn build_fragments(inner: &mut Inner, payload: &[u8], outgoing: &mut Vec<Vec<u8>>) {
@@ -773,32 +831,173 @@ mod tests {
 
     #[test]
     fn only_valid_keepalive_resets_inactivity_deadline() {
-        let (tx, _) = mpsc::unbounded_channel();
+        for (crc_bytes, compressing) in [(0, false), (0, true), (2, false), (2, true)] {
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            let mut inner = Inner::new(123, crc_bytes, compressing);
+            inner.connect_code = 0x1234abcd;
+            let start = inner.last_received;
+            for opcode in [SessionOp::KeepAlive as u16, OUTBOUND_PING] {
+                let raw = opcode.to_be_bytes();
+                let mut wire = raw.to_vec();
+                if compressing {
+                    wire.push(0xa5);
+                }
+                if crc_bytes == 2 {
+                    wire.extend(crc16(&wire, 123).to_be_bytes());
+                }
+                if opcode == SessionOp::KeepAlive as u16 {
+                    assert_eq!(encode_keepalive(&inner), wire);
+                }
+                for valid in [&raw[..], wire.as_slice()] {
+                    let now = inner.last_received + KEEPALIVE_AFTER;
+                    process_incoming_at(&mut inner, valid, &tx, &mut Vec::new(), now);
+                    assert_eq!(inner.last_received, now);
+                    assert!(inner.connected);
+                    assert_eq!(inner.connect_code, 0x1234abcd);
+                    assert!(inner.sent.is_empty());
+                    assert!(rx.try_recv().is_err());
+                }
+                let old = inner.last_received;
+                let mut trailing_body = raw.to_vec();
+                if compressing {
+                    trailing_body.push(0xa5);
+                }
+                trailing_body.push(0x42);
+                if crc_bytes == 2 {
+                    trailing_body.extend(crc16(&trailing_body, 123).to_be_bytes());
+                    let mut corrupt = wire.clone();
+                    *corrupt.last_mut().unwrap() ^= 1;
+                    process_incoming_at(&mut inner, &corrupt, &tx, &mut Vec::new(), old + TICK);
+                }
+                for invalid in [&raw[..1], trailing_body.as_slice()] {
+                    process_incoming_at(&mut inner, invalid, &tx, &mut Vec::new(), old + TICK);
+                }
+                for tail in [false, true] {
+                    // Valid empty zlib plus optional ignored tail. Neither is
+                    // a source-supported empty control encoding, even with a
+                    // valid CRC; no arbitrary bytes may extend peer lifetime.
+                    let mut zlib = raw.to_vec();
+                    zlib.extend([0x5a, 0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01]);
+                    if tail {
+                        zlib.push(0x42);
+                    }
+                    if crc_bytes == 2 {
+                        zlib.extend(crc16(&zlib, 123).to_be_bytes());
+                    }
+                    process_incoming_at(&mut inner, &zlib, &tx, &mut Vec::new(), old + TICK);
+                }
+                assert_eq!(inner.last_received, old);
+                assert!(rx.try_recv().is_err());
+            }
+            assert!(inner.last_received > start + SESSION_TIMEOUT);
+            let deadline = inner.last_received + SESSION_TIMEOUT;
+            let mut outgoing = Vec::new();
+            tick_at(&mut inner, &mut outgoing, deadline - TICK);
+            assert!(inner.connected);
+            outgoing.clear();
+            tick_at(&mut inner, &mut outgoing, deadline);
+            assert!(!inner.connected);
+            assert!(outgoing.is_empty());
+            assert_eq!(inner.close_reason, Some(CloseReason::Inactivity));
+        }
+    }
+
+    #[test]
+    fn idle_keepalives_survive_both_peer_deadlines_without_reliable_or_application_work() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
         let mut inner = Inner::new(123, 2, true);
-        let old = Instant::now() - SESSION_TIMEOUT;
-        inner.last_received = old;
-        let mut wire = vec![0, 6, 0xa5];
-        wire.extend(crc16(&wire, 123).to_be_bytes());
-        let mut corrupt = wire.clone();
-        corrupt[3] ^= 1;
-        process_incoming(&mut inner, &corrupt, &tx, &mut Vec::new());
-        assert_eq!(inner.last_received, old);
-        process_incoming(&mut inner, &[0, 6], &tx, &mut Vec::new());
-        assert_eq!(inner.last_received, old);
-        process_incoming(&mut inner, &wire, &tx, &mut Vec::new());
-        assert!(inner.last_received > old);
+        inner.connect_code = 0x1234abcd;
+        let start = inner.last_received;
+        let mut server_last_received = start;
+        let mut keepalives = 0;
+        // Three minutes exceeds both our 30s and EQEmu's 60s stale limits.
+        for seconds in 1..=180 {
+            let now = start + Duration::from_secs(seconds);
+            if seconds % 9 == 0 {
+                let wire = encode_keepalive(&inner);
+                process_incoming_at(&mut inner, &wire, &tx, &mut Vec::new(), now);
+            }
+            let mut outgoing = Vec::new();
+            tick_at(&mut inner, &mut outgoing, now);
+            assert!(inner.connected);
+            for wire in outgoing {
+                assert_eq!(wire.len(), 5);
+                assert_eq!(&wire[..3], &[0, 6, 0xa5]);
+                assert_eq!(
+                    u16::from_be_bytes(wire[3..5].try_into().unwrap()),
+                    crc16(&wire[..3], 123)
+                );
+                server_last_received = now;
+                keepalives += 1;
+            }
+            assert!(now.duration_since(server_last_received) < Duration::from_secs(60));
+            assert_eq!(inner.connect_code, 0x1234abcd);
+            assert_eq!((inner.out_sequence, inner.in_sequence), (0, 0));
+            assert!(inner.sent.is_empty());
+            assert!(rx.try_recv().is_err());
+        }
+        assert_eq!(keepalives, 20);
+        // Sending our own keepalives must never stand in for a live peer.
         let mut outgoing = Vec::new();
         let deadline = inner.last_received + SESSION_TIMEOUT;
-        tick_at(&mut inner, &mut outgoing, deadline - TICK);
-        assert!(inner.connected);
+        for now in [
+            deadline - Duration::from_secs(21),
+            deadline - Duration::from_secs(12),
+            deadline - Duration::from_secs(3),
+        ] {
+            tick_at(&mut inner, &mut outgoing, now);
+            assert!(inner.connected);
+        }
+        assert_eq!(outgoing.len(), 3);
+        outgoing.clear();
         tick_at(&mut inner, &mut outgoing, deadline);
-        assert!(!inner.connected);
-        assert!(inner.closing);
         assert_eq!(inner.close_reason, Some(CloseReason::Inactivity));
+        assert!(outgoing.is_empty());
+    }
+
+    #[test]
+    fn acknowledgments_and_resends_postpone_only_outbound_idle_keepalive() {
+        let mut inner = Inner::new(123, 2, true);
+        let start = inner.last_received;
+        let mut outgoing = Vec::new();
+        inner.resend_ack = true;
+        tick_at(&mut inner, &mut outgoing, start + KEEPALIVE_AFTER);
+        assert_eq!(outgoing.len(), 1);
+        assert_eq!(&outgoing[0][..2], &[0, SessionOp::Ack as u8]);
+        assert_eq!(inner.last_sent, start + KEEPALIVE_AFTER);
+        assert_eq!(inner.last_received, start);
+        outgoing.clear();
+        tick_at(
+            &mut inner,
+            &mut outgoing,
+            start + KEEPALIVE_AFTER * 2 - TICK,
+        );
+        assert!(outgoing.is_empty());
+        tick_at(&mut inner, &mut outgoing, start + KEEPALIVE_AFTER * 2);
+        assert_eq!(outgoing, [encode_keepalive(&inner)]);
+        assert_eq!(inner.last_received, start);
+        outgoing.clear();
+        let sent_at = start + KEEPALIVE_AFTER * 2;
+        let reliable = encode_reliable(&inner, SessionOp::Single, 0, &[1, 2]);
+        inner.sent.insert(
+            0,
+            Sent {
+                bytes: reliable.clone(),
+                sent_at,
+                first_sent_at: sent_at,
+            },
+        );
+        let resend_at = sent_at + RESEND_AFTER + TICK;
+        tick_at(&mut inner, &mut outgoing, resend_at);
+        assert_eq!(outgoing, [reliable]);
+        assert_eq!(inner.last_sent, resend_at);
+        assert_eq!(inner.sent[&0].first_sent_at, sent_at);
+        assert_eq!(inner.last_received, start);
     }
 
     #[test]
     fn retransmissions_expire_even_when_peer_sends_keepalives() {
+        let (tx, _) = mpsc::unbounded_channel();
         let mut inner = Inner::new(123, 2, true);
         let start = Instant::now();
         inner.sent.insert(
@@ -812,19 +1011,83 @@ mod tests {
         let mut outgoing = Vec::new();
         for seconds in [3, 6, 9, 29] {
             let now = start + Duration::from_secs(seconds);
-            inner.last_received = now;
+            process_incoming_at(&mut inner, &[0, 6], &tx, &mut Vec::new(), now);
             tick_at(&mut inner, &mut outgoing, now);
             assert!(inner.connected);
             assert_eq!(inner.sent[&0].first_sent_at, start);
         }
         assert!(!outgoing.is_empty());
         outgoing.clear();
-        inner.last_received = start + SESSION_TIMEOUT;
+        process_incoming_at(
+            &mut inner,
+            &[0, 6],
+            &tx,
+            &mut Vec::new(),
+            start + SESSION_TIMEOUT,
+        );
         tick_at(&mut inner, &mut outgoing, start + SESSION_TIMEOUT);
         assert!(!inner.connected);
         assert!(inner.sent.is_empty());
         assert!(outgoing.is_empty());
         assert_eq!(inner.close_reason, Some(CloseReason::Unacknowledged));
+    }
+
+    #[tokio::test]
+    async fn connected_socket_sends_idle_keepalive_and_accepts_raw_peer_ping() {
+        let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let client_address = socket.local_addr().unwrap();
+        let address = peer.local_addr().unwrap();
+        socket.connect(address).await.unwrap();
+        let (tx, rx) = mpsc::unbounded_channel();
+        let mut inner = Inner::new(123, 2, true);
+        inner.connect_code = 0x1234abcd;
+        let before = inner.last_received;
+        inner.last_received = before - SESSION_TIMEOUT + Duration::from_secs(2);
+        inner.last_sent = before - KEEPALIVE_AFTER;
+        let expected = encode_keepalive(&inner);
+        let mut stream = EqStream {
+            socket,
+            inner: Arc::new(Mutex::new(inner)),
+            peer: address,
+            closed: Arc::new(Notify::new()),
+            incoming: rx,
+            tasks: Vec::new(),
+        };
+        stream.tasks.push(stream.spawn_reader(tx));
+        stream.tasks.push(stream.spawn_ticker());
+        let mut bytes = [0; MAX_PACKET_SIZE];
+        let (len, from) = tokio::time::timeout(Duration::from_secs(1), peer.recv_from(&mut bytes))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(from, client_address);
+        assert_eq!(&bytes[..len], expected);
+        peer.send_to(&[0, 0x1c], from).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if stream.inner.lock().await.last_received > before {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+        {
+            let guard = stream.inner.lock().await;
+            assert!(guard.connected);
+            assert_eq!(guard.connect_code, 0x1234abcd);
+            assert_eq!((guard.out_sequence, guard.in_sequence), (0, 0));
+            assert!(guard.sent.is_empty());
+        }
+        assert!(stream.incoming.try_recv().is_err());
+        let before_send = Instant::now();
+        stream.send(&AppPacket::empty(0x1234)).await.unwrap();
+        let guard = stream.inner.lock().await;
+        assert!(guard.last_sent >= before_send);
+        assert_eq!(guard.out_sequence, 1);
+        assert_eq!(guard.sent.len(), 1);
     }
 
     #[tokio::test]

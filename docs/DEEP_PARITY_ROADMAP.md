@@ -305,3 +305,20 @@ class-1/skill-0/level-10 database cap of75.
   editor, then prove a single explicit creation on a new dedicated test account.
   Cursor authority still blocks arbitrary NPC hand-ins; reviewed server patches
   are stored separately and remain undeployed.
+
+### Idle connection reliability
+
+- A real character-selection pause failed before any approval/create request
+  was sent. Client transport now emits the source-backed empty keepalive after
+  nine seconds without outgoing traffic. Raw empty KeepAlive/OutboundPing and
+  exact negotiated empty encodings are accepted; malformed/trailing payloads
+  cannot masquerade as valid control traffic.
+- Receive silence and original unacknowledged-send deadlines remain independent
+  of these keepalives. Independent review reproduced a zlib trailing-data edge
+  case, fixed by exact empty-control framing rather than generic decompression.
+- All122 net-library tests passed, including16 stream cases and a180s synthetic
+  idle/real local UDP regression. Strict net all-target lint passed. A dedicated
+  live empty-roster connection then survived120,020ms without name approval,
+  application polling or zone entry before proceeding to its bounded creation
+  proof. Evidence: `/tmp/openeq-creation-proof-v2` and
+  `/tmp/openeq-idle-transport-tests.log`.
