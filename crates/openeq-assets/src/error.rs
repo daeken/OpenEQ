@@ -22,6 +22,10 @@ pub enum Error {
     DirectoryMismatch { listed: usize, table: usize },
     #[error("file not found in archive: {0}")]
     NotFound(String),
+    #[error(
+        "zone assets for {zone} are missing from {directory}: expected {zone}.eqg or {zone}.s3d; copy this zone's original client files into that directory"
+    )]
+    MissingZone { zone: String, directory: PathBuf },
     #[error("unsupported or corrupt image in {name}: {source}")]
     Image {
         name: String,

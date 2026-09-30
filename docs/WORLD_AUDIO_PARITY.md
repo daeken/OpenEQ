@@ -40,6 +40,13 @@ structure from all untested texture, GPU, traversal, NPC and acoustic behavior.
 Use `--metadata-only` for a faster format/region survey or `--zones gfaydark
 poknowledge feerrott2` for a focused rerun. Original assets are never exported.
 
+Installed discovery cannot find wholly absent zone files. For server coverage,
+use `--zones-file /path/to/server-zone-names.txt` with one expected short name per
+line (blank lines and `#` comments are allowed). The manifest records the exact
+normalized selection; the summary reports missing primary archives separately
+from corrupt/unsupported content. Database zone names can include unused or
+unreleased entries, so this inventory is not a list of confirmed travel routes.
+
 ## September 30: first broad evidence checkpoint
 
 Implemented in this pass:
@@ -150,3 +157,41 @@ Strict workspace Clippy, formatting, normal client/audit builds and all-target
 terrain captures are `/tmp/openeq-terrain-topology/`. The broad test run used
 `EQ_DIR` and `EQ_CLIENT_DIR` pointing at the local installation and
 `OPENEQ_UI_CAPTURE_DIR=/tmp/openeq-world-audio-checkpoint-ui`.
+
+## September 30: classic Freeport missing-assets report
+
+PoK travel selected classic West Freeport (`freportw`, zone 9), but the installed
+directory has neither `freportw.s3d` nor `freportw_obj.s3d`. Its character archive
+alone is insufficient. `freeportwest.eqg` is the redesigned zone 383, with different
+geometry and server coordinates; it must not substitute for classic Freeport.
+East Freeport's classic terrain/props archives are also absent. Restoring the
+matching original archives from an older installation remains necessary; this
+checkpoint does not claim that classic Freeport is playable.
+
+The loader now requires the primary zone archive and its matching terrain WLD,
+allows classic zones without optional prop archives, and reports missing assets
+with their expected names and installation directory. Props-only archives and
+matching WLDs hidden in supplemental archives cannot masquerade as terrain.
+Primary archive selection handles filename case consistently in loading and
+metadata checks. Three synthetic regressions cover these cases, including a
+primary-only zone with verified physical ground and a classic/modern Freeport
+name collision.
+
+A read-only server database inventory supplied 482 distinct expected zone names
+to the new `--zones-file` survey. 458 metadata reads passed; 23 have no matching
+primary archive; Dranikcatacombsa retains its known internal banner mismatch.
+No survey timed out. The 23 names include unused/test entries; no reachability
+claim is implied. They are: apprentice, arttest, aviak, barter, befallenb, commons,
+cshome, ecommons, erudsxing2, freeporttemple, freporte, freportw, highpass,
+highpasskeep, kithforest, misty, nektropos, oasis, oldhighpass, oot, qvicb, sro, tox.
+Reports: `/tmp/openeq-freeport-server-zone-survey/`. A separate geometry/collision
+survey passed freportn, freeportwest, gfaydark and poknowledge, and correctly
+reported freporte/freportw missing: `/tmp/openeq-freeport-focused-survey/`.
+
+Verification: all 228 asset tests passed, including original fixtures and all
+three new regressions, with no ignored tests. Original PoK/GFay/Chardok/Abysmal
+GPU uploads passed. The zone-list driver passed checks for comments, blank lines,
+case normalization, deduplication, missing-assets reporting and invalid/empty-list
+rejection. No character state or client assets were changed.
+Strict workspace Clippy, formatting and the normal client/audit builds passed.
+Logs: `/tmp/openeq-freeport-{assets-tests,gpu,clippy,client-build,build}.log`.

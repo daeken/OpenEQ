@@ -80,6 +80,7 @@ pub struct ZoneMetadata {
 }
 
 pub fn metadata(base: &Path, zone: &str) -> Result<ZoneMetadata> {
+    let path = loader::zone_archive(base, zone)?;
     let mut report = ZoneMetadata {
         format: "wld",
         version: None,
@@ -90,8 +91,11 @@ pub fn metadata(base: &Path, zone: &str) -> Result<ZoneMetadata> {
         liquid_detail: None,
         border_status: "not_checked",
     };
-    if base.join(format!("{zone}.eqg")).is_file() {
-        let archive = Archive::open(base.join(format!("{zone}.eqg")))?;
+    if path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("eqg"))
+    {
+        let archive = Archive::open(path)?;
         let declaration = loader::read_eqg_declaration(base, zone, &archive)?;
         report.border_status = "unsupported_eqg";
         if declaration.trim_ascii_start().starts_with(b"EQTZP") {
@@ -121,7 +125,7 @@ pub fn metadata(base: &Path, zone: &str) -> Result<ZoneMetadata> {
             report.liquid_status = "unsupported_eqgz";
         }
     } else {
-        let archive = Archive::open(base.join(format!("{zone}.s3d")))?;
+        let archive = Archive::open(path)?;
         let bytes = archive.read(&format!("{zone}.wld"))?;
         let bsp = BspRegions::parse(&bytes)?;
         report.authored_regions = Some(bsp.declarations.len());

@@ -323,6 +323,20 @@ fn hidden_only_objects_keep_local_coordinates_and_all_instance_transforms() {
 }
 
 struct TempDir(std::path::PathBuf);
+impl TempDir {
+    fn new() -> Self {
+        let dir = Self(std::env::temp_dir().join(format!(
+            "openeq-invisible-collision-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        )));
+        std::fs::create_dir(&dir.0).unwrap();
+        dir
+    }
+}
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
@@ -361,8 +375,7 @@ fn archive_bytes(name: &str, payload: &[u8]) -> Vec<u8> {
     data
 }
 
-#[test]
-fn loaders_preserve_hidden_terrain_and_unplaced_object_ownership() {
+fn collision_wld_bytes() -> Vec<u8> {
     // Quantized positions /2 plus a nonzero fragment center must be applied
     // exactly once before instance scaling/rotation/translation.
     let mut body = words(&[0, 3, 0, 0, 0]);
@@ -385,16 +398,89 @@ fn loaders_preserve_hidden_terrain_and_unplaced_object_ownership() {
             .into_iter()
             .flat_map(u16::to_le_bytes),
     );
-    let payload = wld_bytes(Some(&body));
-    let dir = TempDir(std::env::temp_dir().join(format!(
-            "openeq-invisible-collision-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        )));
-    std::fs::create_dir(&dir.0).unwrap();
+    wld_bytes(Some(&body))
+}
+
+#[test]
+fn classic_zone_without_optional_object_archive_keeps_terrain_collision() {
+    let dir = TempDir::new();
+    // Windows client files may retain mixed-case archive and world names.
+    std::fs::write(
+        dir.0.join("Fixture.S3D"),
+        archive_bytes("FIXTURE.WLD", &collision_wld_bytes()),
+    )
+    .unwrap();
+    let scene = openeq_assets::load_zone(&dir.0, "fixture").unwrap();
+    assert!(scene.objects.is_empty());
+    assert_eq!(scene.collision_meshes.len(), 1);
+    let world = CollisionWorld::build(&scene);
+    assert_eq!(world.triangle_count(), 2);
+    assert_eq!(world.ground_height(7.5, -3.5, 3., 0., 0.), Some(3.));
+    assert_eq!(
+        openeq_assets::audit::metadata(&dir.0, "fixture")
+            .unwrap()
+            .format,
+        "wld"
+    );
+}
+
+#[test]
+fn classic_zone_requires_primary_archive_even_with_props_and_modern_replacement() {
+    let dir = TempDir::new();
+    for (archive, world) in [
+        ("freportw_obj.s3d", "freportw.wld"),
+        ("freportw_chr.s3d", "freportw.wld"),
+        ("freeportwest.eqg", "freeportwest.zon"),
+    ] {
+        std::fs::write(
+            dir.0.join(archive),
+            archive_bytes(world, &collision_wld_bytes()),
+        )
+        .unwrap();
+    }
+    let error = openeq_assets::load_zone(&dir.0, "freportw")
+        .err()
+        .expect("classic archive is missing");
+    assert!(
+        matches!(error, openeq_assets::Error::MissingZone { ref zone, ref directory }
+        if zone == "freportw" && directory == &dir.0)
+    );
+    let message = error.to_string();
+    assert!(message.contains("freportw.s3d"));
+    assert!(message.contains("copy this zone's original client files"));
+    assert!(matches!(
+        openeq_assets::audit::metadata(&dir.0, "freportw"),
+        Err(openeq_assets::Error::MissingZone { .. })
+    ));
+}
+
+#[test]
+fn classic_zone_requires_matching_world_inside_primary_archive() {
+    let dir = TempDir::new();
+    // A matching world in a supplemental archive must not hide a broken primary.
+    std::fs::write(
+        dir.0.join("fixture_obj.s3d"),
+        archive_bytes("fixture.wld", &collision_wld_bytes()),
+    )
+    .unwrap();
+    for wrong_name in ["objects.wld", "otherzone.wld", "fixture.bmp"] {
+        std::fs::write(
+            dir.0.join("fixture.s3d"),
+            archive_bytes(wrong_name, &collision_wld_bytes()),
+        )
+        .unwrap();
+        let error = openeq_assets::load_zone(&dir.0, "fixture")
+            .err()
+            .expect("primary archive has no matching terrain world");
+        assert!(matches!(error, openeq_assets::Error::Format(ref message)
+            if message.contains("fixture.s3d") && message.contains("missing its terrain world fixture.wld")));
+    }
+}
+
+#[test]
+fn loaders_preserve_hidden_terrain_and_unplaced_object_ownership() {
+    let payload = collision_wld_bytes();
+    let dir = TempDir::new();
     for (archive, wld) in [
         ("fixture.s3d", "fixture.wld"),
         ("fixture_obj.s3d", "fixture_obj.wld"),

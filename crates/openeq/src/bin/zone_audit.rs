@@ -54,6 +54,8 @@ fn main() -> Result<()> {
         }
         Err(error) => {
             failed = true;
+            report["missing_assets"] =
+                matches!(error, openeq_assets::Error::MissingZone { .. }).into();
             report["metadata_error"] = error.to_string().into();
         }
     }

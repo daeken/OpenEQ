@@ -2,7 +2,7 @@
 //!
 //! EverQuest zones use three supported geometry layouts:
 //!
-//! * **Classic zones** ship as `{name}.s3d` plus `{name}_obj.s3d`/`{name}_2_obj.s3d`
+//! * **Classic zones** ship as `{name}.s3d` plus optional `{name}_obj.s3d`/`{name}_2_obj.s3d`
 //!   archives of `WLD` fragments. Terrain lives in `{name}.wld`; placeable
 //!   objects live in the `_obj` archives as `*_DMSPRITEDEF` meshes placed by
 //!   `0x15` actor instances.
@@ -335,24 +335,34 @@ pub fn load_object_library(base: impl AsRef<Path>, zone: &str) -> Result<Scene> 
 /// Loads a zone by name from a client data directory.
 pub fn load_zone(base: impl AsRef<Path>, name: &str) -> Result<Scene> {
     let base = base.as_ref();
-    let eqg = base.join(format!("{name}.eqg"));
-    if eqg.is_file() {
-        return load_eqg(base, name, &eqg);
+    let path = zone_archive(base, name)?;
+    if path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("eqg"))
+    {
+        return load_eqg(base, name, &path);
     }
-    load_wld(base, name)
+    load_wld(base, name, &path)
 }
 
-fn load_wld(base: &Path, name: &str) -> Result<Scene> {
-    let primary = base.join(format!("{name}.s3d"));
-    let object_archive = base.join(format!("{name}_obj.s3d"));
-    if !object_archive.is_file() {
-        return Err(Error::Format(format!(
-            "{name} has no .eqg and no {name}_obj.s3d to load as a classic zone"
-        )));
+/// Keep live loading and metadata surveys on the same primary archive.
+/// Object/character archives and similarly named revamped zones cannot replace it.
+pub(crate) fn zone_archive(base: &Path, name: &str) -> Result<PathBuf> {
+    for extension in ["eqg", "s3d"] {
+        let path = case_insensitive_file(base, &format!("{name}.{extension}"));
+        if path.is_file() {
+            return Ok(path);
+        }
     }
+    Err(Error::MissingZone {
+        zone: name.to_owned(),
+        directory: base.to_path_buf(),
+    })
+}
 
-    let mut paths = vec![primary];
-    let prefix = format!("{name}_");
+fn load_wld(base: &Path, name: &str, primary: &Path) -> Result<Scene> {
+    let mut paths = Vec::new();
+    let prefix = format!("{name}_").to_ascii_lowercase();
     for entry in std::fs::read_dir(base).map_err(|source| Error::Io {
         path: base.to_path_buf(),
         source,
@@ -362,12 +372,14 @@ fn load_wld(base: &Path, name: &str) -> Result<Scene> {
         if file_name.starts_with(&prefix)
             && file_name.ends_with(".s3d")
             && !file_name.contains("_chr")
+            && entry.path().is_file()
         {
             paths.push(entry.path());
         }
     }
     paths.sort();
     paths.dedup();
+    paths.insert(0, primary.to_path_buf());
 
     let mut scene = Scene {
         name: name.to_owned(),
@@ -386,12 +398,16 @@ fn load_wld(base: &Path, name: &str) -> Result<Scene> {
     // Keep the archive index for every WLD so texture lookups can prefer the
     // archive a reference came from.
     let mut wlds: Vec<(usize, Wld)> = Vec::new();
+    let main_name = format!("{name}.wld");
     for path in &paths {
-        if !path.is_file() {
-            continue;
-        }
         let archive = Archive::open(path)?;
         let archive_index = scene.archives.len();
+        if archive_index == 0 && !archive.contains(&main_name) {
+            return Err(Error::Format(format!(
+                "classic zone archive {} is missing its terrain world {main_name}",
+                primary.display()
+            )));
+        }
         let wld_names: Vec<String> = archive
             .names()
             .iter()
@@ -408,18 +424,16 @@ fn load_wld(base: &Path, name: &str) -> Result<Scene> {
     register_wld_textures(&mut scene, &wlds);
 
     // Terrain: every mesh in the zone's own WLD, baked together.
-    let main_name = format!("{name}.wld");
-    if let Some((archive_index, wld)) = wlds
+    let (archive_index, wld) = wlds
         .iter()
-        .find(|(_, wld)| wld.filename.eq_ignore_ascii_case(&main_name))
-    {
-        let meshes: Vec<&wld::Mesh> = wld.iter::<wld::Mesh>().map(|(_, mesh)| mesh).collect();
-        scene
-            .collision_meshes
-            .extend(mesh::bake_wld_collision_meshes(wld, meshes.iter().copied()));
-        let (materials, geometries) = mesh::bake_wld_meshes(wld, meshes);
-        append_baked(&mut scene, *archive_index, materials, geometries);
-    }
+        .find(|(index, wld)| *index == 0 && wld.filename.eq_ignore_ascii_case(&main_name))
+        .ok_or_else(|| Error::NotFound(main_name.clone()))?;
+    let meshes: Vec<&wld::Mesh> = wld.iter::<wld::Mesh>().map(|(_, mesh)| mesh).collect();
+    scene
+        .collision_meshes
+        .extend(mesh::bake_wld_collision_meshes(wld, meshes.iter().copied()));
+    let (materials, geometries) = mesh::bake_wld_meshes(wld, meshes);
+    append_baked(&mut scene, *archive_index, materials, geometries);
 
     // Objects: one object per mesh fragment in the non-terrain WLDs.
     for (archive_index, wld) in &wlds {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Survey installed zones in isolated CPU-only processes; never certifies fidelity."""
+"""Survey installed or expected zones in isolated CPU-only processes; never certifies fidelity."""
 import argparse
 import concurrent.futures
 import json
@@ -17,20 +17,34 @@ def main():
     parser.add_argument("--jobs", type=int, default=2, choices=range(1, 5))
     parser.add_argument("--timeout", type=float, default=60)
     parser.add_argument("--metadata-only", action="store_true")
-    parser.add_argument("--zones", nargs="+")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--zones", nargs="+")
+    selection.add_argument("--zones-file", type=Path,
+                           help="expected zone short names, one per line; blank lines and # comments allowed")
     args = parser.parse_args()
     if not 0 < args.timeout <= 3600:
         parser.error("timeout must be between 0 and 3600 seconds")
     binary = args.binary.resolve(strict=True)
     base = args.dir.resolve(strict=True)
-    args.output.mkdir(parents=True, exist_ok=False)
-    if args.zones:
-        manifest = {"zones": sorted(set(args.zones)), "scope": "explicit_selection"}
+    zones = args.zones
+    if args.zones_file:
+        zones = [line.split("#", 1)[0].strip() for line in args.zones_file.read_text().splitlines()]
+        zones = [zone for zone in zones if zone]
+        if not zones:
+            parser.error("zones file contains no zone names")
+    if zones:
+        if any(not zone.isascii() or not all(c.isalnum() or c == "_" for c in zone) for zone in zones):
+            parser.error("zone names must contain only ASCII letters, numbers or underscores")
+        manifest = {"zones": sorted({zone.lower() for zone in zones}),
+                    "scope": "expected_zone_list" if args.zones_file else "explicit_selection"}
+        if args.zones_file:
+            manifest["zones_file"] = str(args.zones_file.resolve())
     else:
         discovery = subprocess.run([str(binary), "--list", "--dir", str(base)],
                                    check=True, capture_output=True, text=True, timeout=300)
         manifest = json.loads(discovery.stdout)
         manifest["scope"] = "installed_declarations"
+    args.output.mkdir(parents=True, exist_ok=False)
     with binary.open("rb") as executable:
         binary_hash = hashlib.file_digest(executable, "sha256").hexdigest()
     manifest.update({"binary": str(binary), "binary_sha256": binary_hash, "asset_directory": str(base),
@@ -73,6 +87,7 @@ def main():
             key = field + ":" + value
             counts[key] = counts.get(key, 0) + 1
     summary = {"zones_attempted": len(reports), "counts": counts,
+               "missing_assets": sorted(r["zone"] for r in reports if r.get("missing_assets")),
                "failed_or_timed_out": [r["zone"] for r in reports if r.get("exit_code") != 0],
                "limits": "CPU structure/metadata only; textures, GPU appearance, traversability, NPCs and audio not certified"}
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")

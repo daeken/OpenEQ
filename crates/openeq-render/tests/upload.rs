@@ -24,7 +24,7 @@ fn zones_upload_within_the_device_limits() {
 
     let mut checked = 0;
     for zone in HEAVY_ZONES {
-        let classic = dir.join(format!("{zone}_obj.s3d")).is_file();
+        let classic = dir.join(format!("{zone}.s3d")).is_file();
         let eqg = dir.join(format!("{zone}.eqg")).is_file();
         if !classic && !eqg {
             continue;
