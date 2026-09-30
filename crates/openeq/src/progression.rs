@@ -67,6 +67,11 @@ pub struct ProgressionState {
     pub level: Option<u32>,
     /// Raw received ratio; values above 330 remain observable but not a percent.
     pub experience_bar_units: Option<u32>,
+    pub aa_experience_bar_units: Option<u32>,
+    /// Latest received balance: full-width profile or zero-extended u16 stats.
+    pub aa_unspent_points: Option<u32>,
+    /// Preserve invalid percentages raw; presentation must not invent a value.
+    pub aa_allocation_percent: Option<u8>,
     pub skills: [Option<u32>; SKILL_COUNT],
     pub languages: [Option<u32>; LANGUAGE_COUNT],
     /// Last profile snapshots, never inferred from gains, levels or trainer replies.
@@ -80,6 +85,9 @@ impl Default for ProgressionState {
             revision: 0,
             level: None,
             experience_bar_units: None,
+            aa_experience_bar_units: None,
+            aa_unspent_points: None,
+            aa_allocation_percent: None,
             skills: [None; SKILL_COUNT],
             languages: [None; LANGUAGE_COUNT],
             profile_training_points: None,
@@ -109,12 +117,16 @@ impl ProgressionState {
             profile.training_points,
             profile.experience_total,
         );
+        self.aa_unspent_points = Some(profile.aa_unspent_points);
     }
 
     fn replace(&mut self, level: u32, skills: &[u32], languages: &[u8], points: u32, xp: u64) {
         self.confirmed = true;
         self.level = Some(level);
         self.experience_bar_units = None;
+        self.aa_experience_bar_units = None;
+        self.aa_unspent_points = None;
+        self.aa_allocation_percent = None;
         self.skills = std::array::from_fn(|id| skills.get(id).copied());
         self.languages = std::array::from_fn(|id| languages.get(id).copied().map(u32::from));
         self.profile_training_points = Some(points);
@@ -131,6 +143,20 @@ impl ProgressionState {
         }
         let mut skill_change = None;
         let changed = match event {
+            ProgressionEvent::AlternateAdvancement {
+                bar_units,
+                unspent_points,
+                allocation_percent,
+            } => {
+                let unspent_points = u32::from(unspent_points);
+                let changed = self.aa_experience_bar_units != Some(bar_units)
+                    || self.aa_unspent_points != Some(unspent_points)
+                    || self.aa_allocation_percent != Some(allocation_percent);
+                self.aa_experience_bar_units = Some(bar_units);
+                self.aa_unspent_points = Some(unspent_points);
+                self.aa_allocation_percent = Some(allocation_percent);
+                changed
+            }
             ProgressionEvent::Experience { bar_units } => {
                 let changed = self.experience_bar_units != Some(bar_units);
                 self.experience_bar_units = Some(bar_units);
@@ -265,6 +291,68 @@ mod tests {
         assert_eq!(state.profile_experience_total, Some(123_456));
     }
     #[test]
+    fn aa_is_independent_preserves_raw_values_and_requires_a_fresh_profile() {
+        let mut state = ProgressionState::default();
+        let mut profile = crate::item_use_state::tests::fixture()
+            .profile
+            .take()
+            .unwrap();
+        profile.aa_unspent_points = u32::MAX;
+        profile.training_points = 7;
+        profile.experience_total = 123_456;
+        let event = ProgressionEvent::AlternateAdvancement {
+            bar_units: 165,
+            unspent_points: 12,
+            allocation_percent: 50,
+        };
+        state.apply(event);
+        assert_eq!(state.aa_unspent_points, None);
+        state.profile(&profile);
+        assert_eq!(state.aa_unspent_points, Some(u32::MAX));
+        assert_eq!(state.aa_experience_bar_units, None);
+        assert_eq!(state.aa_allocation_percent, None);
+        state.apply(ProgressionEvent::Experience { bar_units: 33 });
+        assert_eq!(state.apply(event), None);
+        let revision = state.revision;
+        state.apply(event);
+        assert_eq!(state.revision, revision);
+        assert_eq!(state.aa_unspent_points, Some(12));
+        assert_eq!(state.aa_experience_bar_units, Some(165));
+        assert_eq!(state.aa_allocation_percent, Some(50));
+        for (bar_units, unspent_points, allocation_percent) in
+            [(0, 0, 0), (330, u16::MAX, 100), (u32::MAX, 1, u8::MAX)]
+        {
+            assert_eq!(
+                state.apply(ProgressionEvent::AlternateAdvancement {
+                    bar_units,
+                    unspent_points,
+                    allocation_percent,
+                }),
+                None
+            );
+            assert_eq!(state.aa_experience_bar_units, Some(bar_units));
+            assert_eq!(state.aa_unspent_points, Some(u32::from(unspent_points)));
+            assert_eq!(state.aa_allocation_percent, Some(allocation_percent));
+        }
+        assert_eq!(state.experience_fraction(), Some(0.1));
+        assert_eq!(state.profile_training_points, Some(7));
+        assert_eq!(state.profile_experience_total, Some(123_456));
+        assert_eq!(state.skills, [None; SKILL_COUNT]);
+        assert_eq!(state.languages, [None; LANGUAGE_COUNT]);
+        state.begin_zone();
+        let revision = state.revision;
+        state.apply(event);
+        assert_eq!(state.revision, revision);
+        assert_eq!(state.aa_unspent_points, Some(1));
+        profile.aa_unspent_points = 70_001;
+        state.profile(&profile);
+        assert_eq!(state.aa_unspent_points, Some(70_001));
+        assert_eq!(state.aa_experience_bar_units, None);
+        assert_eq!(state.aa_allocation_percent, None);
+        let new_character = ProgressionState::default();
+        assert_eq!(new_character.aa_unspent_points, None);
+    }
+    #[test]
     fn travel_requires_a_fresh_profile_and_does_not_celebrate_snapshot_changes() {
         let mut state = ProgressionState::default();
         state.apply(skill(0, 90));
@@ -315,11 +403,21 @@ mod tests {
         profile.languages = vec![100; 32];
         profile.training_points = 7;
         profile.experience_total = 123456;
+        profile.aa_unspent_points = 70_001;
         live.game.strings = StringTable::parse("13855 1H Blunt");
         live.gameplay_event(GameplayEvent::Profile(profile.clone()));
         assert_eq!(live.game.progression.skills[0], Some(55));
         assert_eq!(live.game.progression.profile_training_points, Some(7));
         assert_eq!(live.game.progression.profile_experience_total, Some(123456));
+        assert_eq!(live.game.progression.aa_unspent_points, Some(70_001));
+        assert!(live.game.chat.is_empty());
+        let aa = GameplayEvent::Progression(ProgressionEvent::AlternateAdvancement {
+            bar_units: 165,
+            unspent_points: 12,
+            allocation_percent: 50,
+        });
+        live.gameplay_event(aa.clone());
+        assert_eq!(live.game.progression.aa_unspent_points, Some(12));
         assert!(live.game.chat.is_empty());
         live.gameplay_event(GameplayEvent::Progression(skill(0, 56)));
         assert!(
@@ -362,11 +460,16 @@ mod tests {
         assert_eq!(live.game.chat.len(), count);
         assert_eq!(live.game.progression.skills[0], Some(56));
         assert!(!live.game.progression.confirmed);
+        live.gameplay_event(aa);
+        assert_eq!(live.game.progression.aa_unspent_points, Some(12));
         profile.skills[0] = 99;
         live.gameplay_event(GameplayEvent::Profile(profile));
         assert_eq!(live.game.progression.skills[0], Some(99));
         assert_eq!(live.game.chat.len(), count);
         assert_eq!(live.game.progression.experience_bar_units, None);
+        assert_eq!(live.game.progression.aa_unspent_points, Some(70_001));
+        assert_eq!(live.game.progression.aa_experience_bar_units, None);
+        assert_eq!(live.game.progression.aa_allocation_percent, None);
         assert!(wire.try_recv().is_err());
     }
 }

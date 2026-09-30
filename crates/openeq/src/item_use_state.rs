@@ -459,6 +459,7 @@ pub(crate) mod tests {
             skills: vec![],
             languages: vec![],
             experience_total: 0,
+            aa_unspent_points: 0,
             spell_book: vec![u32::MAX; 720],
             memorized_spells: vec![u32::MAX; 12],
             spell_refresh: vec![],

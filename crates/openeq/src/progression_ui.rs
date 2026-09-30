@@ -1,4 +1,4 @@
-//! Receive-only skills, languages and normal experience using the original skin.
+//! Receive-only skills, languages and normal/AA experience using the original skin.
 use crate::gameplay_ui::{GOLD, GameHudState, MUTED, Painter, WHITE, position};
 use openeq_ui::{HitTarget, Rect, UiBindings};
 use std::sync::Arc;
@@ -15,6 +15,7 @@ pub enum UiProgressionPage {
     #[default]
     Skills,
     Languages,
+    AlternateAdvancement,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -33,6 +34,9 @@ pub struct UiProgression {
     pub current: bool,
     pub level: Option<u32>,
     pub experience_bar_units: Option<u32>,
+    pub aa_experience_bar_units: Option<u32>,
+    pub aa_unspent_points: Option<u32>,
+    pub aa_allocation_percent: Option<u8>,
     /// Adapter-supplied names and base values, sorted by numeric ID.
     pub skills: Arc<[UiProgressionRow]>,
     pub languages: Arc<[UiProgressionRow]>,
@@ -48,10 +52,24 @@ impl UiProgression {
             .map(|units| units as f32 / 330.)
     }
 
+    pub fn aa_experience_fraction(&self) -> Option<f32> {
+        self.aa_experience_bar_units
+            .filter(|units| {
+                self.current && *units <= openeq_net::progression::AA_EXPERIENCE_BAR_UNITS
+            })
+            .map(|units| units as f32 / openeq_net::progression::AA_EXPERIENCE_BAR_UNITS as f32)
+    }
+
+    pub fn aa_allocation(&self) -> Option<u8> {
+        self.aa_allocation_percent
+            .filter(|percent| self.current && *percent <= 100)
+    }
+
     fn rows(&self) -> impl Iterator<Item = &UiProgressionRow> {
-        let (rows, bound) = match self.page {
+        let (rows, bound): (&[UiProgressionRow], usize) = match self.page {
             UiProgressionPage::Skills => (&self.skills, 78),
             UiProgressionPage::Languages => (&self.languages, 28),
+            UiProgressionPage::AlternateAdvancement => (&[], 0),
         };
         rows.iter()
             .take(bound)
@@ -77,6 +95,7 @@ impl ProgressionAction {
         let kind = match action {
             "skills" => ProgressionActionKind::Page(UiProgressionPage::Skills),
             "languages" => ProgressionActionKind::Page(UiProgressionPage::Languages),
+            "aa" => ProgressionActionKind::Page(UiProgressionPage::AlternateAdvancement),
             "scroll:-1" => ProgressionActionKind::Scroll { rows: -1 },
             "scroll:1" => ProgressionActionKind::Scroll { rows: 1 },
             _ => return None,
@@ -124,7 +143,13 @@ impl Painter<'_> {
             Rect::new(self.screen.width * 0.5 - 210., 32., 420., WINDOW_HEIGHT),
             self.screen,
         );
-        self.shell("SkillsWindow", "skills", rect, "Skills & languages", true);
+        self.shell(
+            "SkillsWindow",
+            "skills",
+            rect,
+            "Skills, languages & AA",
+            true,
+        );
         self.text(
             Rect::new(rect.x + 12., rect.y + 28., (rect.width - 24.).max(0.), 34.),
             if progression.status.is_empty() {
@@ -135,10 +160,11 @@ impl Painter<'_> {
             MUTED,
             true,
         );
-        let tab_width = ((rect.width - 28.) / 2.).max(0.);
+        let tab_width = ((rect.width - 32.) / 3.).max(0.);
         for (index, (page, suffix, label)) in [
             (UiProgressionPage::Skills, "skills", "Skills"),
             (UiProgressionPage::Languages, "languages", "Languages"),
+            (UiProgressionPage::AlternateAdvancement, "aa", "AA"),
         ]
         .into_iter()
         .enumerate()
@@ -155,6 +181,10 @@ impl Painter<'_> {
                 label,
                 progression.page == page,
             );
+        }
+        if progression.page == UiProgressionPage::AlternateAdvancement {
+            self.aa_progression(rect, progression);
+            return;
         }
         let rows = progression_visible_rows(self.screen.height as u32);
         let list = Rect::new(
@@ -319,6 +349,83 @@ impl Painter<'_> {
         );
     }
 
+    fn aa_progression(&mut self, rect: Rect, progression: &UiProgression) {
+        let left = rect.x + 12.;
+        let width = (rect.width - 24.).max(0.);
+        let top = rect.y + LIST_TOP;
+        let fraction = progression.aa_experience_fraction();
+        let allocation = progression.aa_allocation();
+        // Keep each value on its own row even in the narrow viewport. On very
+        // short windows, omit rows that would overlap the Done control.
+        for (offset, label, current) in [
+            (
+                0.,
+                fraction.map_or_else(
+                    || "AA experience unavailable".into(),
+                    |value| format!("AA experience {:.1}%", value * 100.),
+                ),
+                fraction.is_some(),
+            ),
+            (
+                36.,
+                progression.aa_unspent_points.map_or_else(
+                    || "Unspent AA points unavailable".into(),
+                    |points| {
+                        format!(
+                            "Unspent AA points: {points}{}",
+                            if progression.current { "" } else { " (stale)" }
+                        )
+                    },
+                ),
+                progression.current && progression.aa_unspent_points.is_some(),
+            ),
+            (
+                58.,
+                allocation.map_or_else(
+                    || "Experience to AA unavailable".into(),
+                    |percent| format!("Experience to AA: {percent}%"),
+                ),
+                allocation.is_some(),
+            ),
+        ] {
+            if top + offset + 18. <= rect.bottom() - 38. {
+                self.text(
+                    Rect::new(left, top + offset, width, 18.),
+                    label,
+                    if current { WHITE } else { MUTED },
+                    false,
+                );
+            }
+        }
+        if top + 33. <= rect.bottom() - 38. {
+            let mut bindings = UiBindings::default();
+            let gauge = bindings.widget_mut("IW_AltAdvGauge");
+            gauge.rect = Some(Rect::new(left, top + 22., width, 11.));
+            gauge.gauge = Some(fraction.unwrap_or(0.));
+            gauge.enabled = Some(fraction.is_some());
+            self.widget("IW_AltAdvGauge", &bindings);
+        }
+        if top + 142. <= rect.bottom() - 38. {
+            self.text(
+                Rect::new(left, top + 108., width, 34.),
+                if progression.current {
+                    "Values update when received."
+                } else {
+                    "Last received values · Not current"
+                },
+                MUTED,
+                true,
+            );
+        }
+        self.button(
+            "SKLW_DoneButton",
+            "game:close:skills",
+            Rect::new(rect.right() - 106., rect.bottom() - 29., 94., 22.),
+            "Done",
+            false,
+        );
+    }
+
     pub(crate) fn inventory_progression(
         &mut self,
         rect: Rect,
@@ -395,6 +502,9 @@ mod tests {
             current: true,
             level: Some(65),
             experience_bar_units: Some(165),
+            aa_experience_bar_units: Some(66),
+            aa_unspent_points: Some(12),
+            aa_allocation_percent: Some(50),
             open: true,
             skills: (0..78)
                 .map(|id| UiProgressionRow {
@@ -423,6 +533,7 @@ mod tests {
                 <Listbox item="SKLW_SkillList" />
                 <Button item="SKLW_DoneButton" /><Button item="IW_Skills" />
                 <Gauge item="IW_ExpGauge"><GaugeOffsetY>0</GaugeOffsetY><FillTint><R>220</R><G>150</G><B>0</B></FillTint></Gauge>
+                <Gauge item="IW_AltAdvGauge"><GaugeOffsetY>0</GaugeOffsetY><FillTint><R>20</R><G>150</G><B>220</B></FillTint></Gauge>
                 </XML>"#).unwrap(),
             initial_bindings:UiBindings::default(),
         }
@@ -449,6 +560,10 @@ mod tests {
             (
                 "languages",
                 ProgressionActionKind::Page(UiProgressionPage::Languages),
+            ),
+            (
+                "aa",
+                ProgressionActionKind::Page(UiProgressionPage::AlternateAdvancement),
             ),
             ("scroll:-1", ProgressionActionKind::Scroll { rows: -1 }),
             ("scroll:1", ProgressionActionKind::Scroll { rows: 1 }),
@@ -515,6 +630,146 @@ mod tests {
         state.experience_bar_units = Some(165);
         state.current = false;
         assert_eq!(state.experience_fraction(), None);
+    }
+
+    #[test]
+    fn aa_display_distinguishes_zero_unknown_invalid_and_stale_without_actions() {
+        let hud = minimal_hud();
+        for (units, points, allocation, current, labels, fill_fraction) in [
+            (
+                Some(0),
+                Some(0),
+                Some(0),
+                true,
+                [
+                    "AA experience 0.0%",
+                    "Unspent AA points: 0",
+                    "Experience to AA: 0%",
+                ],
+                0.,
+            ),
+            (
+                Some(330),
+                Some(u32::MAX),
+                Some(100),
+                true,
+                [
+                    "AA experience 100.0%",
+                    "Unspent AA points: 4294967295",
+                    "Experience to AA: 100%",
+                ],
+                1.,
+            ),
+            (
+                Some(165),
+                Some(12),
+                Some(50),
+                true,
+                [
+                    "AA experience 50.0%",
+                    "Unspent AA points: 12",
+                    "Experience to AA: 50%",
+                ],
+                0.5,
+            ),
+            (
+                None,
+                None,
+                None,
+                true,
+                [
+                    "AA experience unavailable",
+                    "Unspent AA points unavailable",
+                    "Experience to AA unavailable",
+                ],
+                0.,
+            ),
+            (
+                Some(331),
+                Some(12),
+                Some(101),
+                true,
+                [
+                    "AA experience unavailable",
+                    "Unspent AA points: 12",
+                    "Experience to AA unavailable",
+                ],
+                0.,
+            ),
+            (
+                Some(165),
+                Some(12),
+                Some(50),
+                false,
+                [
+                    "AA experience unavailable",
+                    "Unspent AA points: 12 (stale)",
+                    "Experience to AA unavailable",
+                ],
+                0.,
+            ),
+        ] {
+            let progression = UiProgression {
+                page: UiProgressionPage::AlternateAdvancement,
+                aa_experience_bar_units: units,
+                aa_unspent_points: points,
+                aa_allocation_percent: allocation,
+                current,
+                ..fixture()
+            };
+            let state = GameHudState {
+                progression: Some(progression),
+                ..Default::default()
+            };
+            for viewport in [[900, 650], [350, 400], [240, 220]] {
+                let frame = hud.gameplay_frame(viewport, &HudState::default(), &state);
+                let done = frame
+                    .hit_targets
+                    .iter()
+                    .rev()
+                    .find(|hit| hit.item == "game:close:skills")
+                    .unwrap();
+                for label in labels {
+                    assert!(frame.commands.iter().any(|cmd| matches!(cmd,
+                        DrawCommand::Text { text, rect, .. } if text == label && rect.bottom() < done.rect.y)),
+                        "{viewport:?}: {label}");
+                }
+                let fill = frame
+                    .commands
+                    .iter()
+                    .find_map(|cmd| match cmd {
+                        DrawCommand::Fill {
+                            rect, clip, color, ..
+                        } if *color == [20, 150, 220, 255] => Some((rect.width, clip.width)),
+                        _ => None,
+                    })
+                    .unwrap();
+                assert!((fill.1 - fill.0 * fill_fraction).abs() < 0.001);
+                assert!(
+                    frame
+                        .hit_targets
+                        .iter()
+                        .filter(|hit| hit.window_id.as_deref() == Some("skills"))
+                        .all(|hit| !hit.item.starts_with("progression:")
+                            || matches!(
+                                ProgressionAction::from_hit(hit),
+                                Some(ProgressionAction {
+                                    kind: ProgressionActionKind::Page(_),
+                                    ..
+                                })
+                            ))
+                );
+            }
+        }
+        let mut progression = fixture();
+        for units in [331, u32::MAX] {
+            progression.aa_experience_bar_units = Some(units);
+            assert_eq!(progression.aa_experience_fraction(), None);
+        }
+        for allocation in [101, u8::MAX] {
+            progression.aa_allocation_percent = Some(allocation);
+            assert_eq!(progression.aa_allocation(), None);
+        }
     }
 
     #[test]
@@ -778,6 +1033,14 @@ mod tests {
                 "full",
                 "narrow-skills",
                 "narrow-inventory",
+                "aa",
+                "aa-zero",
+                "aa-full",
+                "aa-unknown",
+                "aa-invalid",
+                "aa-stale",
+                "narrow-aa",
+                "narrow-aa-stale",
             ] {
                 let viewport = if mode.starts_with("narrow") {
                     [350, 400]
@@ -826,6 +1089,31 @@ mod tests {
                 }
                 if mode == "narrow-inventory" {
                     progression.open = false;
+                }
+                if mode.contains("aa") {
+                    progression.page = UiProgressionPage::AlternateAdvancement;
+                    progression.status =
+                        "Alternate advancement values reported by the server.".into();
+                    if mode.ends_with("zero") {
+                        progression.aa_experience_bar_units = Some(0);
+                        progression.aa_unspent_points = Some(0);
+                        progression.aa_allocation_percent = Some(0);
+                    } else if mode.ends_with("full") {
+                        progression.aa_experience_bar_units = Some(330);
+                        progression.aa_unspent_points = Some(u32::MAX);
+                        progression.aa_allocation_percent = Some(100);
+                    } else if mode.ends_with("unknown") {
+                        progression.aa_experience_bar_units = None;
+                        progression.aa_unspent_points = None;
+                        progression.aa_allocation_percent = None;
+                    } else if mode.ends_with("invalid") {
+                        progression.aa_experience_bar_units = Some(u32::MAX);
+                        progression.aa_allocation_percent = Some(u8::MAX);
+                    } else if mode.ends_with("stale") {
+                        progression.current = false;
+                        progression.status =
+                            "Connection lost · Values are from the previous session".into();
+                    }
                 }
                 let mut state = GameHudState {
                     progression: Some(progression),

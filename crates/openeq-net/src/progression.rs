@@ -1,17 +1,29 @@
 //! Receive-only RoF2 progression messages, following EQEmu's senders and
 //! `common/patches/rof2.cpp` at 4aceae18b94ffaafc08e2b17bc41cd72c77f795d.
 //! Experience updates carry a bar ratio, not an absolute experience total.
-use crate::{wire::u32_at, zone::ZoneError};
+use crate::{
+    wire::{u16_at, u32_at},
+    zone::ZoneError,
+};
 
 pub const OP_EXP_UPDATE: u16 = 0x20ed;
 pub const OP_LEVEL_UPDATE: u16 = 0x1eec;
 pub const OP_SKILL_UPDATE: u16 = 0x004c;
+pub const OP_AA_EXP_UPDATE: u16 = 0x7d14;
 /// Scale used by EQEmu's normal experience-bar senders. Transient level-update
 /// ratios can exceed this; preserve their wire value instead of rejecting them.
 pub const EXPERIENCE_BAR_UNITS: u32 = 330;
+/// AA uses the same scale, but has its own independently received progress.
+pub const AA_EXPERIENCE_BAR_UNITS: u32 = 330;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProgressionEvent {
+    AlternateAdvancement {
+        bar_units: u32,
+        /// The stats sender narrows the profile's u32 balance to u16.
+        unspent_points: u16,
+        allocation_percent: u8,
+    },
     Experience {
         bar_units: u32,
     },
@@ -31,19 +43,26 @@ pub enum ProgressionEvent {
     },
 }
 
-/// Malformed recognized packets are errors. Unknown opcodes, including AA and
-/// trainer traffic, remain available to other parsers. Reserved bytes are
+/// Malformed recognized packets are errors. Unknown opcodes, including AA
+/// actions and trainer traffic, remain available to other parsers. Reserved bytes are
 /// consumed without exposing or requiring their observed contents.
 pub fn parse_packet(opcode: u16, data: &[u8]) -> Option<Result<ProgressionEvent, ZoneError>> {
     let expected_length = match opcode {
         OP_EXP_UPDATE => 8,
-        OP_LEVEL_UPDATE | OP_SKILL_UPDATE => 12,
+        OP_LEVEL_UPDATE | OP_SKILL_UPDATE | OP_AA_EXP_UPDATE => 12,
         _ => return None,
     };
     if data.len() != expected_length {
         return Some(Err(ZoneError::Malformed("progression packet")));
     }
     let event = match opcode {
+        OP_AA_EXP_UPDATE => ProgressionEvent::AlternateAdvancement {
+            // SendAlternateAdvancementStats uses AltAdvStats_Struct, not the
+            // similarly named AAExpUpdate_Struct. Bytes 6–7 and 9–11 are opaque.
+            bar_units: u32_at(data, 0)?,
+            unspent_points: u16_at(data, 4)?,
+            allocation_percent: data[8],
+        },
         OP_EXP_UPDATE => ProgressionEvent::Experience {
             bar_units: u32_at(data, 0)?,
             // The second u32 is not assigned by the inspected XP senders.
@@ -134,6 +153,7 @@ mod tests {
             (OP_EXP_UPDATE, 8),
             (OP_LEVEL_UPDATE, 12),
             (OP_SKILL_UPDATE, 12),
+            (OP_AA_EXP_UPDATE, 12),
         ] {
             let mut data = vec![0; length];
             assert!(parse_packet(opcode, &data).unwrap().is_ok());
@@ -146,10 +166,34 @@ mod tests {
     }
 
     #[test]
-    fn unknown_aa_and_training_opcodes_are_not_claimed() {
-        for opcode in [0, 0xffff, 0x7d14, 0x1966, 0x4b64, 0x3bc9, 0x5f8e] {
+    fn unknown_aa_actions_and_training_opcodes_are_not_claimed() {
+        for opcode in [0, 0xffff, 0x1966, 0x4b64, 0x3bc9, 0x5f8e] {
             assert!(parse_packet(opcode, &[]).is_none());
             assert!(parse_packet(opcode, &[0; 12]).is_none());
+        }
+    }
+
+    #[test]
+    fn aa_stats_preserve_independent_widths_and_ignore_reserved_bytes() {
+        for bar_units in [0u32, 165, 330, 331, u32::MAX] {
+            for unspent_points in [0u16, 1, u16::MAX] {
+                for allocation_percent in [0, 50, 100, 101, u8::MAX] {
+                    for opaque in [0, 0x76, 0xff] {
+                        let mut data = [opaque; 12];
+                        data[..4].copy_from_slice(&bar_units.to_le_bytes());
+                        data[4..6].copy_from_slice(&unspent_points.to_le_bytes());
+                        data[8] = allocation_percent;
+                        assert_eq!(
+                            parse_packet(OP_AA_EXP_UPDATE, &data).unwrap().unwrap(),
+                            ProgressionEvent::AlternateAdvancement {
+                                bar_units,
+                                unspent_points,
+                                allocation_percent,
+                            }
+                        );
+                    }
+                }
+            }
         }
     }
 }

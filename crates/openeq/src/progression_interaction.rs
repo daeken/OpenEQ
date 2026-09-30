@@ -1,4 +1,4 @@
-//! Local skills/languages window; opening and scrolling never send a packet.
+//! Local skills/languages/AA window; opening and scrolling never send a packet.
 use crate::{
     gameplay_ui::GameHudState,
     interaction::Interaction,
@@ -38,6 +38,7 @@ fn rows(live: &LiveWorld, page: UiProgressionPage) -> Arc<[UiProgressionRow]> {
     let values: &[Option<u32>] = match page {
         UiProgressionPage::Skills => &progression.skills,
         UiProgressionPage::Languages => &progression.languages,
+        UiProgressionPage::AlternateAdvancement => &[],
     };
     values
         .iter()
@@ -47,6 +48,7 @@ fn rows(live: &LiveWorld, page: UiProgressionPage) -> Arc<[UiProgressionRow]> {
             name: match page {
                 UiProgressionPage::Skills => skill_name(&live.game.strings, id as u32),
                 UiProgressionPage::Languages => language_name(&live.game.strings, id as u32),
+                UiProgressionPage::AlternateAdvancement => unreachable!(),
             },
             value: *value,
         })
@@ -67,7 +69,9 @@ impl Interaction {
         };
         view.progression = Some(UiProgression {
             revision: progression.revision,
-            status: if current {
+            status: if current && window.page == UiProgressionPage::AlternateAdvancement {
+                "Alternate advancement values reported by the server.".into()
+            } else if current {
                 "Base values reported by the server; bonuses and training caps are not included."
                     .into()
             } else {
@@ -78,6 +82,9 @@ impl Interaction {
             experience_bar_units: progression
                 .experience_bar_units
                 .filter(|units| *units <= openeq_net::progression::EXPERIENCE_BAR_UNITS),
+            aa_experience_bar_units: progression.aa_experience_bar_units,
+            aa_unspent_points: progression.aa_unspent_points,
+            aa_allocation_percent: progression.aa_allocation_percent,
             skills,
             languages,
             open: window.open,
@@ -100,6 +107,7 @@ impl Interaction {
         let count = match window.page {
             UiProgressionPage::Skills => window.skills.len(),
             UiProgressionPage::Languages => window.languages.len(),
+            UiProgressionPage::AlternateAdvancement => 0,
         };
         window.scroll = window
             .scroll
@@ -190,6 +198,30 @@ mod tests {
             },
         );
         assert_eq!(interaction.skills_window.scroll, 0);
+        live.game
+            .progression
+            .apply(ProgressionEvent::AlternateAdvancement {
+                bar_units: 331,
+                unspent_points: 12,
+                allocation_percent: 101,
+            });
+        interaction.progression_action(
+            &live,
+            ProgressionAction {
+                revision: live.game.progression.revision,
+                kind: ProgressionActionKind::Page(UiProgressionPage::AlternateAdvancement),
+            },
+        );
+        let mut aa = GameHudState::default();
+        interaction.progression_view(&live, &mut aa);
+        let aa = aa.progression.unwrap();
+        assert_eq!(aa.page, UiProgressionPage::AlternateAdvancement);
+        assert_eq!(aa.aa_unspent_points, Some(12));
+        assert_eq!(aa.aa_experience_bar_units, Some(331));
+        assert_eq!(aa.aa_allocation_percent, Some(101));
+        assert_eq!(aa.aa_experience_fraction(), None);
+        assert_eq!(aa.aa_allocation(), None);
+        assert_eq!(interaction.skills_window.scroll, 0);
         live.game.progression.begin_zone();
         interaction.progression_action(
             &live,
@@ -198,7 +230,10 @@ mod tests {
                 kind: ProgressionActionKind::Page(UiProgressionPage::Skills),
             },
         );
-        assert_eq!(interaction.skills_window.page, UiProgressionPage::Languages);
+        assert_eq!(
+            interaction.skills_window.page,
+            UiProgressionPage::AlternateAdvancement
+        );
         let mut stale = GameHudState::default();
         interaction.progression_view(&live, &mut stale);
         assert!(!stale.progression.unwrap().current);

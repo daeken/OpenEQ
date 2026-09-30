@@ -8,9 +8,12 @@ recorded below, separately from source evidence.
 [PROGRESSION_UI_PLAN.md](PROGRESSION_UI_PLAN.md) covers presentation.
 
 Current implementation exposes profile training points, languages and absolute
-experience, checked incoming skill/language, experience and level events, and
-a foreground progression reducer with a received 330-unit XP ratio. It has no
-outgoing progression or trainer API. The dedicated Fellowship live proof passed
+experience, checked incoming skill/language, experience, level and AA events,
+and a foreground progression reducer with independently received 330-unit
+normal/AA XP ratios. The receive-only AA follow-up below adds profile unspent
+AA points and a local display without outgoing AA commands. Trainer work is
+documented separately; the original receive slice had no trainer API.
+The dedicated Fellowship live proof passed
 for real profile data, skill/language changes, invalid-ratio handling and a
 restored fresh login. Live level changes and same-total XP commands were deferred
 on this fixture because its inherited level10/absolute-XP0 state is inconsistent.
@@ -53,7 +56,7 @@ plus registered RoF2 translators; old comments saying XP is 14 bytes are stale.
 | Normal XP update | `0x20ed` | 8 | u32 bar units @0; ignore u32 @4 |
 | Local level update | `0x1eec` | 12 | u32 new level @0; u32 reported old level @4; u32 XP bar units @8 |
 | Skill/language value | `0x004c` | 12 | u32 wire skill ID @0; u32 value @4; opaque four bytes @8 |
-| AA progress, separate optional follow-up | `0x7d14` | 12 | u32 AA bar units @0; u16 unspent AA points @4; ignore u16 @6; u8 allocation percentage @8; ignore three bytes @9 |
+| AA progress, implemented receive-only follow-up | `0x7d14` | 12 | u32 AA bar units @0; u16 unspent AA points @4; ignore u16 @6; u8 allocation percentage @8; ignore three bytes @9 |
 
 `rof2_ops.h` registers a SkillUpdate encoder but no ExpUpdate, LevelUpdate or
 AAExpUpdate translator; those latter packets use the common structs unchanged.
@@ -411,6 +414,78 @@ preflight-only attempts stopped before login: an initially miscounted innate
 AA row total and textual opcode padding (`0x04c` versus `0x004c`). The final
 probe checks14 AA rows and compares opcode values numerically; no decoder
 change or fixture mutation was needed for those preflight corrections.
+
+## Completed AA receive-only follow-up, 2026-09-30
+
+The source audit confirmed that `Client::SendAlternateAdvancementStats`
+(`zone/aa.cpp:985–993`) allocates **AltAdvStats_Struct**, not the similarly
+named AAExpUpdate_Struct. No RoF2 translator is registered, so the checked
+decoder consumes the exact 12-byte common layout in the table above. Reserved
+bytes are opaque; malformed lengths fail while full-width ratios and
+allocation bytes remain observable, including out-of-range values.
+
+The actual bar is `uint32(330 * m_pp.expAA / GetRequiredAAExperience())`.
+`GetRequiredAAExperience` (`zone/exp.cpp:1307–1320`) can use a Lua override or
+the server's `AA:ExpPerPoint` rule. Neither the bar nor an ordinary XP packet
+establishes absolute AA XP. OpenEQ does not infer thresholds or a total.
+
+RoF2's profile encoder writes full-width `emu->aapoints` after the counted AA
+tab array and before two reserved bytes and the bandolier count
+(`common/patches/rof2.cpp:2828–2839`). The existing bounded profile cursor now
+retains that u32. A later AA stats packet carries only a u16 balance because
+the server assigns the u32 profile field to `AltAdvStats_Struct::unspent`.
+OpenEQ replaces its latest received balance with that zero-extended u16; it
+does not reconstruct absent high bits or treat the two reserved bytes as part
+of the balance. The profile remains an unchanged full-width snapshot.
+
+Initial authority does not require a new request. The server sends the profile
+in `Handle_Connect_OP_ZoneEntry` (`zone/client_packet.cpp:1712–1718`), then the
+RoF2 WorldObjectsSent handshake invokes `SendZoneInPackets`
+(`zone/client_packet.cpp:1221–1231`). That function sends AA stats only at
+level51 or above (`zone/client.cpp:838–840`). Lower-level characters therefore
+have a profile balance, with progress/allocation unknown until an actual AA
+stats event arrives. `Handle_Connect_OP_SendAAStats` sends timers and a marker,
+not these values; no extra AA request was added.
+
+The foreground reducer accepts AA events only after the current profile,
+stores all three fields independently from normal XP/skills/training, and
+ignores duplicates. Received decreases and zeros are valid. Travel or
+disconnect makes retained values stale. A fresh profile clears old AA
+progress/allocation and seeds only its own unspent balance. A new character's
+default state has no received values. A received allocation is a last-reported
+percentage, not a grant of eligibility or evidence of a newly applied command.
+In particular, `SetEXP` below level51 resets the server allocation without an
+AA stats packet (`zone/exp.cpp:851–854`); the last-reported allocation can
+remain visible until another AA event or profile replaces/clears it. OpenEQ
+does not invent an AA update from a received level change.
+
+The existing Skills window now has a local **AA** tab. It uses the original
+`IW_AltAdvGauge` artwork and displays AA experience, unspent points and
+experience allocation. Ratios above330 and allocations above100 display as
+unavailable, preserving the raw values in state. Stale balances are labelled;
+stale percentages/gauges are unavailable. No purchase, spend, respec, AA
+ability, allocation control, command encoder or request path was introduced.
+The inventory's normal XP display and training behavior remain separate.
+
+Validation: eight targeted net tests and14 progression CPU tests passed,
+along with12 training tests (including explicit AA isolation) and strict
+Clippy for the net/application libraries and tests. Coverage includes every
+short/trailing AA packet length, opaque bytes, independent field widths,
+profile alignment/full width, raw invalid percentages, duplicate/decreasing
+updates, profile replacement, zone gating, no outgoing commands, and UI bounds
+at900×650,350×400 and240×220. The original-art GPU test passed and generated
+36 captures in `/tmp/openeq-aa-ui`: the existing20 progression cases plus16 AA
+captures at1×/2×, including normal/narrow, zero/full, unknown/invalid and stale
+states. All16 AA captures and representative skills/languages captures were
+visually inspected; values, original gauge art, tabs and Done controls remain
+legible and separate. This follow-up did not connect to or mutate a live fixture
+and makes no live AA gain/purchase claim.
+
+Integration checkpoint: all 868 workspace tests passed with original assets and
+GPU tests enabled, zero failures/ignored. Strict workspace/all-target Clippy,
+formatting, normal build and playback-disabled all-target check passed.
+Full-suite evidence uses `/tmp/openeq-aa-checkpoint-`; independent source and UI
+review found no blocker. The live AA limits above still apply.
 
 ## Exact source anchors
 

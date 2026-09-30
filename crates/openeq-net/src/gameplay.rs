@@ -188,6 +188,8 @@ pub struct PlayerProfile {
     pub languages: Vec<u8>,
     /// Absolute XP at profile time, distinct from subsequent XP bar updates.
     pub experience_total: u64,
+    /// Full-width unspent AA points at profile time; AA stats updates use u16.
+    pub aa_unspent_points: u32,
     pub spell_book: Vec<u32>,
     pub memorized_spells: Vec<u32>,
     pub spell_refresh: Vec<u32>,
@@ -1781,7 +1783,8 @@ fn parse_profile(data: &[u8]) -> Option<PlayerProfile> {
     let cursor_currency = currency(&mut r)?;
     r.skip(12 + 8 + 4)?;
     r.array(4, 32)?;
-    r.skip(4 + 2)?;
+    let aa_unspent_points = r.u32()?;
+    r.skip(2)?;
     let bandoliers = r.u32()?;
     if bandoliers > 100 {
         return None;
@@ -1838,6 +1841,7 @@ fn parse_profile(data: &[u8]) -> Option<PlayerProfile> {
         skills,
         languages,
         experience_total,
+        aa_unspent_points,
         spell_book,
         memorized_spells,
         spell_refresh,
@@ -1890,7 +1894,8 @@ mod tests {
         }
         zeros(&mut data, 12 + 8 + 4);
         array(&mut data, 1, 4);
-        zeros(&mut data, 4 + 2);
+        data.extend_from_slice(&0xf123_4567u32.to_le_bytes()); // unspent AA
+        zeros(&mut data, 2);
         data.extend_from_slice(&0u32.to_le_bytes()); // bandoliers
         data.extend_from_slice(&0u32.to_le_bytes()); // potion belt
         zeros(&mut data, 16 + 48 + 4 + 16);
@@ -1951,6 +1956,7 @@ mod tests {
                         .collect::<Vec<_>>()
                 );
                 assert_eq!(profile.experience_total, 0xf123_4567_89ab_cdef);
+                assert_eq!(profile.aa_unspent_points, 0xf123_4567);
                 assert_eq!((profile.race, profile.class, profile.level), (522, 12, 85));
                 assert_eq!(profile.stats, [10, 11, 12, 13, 14, 15, 16]);
                 assert_eq!(
@@ -1994,7 +2000,7 @@ mod tests {
     #[test]
     fn progression_dispatch_preserves_events_and_malformed_packet_errors() {
         use crate::progression::{
-            OP_EXP_UPDATE, OP_LEVEL_UPDATE, OP_SKILL_UPDATE, ProgressionEvent,
+            OP_AA_EXP_UPDATE, OP_EXP_UPDATE, OP_LEVEL_UPDATE, OP_SKILL_UPDATE, ProgressionEvent,
         };
         let data: Vec<_> = [127u32, 70_001, 0xffff_ffff]
             .into_iter()
@@ -2009,7 +2015,22 @@ mod tests {
                 }
             )))
         ));
-        for opcode in [OP_EXP_UPDATE, OP_LEVEL_UPDATE, OP_SKILL_UPDATE] {
+        assert!(matches!(
+            parse_packet(OP_AA_EXP_UPDATE, &data),
+            Some(Ok(GameplayEvent::Progression(
+                ProgressionEvent::AlternateAdvancement {
+                    bar_units: 127,
+                    unspent_points: 4465,
+                    allocation_percent: 255,
+                }
+            )))
+        ));
+        for opcode in [
+            OP_AA_EXP_UPDATE,
+            OP_EXP_UPDATE,
+            OP_LEVEL_UPDATE,
+            OP_SKILL_UPDATE,
+        ] {
             assert!(parse_packet(opcode, &[]).unwrap().is_err());
         }
     }

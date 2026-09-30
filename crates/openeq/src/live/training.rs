@@ -758,6 +758,7 @@ pub(crate) mod tests {
             skills: vec![55; 78],
             languages: vec![99; 28],
             experience_total: 0,
+            aa_unspent_points: 0,
             spell_book: Vec::new(),
             memorized_spells: Vec::new(),
             spell_refresh: Vec::new(),
@@ -1195,6 +1196,35 @@ pub(crate) mod tests {
             crate::commerce::total_copper(fixture.live.game.currency),
             99_027
         );
+    }
+
+    #[test]
+    fn aa_updates_leave_training_authority_and_points_unchanged() {
+        let mut fixture = Fixture::new();
+        fixture.open();
+        let revision = fixture.worker.authority_revision;
+        fixture.event(ZoneEvent::Gameplay(GameplayEvent::Progression(
+            openeq_net::progression::ProgressionEvent::AlternateAdvancement {
+                bar_units: 330,
+                unspent_points: 12,
+                allocation_percent: 100,
+            },
+        )));
+        assert_eq!(fixture.worker.authority_revision, revision);
+        assert_eq!(
+            fixture
+                .live
+                .training_state()
+                .estimate()
+                .unwrap()
+                .training_points,
+            2
+        );
+        assert_eq!(fixture.live.training_state().value(0), Some(55));
+        assert!(fixture.live.training_state().pending().is_none());
+        assert!(fixture.live.training_state().blocked().is_none());
+        assert_eq!(fixture.live.game.progression.aa_unspent_points, Some(12));
+        assert!(fixture.queue_empty());
     }
 
     #[test]
