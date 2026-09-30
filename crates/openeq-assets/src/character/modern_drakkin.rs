@@ -118,18 +118,21 @@ pub(super) fn select(
     model: &ModernModel,
     code: &str,
     appearance: &CharacterAppearance,
-) -> Vec<(usize, Option<usize>)> {
+) -> (Vec<(usize, Option<usize>)>, bool) {
     let mut selected = Vec::new();
-    let mut add = |name: String, slot| {
+    let mut resolved = true;
+    let mut add = |name: String, slot, required| {
         if let Some(index) = model
             .pieces
             .iter()
             .position(|p| p.name.eq_ignore_ascii_case(&name))
         {
             selected.push((index, slot));
+        } else if required {
+            resolved = false;
         }
     };
-    add(code.to_owned(), None);
+    add(code.to_owned(), None, true);
     for (slot, suffix) in [
         (1, "root_body"),
         (1, "chest_chest01"),
@@ -148,23 +151,35 @@ pub(super) fn select(
         } else {
             material
         };
-        add(format!("{code}_{set:02}_00_{suffix}"), Some(slot));
+        // The authored cloth set has only these three modules. Other suffixes
+        // are intentionally absent, not evidence of a missing client archive.
+        let required = set != 0 || matches!(suffix, "root_body" | "legl_thgh" | "legr_thgh");
+        add(format!("{code}_{set:02}_00_{suffix}"), Some(slot), required);
     }
     // The male archive intentionally has no hair_08 (the bald option).
     // Helms cover hair; eyebrows and authored facial details remain independent.
     if armor(appearance, 0) == 0 {
-        add(format!("{code}_hair_{:02}", appearance.hair_style), None);
+        add(
+            format!("{code}_hair_{:02}", appearance.hair_style),
+            None,
+            !(code.eq_ignore_ascii_case("DKM") && appearance.hair_style == 8),
+        );
     }
-    add(format!("{code}_facialhair_{:02}", appearance.beard), None);
+    add(
+        format!("{code}_facialhair_{:02}", appearance.beard),
+        None,
+        true,
+    );
     add(
         format!("{code}_facialatt_{:02}", appearance.drakkin_details),
         None,
+        true,
     );
-    add(format!("{code}_tattoo_00"), None);
-    selected
+    add(format!("{code}_tattoo_00"), None, true);
+    (selected, resolved)
 }
 
-fn substitute_skin(name: &mut String, skin: u32, archive: &Archive) {
+fn substitute_skin(name: &mut String, skin: u32, archive: &Archive) -> bool {
     let lower = name.to_ascii_lowercase();
     if let Some(index) = lower.find("_s")
         && lower
@@ -175,8 +190,10 @@ fn substitute_skin(name: &mut String, skin: u32, archive: &Archive) {
         let candidate = format!("{}{:02}{}", &lower[..index + 2], skin, &lower[index + 4..]);
         if archive.contains(&candidate) {
             *name = candidate;
+            return true;
         }
     }
+    false
 }
 
 pub(super) fn apply_materials(
@@ -185,7 +202,8 @@ pub(super) fn apply_materials(
     appearance: &CharacterAppearance,
     archive: &Archive,
     customization: Option<&customization::CustomizationEntry>,
-) {
+) -> bool {
+    let mut resolved = true;
     for (index, material) in materials.iter_mut().enumerate() {
         let name = model.material_names[model.baked_materials[index]].to_ascii_lowercase();
         let slot = model.baked_slots[index];
@@ -202,7 +220,7 @@ pub(super) fn apply_materials(
         };
         if let Some(skin) = skin {
             for texture in &mut material.textures {
-                substitute_skin(texture, skin, archive);
+                resolved &= substitute_skin(texture, skin, archive);
             }
             if let Some(normal) = &mut material.normal_map {
                 substitute_skin(normal, skin, archive);
@@ -216,6 +234,7 @@ pub(super) fn apply_materials(
             }
         }
     }
+    resolved
 }
 
 fn appearance_tint(
@@ -248,6 +267,39 @@ fn appearance_tint(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires original Drakkin modules; CPU only"]
+    fn missing_required_module_is_unresolved_but_authored_bald_choice_is_valid() {
+        let base = crate::loader::default_client_dir().expect("original assets");
+        let archive = Archive::open(base.join("dkm.eqg")).unwrap();
+        let mut model = ModernModel::parse(&archive.read("dkm.mod").unwrap(), "DKM").unwrap();
+        load_modules(&mut model, &archive, "DKM").unwrap();
+        let appearance = CharacterAppearance {
+            hair_style: 1,
+            ..Default::default()
+        };
+        assert!(select(&model, "DKM", &appearance).1);
+        model
+            .pieces
+            .retain(|piece| !piece.name.eq_ignore_ascii_case("dkm_hair_01"));
+        let (selected, resolved) = select(&model, "DKM", &appearance);
+        assert!(!resolved);
+        assert!(!selected.is_empty(), "ordinary rendering keeps the body");
+        assert!(select(&model, "DKM", &CharacterAppearance::default()).1);
+        assert!(
+            select(
+                &model,
+                "DKM",
+                &CharacterAppearance {
+                    hair_style: 8,
+                    ..Default::default()
+                }
+            )
+            .1,
+            "male hair08 is an intentionally absent bald module"
+        );
+    }
 
     #[test]
     fn missing_palette_preserves_geometry_choices_but_drops_unsupported_dyes() {

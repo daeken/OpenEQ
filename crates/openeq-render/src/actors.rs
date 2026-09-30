@@ -3,7 +3,9 @@
 //! only when a batch needs more simultaneous poses. Zone geometry is untouched.
 use crate::{GpuActor, GpuScene, Renderer, scene::Instance, upload::UploadContext};
 use glam::{Mat4, Quat, Vec3};
-pub use openeq_assets::character::{CharacterAppearance, CharacterModelSet, EquipmentAppearance};
+pub use openeq_assets::character::{
+    CharacterAppearance, CharacterModelFamily, CharacterModelSet, EquipmentAppearance,
+};
 use openeq_assets::{
     Scene,
     character::{CharacterLibrary, CharacterModel, CharacterPose},
@@ -154,6 +156,7 @@ struct Batch {
     capacity: usize,
     last_seen: f32,
     socket_indices: [Option<usize>; 6],
+    diffuse_textures_loaded: bool,
 }
 struct Timeline {
     action: ActorAction,
@@ -395,10 +398,11 @@ impl ActorRenderer {
             if poses.len() > batch.capacity {
                 let capacity = poses.len().next_power_of_two();
                 match upload_actor(upload, &self.library, &batch.model, capacity) {
-                    Ok((actor, geometry)) => {
+                    Ok((actor, geometry, diffuse_textures_loaded)) => {
                         batch.actor = actor;
                         batch.poses = geometry;
                         batch.capacity = capacity;
+                        batch.diffuse_textures_loaded = diffuse_textures_loaded;
                     }
                     Err(error) => {
                         tracing::warn!(%error, "character pose allocation failed");
@@ -505,7 +509,8 @@ impl ActorRenderer {
         let model = self
             .library
             .load_race_with_appearance(key.0, key.1, &key.2)?;
-        let (actor, poses) = upload_actor(upload, &self.library, &model, 2)?;
+        let (actor, poses, diffuse_textures_loaded) =
+            upload_actor(upload, &self.library, &model, 2)?;
         let socket_indices = socket_indices(&model);
         Ok(Batch {
             model,
@@ -514,6 +519,7 @@ impl ActorRenderer {
             capacity: 2,
             last_seen: time,
             socket_indices,
+            diffuse_textures_loaded,
         })
     }
 
@@ -535,6 +541,41 @@ impl ActorRenderer {
 
     pub fn bounds(&self) -> &BTreeMap<u32, ActorBounds> {
         &self.bounds
+    }
+
+    /// The actual current drawn model, never a requested preference or a
+    /// retained batch from a removed/failed actor's earlier appearance.
+    pub fn model_family(&self, actor_id: u32) -> Option<CharacterModelFamily> {
+        Some(self.current_batch(actor_id)?.model.family())
+    }
+
+    /// Missing diffuse assets still use the ordinary rendering fallback, but
+    /// cannot certify a creation preview. Optional normal maps do not gate it.
+    pub fn diffuse_textures_loaded(&self, actor_id: u32) -> bool {
+        self.current_batch(actor_id)
+            .is_some_and(|batch| batch.diffuse_textures_loaded)
+    }
+
+    pub fn appearance_resolved(&self, actor_id: u32) -> bool {
+        self.current_batch(actor_id)
+            .is_some_and(|batch| batch.model.appearance_resolved())
+    }
+
+    fn current_batch(&self, actor_id: u32) -> Option<&Batch> {
+        self.bounds.get(&actor_id)?;
+        let appearance = self.timelines.get(&actor_id)?.appearance.as_ref()?;
+        self.batches.get(appearance).filter(|batch| {
+            batch
+                .actor
+                .scene
+                .draws
+                .iter()
+                .any(|draw| draw.instance_count > 0 && draw.index_count >= 3)
+        })
+    }
+
+    pub fn customization(&self) -> &openeq_assets::character::customization::CustomizationCatalog {
+        self.library.customization()
     }
 
     pub fn sockets(&self) -> &BTreeMap<u32, ActorSockets> {
@@ -561,16 +602,34 @@ fn upload_actor(
     library: &CharacterLibrary,
     model: &CharacterModel,
     capacity: usize,
-) -> anyhow::Result<(GpuActor, Vec<Geometry>)> {
+) -> anyhow::Result<(GpuActor, Vec<Geometry>, bool)> {
     let names: BTreeSet<_> = model
         .materials
         .iter()
         .flat_map(|m| m.textures.iter().chain(m.normal_map.iter()))
         .collect();
+    let mut loaded_names = BTreeSet::new();
     let textures = names
         .into_iter()
-        .filter_map(|name| library.texture(name))
+        .filter_map(|name| {
+            let texture = library.texture(name)?;
+            loaded_names.insert(name);
+            Some(texture)
+        })
         .collect();
+    let diffuse_textures_loaded = model
+        .meshes
+        .iter()
+        .filter(|mesh| !mesh.indices.is_empty())
+        .all(|mesh| {
+            model.materials.get(mesh.material).is_some_and(|material| {
+                !material.textures.is_empty()
+                    && material
+                        .textures
+                        .iter()
+                        .all(|name| loaded_names.contains(name))
+            })
+        });
     let poses: Vec<_> = (0..capacity).flat_map(|_| model.meshes.clone()).collect();
     let scene = Scene::from_geometry(
         model.code.clone(),
@@ -579,7 +638,7 @@ fn upload_actor(
         textures,
     );
     let gpu = GpuScene::build(upload.device(), upload.queue(), &scene)?;
-    Ok((upload.prepare_actor(gpu), poses))
+    Ok((upload.prepare_actor(gpu), poses, diffuse_textures_loaded))
 }
 
 fn select_pose(model: &CharacterModel, state: &ActorState, time: f32, elapsed: f32) -> Pose {
@@ -705,6 +764,79 @@ mod tests {
         assert_eq!(animation_code(37), Some("P06"));
         assert_eq!(animation_code(43), Some("T05"));
         assert_eq!(animation_code(255), None);
+    }
+
+    #[test]
+    #[ignore = "requires original classic/Luclin/Drakkin assets and GPU"]
+    fn resolved_family_requires_a_current_successful_actor() {
+        let base = openeq_assets::loader::default_client_dir().expect("original assets");
+        let renderer = Renderer::new_headless(64, 64).unwrap();
+        for (preference, race, expected) in [
+            (CharacterModelSet::Classic, 1, CharacterModelFamily::Classic),
+            (CharacterModelSet::Luclin, 1, CharacterModelFamily::Luclin),
+            (
+                CharacterModelSet::Luclin,
+                522,
+                CharacterModelFamily::Drakkin,
+            ),
+        ] {
+            let mut actors = ActorRenderer::load_with_model_set(&base, "", preference).unwrap();
+            let mut state = ActorState {
+                id: 1,
+                race,
+                gender: 0,
+                size: 6.,
+                action: ActorAction::Stand,
+                ..Default::default()
+            };
+            assert_eq!(actors.model_family(state.id), None);
+            actors.update(&renderer, std::slice::from_ref(&state), 0.);
+            assert_eq!(actors.rendered_instances, 1);
+            assert_eq!(actors.model_family(state.id), Some(expected));
+            assert!(actors.diffuse_textures_loaded(state.id));
+            // Retain the old batch in cache while the same actor changes to
+            // an unavailable race. Its old timeline must not certify success.
+            state.race = u32::MAX;
+            actors.update(&renderer, std::slice::from_ref(&state), 1.);
+            assert!(!actors.batches.is_empty());
+            assert_eq!(actors.rendered_instances, 0);
+            assert_eq!(actors.model_family(state.id), None);
+            assert!(!actors.diffuse_textures_loaded(state.id));
+            state.race = race;
+            actors.update(&renderer, std::slice::from_ref(&state), 2.);
+            assert_eq!(actors.model_family(state.id), Some(expected));
+            actors.update(&renderer, &[], 3.);
+            assert!(!actors.batches.is_empty());
+            assert_eq!(actors.model_family(state.id), None);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires original classic character assets and GPU"]
+    fn missing_diffuse_is_reported_without_blocking_ordinary_actor_rendering() {
+        let base = openeq_assets::loader::default_client_dir().expect("original assets");
+        let library = CharacterLibrary::load(&base, "").unwrap();
+        let renderer = Renderer::new_headless(64, 64).unwrap();
+        let mut model = library.load_race(1, 0).unwrap();
+        let material = model
+            .meshes
+            .iter()
+            .find(|mesh| !mesh.indices.is_empty())
+            .unwrap()
+            .material;
+        let normal = model.materials[material].normal_map.take();
+        model.materials[material].normal_map = Some("openeq-test-missing-normal.dds".into());
+        let (_, _, loaded) = upload_actor(&renderer.upload_context(), &library, &model, 1).unwrap();
+        assert!(
+            loaded,
+            "optional missing normal map blocked diffuse readiness"
+        );
+        model.materials[material].normal_map = normal;
+        model.materials[material].textures = vec!["openeq-test-missing-diffuse.dds".into()];
+        let (actor, _, loaded) =
+            upload_actor(&renderer.upload_context(), &library, &model, 1).unwrap();
+        assert!(!loaded);
+        assert!(actor.scene.draws.iter().any(|draw| draw.index_count >= 3));
     }
 
     #[test]

@@ -1,17 +1,22 @@
-//! Read-only character-select previews. The model comes from the received
-//! roster and local assets; this module never creates a connection or command.
-use crate::{account::Token, loading::Job};
+//! Read-only character previews from the roster or a local creation draft.
+//! This module never creates a connection or command.
+use crate::{
+    account::Token,
+    account_creation::{AppearancePolicy, Context, PreviewFamily, PreviewReceipt},
+    loading::Job,
+};
 use openeq_assets::{
     Scene,
+    character::customization::CustomizationCatalog,
     mesh::{Geometry, Material},
     texture::Texture,
 };
-use openeq_net::world::Character;
+use openeq_net::{creation::Appearance, world::Character};
 use openeq_render::{
     Renderer,
     actors::{
         ActorAction, ActorBounds, ActorRenderer, ActorState, CharacterAppearance,
-        CharacterModelSet, EquipmentAppearance,
+        CharacterModelFamily, CharacterModelSet, EquipmentAppearance,
     },
     environment::EnvironmentSettings,
     scene::{Camera, GpuScene},
@@ -29,9 +34,20 @@ use std::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Request {
     pub token: Token,
+    /// Creation authority is part of the cache key; roster previews use None.
+    pub creation: Option<Context>,
     pub character: Character,
     pub dir: PathBuf,
     pub model_set: CharacterModelSet,
+}
+
+/// Available only for a matching loaded creation preview. Provisional invalid
+/// choices receive the resolved family's policy, but no submission receipt.
+#[derive(Debug, Clone)]
+pub struct CreationPreview {
+    pub policy: AppearancePolicy,
+    pub receipt: Option<PreviewReceipt>,
+    pub heritages: Vec<u32>,
 }
 
 struct InFlight<T> {
@@ -111,6 +127,14 @@ impl<T> Drop for Cache<T> {
     }
 }
 
+impl<T> Cache<T> {
+    fn matching(&self, expected: &Request) -> Option<&T> {
+        (self.desired.as_ref() == Some(expected))
+            .then_some(self.ready.as_ref())
+            .flatten()
+    }
+}
+
 #[derive(Default)]
 pub struct Preview {
     cache: Cache<Prepared>,
@@ -174,6 +198,30 @@ impl Preview {
         }
     }
 
+    /// No receipt can cross a changed draft, account, world socket, roster,
+    /// catalog, asset directory, or model preference. A caller must request a
+    /// fresh preview after adopting defaults from a newly resolved family.
+    pub fn creation_preview(&self, expected: &Request) -> Result<CreationPreview, String> {
+        let prepared = self.cache.matching(expected).ok_or_else(|| {
+            if self.cache.desired.as_ref() == Some(expected) && self.cache.failed {
+                "Appearance preview is unavailable.".to_owned()
+            } else {
+                "Loading the current appearance…".to_owned()
+            }
+        })?;
+        let family = prepared
+            .actors
+            .model_family(prepared.state.id)
+            .ok_or_else(|| "Character model is unavailable.".to_owned())?;
+        creation_preview(
+            expected,
+            family,
+            prepared.actors.diffuse_textures_loaded(prepared.state.id),
+            prepared.actors.appearance_resolved(prepared.state.id),
+            prepared.actors.customization(),
+        )
+    }
+
     /// The UI must already be installed. Returns false while loading/failed.
     pub fn render(&mut self, renderer: &mut Renderer, viewport: [u32; 2], heading: f32) -> bool {
         let Some(prepared) = &mut self.cache.ready else {
@@ -209,6 +257,96 @@ impl Preview {
         );
         true
     }
+}
+
+fn creation_preview(
+    request: &Request,
+    loaded: CharacterModelFamily,
+    diffuse_textures_loaded: bool,
+    appearance_resolved: bool,
+    metadata: &CustomizationCatalog,
+) -> Result<CreationPreview, String> {
+    let context = request
+        .creation
+        .ok_or_else(|| "Select a creation draft to preview.".to_owned())?;
+    let family = match loaded {
+        CharacterModelFamily::Classic => PreviewFamily::Classic,
+        CharacterModelFamily::Luclin => PreviewFamily::Luclin,
+        CharacterModelFamily::Drakkin => PreviewFamily::Drakkin,
+        CharacterModelFamily::Modern => {
+            return Err("This model has no supported creation appearance.".to_owned());
+        }
+    };
+    let character = &request.character;
+    let class = u32::from(character.class);
+    let policy_for = |heritage| {
+        AppearancePolicy::for_preview(
+            character.race,
+            class,
+            character.gender,
+            family,
+            metadata,
+            heritage,
+        )
+    };
+    let heritages = if family == PreviewFamily::Drakkin {
+        (0..=7)
+            .filter(|heritage| policy_for(*heritage).is_ok())
+            .collect::<Vec<_>>()
+    } else {
+        vec![0]
+    };
+    let requested_heritage = character.appearance.drakkin_heritage;
+    let heritage = heritages
+        .iter()
+        .find(|heritage| **heritage == requested_heritage)
+        .or_else(|| heritages.first())
+        .copied()
+        .ok_or_else(|| {
+            "No authored appearance is available for this class and gender.".to_owned()
+        })?;
+    let policy = policy_for(heritage).map_err(|error| error.to_string())?;
+    let a = character.appearance;
+    let appearance = Appearance {
+        face: a.face,
+        hair_style: a.hair_style,
+        beard: a.beard,
+        hair_color: a.hair_color,
+        beard_color: a.beard_color,
+        eye_color_1: a.eye_color_1,
+        eye_color_2: a.eye_color_2,
+        heritage: a.drakkin_heritage,
+        tattoo: a.drakkin_tattoo,
+        details: a.drakkin_details,
+    };
+    let valid = policy
+        .validate_appearance(character.race, class, character.gender, appearance)
+        .is_ok();
+    // A provisional appearance can be invalid for the actual loaded family
+    // or heritage. Return its supported defaults even when the provisional
+    // model fell back, but certify only a fresh valid, fully resolved request.
+    if valid && !appearance_resolved {
+        return Err(
+            "The selected appearance is missing required model parts or textures.".to_owned(),
+        );
+    }
+    if valid && !diffuse_textures_loaded {
+        return Err("One or more appearance textures are unavailable.".to_owned());
+    }
+    let receipt = valid.then_some(PreviewReceipt {
+        context,
+        family,
+        model_loaded: true,
+        race: character.race,
+        class,
+        gender: character.gender,
+        appearance,
+    });
+    Ok(CreationPreview {
+        policy,
+        receipt,
+        heritages,
+    })
 }
 
 struct Prepared {
@@ -391,6 +529,7 @@ mod tests {
                 attempt: 4,
                 revision: 2,
             },
+            creation: None,
             dir: PathBuf::from("unused"),
             model_set: CharacterModelSet::Classic,
             character: Character {
@@ -404,6 +543,327 @@ mod tests {
                 enabled: true,
                 appearance: Default::default(),
             },
+        }
+    }
+
+    fn creation_request() -> Request {
+        Request {
+            creation: Some(Context {
+                session: 1,
+                connection: 2,
+                catalog_revision: 3,
+                roster_revision: 4,
+                draft_revision: 5,
+            }),
+            ..request()
+        }
+    }
+
+    #[test]
+    fn creation_capability_uses_loaded_family_and_requires_current_appearance() {
+        let mut request = creation_request();
+        request.model_set = CharacterModelSet::Luclin;
+        request.character.appearance.hair_style = 1;
+        let metadata = CustomizationCatalog::default();
+        let fallback = creation_preview(
+            &request,
+            CharacterModelFamily::Classic,
+            false,
+            false,
+            &metadata,
+        )
+        .unwrap();
+        assert_eq!(fallback.policy.family(), PreviewFamily::Classic);
+        assert_eq!(fallback.policy.default_appearance().hair_style, 0);
+        assert!(
+            fallback.receipt.is_none(),
+            "discarded hair cannot certify preview"
+        );
+        request.character.appearance.hair_style = 0;
+        let fresh = creation_preview(
+            &request,
+            CharacterModelFamily::Classic,
+            true,
+            true,
+            &metadata,
+        )
+        .unwrap();
+        let receipt = fresh.receipt.unwrap();
+        assert_eq!(receipt.family, PreviewFamily::Classic);
+        assert_eq!(receipt.context, request.creation.unwrap());
+        assert_eq!(receipt.appearance, fresh.policy.default_appearance());
+        request.model_set = CharacterModelSet::Classic;
+        let luclin = creation_preview(
+            &request,
+            CharacterModelFamily::Luclin,
+            true,
+            true,
+            &metadata,
+        )
+        .unwrap();
+        assert_eq!(luclin.policy.family(), PreviewFamily::Luclin);
+        assert_eq!(luclin.receipt.unwrap().family, PreviewFamily::Luclin);
+        assert!(
+            creation_preview(
+                &request,
+                CharacterModelFamily::Modern,
+                true,
+                true,
+                &metadata
+            )
+            .is_err()
+        );
+        request.creation = None;
+        assert!(
+            creation_preview(
+                &request,
+                CharacterModelFamily::Classic,
+                true,
+                true,
+                &metadata
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn missing_diffuse_texture_cannot_issue_a_creation_receipt() {
+        let request = creation_request();
+        let metadata = CustomizationCatalog::default();
+        let complete = creation_preview(
+            &request,
+            CharacterModelFamily::Classic,
+            true,
+            true,
+            &metadata,
+        )
+        .unwrap();
+        assert!(complete.receipt.is_some());
+        let missing = creation_preview(
+            &request,
+            CharacterModelFamily::Classic,
+            false,
+            true,
+            &metadata,
+        );
+        assert_eq!(
+            missing.unwrap_err(),
+            "One or more appearance textures are unavailable."
+        );
+    }
+
+    #[test]
+    fn drakkin_policy_bootstraps_authored_heritage_without_certifying_fallback() {
+        let metadata = CustomizationCatalog::parse(
+            "522^0^Red^13107200^1^1,2,3,4^7^9^12^12^8^8^0^\n\
+             522^2^Blue^15580^2^1,2,3,4^7^9^12^12^8^8^0^\n\
+             522^3^Green^25600^2^1,2,3,4^7^9^12^12^8^8^0^\n\
+             522^4^Broken^0^2^^7^9^12^12^8^8^0^",
+        )
+        .unwrap();
+        let mut request = creation_request();
+        request.character.race = 522;
+        request.character.class = 2;
+        let provisional = creation_preview(
+            &request,
+            CharacterModelFamily::Drakkin,
+            false,
+            false,
+            &metadata,
+        )
+        .unwrap();
+        assert_eq!(provisional.heritages, [2, 3]);
+        assert_eq!(provisional.policy.default_appearance().heritage, 2);
+        assert!(provisional.receipt.is_none());
+        request.character.appearance.drakkin_heritage = 2;
+        let fresh = creation_preview(
+            &request,
+            CharacterModelFamily::Drakkin,
+            true,
+            true,
+            &metadata,
+        )
+        .unwrap();
+        assert_eq!(fresh.receipt.unwrap().appearance.heritage, 2);
+        assert!(
+            creation_preview(
+                &request,
+                CharacterModelFamily::Classic,
+                true,
+                true,
+                &metadata
+            )
+            .is_err()
+        );
+        assert!(
+            creation_preview(
+                &request,
+                CharacterModelFamily::Drakkin,
+                true,
+                true,
+                &CustomizationCatalog::default()
+            )
+            .is_err()
+        );
+        request.character.gender = 1;
+        assert!(
+            creation_preview(
+                &request,
+                CharacterModelFamily::Drakkin,
+                true,
+                true,
+                &metadata
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn creation_readiness_requires_the_complete_current_request() {
+        let original = creation_request();
+        let mut cache = Cache {
+            desired: Some(original.clone()),
+            ready: Some(()),
+            job: None,
+            failed: false,
+        };
+        assert!(cache.matching(&original).is_some());
+        for field in 0..12 {
+            let mut changed = original.clone();
+            match field {
+                0 => changed.creation.as_mut().unwrap().session += 1,
+                1 => changed.creation.as_mut().unwrap().connection += 1,
+                2 => changed.creation.as_mut().unwrap().catalog_revision += 1,
+                3 => changed.creation.as_mut().unwrap().roster_revision += 1,
+                4 => changed.creation.as_mut().unwrap().draft_revision += 1,
+                5 => changed.character.appearance.face += 1,
+                6 => changed.character.race += 1,
+                7 => changed.character.class += 1,
+                8 => changed.character.gender += 1,
+                9 => changed.token.revision += 1,
+                10 => changed.model_set = CharacterModelSet::Luclin,
+                11 => changed.dir.push("other-assets"),
+                _ => unreachable!(),
+            }
+            assert!(
+                cache.matching(&changed).is_none(),
+                "changed request field {field}"
+            );
+        }
+        cache.ready = None;
+        cache.failed = true;
+        assert!(cache.matching(&original).is_none());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[ignore = "requires original Luclin assets and GPU; disposable symlinks, no network or audio"]
+    fn missing_requested_hair_can_render_but_cannot_certify_creation() {
+        let source = openeq_assets::loader::default_client_dir().expect("original assets");
+        struct Temporary(PathBuf);
+        impl Drop for Temporary {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let missing = Temporary(std::env::temp_dir().join(format!(
+            "openeq-preview-missing-hair-{}-{unique}",
+            std::process::id()
+        )));
+        std::fs::create_dir(&missing.0).unwrap();
+        for entry in std::fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            if !entry
+                .file_name()
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .starts_with("lgequip")
+            {
+                std::os::unix::fs::symlink(entry.path(), missing.0.join(entry.file_name()))
+                    .unwrap();
+            }
+        }
+        let mut renderer = Renderer::new_headless(400, 300).unwrap();
+        renderer.set_ui_scaled(&openeq_ui::UiFrame::default(), 1.);
+        let mut request = creation_request();
+        request.dir = missing.0.clone();
+        request.model_set = CharacterModelSet::Luclin;
+        let mut preview = Preview::default();
+        for hair in [1, 0] {
+            request.character.appearance.hair_style = hair;
+            request.creation.as_mut().unwrap().draft_revision += 1;
+            preview.update(Some(request.clone()), &renderer);
+            let deadline = Instant::now() + Duration::from_secs(90);
+            while preview.status().is_some() {
+                preview.update(Some(request.clone()), &renderer);
+                assert!(!preview.cache.failed);
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            let prepared = preview.cache.ready.as_ref().unwrap();
+            assert!(prepared.actors.diffuse_textures_loaded(prepared.state.id));
+            assert_eq!(
+                prepared.actors.model_family(prepared.state.id),
+                Some(CharacterModelFamily::Luclin)
+            );
+            assert!(preview.render(&mut renderer, [400, 300], 256.));
+            let support = preview.creation_preview(&request);
+            if hair == 1 {
+                assert!(
+                    support
+                        .unwrap_err()
+                        .contains("missing required model parts")
+                );
+            } else {
+                assert!(support.unwrap().receipt.is_some());
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires original classic/Luclin/Drakkin assets and GPU; no network or audio"]
+    fn loaded_creation_previews_issue_only_matching_receipts() {
+        let base = openeq_assets::loader::default_client_dir().expect("original client assets");
+        let renderer = Renderer::new_headless(400, 300).unwrap();
+        for (preference, race, face, family) in [
+            (CharacterModelSet::Classic, 1, 0, PreviewFamily::Classic),
+            (CharacterModelSet::Classic, 1, 1, PreviewFamily::Classic),
+            (CharacterModelSet::Luclin, 1, 0, PreviewFamily::Luclin),
+            (CharacterModelSet::Luclin, 1, 1, PreviewFamily::Luclin),
+            (CharacterModelSet::Luclin, 522, 0, PreviewFamily::Drakkin),
+            (CharacterModelSet::Luclin, 522, 1, PreviewFamily::Drakkin),
+        ] {
+            let mut request = creation_request();
+            request.dir = base.clone();
+            request.model_set = preference;
+            request.character.race = race;
+            request.character.appearance.face = face;
+            let mut preview = Preview::default();
+            assert!(preview.creation_preview(&request).is_err());
+            let deadline = Instant::now() + Duration::from_secs(90);
+            while preview.status().is_some() {
+                preview.update(Some(request.clone()), &renderer);
+                assert!(!preview.cache.failed, "original {family:?} preview failed");
+                assert!(Instant::now() < deadline, "original preview timed out");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            let capability = preview.creation_preview(&request).unwrap();
+            let receipt = capability.receipt.unwrap();
+            assert_eq!(receipt.family, family);
+            assert_eq!(receipt.race, race);
+            assert_eq!(receipt.context, request.creation.unwrap());
+            let mut stale = request.clone();
+            stale.creation.as_mut().unwrap().draft_revision += 1;
+            assert!(preview.creation_preview(&stale).is_err());
+            stale = request.clone();
+            stale.character.appearance.face += 1;
+            assert!(preview.creation_preview(&stale).is_err());
+            preview.update(None, &renderer);
+            assert!(preview.creation_preview(&request).is_err());
         }
     }
 

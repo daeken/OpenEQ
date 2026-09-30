@@ -1530,6 +1530,12 @@ fn handle_account_input(
             Intent::Back { token } => {
                 controller.action(token, Action::Back);
             }
+            Intent::Create { token, submission } => {
+                controller.action(token, Action::Create(submission));
+            }
+            Intent::CancelCreation { token, operation } => {
+                controller.action(token, Action::CancelCreation(operation));
+            }
             _ => {}
         }
     }
@@ -2027,19 +2033,34 @@ fn present_account(
     if runtime.live.is_some() {
         runtime.retire_character();
     }
+    if let Some(input) = runtime.account_input.as_mut() {
+        input.sync(&runtime.account.as_ref().unwrap().view);
+    }
+    let preview_request = desired_account_preview(runtime, options);
+    runtime
+        .account_preview
+        .update(preview_request.clone(), renderer);
+    if let Some(request) = &preview_request
+        && let Some(context) = request.creation
+    {
+        let result = runtime.account_preview.creation_preview(request);
+        runtime
+            .account_input
+            .as_mut()
+            .unwrap()
+            .apply_creation_preview(&runtime.account.as_ref().unwrap().view, context, result);
+        // A resolved fallback may replace unsupported provisional choices.
+        // Retire that appearance immediately, before drawing the changed draft.
+        let current = desired_account_preview(runtime, options);
+        if current != preview_request {
+            runtime.account_preview.update(current, renderer);
+        }
+    }
     let controller = runtime.account.as_ref().unwrap();
-    let preview_request = runtime
-        .account_input
-        .as_ref()
-        .and_then(|input| input.preview_character(&controller.view))
-        .map(|character| openeq::account_preview::Request {
-            token: controller.view.token,
-            character: character.clone(),
-            dir: options.dir.clone(),
-            model_set: options.model_set,
-        });
-    let showing_preview = preview_request.is_some();
-    runtime.account_preview.update(preview_request, renderer);
+    let showing_preview = runtime.account_input.as_ref().is_some_and(|input| {
+        input.preview_character(&controller.view).is_some()
+            || input.creation_showing_preview(&controller.view)
+    });
     let frame = if let (Some(ui), Some(input)) = (&runtime.account_ui, &runtime.account_input) {
         ui.frame_with_preview_status(
             viewport,
@@ -2070,6 +2091,26 @@ fn present_account(
         renderer.render_ui();
     }
     true
+}
+
+fn desired_account_preview(
+    runtime: &Runtime,
+    options: &Options,
+) -> Option<openeq::account_preview::Request> {
+    let view = &runtime.account.as_ref()?.view;
+    let input = runtime.account_input.as_ref()?;
+    let (creation, character) = if let Some((context, character)) = input.creation_request(view) {
+        (Some(context), character)
+    } else {
+        (None, input.preview_character(view)?.clone())
+    };
+    Some(openeq::account_preview::Request {
+        token: view.token,
+        creation,
+        character,
+        dir: options.dir.clone(),
+        model_set: options.model_set,
+    })
 }
 
 /// Polling, cancellation, and installation are deliberately cheap: all asset

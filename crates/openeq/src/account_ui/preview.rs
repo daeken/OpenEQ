@@ -24,6 +24,9 @@ impl AccountInput {
     }
 
     pub fn preview_heading(&self) -> f32 {
+        if let Some(creation) = &self.creation {
+            return creation.heading;
+        }
         self.preview.as_ref().map_or(256., |choice| choice.heading)
     }
 
@@ -400,6 +403,7 @@ mod tests {
             character.appearance.secondary_model = 201;
             let request = Request {
                 token: view.token,
+                creation: None,
                 character: character.clone(),
                 dir: dir.clone(),
                 model_set,

@@ -118,12 +118,32 @@ impl CharacterLibrary {
             } else {
                 piece
             };
-            let name = format!(
+            let mut name = format!(
                 "{}{:02}{piece:02}_MDF",
                 stem[..5].to_ascii_uppercase(),
                 selector
             );
-            let Some(layers) = self.luclin_material_layers(&name).or_else(|| {
+            if slot == 0 && self.luclin_material_layers(&name).is_none() {
+                // Teeth, mouth interiors and other shared head pieces do not
+                // have a separate palette entry for every face or scalp glyph.
+                // Only demand a variant in a dimension this piece authors.
+                let prefix = stem[..5].to_ascii_uppercase();
+                let part = piece % 10;
+                let face_changes = (1..=7).any(|face| {
+                    self.luclin_material_layers(&format!("{prefix}00{face}{part}_MDF"))
+                        .is_some()
+                });
+                let selector_changes = (1..=9).any(|selector| {
+                    self.luclin_material_layers(&format!("{prefix}{selector:02}0{part}_MDF"))
+                        .is_some()
+                });
+                let face = if face_changes { piece / 10 } else { 0 };
+                let selector = if selector_changes { selector } else { 0 };
+                name = format!("{prefix}{selector:02}{face}{part}_MDF");
+            }
+            let requested_layers = self.luclin_material_layers(&name);
+            model.appearance_resolved &= requested_layers.is_some();
+            let Some(layers) = requested_layers.or_else(|| {
                 self.luclin_material_layers(&format!(
                     "{}00{:02}_MDF",
                     stem[..5].to_ascii_uppercase(),
@@ -142,6 +162,8 @@ impl CharacterLibrary {
                 material.transparent = false;
                 material.alpha_mask = false;
                 model.material_slots[index] = Some(slot);
+            } else {
+                model.appearance_resolved = false;
             }
         }
         self.luclin_eyes(model, appearance);
@@ -150,6 +172,7 @@ impl CharacterLibrary {
     }
 
     fn luclin_eyes(&self, model: &mut CharacterModel, appearance: &CharacterAppearance) {
+        let mut found = [false; 2];
         for index in 0..model.meshes.len() {
             let original = model.meshes[index].material;
             if !model.materials[original]
@@ -167,8 +190,10 @@ impl CharacterLibrary {
             } else {
                 appearance.eye_color_1
             };
+            found[usize::from(left)] = true;
             let name = format!("chr_eye{:03}.dds", u16::from(color) + 1);
             if !self.textures.contains_key(&name) && !self.loose_textures.contains_key(&name) {
+                model.appearance_resolved = false;
                 continue;
             }
             let mut material = model.materials[original].clone();
@@ -184,10 +209,13 @@ impl CharacterLibrary {
                 });
             model.meshes[index].material = material_index;
         }
+        model.appearance_resolved &=
+            (found[0] || appearance.eye_color_1 == 0) && (found[1] || appearance.eye_color_2 == 0);
     }
 
     fn luclin_parts(&self, model: &mut CharacterModel, appearance: &CharacterAppearance) {
         let Some(index) = part_index(&model.code) else {
+            model.appearance_resolved &= appearance.hair_style == 0 && appearance.beard == 0;
             return;
         };
         let offset = index * 30;
@@ -263,6 +291,7 @@ impl CharacterLibrary {
         }
         for (part, anchor, slot, tint) in parts {
             if let Err(error) = self.append_luclin_part(model, part, anchor, slot, tint) {
+                model.appearance_resolved = false;
                 tracing::debug!(%error, model = %model.code, part, "Luclin appearance part unavailable");
             }
         }
@@ -359,6 +388,7 @@ impl CharacterLibrary {
             (actor.references.clone(), vec![anchor], vec![Mat4::IDENTITY])
         };
         let material_start = model.materials.len();
+        let mesh_start = model.meshes.len();
         for reference in references {
             let Some((_, source)) = resolve_mesh(wld, reference) else {
                 continue;
@@ -393,6 +423,12 @@ impl CharacterLibrary {
                 }
             }
             append_mesh(wld, &mesh, model.bone_names.len(), slot, model)?;
+        }
+        if !model.meshes[mesh_start..]
+            .iter()
+            .any(|mesh| !mesh.indices.is_empty())
+        {
+            return Err(Error::NotFound(format!("Luclin part {code} geometry")));
         }
         if tint >> 24 != 0 {
             for material in &mut model.materials[material_start..] {

@@ -210,13 +210,14 @@ impl Fixture {
             0,
         )
         .unwrap();
+        let cosmetic = appearance.default_appearance();
         Submission {
             context,
             draft: Draft {
                 name: "Asteria".into(),
                 choice: combination.choice,
                 gender: 0,
-                appearance: appearance.default_appearance(),
+                appearance: cosmetic,
                 stats: catalog
                     .allocation(combination.allocation_index)
                     .unwrap()
@@ -228,6 +229,10 @@ impl Fixture {
                 context,
                 family: PreviewFamily::Luclin,
                 model_loaded: true,
+                race: combination.choice.race,
+                class: combination.choice.class,
+                gender: 0,
+                appearance: cosmetic,
             },
         }
     }

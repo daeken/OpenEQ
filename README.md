@@ -20,7 +20,11 @@ Connection settings lets you edit the login server and ports before signing in.
 Passwords are never saved by this flow; only the server address and last
 world/character choices are saved in `~/.config/openeq/connection.json` (or under
 `$XDG_CONFIG_HOME`). Select **Preview** to inspect and rotate a character before
-entering. Account and character creation controls are not available yet.
+entering. Select **New** to create a character from the server's permitted
+choices, distribute starting attributes and review its appearance before the
+final **Create** action. A successfully loaded matching preview is required;
+unsupported appearance controls stay unavailable. Account registration remains
+outside this client flow.
 
 When using interactive sign-in, `/camp` sits and returns to a fresh character
 list after the normal countdown; Escape cancels it. A server disconnect during
@@ -214,7 +218,7 @@ you up and automatically returns, following the default five-second cycle.
 This is a playable development milestone, with substantial parity work remaining:
 NPC quest hand-ins, augmentation, raid subgroup/loot administration, guild
 management, quest journals,
-account/character creation, alternate-ability purchases,
+account registration, alternate-ability purchases,
 EQG/absolute-destination border
 triggers, XMI music and event sounds, advanced XML widgets, remaining EQG liquid formats and environmental
 damage rules. Luclin hair/beard colors, Hero's Forge, animated equipment, weather,

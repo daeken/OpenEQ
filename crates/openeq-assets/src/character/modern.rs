@@ -538,7 +538,7 @@ impl ModernModel {
         &mut self,
         code: &str,
         appearance: &CharacterAppearance,
-    ) -> (Vec<Geometry>, Vec<Material>) {
+    ) -> (Vec<Geometry>, Vec<Material>, bool) {
         let variant = if appearance.helm_texture > 0 && appearance.helm_texture != 255 {
             appearance.helm_texture
         } else {
@@ -567,10 +567,13 @@ impl ModernModel {
         }) {
             selected.push(head);
         }
-        let selected = if drakkin::is_drakkin(code) {
+        let (selected, resolved) = if drakkin::is_drakkin(code) {
             drakkin::select(self, code, appearance)
         } else {
-            selected.into_iter().map(|index| (index, None)).collect()
+            (
+                selected.into_iter().map(|index| (index, None)).collect(),
+                true,
+            )
         };
         self.bindings.clear();
         self.baked_materials.clear();
@@ -634,7 +637,7 @@ impl ModernModel {
                     index
                 });
         }
-        (meshes, materials)
+        (meshes, materials, resolved)
     }
 }
 fn clip_code(prefix: &str) -> Option<&'static str> {
@@ -858,7 +861,7 @@ impl CharacterLibrary {
         }
         // Body bounds define actor scale and feet placement. Clothing, hair,
         // horns, and held equipment must never change that reference frame.
-        let (meshes, _) = modern.bake(code, &CharacterAppearance::default());
+        let (meshes, _, _) = modern.bake(code, &CharacterAppearance::default());
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
         for v in meshes.iter().flat_map(|m| m.vertices.chunks_exact(8)) {
@@ -872,9 +875,10 @@ impl CharacterLibrary {
         if drakkin::is_drakkin(code) {
             drakkin::load_modules(&mut modern, &archive, code)?;
         }
-        let (mut meshes, mut materials) = modern.bake(code, &CharacterAppearance::default());
+        let (mut meshes, mut materials, mut appearance_resolved) =
+            modern.bake(code, &CharacterAppearance::default());
         if drakkin::is_drakkin(code) {
-            drakkin::apply_materials(
+            appearance_resolved &= drakkin::apply_materials(
                 &modern,
                 &mut materials,
                 &CharacterAppearance::default(),
@@ -886,6 +890,12 @@ impl CharacterLibrary {
         modern.sample_into("", 0., false, &mut meshes);
         let model = CharacterModel {
             code: code.to_owned(),
+            appearance_resolved,
+            family: if drakkin::is_drakkin(code) {
+                CharacterModelFamily::Drakkin
+            } else {
+                CharacterModelFamily::Modern
+            },
             material_slots: vec![None; materials.len()],
             materials,
             meshes,
@@ -912,11 +922,12 @@ impl CharacterLibrary {
         let normalized = self.normalize_modern_appearance(&model.code, *appearance);
         let appearance = &normalized;
         let mut modern = (**model.modern.as_ref().unwrap()).clone();
-        let (mut meshes, mut materials) = modern.bake(&model.code, appearance);
+        let (mut meshes, mut materials, resolved) = modern.bake(&model.code, appearance);
+        model.appearance_resolved = resolved;
         let archives = self.modern_archives.lock().unwrap();
         let archive = &archives[&model.code];
         if drakkin::is_drakkin(&model.code) {
-            drakkin::apply_materials(
+            model.appearance_resolved &= drakkin::apply_materials(
                 &modern,
                 &mut materials,
                 appearance,
@@ -959,6 +970,7 @@ impl CharacterLibrary {
                     slot == 8,
                 )
             {
+                model.appearance_resolved = false;
                 tracing::debug!(model = %model.code, item = equipment.material, %error, "modern equipment unavailable");
             }
         }

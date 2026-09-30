@@ -137,18 +137,22 @@ impl CharacterLibrary {
         model.meshes.clear();
         model.bindings.clear();
         model.material_slots.clear();
+        model.appearance_resolved = true;
         let mut seen = BTreeSet::new();
         for reference in &skeleton.meshes {
             if reference.0 == 0 {
                 continue;
             }
             let Some((reference, mesh)) = resolve_mesh(wld, *reference) else {
+                model.appearance_resolved = false;
                 continue;
             };
             if !seen.insert(reference.0) {
                 continue;
             }
-            let mesh = self.appearance_mesh(wld, reference, mesh, &model.code, appearance);
+            let (mesh, resolved) =
+                self.appearance_mesh(wld, reference, mesh, &model.code, appearance);
+            model.appearance_resolved &= resolved;
             let is_head = wld
                 .resolve(reference)
                 .is_some_and(|chunk| chunk.name.starts_with(&format!("{}HE", model.code)));
@@ -176,12 +180,12 @@ impl CharacterLibrary {
         mesh: &'a Mesh,
         code: &str,
         appearance: &CharacterAppearance,
-    ) -> &'a Mesh {
+    ) -> (&'a Mesh, bool) {
         if self.luclin_codes.contains(code) {
-            return mesh;
+            return (mesh, true);
         }
         let Some(name) = wld.resolve(reference).map(|chunk| chunk.name.as_str()) else {
-            return mesh;
+            return (mesh, false);
         };
         let helm = appearance.armor(0);
         let chest = appearance.armor(1);
@@ -192,19 +196,21 @@ impl CharacterLibrary {
         } else {
             None
         };
-        replacement
-            .and_then(|name| {
-                wld.chunks().iter().find_map(|chunk| {
-                    if chunk.name == name
-                        && let Fragment::Mesh(mesh) = &chunk.fragment
-                    {
-                        Some(mesh)
-                    } else {
-                        None
-                    }
-                })
+        let Some(replacement) = replacement else {
+            return (mesh, true);
+        };
+        wld.chunks()
+            .iter()
+            .find_map(|chunk| {
+                if chunk.name == replacement
+                    && let Fragment::Mesh(mesh) = &chunk.fragment
+                {
+                    Some((mesh, true))
+                } else {
+                    None
+                }
             })
-            .unwrap_or(mesh)
+            .unwrap_or((mesh, false))
     }
 
     pub(super) fn apply_appearance(
@@ -213,6 +219,10 @@ impl CharacterLibrary {
         appearance: &CharacterAppearance,
     ) {
         if !self.apply_luclin_appearance(model, appearance) {
+            let appearance_wld = &self.wlds[self.actors[&model.code].0];
+            // Face zero means the actor's authored default. Some classic
+            // actors (HUF/DWF) start at face two and have no face-zero palette.
+            let mut face_resolved = appearance.face == 0;
             for (index, material) in model.materials.iter_mut().enumerate() {
                 for name in &mut material.textures {
                     let original = name.to_ascii_lowercase();
@@ -253,6 +263,19 @@ impl CharacterLibrary {
                                 );
                                 if self.has_texture(&candidate) {
                                     replacement = candidate;
+                                    face_resolved = true;
+                                } else if appearance.face != 0 && {
+                                    let stem = candidate.rsplit_once('.').unwrap().0;
+                                    appearance_wld
+                                        .by_name(&format!("{}_MDF", stem.to_ascii_uppercase()))
+                                        .is_some_and(|chunk| {
+                                            matches!(chunk.fragment, Fragment::Material(_))
+                                        })
+                                } {
+                                    // A referenced palette entry must load, but
+                                    // unauthored variants reuse the base piece
+                                    // (teeth, helmet plates, Iksar head details).
+                                    model.appearance_resolved = false;
                                 }
                             }
                         } else if armor > 0 && armor < 100 {
@@ -265,6 +288,8 @@ impl CharacterLibrary {
                                 format!("{}{:02}{}.{}", &stem[..5], texture, &stem[7..], extension);
                             if self.has_texture(&candidate) {
                                 replacement = candidate;
+                            } else {
+                                model.appearance_resolved = false;
                             }
                         }
                     } else if stem.starts_with("clk") && stem.len() == 7 {
@@ -277,6 +302,8 @@ impl CharacterLibrary {
                                 format!("clk{:02}{}.{}", armor - 6, &stem[5..], extension);
                             if self.has_texture(&candidate) {
                                 replacement = candidate;
+                            } else {
+                                model.appearance_resolved = false;
                             }
                         }
                     }
@@ -296,6 +323,7 @@ impl CharacterLibrary {
                     *name = replacement;
                 }
             }
+            model.appearance_resolved &= face_resolved;
         }
         for slot in [7, 8] {
             let equipment = appearance.equipment[slot];
@@ -305,6 +333,7 @@ impl CharacterLibrary {
             if let Err(error) =
                 self.attach_equipment(model, equipment.material, slot == 8, equipment.color)
             {
+                model.appearance_resolved = false;
                 tracing::debug!(model = %model.code, item = equipment.material, %error, "equipment unavailable");
             }
         }

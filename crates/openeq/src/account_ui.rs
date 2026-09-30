@@ -10,8 +10,10 @@ use bevy::{
 use openeq_ui::{Color, DrawCommand, HitTarget, Rect, TextAlign, UiBindings, UiDocument, UiFrame};
 use std::{collections::HashSet, path::Path};
 
+mod creation;
 mod menu;
 mod preview;
+use creation::CreationScreen;
 use menu::{Navigation, Page};
 use preview::PreviewChoice;
 
@@ -60,11 +62,31 @@ pub enum Intent {
     SignIn,
     Cancel,
     Exit,
-    SelectWorld { token: Token, id: u32 },
-    SelectCharacter { token: Token, name: String },
-    Play { token: Token },
-    Refresh { token: Token },
-    Back { token: Token },
+    SelectWorld {
+        token: Token,
+        id: u32,
+    },
+    SelectCharacter {
+        token: Token,
+        name: String,
+    },
+    Play {
+        token: Token,
+    },
+    Refresh {
+        token: Token,
+    },
+    Back {
+        token: Token,
+    },
+    Create {
+        token: Token,
+        submission: Box<crate::account_creation::Submission>,
+    },
+    CancelCreation {
+        token: Token,
+        operation: crate::account_creation::Token,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -79,6 +101,7 @@ enum Focus {
     Connection,
     Refresh,
     Preview,
+    Create,
     RotateLeft,
     RotateRight,
     Back,
@@ -106,7 +129,13 @@ const CREDENTIAL_FOCUS: &[Focus] = &[
     Focus::Exit,
 ];
 const WORLD_FOCUS: &[Focus] = &[Focus::List, Focus::Primary, Focus::Refresh, Focus::Back];
-const CHARACTER_FOCUS: &[Focus] = &[Focus::List, Focus::Preview, Focus::Primary, Focus::Back];
+const CHARACTER_FOCUS: &[Focus] = &[
+    Focus::List,
+    Focus::Create,
+    Focus::Preview,
+    Focus::Primary,
+    Focus::Back,
+];
 
 // Intentionally no Debug/Display/Serialize on any editor state. Passwords never
 // enter UiBindings, draw commands, hit IDs, chat history, notices or diagnostics.
@@ -239,6 +268,7 @@ pub struct AccountInput {
     preview: Option<PreviewChoice>,
     preview_revision: u64,
     preview_held: HashSet<KeyCode>,
+    creation: Option<CreationScreen>,
 }
 impl AccountInput {
     pub fn new(endpoint: Endpoint) -> Self {
@@ -267,6 +297,7 @@ impl AccountInput {
             preview: None,
             preview_revision: 0,
             preview_held: HashSet::new(),
+            creation: None,
         }
     }
     /// Starts at the local main menu. The controller remains idle until the
@@ -303,6 +334,7 @@ impl AccountInput {
         self.handoff_replay.clear();
         self.returning_held.clear();
         self.preview = None;
+        self.creation = None;
         self.preview_revision = self.preview_revision.wrapping_add(1);
         self.preview_held.clear();
         if let Some(navigation) = &mut self.navigation {
@@ -319,11 +351,19 @@ impl AccountInput {
     }
     fn cancel_composition(&mut self) {
         self.cancelled_composition |= self.composition_field.take().is_some();
+        if let Some(creation) = &mut self.creation {
+            self.cancelled_composition |= creation.composing;
+            creation.composing = false;
+            creation.name.preedit.clear();
+        }
         for edit in &mut self.edits {
             edit.preedit.clear();
         }
     }
     pub fn ime_enabled(&self, view: &View) -> bool {
+        if self.creation.is_some() {
+            return self.creation_name_focused(view) && self.focused;
+        }
         self.focused && self.editable_field(view).is_some()
     }
     /// Begin exactly once before routing a gameplay frame's raw events. Bevy's
@@ -381,7 +421,10 @@ impl AccountInput {
             keys.reset(*key);
         }
     }
-    fn sync(&mut self, view: &View) {
+    /// Reconcile server/session changes before presentation, even on frames
+    /// with no input events or model request.
+    pub fn sync(&mut self, view: &View) {
+        self.creation_sync(view);
         if self.preview.is_some() && self.preview_character(view).is_none() {
             self.close_preview();
         }
@@ -424,6 +467,9 @@ impl AccountInput {
         event: &WindowEvent,
     ) -> Option<Intent> {
         self.sync(view);
+        if self.creation.is_some() {
+            return self.creation_event(view, frame, window, event);
+        }
         match event {
             WindowEvent::WindowFocused(event) if event.window == window => {
                 self.focused = event.focused;
@@ -566,6 +612,10 @@ impl AccountInput {
                                     self.open_preview(view);
                                     None
                                 }
+                                Focus::Create => {
+                                    self.open_creation(view);
+                                    None
+                                }
                                 Focus::Connection if self.page(view) == Page::Welcome => {
                                     self.navigate(Page::Connection);
                                     None
@@ -682,6 +732,10 @@ impl AccountInput {
                         }
                         "preview" => {
                             self.open_preview(view);
+                            None
+                        }
+                        "new_character" => {
+                            self.open_creation(view);
                             None
                         }
                         "connection" if self.page(view) == Page::Welcome => {
@@ -977,6 +1031,10 @@ impl AccountUi {
         if screen.is_empty() {
             return paint.frame;
         }
+        if input.creation_valid(view) {
+            paint.creation(input, preview_status, elapsed);
+            return paint.frame;
+        }
         if let Some(character) = input.preview_character(view) {
             paint.preview(character, input, preview_status);
             return paint.frame;
@@ -1013,7 +1071,11 @@ impl AccountUi {
         paint.fill(inner, [9, 13, 20, 205]);
         paint.text(
             Rect::new(inner.x + 14., inner.y + 8., inner.width - 28., 32.),
-            input.title(view),
+            if chars && screen.width < 260. {
+                "Characters"
+            } else {
+                input.title(view)
+            },
             5,
             GOLD,
             false,
@@ -1071,7 +1133,9 @@ impl AccountUi {
         }
         paint.text(
             Rect::new(inner.x + 14., inner.bottom() - 15., inner.width - 28., 15.),
-            if input.page(view) == Page::Welcome {
+            if chars && screen.width < 260. {
+                "Tab · Enter · Escape"
+            } else if input.page(view) == Page::Welcome {
                 "Tab to move · Enter to choose · Escape to exit"
             } else {
                 "Tab to move · Enter to continue · Escape to go back"
@@ -1337,30 +1401,40 @@ impl Paint<'_> {
     }
     fn list(&mut self, inner: Rect, input: &AccountInput) {
         let characters = self.view.stage == Stage::Characters;
+        let compact_buttons = characters && inner.width < 388.;
+        let creation_status = characters
+            .then(|| creation::roster_status(self.view))
+            .flatten();
         let title = if characters {
             bounded_text(&self.view.world_name, 160)
         } else {
             "Available worlds".into()
         };
         self.text(
-            Rect::new(inner.x + 14., inner.y + 46., inner.width - 28., 24.),
-            &title,
-            3,
+            Rect::new(
+                inner.x + 14.,
+                inner.y + 46.,
+                inner.width - 28.,
+                if creation_status.is_some() { 52. } else { 24. },
+            ),
+            creation_status.unwrap_or(&title),
+            if creation_status.is_some() { 1 } else { 3 },
             MUTED,
-            false,
+            creation_status.is_some(),
         );
+        let status_space = if creation_status.is_some() { 32. } else { 0. };
         let list = Rect::new(
             inner.x + 14.,
-            inner.y + 78.,
+            inner.y + 78. + status_space,
             inner.width - 28.,
-            (inner.height - 190.).max(0.),
+            (inner.height - 190. - status_space - if compact_buttons { 34. } else { 0. }).max(0.),
         );
         self.fill(list, [6, 11, 18, 240]);
         self.hit("list", "AccountList", list, true);
         let count = row_count(self.view);
         let first = input.first(self.view);
         let row_height = (list.height / VISIBLE_ROWS as f32).min(32.);
-        if count == 0 {
+        if count == 0 && creation_status.is_none() {
             self.text(
                 Rect::new(list.x + 10., list.y + 18., list.width - 20., 60.),
                 if characters {
@@ -1439,18 +1513,20 @@ impl Paint<'_> {
         if input.focus == Focus::List {
             self.outline(list, [139, 118, 79, 255]);
         }
-        self.text(
-            Rect::new(list.x, list.bottom() + 3., list.width, 18.),
-            &format!(
-                "{}–{} of {}  ·  Scroll or use arrow keys",
-                if count == 0 { 0 } else { first + 1 },
-                count.min(first + VISIBLE_ROWS),
-                count
-            ),
-            1,
-            MUTED,
-            false,
-        );
+        if !list.is_empty() && (creation_status.is_none() || count > 0) {
+            self.text(
+                Rect::new(list.x, list.bottom() + 3., list.width, 18.),
+                &format!(
+                    "{}–{} of {}  ·  Scroll or use arrow keys",
+                    if count == 0 { 0 } else { first + 1 },
+                    count.min(first + VISIBLE_ROWS),
+                    count
+                ),
+                1,
+                MUTED,
+                false,
+            );
+        }
         let y = inner.bottom() - 54.;
         let width = list.width;
         self.button(
@@ -1460,7 +1536,11 @@ impl Paint<'_> {
                 "SERVERSELECT_ExitButton"
             },
             "back",
-            Rect::new(list.x, y, width * 0.22, 32.),
+            if compact_buttons {
+                Rect::new(list.x, y - 34., width * 0.47, 28.)
+            } else {
+                Rect::new(list.x, y, width * 0.22, 32.)
+            },
             if characters && !self.view.resumed {
                 "Back"
             } else {
@@ -1481,10 +1561,43 @@ impl Paint<'_> {
                 input,
             );
         } else {
+            let can_create = self.view.creation.as_ref().is_some_and(|creation| {
+                !creation.pending()
+                    && !matches!(
+                        creation.phase,
+                        Some(crate::account_creation::Phase::Uncertain(_))
+                    )
+                    && creation.selection.catalog.as_ref().is_some_and(|catalog| {
+                        catalog.combinations().iter().any(|combo| {
+                            creation
+                                .selection
+                                .capabilities
+                                .permits(combo, creation.selection.characters.len())
+                                .is_ok()
+                        })
+                    })
+            });
+            self.button(
+                "CLW_Quit_Button",
+                "new_character",
+                if compact_buttons {
+                    Rect::new(list.x + width * 0.53, y - 34., width * 0.47, 28.)
+                } else {
+                    Rect::new(list.x + width * 0.25, y, width * 0.20, 32.)
+                },
+                if compact_buttons { "New" } else { "Create" },
+                can_create,
+                input.focus == Focus::Create,
+                input,
+            );
             self.button(
                 "CLW_Quit_Button",
                 "preview",
-                Rect::new(list.x + width * 0.25, y, width * 0.30, 32.),
+                if compact_buttons {
+                    Rect::new(list.x, y, width * 0.47, 28.)
+                } else {
+                    Rect::new(list.x + width * 0.48, y, width * 0.20, 32.)
+                },
                 "Preview",
                 playable(self.view),
                 input.focus == Focus::Preview,
@@ -1498,8 +1611,18 @@ impl Paint<'_> {
                 "SERVERSELECT_PlayButton"
             },
             "primary",
-            Rect::new(list.x + width * 0.59, y, width * 0.41, 32.),
-            if characters { "Enter world" } else { "Play" },
+            if compact_buttons {
+                Rect::new(list.x + width * 0.53, y, width * 0.47, 28.)
+            } else if characters {
+                Rect::new(list.x + width * 0.71, y, width * 0.29, 32.)
+            } else {
+                Rect::new(list.x + width * 0.59, y, width * 0.41, 32.)
+            },
+            if characters && !compact_buttons {
+                "Enter world"
+            } else {
+                "Play"
+            },
             playable(self.view),
             input.focus == Focus::Primary,
             input,

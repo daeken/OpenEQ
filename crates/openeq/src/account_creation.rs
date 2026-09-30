@@ -1,6 +1,7 @@
 //! Immutable, single-flight creation transactions. No socket or database I/O.
 //! Name approval already reserves durable state; cancellation after dispatch
 //! detaches the UI while the worker finishes this exact bounded transaction.
+pub mod editor;
 use openeq_assets::character::customization::CustomizationCatalog;
 use openeq_net::{
     AppPacket,
@@ -194,12 +195,23 @@ impl AppearancePolicy {
         }
     }
     pub fn validate(&self, draft: &Draft) -> Result<(), CreationError> {
-        if (self.race, self.class, self.gender)
-            != (draft.choice.race, draft.choice.class, draft.gender)
-        {
+        self.validate_appearance(
+            draft.choice.race,
+            draft.choice.class,
+            draft.gender,
+            draft.appearance,
+        )
+    }
+    pub(crate) fn validate_appearance(
+        &self,
+        race: u32,
+        class: u32,
+        gender: u8,
+        a: Appearance,
+    ) -> Result<(), CreationError> {
+        if (self.race, self.class, self.gender) != (race, class, gender) {
             return Err(CreationError::Unavailable("stale appearance capability"));
         }
-        let a = draft.appearance;
         for (feature, value) in [
             (Feature::Face, u32::from(a.face)),
             (Feature::Hair, u32::from(a.hair_style)),
@@ -279,9 +291,23 @@ pub struct Context {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PreviewReceipt {
-    pub context: Context,
-    pub family: PreviewFamily,
-    pub model_loaded: bool,
+    pub(crate) context: Context,
+    pub(crate) family: PreviewFamily,
+    pub(crate) model_loaded: bool,
+    pub(crate) race: u32,
+    pub(crate) class: u32,
+    pub(crate) gender: u8,
+    pub(crate) appearance: Appearance,
+}
+impl PreviewReceipt {
+    pub(crate) fn matches(&self, context: Context, draft: &Draft, family: PreviewFamily) -> bool {
+        self.model_loaded
+            && self.context == context
+            && self.family == family
+            && (self.race, self.class, self.gender)
+                == (draft.choice.race, draft.choice.class, draft.gender)
+            && self.appearance == draft.appearance
+    }
 }
 /// A complete local proposal. The retained account worker validates this
 /// against its own socket snapshot before it claims either outgoing packet.
@@ -382,10 +408,7 @@ impl Transaction {
         capabilities.permits(combination, roster.len())?;
         allocation.validate_stats(draft.stats)?;
         appearance.validate(&draft)?;
-        if !preview.model_loaded
-            || preview.context != context
-            || preview.family != appearance.family()
-        {
+        if !preview.matches(context, &draft, appearance.family()) {
             return Err(CreationError::Unavailable("current character preview"));
         }
         let approval = creation::approve_name(&draft.name, draft.choice)?;
@@ -702,10 +725,15 @@ mod tests {
         }
     }
     fn receipt(context: Context) -> PreviewReceipt {
+        let draft = draft();
         PreviewReceipt {
             context,
             family: PreviewFamily::Luclin,
             model_loaded: true,
+            race: draft.choice.race,
+            class: draft.choice.class,
+            gender: draft.gender,
+            appearance: draft.appearance,
         }
     }
     fn prepared() -> Transaction {
@@ -810,6 +838,48 @@ mod tests {
             .is_err()
         );
     }
+    #[test]
+    fn receipt_cannot_be_reused_for_another_valid_appearance_in_the_same_context() {
+        let mut changed = draft();
+        changed.appearance.face = 1;
+        assert!(policy().validate(&changed).is_ok());
+        assert!(
+            Transaction::prepare(
+                context(),
+                changed,
+                &catalog(),
+                &capabilities(),
+                &[],
+                &policy(),
+                receipt(context())
+            )
+            .is_err()
+        );
+        for field in 0..4 {
+            let mut reused = receipt(context());
+            match field {
+                0 => reused.race += 1,
+                1 => reused.class += 1,
+                2 => reused.gender += 1,
+                3 => reused.appearance.face = 1,
+                _ => unreachable!(),
+            }
+            assert!(
+                Transaction::prepare(
+                    context(),
+                    draft(),
+                    &catalog(),
+                    &capabilities(),
+                    &[],
+                    &policy(),
+                    reused
+                )
+                .is_err(),
+                "reused receipt field {field}"
+            );
+        }
+    }
+
     #[test]
     fn frozen_pair_is_one_shot_and_draft_mutation_cannot_change_reserved_identity() {
         let mut original = draft();

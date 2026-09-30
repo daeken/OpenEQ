@@ -34,6 +34,17 @@ pub enum CharacterModelSet {
     Luclin,
 }
 
+/// Family of a successfully loaded model, independent of the requested model
+/// preference. A missing Luclin replacement can resolve to Classic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CharacterModelFamily {
+    Classic,
+    Luclin,
+    Drakkin,
+    /// Other weighted EQG models have no player customization contract.
+    Modern,
+}
+
 /// Client character assets available to a zone. Share this between NPCs and
 /// cache loaded models by race/gender; archives and animations need only load once.
 pub struct CharacterLibrary {
@@ -87,6 +98,8 @@ struct BoundVertex {
 #[derive(Debug, Clone)]
 pub struct CharacterModel {
     pub code: String,
+    family: CharacterModelFamily,
+    appearance_resolved: bool,
     pub materials: Vec<Material>,
     /// Bind pose geometry, with indices stable across every animation sample.
     pub meshes: Vec<Geometry>,
@@ -439,6 +452,12 @@ impl CharacterLibrary {
         }
         let (parents, bone_order) = hierarchy(skeleton)?;
         let mut model = CharacterModel {
+            appearance_resolved: true,
+            family: if self.luclin_codes.contains(&code) {
+                CharacterModelFamily::Luclin
+            } else {
+                CharacterModelFamily::Classic
+            },
             code,
             materials: Vec::new(),
             meshes: Vec::new(),
@@ -468,7 +487,9 @@ impl CharacterLibrary {
                 continue;
             }
             original_meshes.push(mesh);
-            let mesh = self.appearance_mesh(wld, mesh_ref, mesh, &model.code, appearance);
+            let (mesh, resolved) =
+                self.appearance_mesh(wld, mesh_ref, mesh, &model.code, appearance);
+            model.appearance_resolved &= resolved;
             let is_head = wld
                 .resolve(mesh_ref)
                 .is_some_and(|chunk| chunk.name.starts_with(&format!("{}HE", model.code)));
@@ -631,6 +652,17 @@ impl CharacterLibrary {
 }
 
 impl CharacterModel {
+    pub fn family(&self) -> CharacterModelFamily {
+        self.family
+    }
+
+    /// Supported asset choices resolved without silently substituting or
+    /// omitting a requested variant/part. Rendering can still use its graceful
+    /// fallback when false; a creation preview cannot certify that appearance.
+    pub fn appearance_resolved(&self) -> bool {
+        self.appearance_resolved
+    }
+
     pub fn idle_animation(&self) -> &str {
         ["P01", "C01", ""]
             .into_iter()
@@ -1391,6 +1423,93 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires original classic/Luclin face and eye assets; CPU only"]
+    fn missing_requested_face_and_eye_variants_report_fallback() {
+        let base = crate::loader::default_client_dir().expect("original assets");
+        let mut classic = CharacterLibrary::load(&base, "").unwrap();
+        let face = CharacterAppearance {
+            face: 1,
+            ..Default::default()
+        };
+        assert!(
+            classic
+                .load_race_with_appearance(1, 0, &face)
+                .unwrap()
+                .appearance_resolved()
+        );
+        classic
+            .textures
+            .retain(|name, _| !name.starts_with("humhe0011"));
+        classic
+            .loose_textures
+            .retain(|name, _| !name.starts_with("humhe0011"));
+        assert!(classic.texture("humhe0012.bmp").is_some());
+        assert!(
+            !classic
+                .load_race_with_appearance(1, 0, &face)
+                .unwrap()
+                .appearance_resolved(),
+            "one surviving face texture must not certify a missing declared part"
+        );
+        classic
+            .textures
+            .retain(|name, _| !name.starts_with("humhe001"));
+        classic
+            .loose_textures
+            .retain(|name, _| !name.starts_with("humhe001"));
+        let fallback = classic.load_race_with_appearance(1, 0, &face).unwrap();
+        assert!(!fallback.appearance_resolved());
+        assert!(!fallback.meshes.is_empty());
+        assert!(
+            fallback
+                .materials
+                .iter()
+                .flat_map(|m| &m.textures)
+                .all(|name| classic.texture(name).is_some())
+        );
+        assert!(classic.load_race(1, 0).unwrap().appearance_resolved());
+
+        let mut luclin =
+            CharacterLibrary::load_with_model_set(&base, "", CharacterModelSet::Luclin).unwrap();
+        let eyes = CharacterAppearance {
+            eye_color_1: 1,
+            eye_color_2: 1,
+            ..Default::default()
+        };
+        assert!(
+            luclin
+                .load_race_with_appearance(1, 0, &eyes)
+                .unwrap()
+                .appearance_resolved()
+        );
+        luclin.textures.remove("chr_eye002.dds");
+        luclin.loose_textures.remove("chr_eye002.dds");
+        assert!(
+            !luclin
+                .load_race_with_appearance(1, 0, &eyes)
+                .unwrap()
+                .appearance_resolved()
+        );
+        assert!(luclin.load_race(1, 0).unwrap().appearance_resolved());
+        assert!(
+            luclin
+                .load_race_with_appearance(1, 0, &face)
+                .unwrap()
+                .appearance_resolved()
+        );
+        luclin.textures.remove("humhesk11.dds");
+        luclin.loose_textures.remove("humhesk11.dds");
+        luclin.decoded_textures.lock().unwrap().clear();
+        assert!(
+            !luclin
+                .load_race_with_appearance(1, 0, &face)
+                .unwrap()
+                .appearance_resolved()
+        );
+        assert!(luclin.load_race(1, 0).unwrap().appearance_resolved());
+    }
+
+    #[test]
     fn hierarchy_orders_parents_and_rejects_cycles() {
         let skeleton = Skeleton {
             tracks: vec![track(&[]), track(&[0])],
@@ -1435,6 +1554,8 @@ mod tests {
         };
         let mut model = CharacterModel {
             code: "TEST".into(),
+            family: CharacterModelFamily::Classic,
+            appearance_resolved: true,
             materials: vec![],
             material_slots: vec![],
             meshes: vec![Geometry {
