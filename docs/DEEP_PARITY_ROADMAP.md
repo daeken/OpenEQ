@@ -322,3 +322,18 @@ class-1/skill-0/level-10 database cap of75.
   application polling or zone entry before proceeding to its bounded creation
   proof. Evidence: `/tmp/openeq-creation-proof-v2` and
   `/tmp/openeq-idle-transport-tests.log`.
+
+### Further cursor persistence prerequisites
+
+- Five actual-source database-seam cases reproduce successful saves that omit
+  the201st root, omit queued-bag children, overwrite a head-bag child with a
+  tail root, or ignore initial-clear/child-write failures. The loader's narrow
+  slot-dispatch replay also turns surviving head-bag children into loose roots.
+- Real save methods/items and the previously patched InventoryProfile object
+  run against a fail-closed in-memory SQL seam, with database connection denial
+  and an isolated network namespace. No live character or database was touched.
+  This is a reproduction, not a deployed fix or full save/reconnect proof.
+- `CURSOR_PERSISTENCE_AUDIT.md` records evidence and the reviewable diagnostic.
+  The proposed opt-in extension in `OPENEQ_CURSOR_EXTENSION_V1.md` separates
+  complete observed ownership from durable storage and keeps arbitrary hand-ins
+  pending the required persistence contract and proof.
