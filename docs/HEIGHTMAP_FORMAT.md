@@ -19,7 +19,7 @@ The DAT begins with three little-endian u32 words, a NUL-terminated base texture
 
 Individual object Z is relative to the triangulated terrain below its local X/Y. Group Z is absolute, plus its stored scale-Z times Z adjustment. Object and group Euler rotations are degrees. TOG files contain local object names, positions, rotations and scales, composed beneath the group transform.
 
-ECO files describe named texture, object and flora sections. Texture layers name `*DETAILMAP` images, repeats and height/slope ranges. The renderer uses the authored ecosystem names and per-tile opacity masks. It preserves both color arrays and all flags in the parsed data. Flag bit 0 suppresses a terrain quad; other flag bits are retained and do not remove visible geometry.
+ECO files describe named texture, object and flora sections. Texture layers name `*DETAILMAP` images, repeats and height/slope ranges. The renderer uses the authored ecosystem names and per-tile opacity masks. It preserves both color arrays and all flags in the parsed data. Flag `0x01` suppresses a terrain quad. Flag `0x80` selects the cached negative-slope diagonal (`10--01`); otherwise the quad uses `00--11`. The full-grid mesh, its collision triangles, terrain-relative object/light anchoring and height-dependent compatibility paint use that same topology. Other flag bits are retained without removing visible geometry.
 
 Finite `water.dat` sheets provide extents, elevation, two water colors, normal/environment maps and Fresnel/reflection parameters. Light definitions use packed ARGB colors and intensity; DAT light records provide position and radius.
 
@@ -57,7 +57,8 @@ This is a compatibility implementation, not a complete reproduction of the clien
 - ECO height/slope ranges and repeats are used, but coverage/blend maps and the client's exact soft blending rules remain unverified. The interpolation is an approximation.
 - The two terrain color arrays, MOD/LIT precomputed illumination, ecosystem normal maps, generated radial flora and particle effects are not rendered yet.
 - Finite sheets and supported indexed tile rectangles are drawn. Indexed surfaces use the native two-sided grid, quantized tile UVs, authored materials and ordinary depth occlusion. The current color/reflection/lighting model remains approximate; the native time provider and complete blend/depth states remain unverified. Native top-level DAT liquid volumes support the verified group-free subset, including swimming in Maiden’s Grave. Embedded group regions, unsupported transforms and binary EQGZ remain unresolved; see `EQG_LIQUID_TRANSFORMS.md`. See `HEIGHTMAP_WATER_SURFACES.md`.
-- Native inspection identifies the first DAT header word as the version. The other header words, editor identifiers and quad bits other than bit 0 remain incompletely established. The version-22 object word uses a native `>=22` gate; the current parser's bit test agrees for the audited 20/21/22 layouts, but broader version support needs separate validation.
+- Native inspection identifies the first DAT header word as the version. The other header words, editor identifiers and quad bits other than `0x01`/`0x80` remain incompletely established. The version-22 object word uses a native `>=22` gate; the current parser's bit test agrees for the audited 20/21/22 layouts, but broader version support needs separate validation.
+- The terrain mesh follows the authored diagonal cache at full grid resolution. The native renderer can regenerate that cache during adaptive tessellation; live LOD topology and its re-anchoring schedule remain unverified. Neighbor-aware height derivatives still supply smooth vertex normals, with shared tile-edge normals checked by tests; this is not a claim of native normal-generation parity. The public height sampler retains its existing edge clamping and object-local wrapping; exact native positive-edge/out-of-range behavior remains unresolved.
 - The binary EQGZ v2 per-placement array is consumed but its lighting interpretation is not yet applied.
 - DAT light/effect definitions currently use the first color/intensity frame as a static point light. Temporal effects and exact anchoring should be compared with the original client.
 
@@ -77,3 +78,31 @@ geometry and bounds unchanged. Captures are in `/tmp/openeq-terrain-addressing`.
 They deliberately omit object instances to reveal the terrain. This corrects
 opposite-edge filtering only; it does not claim seamless authored ecosystems
 or original-client terrain shader fidelity.
+
+## Cached diagonal regression
+
+Native `EQGraphicsDX9.dll` sampling (`0x100f38c0`), collision (`0x100cbc00`),
+and visible index generation establish the `0x80` diagonal contract. See
+`EQG_LIQUID_TRANSFORMS.md` for the checked binary hash, branch expressions and
+index-buffer upload evidence. OpenEQ now uses that cache for its full-grid
+terrain instead of always choosing `00--11`.
+
+Synthetic fixtures cover all four triangle planes, unrelated flag bits, hidden
+quads, ground collision, prop/light placement, unchanged absolute group Z, and
+mixed-diagonal tile seams with identical shared positions/normals. A GPU fixture
+compares both terrain modes with independently specified triangles and checks a
+marker that the former diagonal incorrectly buried.
+
+The original Feerrott2 tiles `[-3,-4]` and `[-2,-4]`, row 3, supply a nonplanar,
+walkable seam. The right cell's center at world `[-504,-968]` has cached height
+`61.503113`; the former diagonal gives `57.28212`, a `4.220995` unit error.
+Original-asset tests check native anchor sampling, render mesh collision and
+continuity across the seam. Diagnostic before/after renders in
+`/tmp/openeq-terrain-topology` change only that one cell's indices, preserving
+materials, vertex positions, normals and adjacent topology.
+
+Corrected height-dependent painting changes 10 of 18 retained OldCommons tile
+image fixtures. The deferred-paint regression keeps all 18 prior hashes using
+an explicitly forced legacy-diagonal reference, checks the corrected hashes,
+and verifies every changed pixel lies in a `0x80` cell. All existing synthetic
+unflagged paint hashes remain unchanged.

@@ -1,11 +1,12 @@
 //! Indexed surfaces remain bounded drawing, independent of terrain and physics.
-use glam::Vec3;
+use glam::{Mat4, Quat, Vec3};
 use openeq_assets::{
     Scene,
     collision::CollisionWorld,
     loader,
     mesh::{Geometry, VERTEX_STRIDE},
     pfs::Archive,
+    read::Reader,
     terrain::{
         self, Heightmap, IndexedWaterResolution, TerrainOptions, TerrainTile,
         TerrainWaterExtension, TerrainWaterMetadata, WaterData, indexed_water,
@@ -22,6 +23,206 @@ fn original(zone: &str, internal: &str) -> (Heightmap, WaterData) {
     let water = terrain::parse_water_data(&archive.read("water.dat").unwrap()).unwrap();
     (map, water)
 }
+
+// Reparse the same DAT with only diagonal bits cleared. This restores the exact
+// former anchor arithmetic, including f32 rounding; subtracting the corrected
+// height from already-rounded world positions would not reconstruct that input.
+fn legacy_diagonals(zone: &str, map: &Heightmap) -> Heightmap {
+    let archive = Archive::open(
+        loader::default_client_dir()
+            .unwrap()
+            .join(format!("{zone}.eqg")),
+    )
+    .unwrap();
+    let data = archive.read(&format!("{}.dat", map.options.name)).unwrap();
+    let mut legacy = data.clone();
+    let mut reader = Reader::new(&data);
+    let version = reader.u32().unwrap();
+    assert!(matches!(version, 20 | 21));
+    reader.skip(8).unwrap();
+    let string = |reader: &mut Reader<'_>| {
+        while reader.u8().unwrap() != 0 {}
+    };
+    string(&mut reader);
+    assert_eq!(reader.u32().unwrap() as usize, map.tiles.len());
+    let q = map.options.quads_per_tile;
+    for tile in &map.tiles {
+        reader.skip(12 + (q + 1) * (q + 1) * 12).unwrap();
+        let offset = reader.pos();
+        assert_eq!(reader.take(q * q).unwrap(), tile.quad_flags);
+        for byte in &mut legacy[offset..offset + q * q] {
+            *byte &= !0x80;
+        }
+        reader.skip(8).unwrap();
+        if version >= 21 {
+            if reader.u8().unwrap() != 0 {
+                reader.skip(16).unwrap();
+            }
+            reader.skip(4).unwrap();
+        }
+        for layer in 0..reader.u32().unwrap() {
+            string(&mut reader);
+            if layer != 0 {
+                let width = reader.u32().unwrap() as usize;
+                reader.skip(width * width).unwrap();
+            }
+        }
+        for _ in 0..reader.u32().unwrap() {
+            string(&mut reader);
+            string(&mut reader);
+            reader.skip(8 + 36 + 1).unwrap();
+        }
+        for _ in 0..reader.u32().unwrap() {
+            string(&mut reader);
+            reader.skip(4).unwrap();
+            string(&mut reader);
+            reader.skip(8 + 48).unwrap();
+        }
+        for _ in 0..reader.u32().unwrap() {
+            string(&mut reader);
+            string(&mut reader);
+            reader.skip(1 + 8 + 40).unwrap();
+        }
+        for _ in 0..reader.u32().unwrap() {
+            string(&mut reader);
+            reader.skip(8 + 40).unwrap();
+        }
+    }
+    assert_eq!(
+        reader.remaining(),
+        0,
+        "legacy fixture must consume the complete original DAT"
+    );
+    Heightmap::parse(map.options.clone(), &legacy).unwrap()
+}
+
+fn assert_water_independent_collision_and_legacy_count(
+    zone: &str,
+    scene: &mut Scene,
+    map: &Heightmap,
+    legacy_count: usize,
+    expected_delta: isize,
+) {
+    let corrected_count = CollisionWorld::build(scene).triangle_count();
+    for mesh in &mut scene.meshes {
+        if scene.materials[mesh.material].water.is_some() {
+            mesh.indices.clear();
+        }
+    }
+    assert_eq!(
+        CollisionWorld::build(scene).triangle_count(),
+        corrected_count,
+        "removing every water surface must leave collision unchanged"
+    );
+    let legacy = legacy_diagonals(zone, map);
+    for mesh in &mut scene.meshes {
+        if !scene.terrain_materials.contains_key(&mesh.material) {
+            continue;
+        }
+        let name = &scene.materials[mesh.material].textures[0];
+        let tile_id = name
+            .strip_suffix(".rgba")
+            .unwrap()
+            .rsplit('_')
+            .next()
+            .unwrap()
+            .parse::<usize>()
+            .unwrap();
+        let tile = &legacy.tiles[tile_id];
+        let q = map.options.quads_per_tile;
+        let count = mesh.indices.len();
+        mesh.indices.clear();
+        for row in 0..q {
+            for col in 0..q {
+                if tile.quad_flags[row * q + col] & 1 != 0 {
+                    continue;
+                }
+                let a = (row * (q + 1) + col) as u32;
+                let b = a + (q + 1) as u32;
+                mesh.indices.extend([a, a + 1, b + 1, a, b + 1, b]);
+            }
+        }
+        assert_eq!(mesh.indices.len(), count);
+    }
+    assert_eq!(
+        CollisionWorld::build(scene).triangle_count(),
+        corrected_count,
+        "flipping full-grid triangles cannot make their XY area degenerate"
+    );
+    assert_eq!(map.placements.len(), legacy.placements.len());
+    let mut instance_index = 0;
+    let mut delta = 0;
+    let mut changed_triangles = 0;
+    for (new, old) in map.placements.iter().zip(&legacy.placements) {
+        assert_eq!(new.model, old.model);
+        let Some(object) = scene.objects.iter().find(|object| object.name == new.model) else {
+            continue;
+        };
+        let (scale, rotation, position) = new.transform.to_scale_rotation_translation();
+        assert!(scale.is_finite() && rotation.is_finite() && position.is_finite());
+        let instance = &mut scene.instances[instance_index];
+        instance_index += 1;
+        assert_eq!(instance.object, new.model);
+        assert_eq!(instance.position, position.to_array());
+        let (old_scale, old_rotation, old_position) = old.transform.to_scale_rotation_translation();
+        assert_eq!(old_scale, scale);
+        assert_eq!(old_rotation, rotation);
+        assert_eq!(old_position.truncate(), position.truncate());
+        if old_position != position {
+            // The only physical prop input changed is world Z. Inspect the
+            // same f32 world-space areas used by CollisionWorld's validity gate.
+            let transform = |position| {
+                Mat4::from_scale_rotation_translation(
+                    Vec3::from(instance.scale),
+                    Quat::from_array(instance.rotation),
+                    position,
+                )
+            };
+            let transforms = [transform(old_position), transform(position)];
+            assert!(object.meshes.iter().all(|&i| !scene.meshes[i].collidable));
+            for &mesh_id in &object.collision_meshes {
+                let mesh = &scene.collision_meshes[mesh_id];
+                for triangle in mesh.indices.chunks_exact(3) {
+                    let local = [triangle[0], triangle[1], triangle[2]]
+                        .map(|i| Vec3::from(mesh.positions[i as usize]));
+                    let areas = transforms.map(|transform| {
+                        let [a, b, c] = local.map(|p| transform.transform_point3(p));
+                        assert!(a.is_finite() && b.is_finite() && c.is_finite());
+                        (b - a).cross(c - a).length_squared()
+                    });
+                    assert!(areas.iter().all(|a| a.is_finite()));
+                    let accepted = areas.map(|area| area >= 1e-10);
+                    if accepted[0] != accepted[1] {
+                        delta += isize::from(accepted[1]) - isize::from(accepted[0]);
+                        changed_triangles += 1;
+                        eprintln!(
+                            "{zone}: {} instance{} mesh{mesh_id} triangle{:?} z{}->{} area²{:?}",
+                            instance.object,
+                            instance_index - 1,
+                            triangle,
+                            old_position.z,
+                            position.z,
+                            areas
+                        );
+                    }
+                }
+            }
+        }
+        instance.position = old_position.to_array();
+    }
+    assert!(changed_triangles > 0);
+    assert_eq!(
+        delta, expected_delta,
+        "changed world-space degeneracy decisions"
+    );
+    assert_eq!(
+        CollisionWorld::build(scene).triangle_count(),
+        legacy_count,
+        "restoring legacy diagonals and original prop anchors must recover the previous count"
+    );
+    assert_eq!(corrected_count as isize, legacy_count as isize + delta);
+}
+
 fn bounds(mesh: &Geometry) -> ([f32; 3], [f32; 3]) {
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
@@ -279,11 +480,6 @@ fn original_feerrott_pond_bounds_seams_occluded_tile_and_noncollision() {
         assert!(!loaded.collidable);
         assert_resolved_material(&scene, loaded, &water, surface.material_index);
     }
-    assert_eq!(
-        CollisionWorld::build(&scene).triangle_count(),
-        824400,
-        "new water must not add physical triangles"
-    );
     let water_only = Scene::from_geometry(
         "indexed water".into(),
         scene.materials.clone(),
@@ -297,16 +493,7 @@ fn original_feerrott_pond_bounds_seams_occluded_tile_and_noncollision() {
         world.clip_camera([-720., -2900., -40.], [-720., -2900., -60.], 0.),
         [-720., -2900., -60.]
     );
-    for mesh in &mut scene.meshes {
-        if scene.materials[mesh.material]
-            .water
-            .as_ref()
-            .is_some_and(|w| w.indexed_uv_scale.is_some())
-        {
-            mesh.indices.clear();
-        }
-    }
-    assert_eq!(CollisionWorld::build(&scene).triangle_count(), 824400);
+    assert_water_independent_collision_and_legacy_count("feerrott2", &mut scene, &map, 824400, -1);
 }
 
 #[test]
@@ -324,7 +511,7 @@ fn original_buried_sea_selector_two_keeps_its_gray_material() {
             .count(),
         22
     );
-    let scene = loader::load_zone(loader::default_client_dir().unwrap(), "buriedsea").unwrap();
+    let mut scene = loader::load_zone(loader::default_client_dir().unwrap(), "buriedsea").unwrap();
     let meshes = indexed_meshes(&scene);
     assert_eq!(meshes.len(), 900);
     let surface = baked
@@ -367,7 +554,7 @@ fn original_buried_sea_selector_two_keeps_its_gray_material() {
                 .map(|s| s.geometry.indices.len() / 3)
                 .sum::<usize>()
     );
-    assert_eq!(CollisionWorld::build(&scene).triangle_count(), 1567093);
+    assert_water_independent_collision_and_legacy_count("buriedsea", &mut scene, &map, 1567093, 4);
 }
 
 #[test]
@@ -378,10 +565,10 @@ fn inactive_indexed_definitions_and_legacy_water_keep_existing_behavior() {
     let baked = indexed_water::bake(&map, &water).unwrap();
     assert!(baked.surfaces.is_empty() && baked.diagnostics.is_empty());
     let base = loader::default_client_dir().unwrap();
-    let scene = loader::load_zone(&base, "oldcommons").unwrap();
+    let mut scene = loader::load_zone(&base, "oldcommons").unwrap();
     assert!(indexed_meshes(&scene).is_empty());
     assert_eq!(scene.triangle_count(), 834516);
-    assert_eq!(CollisionWorld::build(&scene).triangle_count(), 841729);
+
     let finite = scene
         .meshes
         .iter()
@@ -393,6 +580,7 @@ fn inactive_indexed_definitions_and_legacy_water_keep_existing_behavior() {
         scene.materials[finite[0].material].water.as_ref(),
         Some(&water.finite_sheets[0].material)
     );
+    assert_water_independent_collision_and_legacy_count("oldcommons", &mut scene, &map, 841729, 2);
     let scene = loader::load_zone(base, "anguish").unwrap();
     let eqg = scene
         .materials

@@ -358,7 +358,7 @@ fn native_source_name_collision_preserves_eager_registration_order() {
 
 #[test]
 #[ignore = "requires original OldCommons archive; CPU only"]
-fn original_loader_defers_all_tiles_and_matches_prechange_pixel_hashes() {
+fn original_loader_defers_tiles_and_limits_paint_changes_to_corrected_diagonals() {
     let base = default_client_dir().expect("original client assets");
     let scene = load_zone(base, "oldcommons").unwrap();
     assert_eq!(scene.terrain_materials.len(), 1552);
@@ -371,31 +371,77 @@ fn original_loader_defers_all_tiles_and_matches_prechange_pixel_hashes() {
             .count(),
         1552
     );
-    // Recorded from the eager implementation before this refactor. Includes
-    // every original tile with more than three ecosystem applications.
+    let archive = &scene.archives[0];
+    let map = read_heightmap(archive, &archive.read("commonlands.zon").unwrap()).unwrap();
+    let mut ecosystems = Ecosystems::new();
+    for tile in &map.tiles {
+        for layer in &tile.layers {
+            let key = layer.ecosystem.to_ascii_lowercase();
+            if !ecosystems.contains_key(&key) {
+                ecosystems.insert(
+                    key.clone(),
+                    terrain::parse_ecosystem(&archive.read(&format!("{key}.eco")).unwrap())
+                        .unwrap(),
+                );
+            }
+        }
+    }
+    let mut legacy_map = map.clone();
+    for tile in &mut legacy_map.tiles {
+        for flag in &mut tile.quad_flags {
+            *flag &= !0x80;
+        }
+    }
+    let legacy = Scene::from_prepared_terrain(
+        "legacy diagonals".into(),
+        terrain::prepare(&legacy_map, &ecosystems, |name| scene.texture(name)).unwrap(),
+    );
+    // Retain the pre-refactor eager hashes with the former all-positive grid.
+    // Corrected hashes may change only height-dependent paint in 0x80 cells.
+    // Includes every original tile with more than three ecosystem applications.
     let goldens = [
-        (0, 0x2b4838a245432da5),
-        (137, 0x83fb1f4685410ee2),
-        (233, 0xf43905c3e16c0002),
-        (274, 0xca46b05604eaacb6),
-        (411, 0xc371656da5b56bac),
-        (430, 0x336b329dbe5b9f27),
-        (548, 0x9a4d978b592445a3),
-        (685, 0xf807359c4ec89dd8),
-        (822, 0x21d0b4558a00b89e),
-        (959, 0x91ecfa0b1f42e895),
-        (1096, 0x4923c11327050685),
-        (1158, 0x0def58099db7a2ef),
-        (1172, 0x8c7971afd5460a95),
-        (1205, 0x9eeea475d63d3456),
-        (1219, 0xcc624b8c71d479d8),
-        (1233, 0x07fec6aba978d5b6),
-        (1370, 0xbc312b73cb765170),
-        (1507, 0xfc12c2b75de6e996),
+        (0, 0x2b4838a245432da5, 0x2b4838a245432da5),
+        (137, 0x83fb1f4685410ee2, 0x83fb1f4685410ee2),
+        (233, 0xf43905c3e16c0002, 0xc28f006b619c746e),
+        (274, 0xca46b05604eaacb6, 0xca46b05604eaacb6),
+        (411, 0xc371656da5b56bac, 0xc371656da5b56bac),
+        (430, 0x336b329dbe5b9f27, 0x2327b121c618e471),
+        (548, 0x9a4d978b592445a3, 0x012e42978075e695),
+        (685, 0xf807359c4ec89dd8, 0xf807359c4ec89dd8),
+        (822, 0x21d0b4558a00b89e, 0x21d0b4558a00b89e),
+        (959, 0x91ecfa0b1f42e895, 0xe38a0116b3bb9771),
+        (1096, 0x4923c11327050685, 0xa7324e3c0488f909),
+        (1158, 0x0def58099db7a2ef, 0x622fbb0d9b401a9b),
+        (1172, 0x8c7971afd5460a95, 0x8c7971afd5460a95),
+        (1205, 0x9eeea475d63d3456, 0x92799e30148a6221),
+        (1219, 0xcc624b8c71d479d8, 0x4e1cf295cecf6e97),
+        (1233, 0x07fec6aba978d5b6, 0x8947ef492dca9fb5),
+        (1370, 0xbc312b73cb765170, 0xbc312b73cb765170),
+        (1507, 0xfc12c2b75de6e996, 0xb5d6363c15f07fba),
     ];
-    for (tile, golden) in goldens {
+    for (tile, before, after) in goldens {
         let name = format!("__terrain_commonlands_{tile}.rgba");
-        assert_eq!(hash(&scene.texture(&name).unwrap().rgba), golden, "{name}");
+        let old = legacy.texture(&name).unwrap();
+        let actual = scene.texture(&name).unwrap();
+        assert_eq!(hash(&old.rgba), before, "legacy {name}");
+        assert_eq!(hash(&actual.rgba), after, "corrected {name}");
+        let q = map.options.quads_per_tile;
+        for (pixel, (a, b)) in old
+            .rgba
+            .chunks_exact(4)
+            .zip(actual.rgba.chunks_exact(4))
+            .enumerate()
+        {
+            if a != b {
+                let col = (pixel % 128) * q / 128;
+                let row = (pixel / 128) * q / 128;
+                assert_ne!(
+                    map.tiles[tile].quad_flags[row * q + col] & 0x80,
+                    0,
+                    "paint changed outside a corrected cell in {name}"
+                );
+            }
+        }
     }
     assert_eq!(cached_count(&scene), goldens.len());
 }

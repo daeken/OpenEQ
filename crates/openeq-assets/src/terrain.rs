@@ -125,6 +125,7 @@ pub struct TerrainTile {
     pub heights: Vec<f32>,
     pub colors: Vec<u32>,
     pub secondary_colors: Vec<u32>,
+    /// Bit 0 hides the quad; bit 7 selects its cached negative-slope diagonal.
     pub quad_flags: Vec<u8>,
     pub water_level: f32,
     pub water_metadata: TerrainWaterMetadata,
@@ -132,8 +133,9 @@ pub struct TerrainTile {
 }
 
 impl TerrainTile {
-    /// Piecewise planar height matching the grid's diagonal, for objects whose
-    /// DAT Z is relative to the ground. Local X/Y are in world units.
+    /// Piecewise planar height matching the authored quad-diagonal cache, for
+    /// objects whose DAT Z is relative to the ground. Local X/Y are in world
+    /// units and clamp to this tile's edges. Native adaptive LOD is not applied.
     pub fn height_at(&self, options: &TerrainOptions, x: f32, y: f32) -> f32 {
         let q = options.quads_per_tile;
         let gx = (x / options.units_per_vertex).clamp(0.0, q as f32);
@@ -146,7 +148,13 @@ impl TerrainTile {
         let b = self.heights[(row + 1) * (q + 1) + col];
         let c = self.heights[(row + 1) * (q + 1) + col + 1];
         let d = self.heights[row * (q + 1) + col + 1];
-        if y >= x {
+        if self.quad_flags[row * q + col] & 0x80 != 0 {
+            if x + y <= 1.0 {
+                a + (d - a) * x + (b - a) * y
+            } else {
+                c + (1.0 - x) * (b - c) + (1.0 - y) * (d - c)
+            }
+        } else if y >= x {
             a + (b - a) * y + (c - b) * x
         } else {
             a + (d - a) * x + (c - d) * y

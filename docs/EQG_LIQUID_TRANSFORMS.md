@@ -43,9 +43,10 @@ be checked with a tolerance; they are not byte-exact CPU emulation fixtures.
 The renderer rebuilds bit `0x80` from generated triangle edges, then uploads
 those indices to D3D. This establishes a link to visible topology, but not that
 the original on-disk cache always equals the live tessellator's result. OpenEQ's
-fixed-diagonal `TerrainTile::height_at` and full-resolution terrain construction
-need an explicit compatibility decision; the evidence does not justify claiming
-native adaptive tessellation or LOD parity.
+`TerrainTile::height_at` and full-resolution terrain construction now follow
+that authored cache, as do the resulting collision triangles and relative
+prop/light anchors. This is the supported full-grid compatibility contract;
+the evidence does not justify claiming native adaptive tessellation or LOD parity.
 
 ## Heightmap DAT record grammar
 
@@ -178,10 +179,13 @@ routine also selects its quad triangles using `flags & 0x80` at `0x100cbcf4`;
 it separately excludes hidden quads using bit `0x01` at `0x100cbc1e`.
 
 Region anchoring happens in base tile initialization `0x100f4360` before this
-later index-generation path. A full-grid decoder can use the authored cache for
-the recorded anchor contract without reproducing live LOD. Rendering the same
-full-grid diagonal would be a defensible bounded approximation, but is a
-separate change from metadata retention. The normal client's tessellator-mode
+later index-generation path. OpenEQ uses the authored cache for the recorded
+anchor contract and visible full-grid triangles, without reproducing live LOD.
+The ordinary height sampler remains f32 with its existing edge clamping, while
+the stricter region-anchor sampler evaluates the recovered expressions with
+f64 intermediates and rejects unsupported coordinates. A native Feerrott2 seam
+fixture checks their agreement within f32 tolerance and the matching collision
+surface; see `HEIGHTMAP_FORMAT.md`. The normal client's tessellator-mode
 selection and later re-anchoring schedule are not recovered here.
 
 ## Native DAT rotation, extent and containment

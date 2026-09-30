@@ -200,8 +200,8 @@ fn authored_diagonal_selects_all_four_native_height_planes() {
         native_anchor_height(&map.options, tile, [5., 5.]).unwrap(),
         15.
     );
-    // The existing render/object sampler is deliberately unchanged.
-    assert_eq!(tile.height_at(&map.options, 5., 5.), 20.);
+    // Render/object anchoring now follows the same cached diagonal.
+    assert_eq!(tile.height_at(&map.options, 5., 5.), 15.);
     for point in [[0., 5.], [10., 5.], [-1., 5.], [5., 11.], [f32::NAN, 5.]] {
         assert!(native_anchor_height(&map.options, tile, point).is_err());
     }
@@ -496,9 +496,14 @@ fn original_negative_diagonals_match_native_height_replay() {
         let [x, y, _] = region.position;
         let height = native_anchor_height(&map.options, tile, [x, y]).unwrap();
         assert!((f64::from(height) - expected).abs() < 0.00002, "{zone}");
-        // These original records distinguish the recovered diagonal from the
-        // existing render/object-placement sampler by well over float error.
-        assert!((height - tile.height_at(&map.options, x, y)).abs() > 0.5);
+        assert!((height - tile.height_at(&map.options, x, y)).abs() < 0.0001);
+        // Preserve the evidence that these original records distinguish the
+        // cached diagonal from the former all-positive grid well beyond roundoff.
+        let mut legacy = tile.clone();
+        for flag in &mut legacy.quad_flags {
+            *flag &= !0x80;
+        }
+        assert!((height - legacy.height_at(&map.options, x, y)).abs() > 0.5);
     }
 }
 

@@ -220,12 +220,20 @@ where
         let mut indices = Vec::with_capacity(q * q * 6);
         for row in 0..q {
             for col in 0..q {
-                if tile.quad_flags[row * q + col] & 1 != 0 {
+                let flags = tile.quad_flags[row * q + col];
+                if flags & 1 != 0 {
                     continue;
                 }
                 let a = (row * (q + 1) + col) as u32;
                 let b = a + (q + 1) as u32;
-                indices.extend([a, a + 1, b + 1, a, b + 1, b]);
+                // Match height_at and native collision's saved diagonal. The
+                // native renderer may later regenerate this cache for LOD;
+                // our full-grid mesh preserves the authored cached topology.
+                if flags & 0x80 != 0 {
+                    indices.extend([a, a + 1, b, a + 1, b + 1, b]);
+                } else {
+                    indices.extend([a, a + 1, b + 1, a, b + 1, b]);
+                }
             }
         }
         if indices.is_empty() {
