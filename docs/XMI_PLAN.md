@@ -1,19 +1,141 @@
 # XMI music: verified structure and synthesis plan
 
-Research snapshot: 2026-09-29, using the original client installed at
+Original research snapshot: 2026-09-29, using the original client installed at
 `/Users/daeken/EverQuest`, its Miles DLL, and the local macOS SDK. This was static,
 silent research: no DLL execution, synthesizer initialization, audio device,
 playback, bank download, or proprietary asset copied into the repository.
 
-The container and event grammar are now sufficiently understood to implement a
-bounded asset parser. The installed Miles library establishes a default clock of
-120 ticks per second. **EverQuest's music selector mapping is still unresolved**;
-do not enable automatic zone XMI playback by guessing a sequence offset.
+The bounded container/event parser is now implemented. The installed Miles
+library establishes a default clock of 120 ticks per second. Subsequent
+[native lookup research](XMI_NATIVE_SELECTION.md) establishes that nonnegative
+EFF/EMT music selectors map directly to zero-based container ordinals, including
+zero. Extended looping/branching playback is still a separate implementation.
 
 Current audio metadata retains `AudioReference::XmiSequence { file, sequence }`.
-The `sequence` value is an authored selector, not a verified zero-based container
-ordinal. The runtime deliberately skips XMI. See [audio assets](AUDIO_PLAN.md)
+The `sequence` value is an authored selector; native lookup passes it unchanged
+as the selected file's zero-based container ordinal. See [audio assets](AUDIO_PLAN.md)
 and [current runtime](AUDIO_RUNTIME.md).
+
+The pure parser was implemented and checked on 2026-09-30; executed facts are
+recorded below. Selector statements in the original research are historical;
+subsequent native lookup research is separate from this parser's container
+ordinal API. Parsing does not enable playback or select a zone's music.
+
+## Implemented parser and executed validation, 2026-09-30
+
+`openeq_assets::audio::xmi::XmiFile::parse` is a pure owned-data decoder. It
+returns source-ordered sequences with a distinct `XmiSequenceOrdinal`, raw
+optional TIMB pairs, optional RBRN records and validated target event indices,
+absolute EVNT file ranges, and events with EVNT-relative start/status offsets,
+additive delays, absolute u64 ticks and note-on duration. `note_end_tick()`
+exposes checked authored tick+duration without creating a note-off, choosing an
+overlap policy or moving the next event's time. Equal-tick events remain in
+source order. EOT is retained and its one optional internal zero is recorded.
+
+Every channel shape is represented independently. Controllers, tempo/other
+meta events and both SysEx statuses preserve their exact payload values;
+extended control flow is not interpreted. Raw timbre bytes and duplicate branch
+marker IDs are retained without assigning instrument or branch semantics.
+Unknown leaf chunks retain scope, tag, absolute header offset and payload.
+The parser never searches their contents for chunk signatures.
+
+The reader enforces the documented FORM XDIR / CAT XMID / FORM XMID nesting
+without generic recursion. Required chunks, optional table duplicates,
+sequence counts, parent extents, table extents, four-byte VLQs, data-byte status
+bits and EOT tails are checked. Odd IFF padding must exist inside the declared
+parent, but its value is opaque. Errors report an absolute file offset and the
+sequence ordinal when available. Limits are 4 MiB source, 256 sequences,
+65,536 events per sequence, 262,144 events per file, 4,096 records per table and
+16,384 chunks per file; tick additions and note end times use checked u64
+arithmetic. Unknown nested container types are rejected rather than recursively
+interpreted or flattened.
+
+Eleven generated-byte portable tests pass. They cover source order, additive
+`7F 01` delay 128, overlap/zero duration without generated releases, all channel
+shapes, raw tempo/SysEx/controller values, exact table widths, branch targets
+at preceding delay bytes, invalid interior/status/padding targets, EOT cases,
+maximum/unterminated VLQs, every truncated file prefix, parent length failures,
+duplicate/missing chunks, count mismatch, unknown leaves and all resource
+limits, including explicit zero-delay provenance without changing additive ticks.
+Notes whose durations extend beyond EOT remain represented; cleanup is
+a scheduler concern, not a silently truncated parser duration.
+
+The opt-in test `audio::xmi::tests::original_xmi_container_and_sequence_sweep`
+passed against `EQ_DIR=/Users/daeken/EverQuest`. It independently reproduced all
+79 containers, 389 sequences, 548,617 events, 387 TIMB chunks/4,392 pairs,
+51 RBRN chunks/58 records and 205 internal EOT padding bytes. Event-type totals,
+83 zero-duration notes, 1,772 tempo events, 22 SysEx events, maximum ticks/duration/
+event count/EVNT size, and the named fixture timings below match the research.
+The Befallen ordinal 11 branch at offset 765 resolves to delay 8 followed by the
+pitch-bend status at 766. All observed note end ticks are at/before EOT.
+
+Strict Clippy passed for the assets library and tests. No original asset bytes
+were copied into the repository. Tests neither open an
+audio device nor initialize a synthesizer. Native control interpretation,
+scheduling, synthesis and runtime playback are subsequent work.
+
+## Implemented bounded scheduler, 2026-09-30
+
+`openeq::audio::xmi::schedule` provides a pure `XmiScheduler`, explicit
+`SampleClock`, and bounded `preflight` report before any output. Source metadata
+remains observable by source index; MIDI messages expose status/data bytes for
+a separate synthesizer adapter. A scheduler owns only the immutable selected
+sequence, 32 active slots, a release heap bounded by those slots and 16 remembered
+sustain values. Pull batches have a 512-event maximum. Source-event count and
+per-call work stay bounded; repeats are never expanded into an event vector.
+
+The scheduler follows [native note-walker evidence](XMI_NATIVE_SELECTION.md):
+duration expiries precede authored events at equal ticks, simultaneous expiries
+follow ascending active-slot order, and each note-on uses the first free slot.
+Overlapping same-key notes retain separate identities and emit every native
+note-off rather than suppressing an older release. Zero-duration notes release
+at the next tick, except when EOT stops them sooner. Notes beyond EOT are stopped
+at EOT. Cleanup releases active slots in ascending order, then emits CC64=0 on
+channels whose remembered sustain is at least 64; it does not invent a blanket
+CC120 reset. Cancellation drops all pending source/releases and returns at most
+48 cleanup messages for the caller's current render frame, then remains inert.
+
+Sample frames are computed as checked `floor(tick * sample_rate / clock_rate)`
+using a u128 intermediate. This avoids repeated rounding drift at 44.1 kHz and
+48 kHz. Same-frame events retain their tick/source order. The default clock is
+the observed Miles 120 Hz; an explicit nonzero clock rate can be supplied.
+
+Controller 120 follows common MIDI output, matching the new native dispatch
+evidence. Controller 108 also follows common output under EQ's observed lack of
+a prefix callback. The unimplemented native controls 106, 109, 110, 111, 115–119 and
+all SysEx are rejected before emitting any events. Passive RBRN metadata alone
+does not imply a branch; executing controller 109 remains unsupported. Rejected
+controls are not relabelled as ordinary MIDI or silently skipped. Preflight
+reports the first source index and occurrence count for each bounded issue kind.
+
+Nine portable tests passed for clock drift/overflow, native release ordering,
+slot reuse, same-key overlap, zero duration, EOT/cancellation/sustain cleanup,
+source metadata/channel shapes, unsupported controls and explicit zero delays,
+capacity/work guards and
+batch partition independence. The ignored `original_xmi_scheduler_coverage`
+audit passed against the installed 79 files/389 sequences without a synthesizer
+or device. It fully scheduled 384 sequences into 927,156 ordered outputs; peak
+active-note occupancy was 31 of 32 slots. Exactly five sequences were rejected:
+
+| Original file / ordinal | Explicit reason |
+| --- | --- |
+| `templeveeshan.xmi` / 0 | Controllers 116/117 (loop interpreter not implemented) |
+| `thurgadina.xmi` / 0 and 5 | Controllers 116/117 |
+| `thurgadinb.xmi` / 0 | Controllers 116/117 |
+| `thedeep.xmi` / 0 | SysEx (native instrument setup not reproduced) |
+
+These are scheduling checks, not a claim of original timbre parity or listening
+validation. The renderer/stream integration and system synthesizer remain
+separate modules and carry their own executed evidence.
+Strict Clippy passed for the assets/application libraries and tests, and an
+independent comparison with the native note/controller traces found no blocking
+scheduler discrepancy. A remaining non-corpus timing question is whether an
+explicit zero delay byte causes a native one-tick wait. The parser preserves
+additive ticks and records any literal zero among delay bytes, including zeros
+mixed with positive delays. Preflight rejects these sequences with
+`UnsupportedZeroDelay`; zero-duration notes still use the verified one-tick
+minimum. The original parser sweep asserts that none of the 79 installed files
+contains a zero delay byte, so supported corpus coverage remains 384/389.
 
 ## Container structure
 
@@ -80,8 +202,9 @@ changes, and 4,546 program changes. There are 8,996 meta/SysEx events. No explic
 note-off, polyphonic pressure, or channel pressure events occurred in this set;
 the parser can still represent those standard channel message shapes.
 
-All pending note end ticks were at or before EOT. There are 83 zero-duration
-notes, so a renderer must handle immediate releases. The longest duration is
+All pending authored note end ticks were at or before EOT. There are 83
+zero-duration notes; subsequent native tracing establishes a one-tick minimum
+before expiry, unless EOT stops the note sooner. The longest duration is
 6,442 ticks, longest sequence is 39,431 ticks, largest EVNT is 29,918 bytes, and
 largest event count is 6,896 (`kaladima.xmi`, ordinal 7). Observed VLQs require
 at most two bytes; a bounded four-byte decoder accommodates normal MIDI-style
@@ -133,7 +256,14 @@ Useful fixtures, with zero-based **container ordinals**, not EQ selectors:
 | `gfaydark.xmi` / 5 | 4,596 | 38.3 | 1 |
 | `griegsend.xmi` / 0 | 39,431 | 328.591666… | 1 |
 
-## Selectors, branches, and controllers still need work
+## Original selector audit and subsequent native resolution
+
+The mismatched selector observations below motivated native tracing. The
+subsequent [native selection evidence](XMI_NATIVE_SELECTION.md) resolves the
+mapping directly: raw nonnegative music selectors are zero-based, separate
+EFF day/night kinds matter, and out-of-range ordinals can be authored requests
+that native initialization rejects. The original absence of a mapping was a
+research limit, not permission to invent an offset or fallback.
 
 The Miles sequence finder at `0x2111acb0`, called by the internal implementation
 of `AIL_init_sequence`, selects nested `FORM XMID` records using a **zero-based
@@ -166,8 +296,10 @@ Controller values in the originals include these extended cases:
 | 117 | 127 (4) |
 | 120 | 0 (51), 3 (3), 64 (4) |
 
-Controller 120 values correlate with RBRN marker IDs. Blindly forwarding it as
-GM's “all sound off” would lose this distinction. Controllers 116/117 occur in
+Controller 120 values correlate with RBRN marker IDs, but subsequent native
+dispatch tracing disproves that correlation as a branch rule: controller 120
+uses common MIDI output; controller 109 executes `AIL_branch_index`.
+Controllers 116/117 occur in
 `templeveeshan.xmi` ordinal 0, `thurgadina.xmi` ordinals 0 and 5, and
 `thurgadinb.xmi` ordinal 0. Preserve these commands and branch tables; establish
 their control-flow semantics before implementing looping or branching. Until

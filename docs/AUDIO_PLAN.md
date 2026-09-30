@@ -313,6 +313,12 @@ format inspection, but should not be required to play the game.
 
 ### XMI is a separate synthesis problem
 
+Update2026-09-30: this section is the original design research. The bounded
+parser, native ordinal selection,384/389-sequence scheduler and macOS offline
+synthesis backend are now implemented; see [AUDIO_RUNTIME.md](AUDIO_RUNTIME.md)
+and [XMI_NATIVE_SELECTION.md](XMI_NATIVE_SELECTION.md) for current behavior.
+Loop/SysEx support and original timbre fidelity remain open.
+
 `gfaydark.xmi` is a 28,062-byte IFF container beginning `FORM XDIR`, followed by
 `CAT XMID`; it contains six `EVNT` sequences. `qeynos.xmi` is 107,184 bytes and
 contains thirteen. These are event sequences, not compressed waveforms.

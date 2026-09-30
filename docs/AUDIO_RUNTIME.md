@@ -1,6 +1,8 @@
 # Zone audio runtime
 
-The client now plays original zone WAV ambience and MP3 music. Asset details and
+The client plays original zone WAV ambience, MP3 music and supported classic
+XMI music sequences. XMI synthesis currently uses the installed macOS DLSSynth
+with its default bank; other platforms report synthesis unavailable. Asset details and
 evidence are in [AUDIO_PLAN.md](AUDIO_PLAN.md). No EverQuest audio is redistributed.
 
 ## User controls
@@ -30,13 +32,17 @@ development headers (Debian/Ubuntu: `libasound2-dev`); `cargo build -p openeq
 
 ## Current coverage and policies
 
-- Classic EFF kinds 0 (day/night ambience) and 1 (MP3 music). Legacy effect kinds
-  2/3 and XMI selections are retained by the parser but omitted from playback.
+- Classic EFF has independent day/night types at bytes56/57: kind0 ambience
+  and kind1 music are supported. Nonnegative music selectors, including zero,
+  select the unchanged zero-based XMI ordinal; negative IDs select MP3 entries.
+  Native all-day collapse requires equal kinds, selectors, cooldowns and levels.
+  Kind2 suppresses the second emitter natively; kinds2/3 remain unimplemented.
 - EMT WAV/MP3 emitters with known day/night and continuous/delayed-repeat modes.
   Unknown loop modes do not create repeated bursts. Zero-range MP3s such as
   Anguish are zone music; zero-range effects are not turned into global sounds.
-- Day is currently 06:00–18:00 from the live zone clock (viewer defaults to noon).
-  Exact native transition boundaries and opaque EMT flags remain unverified.
+- Native day selection uses the raw 1–24 server hour:5 through18 inclusive
+  (normalized display04:00 through17:59). See [native evidence](XMI_NATIVE_SELECTION.md).
+  The scheduler receives the raw byte; opaque EMT flags remain unverified.
 - Source/scene positions are used directly; network poses are not swapped again.
   The listener follows the player's first-person camera even in third person.
 - EMT ambient distance gain is linear between full and maximum radii. Classic
@@ -49,15 +55,16 @@ development headers (Debian/Ubuntu: `libasound2-dev`); `cargo build -p openeq
   EMT gains are capped at unity separately from user volume, and the summed
   output has a limiter. This avoids unbounded boosts in original EMT files.
 - One current music track is selected. Audible current music wins overlapping
-  regions, and regions with the same file reuse its playback token. Region
+  regions, and regions with the same file and XMI ordinal reuse its playback token. Region
   activation remains separate from shared track identity. At most one outgoing
   track fades alongside it. Crossing a zone boundary stops both immediately.
 - Authored EMT fade-in/out applies to music and WAVs. Classic ambient exit uses
   a short client fade. Fading effects count toward the 32-voice bound; the oldest
   fade can end early to make room for a newly audible voice.
 - Delayed repeats wait from completion, never accumulate a catch-up queue after
-  stalls. Continuous WAV loops reuse decoded buffers. MP3 continuous playback
-  reopens after completion, so gapless music looping is not claimed.
+  stalls. Continuous WAV loops reuse decoded buffers. Music continuous playback
+  reopens after completion, so gapless looping is not claimed. XMI has a bounded
+  two-second release tail, a client policy rather than a native timing claim.
 
 ## Threads and bounds
 
@@ -82,7 +89,15 @@ active effects are not evicted. At most two pending decoded effects can add
 another 32 MiB transiently, plus bounded compressed archive/source buffers.
 Each music stream uses up to 320 KiB of prepared stereo samples across its queue
 and producer/consumer blocks, plus the codec's internal buffers.
-Only loose MP3 music currently streams; archived music is skipped. Source/decode
+MP3 streaming requires loose files. XMI files use the bounded asset catalog.
+XMI workers asynchronously initialize, own and dispose their AudioUnit on one
+thread. Two worker slots bound concurrent initialization, rendering and disposal;
+a transient occupied slot retries without suppressing the track. Eight PCM blocks
+feed the existing nonblocking consumer. Initialization/render failures suppress
+only that file+ordinal until the next zone load. No synthesis or disk IO occurs
+on the game thread or audio callback. The adapter has32KiB scratch; internal
+AudioUnit/default-bank allocations remain OS-managed and are not included in
+the prepared-PCM memory bound. Source/decode
 failures are suppressed until the next zone load rather than retried every frame.
 
 Rodio 0.22.2 and CPAL 0.17.3 use MIT/Apache-2.0 licenses; Symphonia 0.5.5 uses
@@ -106,7 +121,14 @@ cargo check -p openeq --no-default-features --all-targets
 ```
 
 Speaker listening and native-client acoustic comparison remain manual checks.
-Other follow-ups: XMI parsing/synthesis with a licensed user-supplied bank,
-original animation/spell/combat sound events, stereo panning, reverb/occlusion,
+The parser covers79 installed XMI files/389 sequences. Native-based scheduling
+supports384; four sequences use unsupported loop controls and one uses SysEx.
+Those are rejected before producing music. Tests cover native32-note duration
+slots, same-tick ordering, overlapping notes, zero-duration notes, cancellation,
+and silent original GFay synthesis. The OS default bank enables music, but does
+not establish original Miles timbre or acoustic parity.
+
+Other follow-ups: native loop/SysEx semantics, cross-platform synthesis and
+original-compatible banks, original animation/spell/combat sound events, stereo panning, reverb/occlusion,
 EAL default levels, native opaque emitter flags, exact fade/priority rules,
 device hotplug recovery, and graphical options controls.

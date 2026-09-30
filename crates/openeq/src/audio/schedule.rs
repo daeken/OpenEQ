@@ -1,7 +1,9 @@
-//! Device-free emitter selection. Distance curves and 06:00–18:00 day selection
-//! are first-pass client policy; opaque legacy flags never become new behavior.
+//! Device-free emitter selection. Distance curves remain first-pass client policy.
+//! Native day selection uses raw server hours 5..=18 (the clock is 1..=24);
+//! see docs/XMI_NATIVE_SELECTION.md. Opaque flags never become new behavior.
 use openeq_assets::audio::{
     ActivePeriod, AudioEmitter, AudioReference, ClassicEmitterKind, EmtLoopMode, ZoneAudio,
+    xmi::XmiSequenceOrdinal,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -18,7 +20,7 @@ pub enum Channel {
 #[derive(Clone, Debug)]
 struct Emitter {
     id: usize,
-    files: [Option<String>; 2],
+    files: [Option<Track>; 2],
     channel: Channel,
     position: [f32; 3],
     full_radius: f32,
@@ -31,11 +33,23 @@ struct Emitter {
     fades: [u64; 2],
     environment: bool,
 }
-fn supported_file(reference: &AudioReference) -> Option<String> {
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Track {
+    file: String,
+    sequence: Option<XmiSequenceOrdinal>,
+}
+fn supported_file(reference: &AudioReference) -> Option<Track> {
     match reference {
         AudioReference::File(file) if file.ends_with(".wav") || file.ends_with(".mp3") => {
-            Some(file.to_ascii_lowercase())
+            Some(Track {
+                file: file.to_ascii_lowercase(),
+                sequence: None,
+            })
         }
+        AudioReference::XmiSequence { file, sequence } => Some(Track {
+            file: file.to_ascii_lowercase(),
+            sequence: Some(XmiSequenceOrdinal(u16::try_from(*sequence).ok()?)),
+        }),
         _ => None,
     }
 }
@@ -43,10 +57,14 @@ fn millis(value: i32) -> u64 {
     u64::try_from(value).unwrap_or(0).min(86_400_000)
 }
 impl Emitter {
-    fn from_asset(id: usize, asset: &AudioEmitter) -> Option<Self> {
+    fn from_asset(id: usize, asset: &AudioEmitter, side: usize) -> Option<Self> {
         Some(match asset {
             AudioEmitter::Classic(source) => {
-                let channel = match source.kind {
+                let all_day = source.is_all_day();
+                if all_day && side == 1 {
+                    return None;
+                }
+                let channel = match source.kinds[side] {
                     ClassicEmitterKind::Ambient => Channel::Ambience,
                     ClassicEmitterKind::Music => Channel::Music,
                     _ => return None,
@@ -60,7 +78,11 @@ impl Emitter {
                 });
                 Self {
                     id,
-                    files: source.sounds.each_ref().map(supported_file),
+                    files: std::array::from_fn(|period| {
+                        (all_day || period == side)
+                            .then(|| supported_file(&source.sounds[side]))
+                            .flatten()
+                    }),
                     channel,
                     position: source.position,
                     // Kind 0 is two-dimensional ambience: its radius activates
@@ -69,12 +91,13 @@ impl Emitter {
                     max_radius: source.radius,
                     activation: source.radius,
                     global: false,
-                    gains: if channel == Channel::Music {
-                        [1.; 2]
+                    gains: [if channel == Channel::Music {
+                        1.
                     } else {
-                        [source.raw_words[15], source.raw_words[16]]
-                            .map(|raw| 10f32.powf(-((raw as i32 as f64).abs() as f32) / 2000.))
-                    },
+                        10f32.powf(
+                            -((source.raw_words[15 + side] as i32 as f64).abs() as f32) / 2000.,
+                        )
+                    }; 2],
                     continuous: delays.map(|delay| channel == Channel::Music || delay == [0, 0]),
                     delays,
                     fades: [
@@ -89,13 +112,16 @@ impl Emitter {
                 }
             }
             AudioEmitter::Emt(source) => {
+                if side == 1 {
+                    return None;
+                }
                 let continuous = match source.loop_mode {
                     EmtLoopMode::Continuous => true,
                     EmtLoopMode::DelayedRepeat => false,
                     _ => return None,
                 };
                 let file = supported_file(&source.sound)?;
-                let channel = if file.ends_with(".mp3") {
+                let channel = if file.sequence.is_some() || file.file.ends_with(".mp3") {
                     Channel::Music
                 } else {
                     Channel::Ambience
@@ -166,19 +192,20 @@ impl Emitter {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Key {
     Effect(usize),
-    Music(String),
+    Music(Track),
 }
 #[derive(Clone, Debug)]
 struct State {
     token: Option<u64>,
     next: Duration,
-    file: String,
+    file: Track,
     delay: [u64; 2],
 }
 #[derive(Clone, Debug)]
 pub struct Voice {
     pub token: u64,
     pub file: String,
+    pub sequence: Option<XmiSequenceOrdinal>,
     pub channel: Channel,
     pub gain: f32,
     pub continuous: bool,
@@ -192,8 +219,8 @@ pub struct Scheduler {
     states: BTreeMap<Key, State>,
     sequence: u64,
     random: u64,
-    current_music: Option<String>,
-    failed: BTreeSet<String>,
+    current_music: Option<Track>,
+    failed: BTreeSet<Track>,
     active_regions: BTreeSet<usize>,
 }
 impl Scheduler {
@@ -202,7 +229,9 @@ impl Scheduler {
             .emitters
             .iter()
             .enumerate()
-            .filter_map(|(id, source)| Emitter::from_asset(id, source))
+            .flat_map(|(id, source)| {
+                (0..2).filter_map(move |side| Emitter::from_asset(id * 2 + side, source, side))
+            })
             .collect();
         self.states.clear();
         self.failed.clear();
@@ -236,7 +265,7 @@ impl Scheduler {
         hour: u8,
         environment: bool,
     ) -> Vec<Voice> {
-        let period = usize::from(!(6..18).contains(&hour));
+        let period = usize::from(!(5..19).contains(&hour));
         let mut candidates = Vec::new();
         let mut active_regions = BTreeSet::new();
         for emitter in &self.emitters {
@@ -315,7 +344,8 @@ impl Scheduler {
             });
             voices.push(Voice {
                 token,
-                file: file.clone(),
+                file: file.file.clone(),
+                sequence: file.sequence,
                 channel: emitter.channel,
                 gain,
                 continuous: emitter.continuous[period],
@@ -382,6 +412,47 @@ mod tests {
         assert_eq!(next.len(), 1);
         assert_eq!(next[0].token, token);
     }
+
+    #[test]
+    fn xmi_identity_includes_ordinal_and_failure_does_not_silence_other_sequences() {
+        let mut metadata = zone("2,gfaydark.xmi,0,0,1,0,0,0,0,0,0,100,100,0,0,0,0,0,0,0");
+        let AudioEmitter::Emt(first) = &mut metadata.emitters[0] else {
+            panic!("EMT")
+        };
+        first.sound = AudioReference::XmiSequence {
+            file: "gfaydark.xmi".into(),
+            sequence: 0,
+        };
+        let mut second = first.clone();
+        second.position = [150., 0., 0.];
+        second.sound = AudioReference::XmiSequence {
+            file: "gfaydark.xmi".into(),
+            sequence: 1,
+        };
+        metadata.emitters.push(AudioEmitter::Emt(second));
+        let mut scheduler = Scheduler::default();
+        scheduler.set_zone(&metadata);
+        let first = scheduler
+            .update(Duration::ZERO, [0.; 3], 12, true)
+            .remove(0);
+        assert_eq!(first.sequence, Some(XmiSequenceOrdinal(0)));
+        let second = scheduler
+            .update(Duration::from_secs(1), [150., 0., 0.], 12, true)
+            .remove(0);
+        assert_eq!(second.sequence, Some(XmiSequenceOrdinal(1)));
+        assert_ne!(first.token, second.token);
+        scheduler.finished(second.token, Duration::from_secs(2), true);
+        assert!(
+            scheduler
+                .update(Duration::from_secs(3), [150., 0., 0.], 12, true)
+                .is_empty()
+        );
+        let restored = scheduler
+            .update(Duration::from_secs(3), [0.; 3], 12, true)
+            .remove(0);
+        assert_eq!(restored.sequence, Some(XmiSequenceOrdinal(0)));
+        assert_eq!(restored.channel, Channel::Music);
+    }
     #[test]
     fn caps_voices_skips_unknown_modes_and_selects_day_night() {
         let rows = (0..40)
@@ -397,6 +468,28 @@ mod tests {
         assert!(s.update(Duration::ZERO, [101.; 3], 12, true).is_empty());
         s.set_zone(&zone("2,a.wav,0,0,1,0,0,100,0,0,0,20,100,0,0,0,0,0,0,1"));
         assert!(tick(&mut s, 0).is_empty());
+    }
+
+    #[test]
+    fn native_day_boundaries_use_unnormalized_server_hours() {
+        for (hour, active) in [
+            (1, false),
+            (4, false),
+            (5, true),
+            (18, true),
+            (19, false),
+            (24, false),
+        ] {
+            let mut scheduler = Scheduler::default();
+            scheduler.set_zone(&zone("2,day.wav,0,1,1,0,0,0,0,0,0,20,100,0,0,0,0,0,0,1"));
+            assert_eq!(
+                !scheduler
+                    .update(Duration::ZERO, [0.; 3], hour, true)
+                    .is_empty(),
+                active,
+                "raw hour {hour}"
+            );
+        }
     }
 
     #[test]
@@ -461,7 +554,7 @@ mod tests {
                     record_index: 0,
                     position: [0.; 3],
                     radius: 100.,
-                    kind: ClassicEmitterKind::Ambient,
+                    kinds: [ClassicEmitterKind::Ambient; 2],
                     cooldown_ms: [0, 5000],
                     random_delay_ms: 0,
                     sound_ids: [1, 2],
@@ -487,5 +580,85 @@ mod tests {
         );
         assert_eq!(s.update(Duration::from_secs(7), [0.; 3], 23, true).len(), 1);
         assert!(s.update(Duration::from_secs(8), [0.; 3], 12, true)[0].continuous);
+    }
+
+    #[test]
+    fn classic_independent_period_types_keep_channels_gain_and_environment_gates() {
+        use openeq_assets::audio::{Mp3Index, SoundBank, SoundIdTable};
+        let mut data = [0u8; 84];
+        data[28..32].copy_from_slice(&100f32.to_le_bytes());
+        data[48..52].copy_from_slice(&(-1i32).to_le_bytes());
+        data[52..56].copy_from_slice(&1i32.to_le_bytes());
+        data[56] = 1; // day music
+        data[57] = 0; // night ambience
+        data[64..68].copy_from_slice(&2000u32.to_le_bytes());
+        let zone = ZoneAudio::parse_eff(
+            "test",
+            &data,
+            &SoundBank::parse("EMIT\nnight\n").unwrap(),
+            &SoundIdTable::default(),
+            &Mp3Index::parse("day.mp3").unwrap(),
+        )
+        .unwrap();
+        let mut scheduler = Scheduler::default();
+        scheduler.set_zone(&zone);
+        let day = scheduler.update(Duration::ZERO, [0.; 3], 12, false);
+        assert_eq!(day.len(), 1);
+        assert_eq!(day[0].file, "day.mp3");
+        assert_eq!(day[0].channel, Channel::Music);
+        assert_eq!(day[0].gain, 1.);
+        assert!(
+            scheduler
+                .update(Duration::ZERO, [0.; 3], 23, false)
+                .is_empty()
+        );
+        let night = scheduler.update(Duration::ZERO, [0.; 3], 23, true);
+        assert_eq!(night.len(), 1);
+        assert_eq!(night[0].file, "night.wav");
+        assert_eq!(night[0].channel, Channel::Ambience);
+        assert!((night[0].gain - 0.1).abs() < 1e-6);
+        assert_ne!(day[0].token, night[0].token);
+    }
+
+    #[test]
+    fn classic_native_all_day_coalescing_preserves_voice_and_type_two_suppresses_second() {
+        use openeq_assets::audio::{Mp3Index, SoundBank, SoundIdTable};
+        let mut data = [0u8; 84];
+        data[28..32].copy_from_slice(&100f32.to_le_bytes());
+        data[48..52].copy_from_slice(&1i32.to_le_bytes());
+        data[52..56].copy_from_slice(&1i32.to_le_bytes());
+        let bank = SoundBank::parse("EMIT\nwind\n").unwrap();
+        let parse = |data: &[u8]| {
+            ZoneAudio::parse_eff(
+                "test",
+                data,
+                &bank,
+                &SoundIdTable::default(),
+                &Mp3Index::default(),
+            )
+            .unwrap()
+        };
+        let mut scheduler = Scheduler::default();
+        scheduler.set_zone(&parse(&data));
+        assert_eq!(scheduler.emitters.len(), 1);
+        let day = scheduler.update(Duration::ZERO, [0.; 3], 12, true);
+        let night = scheduler.update(Duration::ZERO, [0.; 3], 23, true);
+        assert_eq!(day[0].token, night[0].token);
+        // Unequal native level fields prevent all-day coalescing.
+        data[64..68].copy_from_slice(&1000u32.to_le_bytes());
+        scheduler.set_zone(&parse(&data));
+        assert_eq!(scheduler.emitters.len(), 2);
+        data[56] = 2;
+        scheduler.set_zone(&parse(&data));
+        assert!(
+            scheduler
+                .update(Duration::ZERO, [0.; 3], 12, true)
+                .is_empty()
+        );
+        assert!(
+            scheduler
+                .update(Duration::ZERO, [0.; 3], 23, true)
+                .is_empty()
+        );
     }
 }

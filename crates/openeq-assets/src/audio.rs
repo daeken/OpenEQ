@@ -8,6 +8,7 @@ use crate::{Error, Result};
 
 mod index;
 mod tables;
+pub mod xmi;
 
 pub use index::{AudioAsset, AudioAssetLocation, AudioCatalog, AudioFormat};
 pub use tables::{Mp3Index, SoundBank, SoundIdTable};
@@ -91,7 +92,7 @@ pub enum SoundNamespace {
 pub enum AudioReference {
     Silent,
     File(String),
-    /// Sequence numbering is preserved, not converted to MIDI track indices.
+    /// Native zero-based XMI container ordinal, retained separately from MIDI tracks.
     XmiSequence {
         file: String,
         sequence: i32,
@@ -128,13 +129,26 @@ pub struct ClassicEmitter {
     /// Authored asset/scene coordinates, Z up. Do not swap like network poses.
     pub position: [f32; 3],
     pub radius: f32,
-    pub kind: ClassicEmitterKind,
+    /// Independent day/night types at EFF bytes 56 and 57.
+    pub kinds: [ClassicEmitterKind; 2],
     pub cooldown_ms: [i32; 2],
     pub random_delay_ms: i32,
     pub sound_ids: [i32; 2],
     pub sounds: [AudioReference; 2],
     /// Exact words, including opaque headers, padding and kind-dependent tail.
     pub raw_words: [u32; EFF_RECORD_BYTES / 4],
+}
+
+impl ClassicEmitter {
+    /// Native EFF reader emits one always-active entry when both alternatives
+    /// match, or when the first type is the special type 2 (still unsupported).
+    pub fn is_all_day(&self) -> bool {
+        self.kinds[0] == ClassicEmitterKind::Effect2
+            || (self.kinds[0] == self.kinds[1]
+                && self.sound_ids[0] == self.sound_ids[1]
+                && self.cooldown_ms[0] == self.cooldown_ms[1]
+                && self.raw_words[15] == self.raw_words[16])
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -244,19 +258,21 @@ impl ZoneAudio {
                     "negative legacy radius sentinel retained; activation semantics unverified",
                 );
             }
-            let kind = match record[56] {
+            let kinds = [record[56], record[57]].map(|kind| match kind {
                 0 => ClassicEmitterKind::Ambient,
                 1 => ClassicEmitterKind::Music,
                 2 => ClassicEmitterKind::Effect2,
                 3 => ClassicEmitterKind::Effect3,
                 value => ClassicEmitterKind::Unknown(value),
-            };
-            if matches!(
-                kind,
-                ClassicEmitterKind::Effect2
-                    | ClassicEmitterKind::Effect3
-                    | ClassicEmitterKind::Unknown(_)
-            ) {
+            });
+            if kinds.iter().any(|kind| {
+                matches!(
+                    kind,
+                    ClassicEmitterKind::Effect2
+                        | ClassicEmitterKind::Effect3
+                        | ClassicEmitterKind::Unknown(_)
+                )
+            }) {
                 result.diagnostics.push(
                     &source,
                     Some(record_index + 1),
@@ -265,13 +281,16 @@ impl ZoneAudio {
                 );
             }
             let sound_ids = [words[12] as i32, words[13] as i32];
-            let sounds = sound_ids.map(|id| match kind {
-                ClassicEmitterKind::Music => mp3.resolve_music(&zone, id),
-                ClassicEmitterKind::Unknown(_) if id != 0 => AudioReference::Unresolved {
-                    id,
-                    namespace: SoundNamespace::UnknownEmitter,
-                },
-                _ => bank.resolve_effect(id, global),
+            let sounds = std::array::from_fn(|side| {
+                let id = sound_ids[side];
+                match kinds[side] {
+                    ClassicEmitterKind::Music => mp3.resolve_music(&zone, id),
+                    ClassicEmitterKind::Unknown(_) if id != 0 => AudioReference::Unresolved {
+                        id,
+                        namespace: SoundNamespace::UnknownEmitter,
+                    },
+                    _ => bank.resolve_effect(id, global),
+                }
             });
             for sound in &sounds {
                 if let AudioReference::Unresolved { id, namespace } = sound {
@@ -287,7 +306,7 @@ impl ZoneAudio {
                 record_index,
                 position,
                 radius,
-                kind,
+                kinds,
                 cooldown_ms: [words[8] as i32, words[9] as i32],
                 random_delay_ms: words[10] as i32,
                 sound_ids,

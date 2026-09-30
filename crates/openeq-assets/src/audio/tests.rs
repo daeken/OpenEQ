@@ -20,7 +20,7 @@ fn eff(kind: u8, ids: [i32; 2]) -> Vec<u8> {
     words[10] = 1000;
     words[12] = ids[0] as u32;
     words[13] = ids[1] as u32;
-    words[14] = u32::from(kind) | 0xaabb_cc00;
+    words[14] = u32::from(kind) | (u32::from(kind) << 8) | 0xaabb_0000;
     words[17] = 2000;
     words[20] = 12345;
     words.into_iter().flat_map(u32::to_le_bytes).collect()
@@ -120,7 +120,13 @@ fn mp3_table_is_one_based_and_preserves_empty_invalid_slots() {
             sequence: 4
         }
     );
-    assert_eq!(table.resolve_music("zone", 0), AudioReference::Silent);
+    assert_eq!(
+        table.resolve_music("zone", 0),
+        AudioReference::XmiSequence {
+            file: "zone.xmi".into(),
+            sequence: 0
+        }
+    );
 }
 
 #[test]
@@ -138,7 +144,7 @@ fn classic_raw_fields_and_asymmetric_source_coordinates_survive() {
     assert_eq!(first.cooldown_ms, [5000, 7000]);
     assert_eq!(first.random_delay_ms, 1000);
     assert_eq!(first.raw_words[1], 0xdead_beef);
-    assert_eq!(first.raw_words[14], 0xaabb_cc00);
+    assert_eq!(first.raw_words[14], 0xaabb_0000);
     assert_eq!(first.raw_words[20], 12345);
     assert_eq!(
         first.sounds,
@@ -148,7 +154,7 @@ fn classic_raw_fields_and_asymmetric_source_coordinates_survive() {
         ]
     );
     let music = classic(&zone.emitters[1]);
-    assert_eq!(music.kind, ClassicEmitterKind::Music);
+    assert_eq!(music.kinds[0], ClassicEmitterKind::Music);
     assert_eq!(
         music.sounds,
         [
@@ -156,9 +162,12 @@ fn classic_raw_fields_and_asymmetric_source_coordinates_survive() {
             AudioReference::File("second.mp3".into())
         ]
     );
-    assert_eq!(classic(&zone.emitters[2]).kind, ClassicEmitterKind::Effect3);
     assert_eq!(
-        classic(&zone.emitters[3]).kind,
+        classic(&zone.emitters[2]).kinds[0],
+        ClassicEmitterKind::Effect3
+    );
+    assert_eq!(
+        classic(&zone.emitters[3]).kinds[0],
         ClassicEmitterKind::Unknown(99)
     );
     assert!(matches!(
@@ -168,6 +177,47 @@ fn classic_raw_fields_and_asymmetric_source_coordinates_survive() {
             ..
         }
     ));
+}
+
+#[test]
+fn native_classic_periods_use_independent_sound_namespaces() {
+    let bank = SoundBank::parse("EMIT\nbird\n").unwrap();
+    let mp3 = Mp3Index::parse("music.mp3").unwrap();
+    for (kinds, ids, expected) in [
+        (
+            [1, 0],
+            [-1, 1],
+            [
+                AudioReference::File("music.mp3".into()),
+                AudioReference::File("bird.wav".into()),
+            ],
+        ),
+        (
+            [0, 1],
+            [1, -1],
+            [
+                AudioReference::File("bird.wav".into()),
+                AudioReference::File("music.mp3".into()),
+            ],
+        ),
+    ] {
+        let mut bytes = eff(kinds[0], ids);
+        bytes[57] = kinds[1];
+        let zone = ZoneAudio::parse_eff("gfaydark", &bytes, &bank, &SoundIdTable::default(), &mp3)
+            .unwrap();
+        assert_eq!(classic(&zone.emitters[0]).sounds, expected);
+    }
+}
+
+#[test]
+fn native_classic_zero_music_selector_is_first_xmi_sequence() {
+    assert_eq!(
+        Mp3Index::default().resolve_music("gfaydark", 0),
+        AudioReference::XmiSequence {
+            file: "gfaydark.xmi".into(),
+            sequence: 0,
+        }
+    );
 }
 
 #[test]

@@ -8,7 +8,11 @@ use rodio::{Player, Source};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
-    sync::{Arc, Mutex, mpsc},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     time::{Duration, Instant},
 };
 
@@ -161,6 +165,7 @@ struct Playing {
     voice: Voice,
     started: Instant,
     gain: f32,
+    music_failure: Option<Arc<AtomicBool>>,
 }
 impl Playing {
     fn update_gain(&mut self, levels: Levels, now: Instant) {
@@ -271,8 +276,12 @@ fn run(
             .filter_map(|(token, playing)| playing.player.empty().then_some(*token))
             .collect();
         for token in finished {
-            players.remove(&token);
-            scheduler.finished(token, elapsed, false);
+            let failed = players.remove(&token).is_some_and(|playing| {
+                playing
+                    .music_failure
+                    .is_some_and(|flag| flag.load(Ordering::Acquire))
+            });
+            scheduler.finished(token, elapsed, failed);
         }
         let voices = scheduler.update(
             elapsed,
@@ -394,17 +403,36 @@ fn run(
             let Some(mixer) = &output.mixer else {
                 continue;
             };
+            let mut music_failure = None;
             let source: Box<dyn Source<Item = f32> + Send> = if voice.channel == Channel::Music {
                 // Original MP3 music is loose; archived streaming can follow
                 // once an incremental PFS reader exists.
-                let result = match catalog.asset(&voice.file).map(|asset| &asset.location) {
-                    Some(AudioAssetLocation::Loose(path)) => decode::stream_music(path),
-                    _ => Err(anyhow::anyhow!("streaming music file unavailable")),
+                let result = if let Some(sequence) = voice.sequence {
+                    (|| {
+                        let bytes = catalog
+                            .read(&voice.file)?
+                            .ok_or_else(|| anyhow::anyhow!("XMI file unavailable"))?;
+                        super::xmi::stream::stream(bytes, sequence)
+                    })()
+                } else {
+                    match catalog.asset(&voice.file).map(|asset| &asset.location) {
+                        Some(AudioAssetLocation::Loose(path)) => decode::stream_music(path),
+                        _ => Err(anyhow::anyhow!("streaming music file unavailable")),
+                    }
                 };
                 match result {
-                    Ok(source) => Box::new(source),
+                    Ok(source) => {
+                        music_failure = Some(source.failure());
+                        Box::new(source)
+                    }
                     Err(error) => {
-                        tracing::warn!(file=%voice.file,%error,"music unavailable");
+                        if error.downcast_ref::<super::xmi::stream::Busy>().is_some() {
+                            // A cancelled synth can still be disposing on its
+                            // owning worker. Retry this occurrence, do not mark
+                            // valid music unavailable for the entire zone.
+                            continue;
+                        }
+                        tracing::warn!(file=%voice.file,sequence=?voice.sequence,%error,"music unavailable");
                         scheduler.finished(voice.token, elapsed, true);
                         continue;
                     }
@@ -447,6 +475,12 @@ fn run(
                 }
                 continue;
             };
+            let fresh = control.lock().unwrap().clone();
+            if fresh.stop || fresh.zone != zone {
+                // File parsing/decoder construction may finish after zoning.
+                // Drop the bounded source before it can reach the mixer.
+                continue;
+            }
             let player = Player::connect_new(mixer);
             if voice.channel == Channel::Ambience {
                 while players
@@ -474,8 +508,9 @@ fn run(
                 voice,
                 started: now,
                 gain: 0.,
+                music_failure,
             };
-            playing.update_gain(desired.levels, now);
+            playing.update_gain(fresh.levels, now);
             players.insert(playing.voice.token, playing);
         }
         std::thread::sleep(Duration::from_millis(20));

@@ -54,13 +54,15 @@ armor, hair, facial pieces and robes. Classic models remain the default; use
 to the available original models. This choice persists across zone travel for
 the current session.
 
-Authored WAV ambience and MP3 zone music play automatically. Use `/audio` for
+Authored WAV ambience and MP3 zone music play automatically. On macOS, supported
+classic XMI music also plays using the installed synthesizer. Use `/audio` for
 current levels, `/audio music 25` or `/audio ambience 50` to adjust a channel,
 and `/audio mute` or `/audio unmute`. `/audio master 0` silences all channels;
 `/audio environment off` disables environment-controlled emitters. Levels are
 saved in `~/.config/openeq/audio.json`. `--no-audio` prevents opening an output
-device, useful for unattended runs. Classic XMI music and combat/spell sounds
-are still pending. See the [audio notes](docs/AUDIO_RUNTIME.md) for coverage.
+device, useful for unattended runs. XMI loop/SysEx support, original instrument
+fidelity, other-platform synthesis and combat/spell sounds remain pending.
+See the [audio notes](docs/AUDIO_RUNTIME.md) for coverage.
 
 Controls:
 

@@ -6,7 +6,11 @@ use std::{
     io::Cursor,
     num::NonZero,
     path::Path,
-    sync::mpsc::{self, Receiver, TryRecvError},
+    sync::{
+        Arc,
+        atomic::AtomicBool,
+        mpsc::{self, Receiver, TryRecvError},
+    },
     time::Duration,
 };
 
@@ -70,6 +74,31 @@ pub struct MusicStream {
     duration: Option<Duration>,
     silence: u16,
     ended: bool,
+    failure: Arc<AtomicBool>,
+}
+
+impl MusicStream {
+    pub(super) fn from_queue(
+        receiver: Receiver<Vec<f32>>,
+        channels: NonZero<u16>,
+        rate: NonZero<u32>,
+        duration: Option<Duration>,
+        failure: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            receiver,
+            block: Vec::new().into_iter(),
+            channels,
+            rate,
+            duration,
+            silence: 0,
+            ended: false,
+            failure,
+        }
+    }
+    pub(super) fn failure(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.failure)
+    }
 }
 
 pub fn stream_music(path: &Path) -> Result<MusicStream> {
@@ -114,6 +143,7 @@ pub fn stream_music(path: &Path) -> Result<MusicStream> {
         duration,
         silence: 0,
         ended: false,
+        failure: Arc::default(),
     })
 }
 
@@ -215,6 +245,7 @@ mod tests {
             duration: None,
             silence: 0,
             ended: false,
+            failure: Arc::default(),
         };
         assert_eq!(stream.next(), Some(0.));
         tx.send(vec![0.25, 0.75]).unwrap();

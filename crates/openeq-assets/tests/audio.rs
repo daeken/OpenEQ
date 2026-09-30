@@ -26,7 +26,7 @@ fn original_pok_emitters_resolve_archive_effects_and_correct_mp3_index() {
     let AudioEmitter::Classic(night) = &zone.emitters[0] else {
         panic!("EFF");
     };
-    assert_eq!(night.kind, ClassicEmitterKind::Ambient);
+    assert_eq!(night.kinds[0], ClassicEmitterKind::Ambient);
     assert_eq!(night.radius, 850.);
     assert_eq!(
         night.sounds,
@@ -116,6 +116,29 @@ fn original_gfay_xmi_references_remain_sequences_and_sound_banks_are_readable() 
             sequence: 2
         }
     );
+    assert_eq!(first.kinds, [ClassicEmitterKind::Music; 2]);
+    assert_eq!(
+        first.sounds[1],
+        AudioReference::XmiSequence {
+            file: "gfaydark.xmi".into(),
+            sequence: 0
+        }
+    );
+    let AudioEmitter::Classic(mixed) = &zone.emitters[2] else {
+        panic!("EFF")
+    };
+    assert_eq!(
+        mixed.kinds,
+        [ClassicEmitterKind::Music, ClassicEmitterKind::Ambient]
+    );
+    assert_eq!(
+        mixed.sounds[0],
+        AudioReference::XmiSequence {
+            file: "gfaydark.xmi".into(),
+            sequence: 0
+        }
+    );
+    assert!(matches!(&mixed.sounds[1], AudioReference::File(file) if file.ends_with(".wav")));
     let bytes = catalog.read("gfaydark.xmi").unwrap().unwrap();
     assert_eq!(&bytes[..4], b"FORM");
     assert_eq!(&bytes[8..12], b"XDIR");

@@ -213,13 +213,10 @@ impl Mp3Index {
         Ok(result)
     }
 
-    /// Negative IDs use the one-based MP3 table; positive IDs remain XMI
-    /// sequence selections. A parsed sequence is not a decoded audio stream.
+    /// Negative IDs use the one-based MP3 table; nonnegative IDs are native
+    /// zero-based XMI sequence selections. A parsed sequence is not a decoded audio stream.
     pub fn resolve_music(&self, zone: &str, id: i32) -> AudioReference {
-        if id == 0 {
-            return AudioReference::Silent;
-        }
-        if id > 0 {
+        if id >= 0 {
             return match zone_name(zone) {
                 Ok(zone) => AudioReference::XmiSequence {
                     file: format!("{zone}.xmi"),
