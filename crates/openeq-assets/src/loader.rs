@@ -563,8 +563,8 @@ fn load_eqg_archive(base: &Path, name: &str, archive: Archive) -> Result<Scene> 
 }
 
 /// Exact archive and loose declarations keep their existing precedence. Some
-/// heightmap archives use an older internal name (feerrott2 -> feerrott); accept
-/// that only when an actual, unambiguous declaration names an archived DAT.
+/// archives use an older internal name (feerrott2 -> feerrott, chambersb ->
+/// chambersa). Accept only an unambiguous declaration with archived dependencies.
 pub(crate) fn read_eqg_declaration(base: &Path, name: &str, archive: &Archive) -> Result<Vec<u8>> {
     let zon_name = format!("{name}.zon");
     if archive.contains(&zon_name) {
@@ -575,7 +575,7 @@ pub(crate) fn read_eqg_declaration(base: &Path, name: &str, archive: &Archive) -
         Ok(data) => Ok(data),
         Err(source) => {
             if source.kind() == std::io::ErrorKind::NotFound
-                && let Some((data, _)) = unique_heightmap_declaration(archive)?
+                && let Some(data) = unique_zone_declaration(archive)?
             {
                 return Ok(data);
             }
@@ -585,6 +585,70 @@ pub(crate) fn read_eqg_declaration(base: &Path, name: &str, archive: &Archive) -
             })
         }
     }
+}
+
+fn unique_zone_declaration(archive: &Archive) -> Result<Option<Vec<u8>>> {
+    let mut selected = unique_heightmap_declaration(archive)?.map(|(data, _)| data);
+    let mut seen_binary = Vec::new();
+    let mut unresolved = Vec::new();
+    for filename in archive
+        .names()
+        .iter()
+        .filter(|name| name.to_ascii_lowercase().ends_with(".zon"))
+    {
+        let data = archive.read(filename)?;
+        if !data.starts_with(b"EQGZ") || seen_binary.contains(&data) {
+            continue;
+        }
+        seen_binary.push(data.clone());
+        // The original renamed dungeon archives contain one complete EQGZ
+        // declaration. Resolve its own mesh table, never infer a terrain name
+        // from the outer archive or select an arbitrary first ZON.
+        let zone = match ZoneFile::parse(&data, |name| archive.read(name)) {
+            Ok(zone) => zone,
+            Err(error) => {
+                unresolved.push((filename, error));
+                continue;
+            }
+        };
+        if !zone.objects.iter().any(|object| object.is_terrain) {
+            unresolved.push((
+                filename,
+                Error::Format("declaration has no terrain mesh".into()),
+            ));
+            continue;
+        }
+        if let Some(previous) = &selected {
+            if previous != &data {
+                return Err(Error::Format(
+                    "multiple distinct archived zone declarations name available geometry".into(),
+                ));
+            }
+        } else {
+            selected = Some(data);
+        }
+    }
+    if selected.is_none() {
+        // A sole broken internal declaration is useful evidence. Report its
+        // missing/corrupt dependency rather than the unrelated outer ZON path.
+        if unresolved.len() == 1 {
+            let (filename, error) = unresolved.pop().unwrap();
+            return Err(Error::Format(format!(
+                "archived zone declaration {filename}: {error}"
+            )));
+        }
+        if unresolved.len() > 1 {
+            return Err(Error::Format(format!(
+                "multiple distinct archived zone declarations could not resolve geometry: {}",
+                unresolved
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+    }
+    Ok(selected)
 }
 
 fn unique_heightmap_declaration(

@@ -95,6 +95,7 @@ fn model_bytes(model: &TerMod) -> Vec<u8> {
             let offset = string(&mut strings, key);
             let (kind, value) = match &material.properties[key] {
                 Property::Float(v) => (0, v.to_bits()),
+                Property::IntegerBits(v) => (1, *v),
                 Property::Text(v) => (2, string(&mut strings, v)),
                 Property::Uint(v) => (3, *v),
             };

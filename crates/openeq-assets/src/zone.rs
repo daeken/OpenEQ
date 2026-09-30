@@ -24,6 +24,9 @@ pub const MOD_MAGIC: u32 = 0x4D47_5145;
 #[derive(Debug, Clone)]
 pub enum Property {
     Float(f32),
+    /// On-disk type 1, copied as a 32-bit word by the native material reader.
+    /// Kept distinct from type 3 colors/words; channel selection is not applied.
+    IntegerBits(u32),
     Text(String),
     Uint(u32),
 }
@@ -232,6 +235,10 @@ impl TerMod {
                 let kind = reader.u32()?;
                 let value = match kind {
                     0 => Property::Float(reader.f32()?),
+                    // Native 0x1001538b dispatches type 1 to 0x10015444,
+                    // retaining its word separately from type 3. See
+                    // docs/EQG_MATERIAL_PROPERTIES.md for the original fixture.
+                    1 => Property::IntegerBits(reader.u32()?),
                     2 => Property::Text(string_at(&strings, reader.i32()? as usize)),
                     3 => Property::Uint(reader.u32()?),
                     other => {

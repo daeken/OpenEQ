@@ -178,3 +178,168 @@ fn unreadable_alternate_is_not_silently_excluded_from_ambiguity_check() {
     assert!(packed.read("internal.zon").is_ok());
     assert!(unique_heightmap_declaration(&packed).is_err());
 }
+
+fn binary_declaration(terrain_name: &str) -> Vec<u8> {
+    let mut zon = Vec::new();
+    for value in [
+        crate::zone::ZON_MAGIC,
+        1,
+        terrain_name.len() as u32 + 1,
+        1,
+        0,
+        0,
+        0,
+    ] {
+        zon.extend(value.to_le_bytes());
+    }
+    zon.extend(terrain_name.as_bytes());
+    zon.push(0);
+    zon.extend(0u32.to_le_bytes());
+    zon
+}
+
+#[test]
+fn binary_alias_requires_resolved_geometry_and_rejects_ambiguity() {
+    let fixture = Fixture::new();
+    let first = binary_declaration("first.ter");
+    let second = binary_declaration("second.ter");
+    let ter: Vec<u8> = [crate::zone::TER_MAGIC, 1, 0, 0, 0, 0]
+        .into_iter()
+        .flat_map(u32::to_le_bytes)
+        .collect();
+    let packed = archive(&[("INTERNAL.ZON", &first), ("first.TER", &ter)]);
+    assert_eq!(
+        read_eqg_declaration(&fixture.0, "renamed", &packed).unwrap(),
+        first
+    );
+    let missing = archive(&[("internal.zon", &first)]);
+    assert!(read_eqg_declaration(&fixture.0, "renamed", &missing).is_err());
+    let mut entries = vec![
+        ("first.zon", first.as_slice()),
+        ("second.zon", second.as_slice()),
+        ("first.ter", ter.as_slice()),
+        ("second.ter", ter.as_slice()),
+    ];
+    for _ in 0..2 {
+        assert!(
+            matches!(read_eqg_declaration(&fixture.0, "renamed", &archive(&entries)), Err(Error::Format(message)) if message.contains("multiple distinct"))
+        );
+        entries.reverse();
+    }
+    let text = declaration("heightmap");
+    let mixed = archive(&[
+        ("binary.zon", &first),
+        ("first.ter", &ter),
+        ("heightmap.zon", &text),
+        ("heightmap.dat", b""),
+    ]);
+    assert!(
+        matches!(read_eqg_declaration(&fixture.0, "renamed", &mixed), Err(Error::Format(message)) if message.contains("multiple distinct"))
+    );
+    let duplicated = archive(&[
+        ("first.zon", &first),
+        ("alias.zon", &first),
+        ("first.ter", &ter),
+    ]);
+    assert_eq!(
+        read_eqg_declaration(&fixture.0, "renamed", &duplicated).unwrap(),
+        first
+    );
+}
+
+#[test]
+#[ignore = "requires original renamed EQG dungeons; CPU only"]
+fn original_renamed_binary_dungeons_load_authored_geometry() {
+    let base = default_client_dir().expect("original client assets");
+    for (zone, internal) in [
+        ("chambersb", "chambersa"),
+        ("chambersc", "chambersa"),
+        ("chambersd", "chambersa"),
+        ("chamberse", "chambersa"),
+        ("chambersf", "chambersa"),
+        ("dranikcatacombsb", "catacombb"),
+        ("dranikcatacombsc", "catacombc"),
+        ("dranikhollowsa", "cavea"),
+        ("dranikhollowsb", "caveb"),
+        ("dranikhollowsc", "cavec"),
+        ("draniksewersa", "sewera"),
+        ("draniksewersb", "sewerb"),
+        ("draniksewersc", "sewerc"),
+    ] {
+        let packed = Archive::open(base.join(format!("{zone}.eqg"))).unwrap();
+        assert!(!packed.contains(&format!("{zone}.zon")), "{zone}");
+        let declaration = read_eqg_declaration(&base, zone, &packed).unwrap();
+        assert_eq!(
+            declaration,
+            packed.read(&format!("{internal}.zon")).unwrap(),
+            "{zone}"
+        );
+        let source = ZoneFile::parse(&declaration, |name| packed.read(name)).unwrap();
+        let scene = load_zone(&base, zone).unwrap();
+        assert_eq!(scene.name, zone);
+        assert_eq!(scene.instances.len(), source.placeables.len(), "{zone}");
+        assert_eq!(scene.lights.len(), source.lights.len(), "{zone}");
+        assert!(scene.triangle_count() > 100, "{zone}");
+        assert!(
+            crate::collision::CollisionWorld::build(&scene).triangle_count() > 100,
+            "{zone}"
+        );
+    }
+}
+
+#[test]
+fn sole_broken_binary_alias_reports_its_internal_dependency_and_duplicates_collapse() {
+    let fixture = Fixture::new();
+    let zon = binary_declaration("missing.ter");
+    for entries in [
+        vec![("internal.zon", zon.as_slice())],
+        vec![
+            ("internal.zon", zon.as_slice()),
+            ("duplicate.zon", zon.as_slice()),
+        ],
+    ] {
+        let error = read_eqg_declaration(&fixture.0, "renamed", &archive(&entries)).unwrap_err();
+        assert!(
+            matches!(error, Error::Format(message)
+            if message.contains("internal.zon") && message.contains("missing.ter")),
+            "{entries:?}"
+        );
+    }
+    let broken = archive(&[("internal.zon", &zon), ("missing.ter", b"bad")]);
+    assert!(
+        matches!(read_eqg_declaration(&fixture.0, "renamed", &broken), Err(Error::Format(message))
+        if message.contains("internal.zon") && message.contains("truncated"))
+    );
+    let other = binary_declaration("other.ter");
+    let mut entries = vec![
+        ("first.zon", zon.as_slice()),
+        ("second.zon", other.as_slice()),
+    ];
+    for _ in 0..2 {
+        assert!(
+            matches!(read_eqg_declaration(&fixture.0, "renamed", &archive(&entries)), Err(Error::Format(message))
+            if message.contains("multiple distinct") && message.contains("first.zon") && message.contains("second.zon"))
+        );
+        entries.reverse();
+    }
+}
+
+#[test]
+#[ignore = "requires original Dranik Catacombs A archive; CPU only"]
+fn original_catacombs_mismatched_banner_names_remain_an_explicit_missing_dependency() {
+    let base = default_client_dir().expect("original client assets");
+    let packed = Archive::open(base.join("dranikcatacombsa.eqg")).unwrap();
+    let zon = packed.read("catacomba.zon").unwrap();
+    // The archive directory and filename CRCs agree on underscores:
+    // 0x1409b969 / 0x0f21b411. Authored ')' names instead hash to
+    // 0x78533c40 / 0x637b3138; no native normalization rule is established.
+    for suffix in ["00", "01"] {
+        assert!(packed.contains(&format!("obp_dz_lbanner0__{suffix}.mod")));
+        assert!(!packed.contains(&format!("obp_dz_lbanner0)_{suffix}.mod")));
+    }
+    let error = ZoneFile::parse(&zon, |name| packed.read(name)).unwrap_err();
+    assert!(matches!(error, Error::NotFound(name) if name == "obp_dz_lbanner0)_00.mod"));
+    let error = load_zone(&base, "dranikcatacombsa").err().unwrap();
+    assert!(matches!(error, Error::Format(message)
+        if message.contains("catacomba.zon") && message.contains("obp_dz_lbanner0)_00.mod")));
+}
