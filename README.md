@@ -19,7 +19,12 @@ Running without arguments opens the same main menu with your last server address
 Connection settings lets you edit the login server and ports before signing in.
 Passwords are never saved by this flow; only the server address and last
 world/character choices are saved in `~/.config/openeq/connection.json` (or under
-`$XDG_CONFIG_HOME`). Account and character creation are not implemented yet.
+`$XDG_CONFIG_HOME`). Select **Preview** to inspect and rotate a character before
+entering. Account and character creation controls are not available yet.
+
+When using interactive sign-in, `/camp` sits and returns to a fresh character
+list after the normal countdown; Escape cancels it. A server disconnect during
+camp is reported separately. Direct `--connect` sessions use `/quit` to exit.
 
 The existing private connection file still skips selection and enters its
 configured `Explorer` development character directly:
@@ -110,7 +115,12 @@ and manual roster/message refresh are not implemented.
 Use `/skills` or **Skills** in inventory to view your base skills and languages
 with their original names. The inventory also shows level and normal experience
 progress when the server supplies it. Skill changes appear in chat; unavailable
-values stay unknown. Trainer purchases remain pending.
+values stay unknown. Target a nearby trainer for your class and use `/train`
+or the service interaction to open training. Select a skill or language and
+choose **Train**. The window shows session practice/money estimates and the
+server-assessed cost after training; the server supplies no price quote in
+advance. An uncertain purchase blocks further spending until fresh authority
+arrives, without automatically retrying it.
 
 The hotbar has twelve initially empty command buttons. Click an empty button,
 right-click an existing one, or use `/hotbutton 1` through `/hotbutton 12` to
@@ -191,7 +201,8 @@ you up and automatically returns, following the default five-second cycle.
 - Natural border travel through authored classic WLD reference volumes, including
   Greater Faydark's four exits; authenticated handoffs use server destination data.
 - Kelethin lift buttons, moving platform collision and passenger carrying.
-- Authored classic liquid volumes, swimming, underwater fog and server-granted levitation.
+- Authored classic and supported group-free DAT20/21 heightmap liquid volumes,
+  swimming, underwater fog and server-granted levitation.
 - Original XML artwork and layout definitions for gameplay windows, with sharp
   high-density text and correctly scaled mouse hit testing.
 - Original WAV ambience and streamed MP3 music, with saved volume controls.
@@ -203,9 +214,9 @@ you up and automatically returns, following the default five-second cycle.
 This is a playable development milestone, with substantial parity work remaining:
 NPC quest hand-ins, augmentation, raid subgroup/loot administration, guild
 management, quest journals,
-account/character creation, 3D character previews, camp-to-roster,
+account/character creation, alternate-ability purchases,
 EQG/absolute-destination border
-triggers, XMI music and event sounds, advanced XML widgets, EQG liquid volumes and environmental
+triggers, XMI music and event sounds, advanced XML widgets, remaining EQG liquid formats and environmental
 damage rules. Luclin hair/beard colors, Hero's Forge, animated equipment, weather,
 terrain ecosystem effects and water refraction remain incomplete. Door motion
 classes include approximations; ordinary door collision switches to the final

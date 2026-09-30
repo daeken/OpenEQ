@@ -28,7 +28,7 @@ assets/GPU, strict Clippy, format, normal build and playback-disabled checks.
    camp-to-roster and reconnect; finish hover/cross-zone resurrection and item/XP
    recovery. Bind pending work to session identity and test interruption at each
    boundary. Use dedicated characters only.
-5. **Progression controls.** Source-backed trainer quotes/purchases, AA and
+5. **Progression controls — trainer purchases verified.** Source-backed trainer purchases, AA and
    augmentation. Reconcile server-confirmed points, currency and item outcomes;
    preserve eligibility and stale-action guards. Never infer success from a
    closed window or invent missing authoritative updates.
@@ -250,3 +250,58 @@ listed rather than being treated as complete.
 - Trainer runtime/UI integration and character creation are next. A read-only
   private Barterer preflight passed for exactly two paid training operations;
   no fixture seeding or training has occurred. See `TRAINER_LIVE_PROOF_PLAN.md`.
+
+### Additional source finding during trainer verification
+
+Pinned EQEmu `common/skill_caps.cpp` declares the skill maximum-level cache as
+`std::map<uint8_t, int32_t>` while computing keys as `class_id * 1,000,000 +
+skill_id`. Those keys narrow and alias between classes/skills. The actual-source
+regression now reproduces incorrect cap results and the separate one-line
+32-bit-key patch passes all eight cases. It remains undeployed; no deployed
+failure or client-side compensation is claimed. See `SKILL_CAP_CACHE_REVIEW.md`,
+which also records distinct reload, ceiling and train-level lookup hazards for
+follow-up. The paid Barterer fixture separately checks its actual
+class-1/skill-0/level-10 database cap of75.
+
+### Trainer runtime, original-art UI and paid proof
+
+- `/train` and trainer service interaction now open the original training
+  window. Skill/language selection, reported maxima, session practice/money
+  estimates, assessed costs and explicit uncertainty are connected to checked
+  single-use requests. The ordinary Skills window remains receive-only.
+- Independent review found and fixed two authority races: skill updates
+  overtaking queued purchases, and worker timeouts reaching a stalled UI after
+  late receipts. Production regressions cover both, duplicate/stale actions,
+  shared currency debits, interrupted purchases and trainer identity/range.
+- Barterer completed two paid purchases through production interaction, with
+  skill55→56→57, costs911/973 and copper100000→99089→98116 matching SQL. A
+  connection loss during the operator pause was followed by a separate
+  purchase-free reconnect proving fresh profile57/0/98116. The29-table offline
+  restoration passed. See `TRAINER_LIVE_PROOF_PLAN.md` for precise scope.
+- Trainer pricing has no stock nonmutating quote; opening may repair invalid
+  specialization state. No invented quote or broad specialization claim is
+  made. AA and augmentation remain open progression work.
+
+### Trainer/creation foundation checkpoint, September 30
+
+- `5192af6` publishes the verified trainer runtime/UI and paid-proof tooling.
+  `455cce1` retains creation catalogs/capabilities and owns the immutable
+  approval/create transaction on one world connection. The creation editor is
+  still pending; no live name reservation or character creation has occurred.
+- Independent creation review reproduced and fixed a stale Enter/Back/Create
+  action leaving the foreground stuck after a capability refresh. The worker
+  now republishes current selection without executing the old action. Local
+  UDP tests cover this alongside cancellation, unknown outcomes and deadlines.
+- The full workspace passed831 tests, zero failed/ignored, including original
+  assets and GPU checks. After the review fix, the complete changed app suite
+  passed414 tests (one more regression), bringing current coverage to832.
+  Strict workspace/all-target Clippy, formatting, normal build and the
+  playback-disabled all-target check passed on the final source.
+- Evidence prefix: `/tmp/openeq-trainer-creation-`; final app/lint/build logs
+  include `final-`, and original-art captures are in the matching `ui` folder.
+  The dedicated trainer fixture is restored/offline. A separate read-only
+  creation-catalog proof left all29 tracked character tables exactly unchanged.
+- Next: bind creation choices to the actually loaded model family, add the
+  editor, then prove a single explicit creation on a new dedicated test account.
+  Cursor authority still blocks arbitrary NPC hand-ins; reviewed server patches
+  are stored separately and remain undeployed.

@@ -617,3 +617,24 @@ overnight cutoff.
   normalization. Evidence: `/tmp/openeq-action-epoch-proof`. No Explorer use.
 - The next active slice is shared direct GPU terrain detail/mask sampling.
   Remaining seven-project scope stays tracked in `DEEP_PARITY_ROADMAP.md`.
+
+## Daytime continuation: trainer purchases and creation foundation
+
+- Trainer purchases now use the original-art panel, current skill/language
+  selection and one stamped request at a time. The paid Barterer proof matched
+  both received skills and SQL costs/balances; a separate reconnect verified
+  persistence after an operator-pause connection loss. All29 fixture tables
+  passed guarded offline restoration. See `TRAINER_LIVE_PROOF_PLAN.md`.
+- Creation catalogs, capabilities, immutable approval/create ownership and
+  cancellation/timeout handling are implemented. Read-only live catalog proof
+  passed without entering or changing a character. Creation controls and actual
+  creation remain the next slice. A review-found stale selection busy-screen
+  race is fixed and independently reproduced before/after.
+- Full workspace831 tests passed; the complete app suite passed414 again after
+  the final additional regression, for832 current tests. Original assets/GPU,
+  strict workspace lint, format, normal build and no-default all-target check
+  all passed. Evidence prefix `/tmp/openeq-trainer-creation-`.
+- A separate actual-source EQEmu test proves skill-cap cache key truncation;
+  reviewed patch0004 fixes it. It is not deployed. Additional server hazards
+  and remaining roadmap scope are recorded in `DEEP_PARITY_ROADMAP.md` and
+  `SKILL_CAP_CACHE_REVIEW.md`.
