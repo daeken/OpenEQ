@@ -1,0 +1,252 @@
+From 18987a397be48c79143b16497f6dea948c46c609 Mon Sep 17 00:00:00 2001
+From: Sera Brocious <sera.brocious@gmail.com>
+Date: Wed, 30 Sep 2026 11:53:03 -0500
+Subject: [PATCH] Preserve full class and skill identities in maximum-level
+ cache
+
+The class_id * 1000000 + skill_id cache key was narrowed to uint8_t,
+merging classes four apart and some adjacent-class skill pairs. With
+different maximum levels, GetSkillCap could skip its own final row and
+return an empty cap. Retain the full key with uint32_t.
+
+Add an isolated actual-source regression that substitutes only repository
+query rows, with no database connection or server configuration. Eight
+cases cover collisions, cap lookup, absent pairs, all 1,248 supported
+identities, normal behavior, rule ceiling and invalid-row filtering.
+
+On the pinned base, five cases fail and 992/1,248 exhaustive lookups return
+wrong maxima and caps. With this change all eight cases pass, including
+zero exhaustive mismatches. The standalone CMake target also passes in a
+disposable build using the matching common archive and dependencies.
+---
+ common/skill_caps.cpp           |   2 +-
+ tests/CMakeLists.txt            |   7 ++
+ tests/skill_caps_cache_test.cpp | 188 ++++++++++++++++++++++++++++++++
+ 3 files changed, 196 insertions(+), 1 deletion(-)
+ create mode 100644 tests/skill_caps_cache_test.cpp
+
+diff --git a/common/skill_caps.cpp b/common/skill_caps.cpp
+index 28cfe53ea..a3b3ede15 100644
+--- a/common/skill_caps.cpp
++++ b/common/skill_caps.cpp
+@@ -20,7 +20,7 @@
+ #include "common/timer.h"
+ 
+ // cache the skill cap max level in the database
+-std::map<uint8_t, int32_t> skill_max_level = {};
++std::map<uint32_t, int32_t> skill_max_level = {};
+ 
+ uint8 skill_cap_max_level = (
+ 	RuleI(Character, SkillCapMaxLevel) > 0 ?
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 346128d60..40224dbed 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -48,3 +48,10 @@ endif()
+ 
+ set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
+ set_property(TARGET tests PROPERTY FOLDER executables/tests)
++
++# Isolated actual-source regression. The fixture substitutes only repository
++# query rows; no server configuration or database connection is required.
++add_executable(skill_caps_cache_tests skill_caps_cache_test.cpp)
++target_include_directories(skill_caps_cache_tests PRIVATE ..)
++target_link_libraries(skill_caps_cache_tests $<TARGET_PROPERTY:tests,LINK_LIBRARIES>)
++set_property(TARGET skill_caps_cache_tests PROPERTY FOLDER executables/tests)
+diff --git a/tests/skill_caps_cache_test.cpp b/tests/skill_caps_cache_test.cpp
+new file mode 100644
+index 000000000..0e4cc5721
+--- /dev/null
++++ b/tests/skill_caps_cache_test.cpp
+@@ -0,0 +1,188 @@
++/*	EQEmu: EQEmulator
++
++	Copyright (C) 2001-2026 EQEmu Development Team
++
++	This program is free software; you can redistribute it and/or modify
++	it under the terms of the GNU General Public License as published by
++	the Free Software Foundation; either version 3 of the License, or
++	(at your option) any later version.
++
++	This program is distributed in the hope that it will be useful,
++	but WITHOUT ANY WARRANTY; without even the implied warranty of
++	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++	GNU General Public License for more details.
++
++	You should have received a copy of the GNU General Public License
++	along with this program. If not, see <http://www.gnu.org/licenses/>.
++*/
++#include "common/skill_caps.h"
++#include "common/eqemu_config.h"
++#include "common/platform.h"
++
++#include <algorithm>
++#include <iostream>
++#include <stdexcept>
++
++// Keep the real SkillCaps class, repository row type, loader, cache and lookup
++// implementation. Substitute only the database query result, without creating
++// a connection, loading server configuration, or copying the tested algorithm.
++class SkillCapsFixtureRepository : public SkillCapsRepository {
++public:
++	static inline std::vector<SkillCaps> rows;
++	static std::vector<SkillCaps> All(Database &) { return rows; }
++};
++#define SkillCapsRepository SkillCapsFixtureRepository
++#include "common/skill_caps.cpp"
++#undef SkillCapsRepository
++
++const EQEmuConfig *Config = nullptr;
++
++namespace {
++using Row = SkillCapsRepository::SkillCaps;
++
++Row row(uint8_t class_id, uint8_t skill_id, uint8_t level, uint32_t cap)
++{
++	return Row{0, skill_id, class_id, level, cap, 0};
++}
++
++void require(bool condition, const char *message)
++{
++	if (!condition) {
++		throw std::runtime_error(message);
++	}
++}
++
++struct Fixture {
++	// The no-argument Database constructor initializes a client handle only.
++	// All() above never queries it; no credentials or server endpoint exist.
++	Database db;
++	SkillCaps caps;
++
++	explicit Fixture(std::vector<Row> rows)
++	{
++		skill_max_level.clear();
++		skill_cap_max_level = 65;
++		SkillCapsFixtureRepository::rows = std::move(rows);
++		caps.SetContentDatabase(&db)->LoadSkillCaps();
++	}
++
++	int maximum(uint8_t class_id, uint8_t skill_id)
++	{
++		return caps.GetSkillCapMaxLevel(class_id, static_cast<EQ::skills::SkillType>(skill_id));
++	}
++
++	Row cap(uint8_t class_id, uint8_t skill_id, uint8_t level)
++	{
++		return caps.GetSkillCap(class_id, static_cast<EQ::skills::SkillType>(skill_id), level);
++	}
++};
++
++void classes_four_apart_do_not_share_maximum()
++{
++	for (bool reverse : {false, true}) {
++		std::vector<Row> rows{row(1, 0, 1, 5), row(1, 0, 10, 50), row(5, 0, 1, 5), row(5, 0, 50, 250)};
++		if (reverse) {
++			std::reverse(rows.begin(), rows.end());
++		}
++		Fixture fixture(std::move(rows));
++		require(fixture.maximum(1, 0) == 10, "class 1 borrowed class 5's higher skill maximum");
++		require(fixture.maximum(5, 0) == 50, "class 5's own maximum changed");
++	}
++}
++
++void own_cap_row_is_used_above_its_last_level()
++{
++	Fixture fixture({row(1, 0, 1, 5), row(1, 0, 10, 50), row(5, 0, 1, 5), row(5, 0, 50, 250)});
++	const auto cap = fixture.cap(1, 0, 65);
++	require(cap.level == 10 && cap.cap == 50, "foreign maximum bypassed own last row and returned an empty cap");
++	require(fixture.cap(5, 0, 65).cap == 250, "class 5's cap lookup changed");
++}
++
++void distinct_skills_in_adjacent_classes_do_not_collide()
++{
++	Fixture fixture({row(1, 64, 20, 100), row(2, 0, 60, 300)});
++	require(fixture.maximum(1, 64) == 20, "class 1 skill 64 collided with class 2 skill 0");
++	require(fixture.maximum(2, 0) == 60, "class 2 skill 0 maximum changed");
++	require(fixture.cap(1, 64, 65).cap == 100, "cross-skill collision lost a valid cap row");
++}
++
++void absent_pair_keeps_the_rule_fallback()
++{
++	Fixture fixture({row(5, 0, 50, 250)});
++	require(fixture.maximum(1, 0) == 65, "absent pair inherited an unrelated database maximum");
++	require(fixture.cap(1, 0, 65).cap == 0, "absent pair invented a cap row");
++}
++
++void every_supported_class_skill_pair_remains_distinct()
++{
++	std::vector<Row> rows;
++	for (uint8_t class_id = 1; class_id <= Class::PLAYER_CLASS_COUNT; ++class_id) {
++		for (uint8_t skill_id = 0; skill_id < EQ::skills::SkillCount; ++skill_id) {
++			rows.push_back(row(class_id, skill_id, 1 + (class_id + skill_id) % 64, class_id * 1000 + skill_id));
++		}
++	}
++	Fixture fixture(rows);
++	std::size_t wrong_maximum = 0;
++	std::size_t wrong_cap = 0;
++	for (const auto &entry : rows) {
++		wrong_maximum += fixture.maximum(entry.class_id, entry.skill_id) != entry.level;
++		wrong_cap += fixture.cap(entry.class_id, entry.skill_id, 65).cap != entry.cap;
++	}
++	std::cout << "  supported_pairs=" << rows.size() << " cached_pairs=" << skill_max_level.size()
++		<< " wrong_maximum=" << wrong_maximum << " wrong_cap=" << wrong_cap << '\n';
++	require(wrong_maximum == 0 && wrong_cap == 0, "supported class/skill identities were merged");
++}
++
++void noncolliding_rows_and_level_clamping_are_unchanged()
++{
++	Fixture fixture({row(1, 0, 5, 25), row(1, 0, 10, 50), row(1, 1, 12, 60), row(2, 2, 30, 150)});
++	require(fixture.maximum(1, 0) == 10 && fixture.maximum(1, 1) == 12 && fixture.maximum(2, 2) == 30,
++		"noncolliding maxima changed");
++	require(fixture.cap(1, 0, 5).cap == 25 && fixture.cap(1, 0, 65).cap == 50,
++		"exact-level lookup or normal upper clamp changed");
++	require(fixture.cap(1, 0, 6).cap == 0, "missing exact-level row should remain empty");
++}
++
++void configured_rule_ceiling_is_unchanged()
++{
++	Fixture fixture({row(2, 3, 1, 5), row(2, 3, 65, 325), row(2, 3, 80, 400)});
++	require(fixture.maximum(2, 3) == 65, "configured rule ceiling was not applied");
++	require(fixture.cap(2, 3, 80).cap == 325, "lookup did not honor the configured rule ceiling");
++}
++
++void invalid_rows_do_not_enter_the_cache()
++{
++	Fixture fixture({row(1, 0, 10, 50), row(1, 0, 0, 999), row(0, 0, 64, 999),
++		row(17, 0, 64, 999), row(1, EQ::skills::SkillCount, 64, 999)});
++	require(fixture.maximum(1, 0) == 10 && fixture.cap(1, 0, 65).cap == 50, "invalid rows polluted a valid maximum");
++	require(skill_max_level.size() == 1, "invalid class, skill or zero-level row was retained");
++}
++} // namespace
++
++int main()
++{
++	RegisterExecutablePlatform(ExePlatformClientImport);
++	EQEmuLogSys::Instance()->LoadLogSettingsDefaults();
++	const std::pair<const char *, void (*)()> tests[] = {
++		{"class separation", classes_four_apart_do_not_share_maximum},
++		{"upper-level cap lookup", own_cap_row_is_used_above_its_last_level},
++		{"cross-skill separation", distinct_skills_in_adjacent_classes_do_not_collide},
++		{"absent-pair fallback", absent_pair_keeps_the_rule_fallback},
++		{"all supported pairs", every_supported_class_skill_pair_remains_distinct},
++		{"noncolliding controls", noncolliding_rows_and_level_clamping_are_unchanged},
++		{"rule ceiling", configured_rule_ceiling_is_unchanged},
++		{"invalid rows", invalid_rows_do_not_enter_the_cache},
++	};
++	std::size_t failures = 0;
++	for (const auto &[name, test] : tests) {
++		try {
++			test();
++			std::cout << "PASS " << name << '\n';
++		} catch (const std::exception &error) {
++			++failures;
++			std::cout << "FAIL " << name << ": " << error.what() << '\n';
++		}
++	}
++	std::cout << "tests=" << std::size(tests) << " failures=" << failures << '\n';
++	return failures == 0 ? 0 : 1;
++}
+-- 
+2.54.0 (Apple Git-157)
+
