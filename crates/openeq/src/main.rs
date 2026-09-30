@@ -925,6 +925,8 @@ fn handle_gameplay_input(
     let mut hotbutton_modal_owned = interaction.hotbuttons.editor.is_some();
     interaction.skills_window.visible_rows =
         openeq::progression_ui::progression_visible_rows(window.height() as u32);
+    interaction.training_window.visible_rows =
+        openeq::training_ui::training_visible_rows(window.height() as u32);
     interaction.guild_window.visible_rows =
         openeq::guild_ui::guild_visible_rows(window.height() as u32);
     interaction.raid_visible_rows = openeq::raid_ui::raid_visible_rows(
@@ -1290,6 +1292,11 @@ fn handle_gameplay_input(
             if hit.window_id.as_deref() == Some("skills") {
                 for event in wheel.read() {
                     interaction.progression_wheel(live, hit, event.y);
+                }
+            }
+            if hit.window_id.as_deref() == Some("training") {
+                for event in wheel.read() {
+                    interaction.training_wheel(live, hit, event.y);
                 }
             }
             if hit.window_id.as_deref() == Some("guild") {

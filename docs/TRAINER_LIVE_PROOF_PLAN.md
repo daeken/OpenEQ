@@ -51,8 +51,30 @@ all related rows. Compare all 29 tables after restoration, preserving private
 before/after journals. The helper's baseline operation is read-only; do not
 seed until the production interaction path and probe are ready.
 
-## Current verification
+## Verification completed, September 30
 
-- Baseline snapshot/preflight passed with fixture offline; no seed or login yet.
-- Source audit and standalone protocol/state tests are documented separately in
-  `TRAINER_TRANSACTION_PLAN.md`. These do not prove deployed purchases.
+- Offline deployment/opcode/cap/rule checks and the private 29-table baseline
+  passed. Only the two planned practices and the trainer-adjacent pose were
+  seeded. The production `/train` and stamped UI path completed both purchases:
+  skill55→56→57, assessed costs911/973, carried copper100000→99089→98116 and
+  session practices2→1→0. Replaying each UI click did not send another purchase.
+- Read-only SQL agreed at both checkpoints and all unrelated gameplay
+  invariants passed. The first checkpoint was checked before allowing the
+  second purchase. A user interruption outlasted the zone connection while the
+  probe waited at the second checkpoint; this was not an uninterrupted normal
+  logout proof. No purchase was retried.
+- After verifying the second database result and offline status, the probe's
+  `--verify-persistence` mode connected without opening a trainer or buying
+  anything. A fresh profile confirmed skill57, zero practices and98116 copper;
+  that verification session logged out normally. Database verification agreed.
+- The guarded offline restoration passed across all29 tables, restoring the
+  exact baseline skill55, zero practices, carried denominations, pose and
+  resources. Inventory GUID and normal login bookkeeping handling are recorded
+  separately in the private journals. Explorer was not involved.
+- Evidence: `/tmp/openeq-training-proof/live.log`, `persistence.log`, private
+  baseline/observation journals and guarded restoration SQL. Credentials and
+  database snapshots remain outside the repository.
+- Source, timeout/race regressions and original-art presentation verification
+  are documented in `TRAINER_TRANSACTION_PLAN.md`. The live proof establishes
+  two ordinary purchases; it does not establish every class, skill, language,
+  specialization-repair case or packet-loss outcome.

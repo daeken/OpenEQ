@@ -22,6 +22,20 @@ fn money(value: Currency) -> UiMoney {
 }
 impl Interaction {
     pub fn open_service(&mut self, live: &mut LiveWorld, expected: Option<u8>) {
+        if expected.is_none()
+            && live
+                .target
+                .and_then(|id| live.entities.get(&id))
+                .is_some_and(|entity| (20..=35).contains(&entity.spawn.class))
+        {
+            self.open_training_window(live);
+            return;
+        }
+        if self.training_window.open || live.training_state().pending().is_some() {
+            live.game
+                .notice("Close training before opening another NPC service.");
+            return;
+        }
         if live.game.trade.engaged() || live.game.item_use.busy() {
             live.game
                 .notice("Finish the current trade or item action before opening an NPC service.");

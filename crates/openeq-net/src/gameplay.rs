@@ -36,6 +36,7 @@ pub enum CoinType {
 
 #[derive(Debug, Clone)]
 pub enum Command {
+    Training(crate::training::TrainingCommand),
     Death(crate::death::DeathCommand),
     Social(crate::social::SocialCommand),
     Raid(crate::raid::RaidCommand),
@@ -371,6 +372,7 @@ pub struct ZonePoint {
 
 #[derive(Debug, Clone)]
 pub enum GameplayEvent {
+    Training(crate::training::TrainingEvent),
     Recovery(crate::death::DeathEvent),
     Social(crate::social::SocialEvent),
     Raid(crate::raid::RaidEvent),
@@ -582,6 +584,7 @@ fn text(out: &mut Vec<u8>, value: &str) {
 pub fn encode_command(command: Command) -> Result<AppPacket, ZoneError> {
     let mut out = Vec::new();
     let opcode = match command {
+        Command::Training(command) => return crate::training::encode_command(command),
         Command::Death(command) => return crate::death::encode_command(command),
         Command::Social(command) => return crate::social::encode_command(command),
         Command::Raid(command) => return crate::raid::encode_command(command),
@@ -856,6 +859,9 @@ pub fn parse_packet(opcode: u16, data: &[u8]) -> Option<Result<GameplayEvent, Zo
     }
     if let Some(event) = crate::guild::parse_packet(opcode, data) {
         return Some(event.map(GameplayEvent::Guild));
+    }
+    if let Some(event) = crate::training::parse_packet(opcode, data) {
+        return Some(event.map(GameplayEvent::Training));
     }
     if let Some(event) = crate::progression::parse_packet(opcode, data) {
         return Some(event.map(GameplayEvent::Progression));

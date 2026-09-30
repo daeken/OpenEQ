@@ -44,6 +44,7 @@ pub struct Interaction {
     pub raid_was_active: bool,
     pub guild_window: crate::guild_interaction::GuildWindowState,
     pub skills_window: crate::progression_interaction::SkillsWindowState,
+    pub training_window: crate::training_interaction::TrainingWindowState,
     pub hotbuttons: crate::hotbutton_interaction::HotbuttonState,
     pub hotbutton_input: crate::hotbutton_input::HotbuttonInput,
     pub merchant_stock: Option<u32>,
@@ -243,6 +244,7 @@ impl Interaction {
         self.raid_view(live, &mut view);
         self.guild_view(live, &mut view);
         self.progression_view(live, &mut view);
+        self.training_view(live, &mut view);
         self.trade_view(live, &mut view);
         self.item_use_view(live, &mut view);
         self.hotbutton_view(&mut view);
@@ -412,6 +414,7 @@ impl Interaction {
             Action::UseTarget => self.open_service(live, None),
             Action::Merchant => self.open_service(live, Some(crate::commerce::MERCHANT_CLASS)),
             Action::Bank => self.open_service(live, Some(crate::commerce::BANKER_CLASS)),
+            Action::Train => self.open_training_window(live),
             Action::Invite(name) => self.invite(live, name),
             Action::Raid => self.raid_open = !self.raid_open,
             Action::GuildWindow => self.guild_window.open = !self.guild_window.open,
@@ -526,6 +529,7 @@ impl Interaction {
             UiAction::Guild(action) => self.guild_action(action, live),
             UiAction::OpenSkills => self.skills_window.open = true,
             UiAction::Progression(action) => self.progression_action(live, action),
+            UiAction::Training(action) => self.training_action(live, action),
             UiAction::ChatLink(id) => {
                 if let Some(link) = live.game.chat_links.get(&id).cloned() {
                     self.inspected_item = None;
@@ -735,6 +739,8 @@ impl Interaction {
             self.raid_open = false;
         } else if window == "skills" {
             self.skills_window.open = false;
+        } else if window == "training" {
+            self.close_training_window(live);
         } else if window == "guild" {
             self.guild_window.open = false;
         } else if window == "inventory" {
@@ -759,6 +765,7 @@ impl Interaction {
         self.raid_tick(live);
         self.guild_tick(live);
         self.progression_tick(live);
+        self.training_tick(live);
         self.sync_hotbuttons(
             live.zone_generation(),
             live.ready && live.error.is_none() && !live.game.recovery.blocks_movement(),

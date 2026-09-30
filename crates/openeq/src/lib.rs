@@ -49,6 +49,8 @@ pub mod item_use_state;
 pub mod trade;
 mod trade_interaction;
 pub mod training;
+pub mod training_interaction;
+pub mod training_ui;
 
 pub mod zone_loading;
 

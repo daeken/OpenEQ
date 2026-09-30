@@ -299,4 +299,39 @@ mod tests {
             assert!(parse_packet(opcode, &[]).is_none());
         }
     }
+
+    #[test]
+    fn production_gameplay_router_encodes_and_decodes_checked_trainer_records() {
+        let command = TrainingCommand::Open {
+            trainer_id: 7,
+            player_id: 9,
+        };
+        let packet =
+            crate::gameplay::encode_command(crate::gameplay::Command::Training(command)).unwrap();
+        let crate::gameplay::GameplayEvent::Training(TrainingEvent::Opened {
+            trainer_id,
+            player_id,
+            ..
+        }) = crate::gameplay::parse_packet(packet.opcode, &packet.data)
+            .unwrap()
+            .unwrap()
+        else {
+            panic!("trainer routing")
+        };
+        assert_eq!((trainer_id, player_id), (7, 9));
+        assert!(
+            crate::gameplay::parse_packet(OP_TRAIN_SKILL_CONFIRM, &[0; 75])
+                .unwrap()
+                .is_err()
+        );
+        let end = crate::gameplay::encode_command(crate::gameplay::Command::Training(
+            TrainingCommand::End {
+                trainer_id: 7,
+                player_id: 9,
+            },
+        ))
+        .unwrap();
+        assert_eq!((end.opcode, end.data.len()), (OP_END_TRAINING, 8));
+        assert!(crate::gameplay::parse_packet(OP_END_TRAINING, &[]).is_none());
+    }
 }

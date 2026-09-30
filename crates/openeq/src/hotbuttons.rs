@@ -137,6 +137,7 @@ pub fn parse_hotbutton_command(command: &str) -> Result<Action, HotbuttonError> 
         | Action::UseItem
         | Action::Merchant
         | Action::Bank
+        | Action::Train
         | Action::Invite(_)
         | Action::AcceptInvite
         | Action::DeclineInvite

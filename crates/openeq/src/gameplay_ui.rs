@@ -17,6 +17,9 @@ pub use crate::social_ui::{SocialAction, UiGroup, UiGroupMember};
 pub use crate::trade_ui::{
     ItemUseAction, TradeAction, UiItemUse, UiTrade, UiTradeSlot, UiTradeStage,
 };
+pub use crate::training_ui::{
+    TrainingAction, TrainingActionKind, UiTraining, UiTrainingPage, UiTrainingRow,
+};
 pub use openeq_ui::TextLink as UiChatLink;
 use openeq_ui::{Color, DrawCommand, HitTarget, Rect, TextAlign, TextLine, UiBindings, UiFrame};
 use std::collections::{BTreeMap, BTreeSet};
@@ -37,6 +40,7 @@ pub fn valid_window_id(id: &str) -> bool {
             | "raid"
             | "guild"
             | "skills"
+            | "training"
             | "hotbuttons"
             | "hotbutton_editor"
             | "chat"
@@ -227,6 +231,7 @@ pub struct GameHudState {
     pub raid: Option<UiRaid>,
     pub guild: Option<UiGuild>,
     pub progression: Option<UiProgression>,
+    pub training: Option<UiTraining>,
     pub hotbuttons: Option<UiHotbuttons>,
     pub money: Option<UiMoney>,
     pub merchant: Option<UiMerchant>,
@@ -265,7 +270,7 @@ pub struct GameHudState {
     pub sitting: bool,
     /// Keys: player, target, chat, actions, inventory, loot, bag:<parent_slot>,
     /// spellbar, spellbook, spell_inspection, casting, buffs, merchant, bank, group, raid,
-    /// guild, skills, trade, hotbuttons, hotbutton_editor.
+    /// guild, skills, training, trade, hotbuttons, hotbutton_editor.
     /// All coordinates are logical pixels.
     pub window_positions: BTreeMap<String, [f32; 2]>,
     /// Back-to-front logical IDs; used by standalone frame/capture callers.
@@ -283,6 +288,7 @@ pub enum UiAction {
     Raid(RaidAction),
     Guild(GuildAction),
     Progression(ProgressionAction),
+    Training(TrainingAction),
     OpenSkills,
     Commerce(CommerceAction),
     /// Only dispatch a removal for a right-click; left-click is inspection.
@@ -331,6 +337,9 @@ impl UiAction {
         }
         if let Some(action) = ProgressionAction::from_hit(hit) {
             return Some(Self::Progression(action));
+        }
+        if let Some(action) = TrainingAction::from_hit(hit) {
+            return Some(Self::Training(action));
         }
         let item = hit.item.as_str();
         if let Some(rows) = item.strip_prefix("SDW_SpellDescription:scroll:") {
@@ -743,6 +752,9 @@ impl Hud {
         }
         if let Some(progression) = &state.progression {
             draw.progression(state, progression);
+        }
+        if let Some(training) = &state.training {
+            draw.training(state, training);
         }
         if let Some(hotbuttons) = &state.hotbuttons {
             draw.hotbuttons(state, hotbuttons);

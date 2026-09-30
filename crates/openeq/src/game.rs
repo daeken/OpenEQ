@@ -476,6 +476,8 @@ impl GameplayState {
         name: impl Fn(u32) -> String,
     ) {
         match event {
+            // LiveWorld owns trainer dispatch stamps and shared-money reconciliation.
+            GameplayEvent::Training(_) => {}
             GameplayEvent::Progression(event) => {
                 if self.progression.confirmed {
                     if let openeq_net::progression::ProgressionEvent::Level { level, .. } = &event

@@ -1,8 +1,9 @@
 # Trainer transactions: authority, interruption and next fixture
 
-Source audit and standalone implementation, 2026-09-29, against EQEmu
-`4aceae18b94ffaafc08e2b17bc41cd72c77f795d`. No server connection, login,
-database access, purchase, deployment or server runtime edit was performed.
+Source audit and trainer implementation, September29–30, against EQEmu
+`4aceae18b94ffaafc08e2b17bc41cd72c77f795d`. The bounded dedicated-character
+purchase and restoration proof is recorded in `TRAINER_LIVE_PROOF_PLAN.md`.
+No server deployment or server runtime edit was performed.
 
 Read with [PROGRESSION_UI_PLAN.md](PROGRESSION_UI_PLAN.md),
 [PROGRESSION_PROTOCOL_PLAN.md](PROGRESSION_PROTOCOL_PLAN.md), and
@@ -19,21 +20,22 @@ transaction IDs limit its guarantees; they do not block ordinary purchases
 with one tracked request, matching receipts and explicit uncertainty handling.
 A universally read-only quote request is not established.
 
-## Existing implementation and the next bounded slice
+## Implemented trainer flow
 
 The current network progression module receives skill/language values, level
 and XP updates. The profile supplies a training-point snapshot and currency.
 `ProgressionState.profile_training_points` deliberately remains a profile
 snapshot; level events do not grant local points. The existing money decoder
 handles `OP_MoneyUpdate=0x640c`, but training does not call its sender.
-The standalone `openeq-net::training` wire API and `openeq::training` session
-reducer now implement the checked prerequisite described below. They are not
-yet connected to runtime dispatch or a purchase UI in this slice.
+The checked `openeq-net::training` wire API and `openeq::training` session
+reducer are connected through the gameplay packet router and
+`live::training`. The original-art trainer window opens through explicit
+`/train` or trainer service interaction.
 The Skills window and command hotbuttons must continue to send no trainer
 traffic merely because a row or window opens.
 
-The implemented prerequisite is a **standalone checked trainer wire API and
-session reducer**, tested offline before the integration owner connects UI/dispatch:
+The implemented flow uses a **checked trainer wire API and session reducer**
+with production dispatch and UI checks:
 
 - Decode the 448-byte open reply and 76-byte completion separately from the
   receive-only progression reducer. Preserve bounded raw fields; expose only
@@ -53,18 +55,19 @@ session reducer**, tested offline before the integration owner connects UI/dispa
   server-assessed cost; it is not independent proof of successful coin debit.
   A cost above known funds makes the balance uncertain instead of wrapping,
   fabricating free success or attempting a refund.
-- The integration owner will add a usable original-art trainer flow after the overlapping
-  networking work. Show reported maxima beside current base values; show price
-  unavailable before Train when no quote exists. A disabled-purchase panel is
-  a fixture aid, not the completed user-facing purchase milestone.
-- This prerequisite changes only standalone modules/exports. It does not add
-  transport dispatch, automatic refresh or live access. Explicit trainer open
-  remains a real interaction with the footprint below, not a harmless query.
+- The original-art trainer flow shows reported maxima beside current base
+  values, current session estimates, and price unavailable before Train because
+  no quote exists. An eligible explicitly selected row enables Train. Page,
+  selection, close and live-state revisions invalidate stale UI hits.
+- Runtime sends one claimed request through a separate trainer queue. The
+  worker rechecks current action/profile authority, trainer incarnation, class,
+  living state and three-dimensional range before transport. Explicit trainer
+  open remains a real interaction with the footprint below, not a harmless query.
 
-This is new trainer coverage, not another Skills window or another live XP
-proof. Runtime/network changes remain with the integration owner.
+This is new trainer coverage; the ordinary Skills window remains receive-only.
+A dedicated operator-gated production probe is available as described below.
 
-### Standalone API and verification
+### API, production dispatch and verification
 
 `openeq-net::training` validates outgoing `Selection` bank/ID pairs, builds
 `TrainingCommand::{Open,End,Train}`, and parses exact-sized `TrainingEvent`
@@ -98,7 +101,7 @@ End command and never refunds or cancels a dispatched request. `begin_epoch`
 invalidates old connection/zone/character data; recovery or level interruption
 requires a fresh profile before further purchases.
 
-Offline validation: four wire tests and thirteen reducer tests cover exact
+Offline validation: five wire tests and fifteen reducer tests cover exact
 lengths/offsets, opaque bytes, bounded names, full-width incoming IDs/costs,
 invalid outgoing banks/languages/NPC IDs, successful sequential purchases,
 new skills, language cap 100, same-value receipts, duplicate/mismatched/late
@@ -106,6 +109,62 @@ callbacks, current trainer identity, known-funds guards, unaffordable reported
 cost, signed-int overflow, concurrent currency changes, close, level/recovery,
 epoch changes and profile-before-spawn ordering. These tests do not claim a
 server-backed transaction token or atomic persistence.
+
+`live::training::State` maintains a foreground session and a worker replica.
+A request includes the current profile and authority revision, trainer
+incarnation, known carried amount and a twelve-second deadline. The worker
+consumes each operation once after checking current class/range/living state.
+The event-priority worker selector handles ready server authority before queued
+requests. Profile, currency, level and skill receipts retire a claimed but
+undispatched choice; trainer despawn/replacement and own-spawn replacement
+likewise invalidate stale choices. `TrainingSent` is published before the next
+server event, so an operation retired before that callback is proven unsent.
+Explicit worker rejection releases only that matching claim. A worker timeout
+publishes the foreground operation stamp before later receipts, even when the
+foreground has stopped polling. Local worker counters can differ after an
+unsent rejection; an explicit mapping preserves the correct callback identity.
+A transport error, timeout or interrupted sent operation remains uncertain and
+is never retried.
+
+A matching skill update and completion debit shared gameplay currency exactly
+once through `commerce::debit`, using the existing denomination handling. The
+practice profile snapshot stays unchanged. Contradictory receipts, a reported
+cost above known money, or an interrupted sent purchase make carried money
+unavailable to merchant, bank and trade spending until an independent balance
+or profile arrives. Practice uncertainty still requires a new profile. Item,
+commerce, trade and camp actions are gated while the trainer request is pending.
+Current production UI choices are checked again by the runtime, even when a
+stale hit reaches the adapter.
+
+Eleven production runtime tests cover foreground/worker authority, sequential
+55→56→57 purchases and shared 100000→99089→98116 copper, duplicate sends,
+profile snapshots, zero-practice prevention, class/range/trainer replacement,
+pre-dispatch skill changes, proven-unsent rejection, sent/unsent death,
+conflicting currency, missing receipts, over-funds costs, source clean-name
+rules, stalled-foreground late receipts and stale timeout callbacks. Adapter and original-art presentation tests cover the panel separately.
+
+### Operator-gated production probe
+
+`trainer_smoke PRIVATE_CONFIG PRIVATE_PROOF_DIRECTORY` is pinned to Barterer
+and a unique living nearby Warlord_Welorf. It requires level 10/class 1, received
+skill 0 value 55, two profile practices, 100000 carried copper and all five
+specializations at most 50 before opening. It sends no movement, audio, SQL or
+combat. The operator owns offline snapshots, fixture seeding and restoration.
+
+The probe opens via production `/train`, selects skill 0 with a current UI
+revision, and replays the same Train hit to verify it cannot queue twice. After
+the first matched value 56/cost 911 it writes `purchase-1.ready` and waits for
+`continue-after-1`; after value 57/cost 973 it writes `purchase-2.ready` and
+waits for `continue-after-2`. All four markers must be absent before starting.
+Each checkpoint allows the operator to inspect persisted server state before
+the next step. The probe then closes through the production UI, logs out
+normally, reconnects, and requires a fresh profile containing value 57,
+zero practices and 98116 copper, then logs out normally again. The presence of
+the probe and synthetic test results do not themselves establish live proof.
+The optional `--verify-persistence` mode performs only the final fresh-profile
+check and normal logout, allowing an operator to inspect an interrupted proof
+without ever repeating its purchases. Verify the dedicated fixture is offline
+and at the expected persisted result before invoking that mode.
 
 ## Exact stock records and what they establish
 

@@ -477,8 +477,10 @@ impl TrainingState {
     /// claimed request. Never use this for a timeout, send error, or missing ACK.
     pub fn rejected_unsent(&mut self, stamp: Stamp) -> bool {
         if self.pending.as_ref().is_some_and(|p| {
-            p.stamp == stamp && p.dispatch != DispatchState::Sent
-                && p.completion.is_none() && p.last_value_receipt.is_none()
+            p.stamp == stamp
+                && p.dispatch != DispatchState::Sent
+                && p.completion.is_none()
+                && p.last_value_receipt.is_none()
         }) {
             self.pending = None;
             true
@@ -1356,5 +1358,43 @@ mod tests {
         assert_eq!(state.trainer(), None);
         assert!(state.claim(stamp, &trainer()).is_ok());
         assert_eq!(state.profile_balances().unwrap().training_points, 2);
+    }
+
+    #[test]
+    fn only_explicit_unsent_proof_releases_a_claim_and_never_a_sent_request() {
+        let mut state = state(2, 30);
+        open(&mut state);
+        let first = train(&mut state, 0, 0);
+        assert!(state.rejected_unsent(first));
+        assert!(!state.rejected_unsent(first));
+        assert_eq!(state.estimate().unwrap().training_points, 2);
+        let second = train(&mut state, 0, 0);
+        assert!(!state.rejected_unsent(first));
+        assert!(state.sent(second));
+        assert!(!state.rejected_unsent(second));
+        assert_eq!(
+            state.send_failed(second),
+            Observation::Blocked(BlockReason::TransportUncertain)
+        );
+        assert_eq!(state.estimate(), None);
+    }
+
+    #[test]
+    fn derived_money_rebase_preserves_received_balance_and_profile_snapshots() {
+        let mut state = state(2, 30);
+        open(&mut state);
+        assert_eq!(
+            state.rebase_estimated_copper(EPOCH, 25),
+            Observation::Updated
+        );
+        assert_eq!(state.observed_copper(), Some(30));
+        assert_eq!(state.profile_balances().unwrap().carried_copper, 30);
+        assert_eq!(state.estimate().unwrap().carried_copper, 25);
+        train(&mut state, 0, 0);
+        assert_eq!(
+            state.rebase_estimated_copper(EPOCH, 20),
+            Observation::Blocked(BlockReason::ConcurrentCurrencyUpdate)
+        );
+        assert_eq!(state.observed_copper(), Some(30));
     }
 }
