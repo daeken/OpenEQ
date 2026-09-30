@@ -638,3 +638,29 @@ overnight cutoff.
   reviewed patch0004 fixes it. It is not deployed. Additional server hazards
   and remaining roadmap scope are recorded in `DEEP_PARITY_ROADMAP.md` and
   `SKILL_CAP_CACHE_REVIEW.md`.
+
+## Continued daytime work: character creation and idle reliability
+
+- The character list now has a five-page creation editor and an actual-model
+  Review. Submission requires an exact matching preview; missing selected
+  parts/textures cannot silently approve a default appearance. Provisional
+  drafts still recover supported defaults. Pending/uncertain outcomes survive
+  closing the editor, and stale connection screens retire without input.
+- Ordinary Trailborn was created through the production controller/editor and
+  original GPU preview after120s idle. Submitted attributes and initial items,
+  binds, skills and languages matched SQL. Fresh login returned the same
+  character; all30 tracked tables remained unchanged. The new fixture stays
+  offline and has not entered a zone. Explorer was not used.
+- A real preapproval idle failure exposed missing client keepalives. The
+  source-backed fix preserves dead-peer/unacknowledged deadlines and passed
+  independent local transport tests plus the120s live idle proof.
+- **864 workspace tests passed**, zero failures/ignored, original assets/GPU
+  included. Strict workspace lint, formatting, client build and playback-free
+  all-target check passed. Evidence prefix:
+  `/tmp/openeq-creation-checkpoint-final-`. Creation screens and outcomes passed
+  normal/Retina/compact captures; independent asset review checked2,299 cases.
+- Separate actual-source tests reproduce five cursor persistence defects,
+  including bag-child/tail row collisions and ignored save failures. The
+  reviewable diagnostic, proposed opt-in protocol and lossless repair plan
+  preserve the distinction between observed state and durable storage. No
+  server patch, schema migration or hand-in extension was deployed.

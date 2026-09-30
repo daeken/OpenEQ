@@ -24,8 +24,8 @@ assets/GPU, strict Clippy, format, normal build and playback-disabled checks.
    lighting data, retain water/holes, and measure memory plus CPU/GPU time across
    representative large zones. Do not claim native pixel fidelity for unknown
    ecosystem blending rules.
-4. **Character/session lifecycle.** Complete creation, appearance preview,
-   camp-to-roster and reconnect; finish hover/cross-zone resurrection and item/XP
+4. **Character/session lifecycle — creation to fresh roster verified.** Complete
+   first-entry coverage and remaining appearance support; finish hover/cross-zone resurrection and item/XP
    recovery. Bind pending work to session identity and test interruption at each
    boundary. Use dedicated characters only.
 5. **Progression controls — trainer purchases verified.** Source-backed trainer purchases, AA and
@@ -66,10 +66,10 @@ listed rather than being treated as complete.
   item move as a direct swap. OpenEQ incorrectly predicted a stack merge and
   sent zero on ordinary UI drops. Fixed the wire quantity and reducer semantics;
   the dedicated live proof below verifies real server persistence.
-- Current ownership: npc_assets handles the original-art trainer UI; xml_ui
-  handles standalone character-creation protocol and immutable draft state;
-  cursor_review handles trainer runtime/network integration. Root handles
-  interaction wiring, integrated verification and private fixture validation.
+- Latest batch ownership: npc_assets handles original-model certification and
+  idle transport; xml_ui handles creation controls/outcomes and the cursor
+  repair design; cursor_review independently reviews authority and source
+  reproductions. Root handles integration, live proofs and publication.
 
 ### Inventory stack and scribing prerequisite
 
@@ -337,3 +337,58 @@ class-1/skill-0/level-10 database cap of75.
   The proposed opt-in extension in `OPENEQ_CURSOR_EXTENSION_V1.md` separates
   complete observed ownership from durable storage and keeps arbitrary hand-ins
   pending the required persistence contract and proof.
+
+### Character creation, original-model preview and live roster proof
+
+- The character list now offers a local five-page New flow: identity, origin,
+  source-valid stat allocation, supported appearance and full-avatar Review.
+  Browsing sends no approval. Only final Create claims the immutable draft on
+  its original selection connection. Keyboard/IME, held/stale clicks,
+  capability refreshes and compact/Retina layouts are covered.
+- Preview authority binds the exact account/socket/catalog/roster/draft and
+  chosen class/appearance to the actually drawn model family. Missing diffuse
+  textures or silently omitted requested parts cannot approve creation. Existing
+  world/roster rendering keeps graceful fallback; provisional drafts can adopt
+  supported defaults without claiming a receipt.
+- Independent review reproduced and fixed missing Luclin hair being shown bald
+  yet approved, stale creation screens hiding connection errors, detached
+  results disappearing, and compact pending text overlapping buttons. Unknown
+  outcomes require a fresh sign-in before another creation attempt.
+- Independent original-asset CPU sweep:2,299 cases,2,210 resolved,89 withheld.
+  Each withheld case was compared to default and produced identical geometry
+  and materials; the UI cannot promise an unrendered choice. This is a bounded
+  appearance sweep, not every cosmetic combination or a live creation matrix.
+- The dedicated ordinary **Trailborn** creation passed after120s idle. Exact
+  submitted stats/face and starting items/binds/skills/languages matched SQL;
+  a fresh authenticated roster returned the same enabled level1 character.
+  All30 tracked character tables stayed identical across reconnect. The fixture
+  remains offline; no zone entry, other-character actions or audio occurred.
+  See `CHARACTER_CREATION_PROOF_PLAN.md` for exact scope and private evidence.
+- Follow-up performance question: name/stat changes retire the full preview
+  request along with its receipt. Measure editor reload costs before adding an
+  immutable model-resource cache keyed separately from draft authority; any
+  reuse must still require an exact fresh submission receipt. This is a source
+  observation, not a reproduced user-facing slowdown.
+
+### Creation verification checkpoint, September30
+
+- `ae09bde` publishes the creation editor, exact model certification, outcome
+  controls and bounded live proof tooling.
+- **864 workspace tests passed**, zero failed/ignored, with original assets and
+  GPU tests enabled and serialized. Strict workspace/all-target Clippy,
+  formatting, normal client build and no-default-feature all-target check pass.
+  Evidence prefix: `/tmp/openeq-creation-checkpoint-final-`. An initial run
+  omitted `EQ_DIR` for three asset tests; the complete corrected run passed.
+- Original-art screenshots cover identity/origin/stats/appearance/review and
+  pending/completed/rejected/unknown/detached outcomes at normal, Retina and
+  compact dimensions. Representative final captures were inspected; files use
+  `/tmp/openeq-creation-checkpoint-{ui,preview,wizard}` and
+  `/tmp/openeq-creation-ui`.
+- Independently reviewed cursor diagnostic/proposal is published in3bad1b7;
+  the idle transport fix is9179f49. Five cursor-save defects reproduce in an
+  isolated actual-source seam; none is described as fixed or deployed.
+- Next implementation priorities: bounded owned-state capture/negotiation and
+  verified NPC hand-ins; lossless cursor storage/caller handling described in
+  `CURSOR_PERSISTENCE_REPAIR_PLAN.md`; first-entry verification for Trailborn;
+  remaining recovery, terrain, AA/augmentation and broader XML UI work. Account
+  registration and unsupported cosmetics remain explicit limits.
