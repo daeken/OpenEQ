@@ -392,3 +392,41 @@ class-1/skill-0/level-10 database cap of75.
   `CURSOR_PERSISTENCE_REPAIR_PLAN.md`; first-entry verification for Trailborn;
   remaining recovery, terrain, AA/augmentation and broader XML UI work. Account
   registration and unsupported cosmetics remain explicit limits.
+
+### Inventory persistence prerequisites and AA display
+
+- Isolated EQEmu patch0005 checks ordinary inventory deletes, cursor preclear,
+  parent replacement and recursive bag saves. Actual-source SQL-seam tests
+  reproduce eight failures (4/12 pass before); all 12 pass after, including the
+  standalone CMake target. Zero-row success and partial-write footprints are
+  explicitly tested. See `INVENTORY_SAVE_ERRORS_REVIEW.md`.
+- Independent ItemInstance audit found one omitted field among 24 members:
+  task-delivery count. Patch0006 preserves it through copy/Clone and recursive
+  inventory insertion. The pinned utility suite with five new regressions goes
+  from81/84 to84/84. See `ITEM_CLONE_REVIEW.md`.
+- Both patches remain undeployed. A newly audited caller trap makes that
+  separation necessary: some trade/barter paths already insert and publish an
+  item before saving, then return another copy on a false result. Caller-owned
+  staging/commit and fail-closed publication must precede rollout; rejecting
+  oversized queues at the leaf alone would introduce another duplication path.
+- The client now receives exact RoF2 AA stats and profile unspent points, and
+  displays them in a local AA tab using original gauge art. Normal/AA XP,
+  training and allocation authority remain independent. Missing/out-of-range
+  values stay unavailable; stale values are labelled. No AA mutation/request
+  path is enabled. See `PROGRESSION_PROTOCOL_PLAN.md` for source gates/widths.
+- Remaining hard work is unchanged: lossless cursor ownership/storage and
+  verified NPC hand-ins, first-entry lifecycle, deeper recovery, native terrain,
+  AA/augmentation transactions and XML UI compatibility. Leaf tests and a
+  received progress bar do not close those milestones.
+- **868 workspace tests passed**, zero failures or ignored, with original assets
+  and serialized GPU checks. Strict workspace/all-target Clippy, formatting,
+  normal client build and playback-disabled all-target check pass. Evidence:
+  `/tmp/openeq-aa-checkpoint-{tests,clippy,fmt,build,headless}.log`; original UI,
+  preview and creation captures use the matching `ui`, `preview` and `wizard`
+  directories. All 16 new AA captures were inspected in the focused run; root
+  independently inspected normal and narrow/stale examples.
+- Patches0001–0006 apply cleanly in order to the pinned EQEmu base. The combined
+  actual-source utility suite passes98/98 with all changed common objects linked,
+  connection denial and network isolation. This verifies integration of the
+  isolated patches, not live persistence or an approved deployment. The client
+  AA slice is committed as `8744322`.

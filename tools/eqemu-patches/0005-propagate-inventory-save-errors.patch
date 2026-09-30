@@ -1,0 +1,349 @@
+From 9adae85c6380c6317f296349ded38126d8ecc964 Mon Sep 17 00:00:00 2001
+From: Sera Brocious <sera.brocious@gmail.com>
+Date: Wed, 30 Sep 2026 14:07:35 -0500
+Subject: [PATCH] Propagate ordinary inventory save errors and accept
+ successful empty deletes
+
+Check cursor preclear, container clearing, parent replacement and recursive child writes. Preserve partial-write and cursor iterator behavior; do not introduce transactions or change shared-bank storage. Accurate leaf results do not provide rollback safety for callers that mutate and publish before saving.
+
+Add a Linux/GCC standalone actual-source SQL-seam regression with connection denial. Eight of twelve cases fail before the fix; all twelve pass after, including the CMake target. This prerequisite remains undeployed pending operation-level ownership and transaction handling.
+---
+ common/shareddb.cpp                  |  38 ++++--
+ tests/CMakeLists.txt                 |  13 ++
+ tests/inventory_save_errors_test.cpp | 195 +++++++++++++++++++++++++++
+ 3 files changed, 232 insertions(+), 14 deletions(-)
+ create mode 100644 tests/inventory_save_errors_test.cpp
+
+diff --git a/common/shareddb.cpp b/common/shareddb.cpp
+index 3a3963287..e05db1b49 100644
+--- a/common/shareddb.cpp
++++ b/common/shareddb.cpp
+@@ -154,16 +154,19 @@ bool SharedDatabase::SaveCursor(
+ 	std::list<EQ::ItemInstance*>::const_iterator& end
+ )
+ {
+-	const int deleted = InventoryRepository::DeleteWhere(
+-		*this,
++	const auto cleared = QueryDatabase(
+ 		fmt::format(
+-			"`character_id` = {} AND (`slot_id` = {} OR `slot_id` BETWEEN {} AND {})",
++			"DELETE FROM {} WHERE `character_id` = {} AND (`slot_id` = {} OR `slot_id` BETWEEN {} AND {})",
++			InventoryRepository::TableName(),
+ 			char_id,
+ 			EQ::invslot::slotCursor,
+ 			EQ::invbag::CURSOR_BAG_BEGIN,
+ 			EQ::invbag::CURSOR_BAG_END
+ 		)
+ 	);
++	if (!cleared.Success()) {
++		return false;
++	}
+ 
+ 	int16 i = EQ::invbag::CURSOR_BAG_BEGIN;
+ 	for (auto& it = start; it != end; ++it, i++) {
+@@ -240,7 +243,9 @@ bool SharedDatabase::SaveInventory(uint32 char_id, const EQ::ItemInstance* inst,
+ 	// Needed to clear out bag slots that 'REPLACE' in UpdateInventorySlot does not overwrite..otherwise, duplication occurs
+ 	// (This requires that parent then child items be sent..which should be how they are currently passed)
+ 	if (EQ::InventoryProfile::SupportsContainers(slot_id)) {
+-		DeleteInventorySlot(char_id, slot_id);
++		if (!DeleteInventorySlot(char_id, slot_id)) {
++			return false;
++		}
+ 	}
+ 
+ 	return UpdateInventorySlot(char_id, inst, slot_id);
+@@ -277,6 +282,9 @@ bool SharedDatabase::UpdateInventorySlot(uint32 char_id, const EQ::ItemInstance*
+ 	e.guid                = inst->GetSerialNumber();
+ 
+ 	const int replaced = InventoryRepository::ReplaceOne(*this, e);
++	if (!replaced) {
++		return false;
++	}
+ 
+ 	// Save bag contents, if slot supports bag contents
+ 	if (inst->IsClassBag() && EQ::InventoryProfile::SupportsContainers(slot_id)) {
+@@ -288,11 +296,13 @@ bool SharedDatabase::UpdateInventorySlot(uint32 char_id, const EQ::ItemInstance*
+ 			i++
+ 		) {
+ 			const EQ::ItemInstance* bag_inst = inst->GetItem(i);
+-			SaveInventory(char_id, bag_inst, EQ::InventoryProfile::CalcSlotId(slot_id, i));
++			if (!SaveInventory(char_id, bag_inst, EQ::InventoryProfile::CalcSlotId(slot_id, i))) {
++				return false;
++			}
+ 		}
+ 	}
+ 
+-	return replaced;
++	return true;
+ }
+ 
+ bool SharedDatabase::UpdateSharedBankSlot(uint32 char_id, const EQ::ItemInstance* inst, int16 slot_id)
+@@ -347,16 +357,16 @@ bool SharedDatabase::UpdateSharedBankSlot(uint32 char_id, const EQ::ItemInstance
+ 
+ bool SharedDatabase::DeleteInventorySlot(uint32 char_id, int16 slot_id)
+ {
+-	const int deleted = InventoryRepository::DeleteWhere(
+-		*this,
++	const auto deleted = QueryDatabase(
+ 		fmt::format(
+-			"`character_id` = {} AND `slot_id` = {}",
++			"DELETE FROM {} WHERE `character_id` = {} AND `slot_id` = {}",
++			InventoryRepository::TableName(),
+ 			char_id,
+ 			slot_id
+ 		)
+ 	);
+ 
+-	if (!deleted) {
++	if (!deleted.Success()) {
+ 		return false;
+ 	}
+ 
+@@ -367,15 +377,15 @@ bool SharedDatabase::DeleteInventorySlot(uint32 char_id, int16 slot_id)
+ 
+ 	const int16 base_slot_id = EQ::InventoryProfile::CalcSlotId(slot_id, EQ::invbag::SLOT_BEGIN);
+ 
+-	return InventoryRepository::DeleteWhere(
+-		*this,
++	return QueryDatabase(
+ 		fmt::format(
+-			"`character_id` = {} AND `slot_id` BETWEEN {} AND {}",
++			"DELETE FROM {} WHERE `character_id` = {} AND `slot_id` BETWEEN {} AND {}",
++			InventoryRepository::TableName(),
+ 			char_id,
+ 			base_slot_id,
+ 			base_slot_id + (EQ::invbag::SLOT_COUNT - 1)
+ 		)
+-	);
++	).Success();
+ }
+ 
+ bool SharedDatabase::DeleteSharedBankSlot(uint32 char_id, int16 slot_id)
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 17cfbfa5a..94fa829ff 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -25,6 +25,19 @@ add_executable(tests ${tests_sources} ${tests_headers})
+ target_link_libraries(tests common cppunit)
+ target_include_directories(tests PRIVATE ..)
+ 
++# Actual SharedDatabase methods with a fail-closed SQL seam. The wrapper uses
++# Linux's GNU-style linker and the libstdc++ C++11 string ABI.
++if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
++	add_executable(inventory_save_errors_tests inventory_save_errors_test.cpp)
++	target_include_directories(inventory_save_errors_tests PRIVATE ..)
++	target_link_libraries(inventory_save_errors_tests $<TARGET_PROPERTY:tests,LINK_LIBRARIES>)
++	target_link_options(inventory_save_errors_tests PRIVATE
++		"LINKER:--wrap=_ZN6DBcore13QueryDatabaseERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEb"
++		"LINKER:--wrap=mysql_real_connect"
++	)
++	set_property(TARGET inventory_save_errors_tests PROPERTY FOLDER executables/tests)
++endif()
++
+ install(TARGETS tests RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
+ 
+ if(MSVC)
+diff --git a/tests/inventory_save_errors_test.cpp b/tests/inventory_save_errors_test.cpp
+new file mode 100644
+index 000000000..8b88ebdf8
+--- /dev/null
++++ b/tests/inventory_save_errors_test.cpp
+@@ -0,0 +1,195 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++// Real SharedDatabase/ItemInstance methods; only SQL execution is substituted.
++// No production config, database connection, or rollback guarantee.
++#include "common/shareddb.h"
++#include "common/inventory_profile.h"
++#include "common/eqemu_config.h"
++
++#include <functional>
++#include <iostream>
++#include <map>
++#include <regex>
++#include <stdexcept>
++#include <string>
++#include <vector>
++
++const EQEmuConfig* Config = nullptr;
++namespace {
++constexpr uint32_t character_id = 424242;
++struct Row {
++	uint32_t item;
++	uint16_t charges;
++	bool operator==(const Row&) const = default;
++};
++enum class Kind { ClearCursor, DeleteSlot, DeleteRange, Replace };
++struct Statement { Kind kind; int slot; bool failed; };
++std::map<int, Row> rows;
++std::map<uint32_t, EQ::ItemData> definitions;
++std::vector<Statement> statements;
++std::function<bool(Kind,int)> fail;
++void require(bool condition, const char* message) {
++	if (!condition) throw std::runtime_error(message);
++}
++void reset() { rows.clear(); statements.clear(); fail = {}; }
++EQ::ItemInstance item(uint32_t id, bool bag = false) {
++	auto [it, inserted] = definitions.try_emplace(id);
++	if (inserted) {
++		auto& data = it->second;
++		data.ID = id;
++		data.ItemClass = bag ? EQ::item::ItemClassBag : EQ::item::ItemClassCommon;
++		data.StackSize = 1;
++		data.BagSlots = bag ? 2 : 0;
++		data.BagSize = 10;
++	}
++	return EQ::ItemInstance(&it->second, 1);
++}
++void require_failure_was_last() {
++	require(!statements.empty() && statements.back().failed, "database work continued after failure");
++}
++}
++
++// Linker wrapping is intentional: unknown SQL fails closed rather than reaching
++// the real DBcore implementation. Deny a connection even if a future path tries it.
++extern "C" MYSQL* __wrap_mysql_real_connect(MYSQL*, const char*, const char*, const char*,
++	const char*, unsigned int, const char*, unsigned long) {
++	throw std::runtime_error("database connections are forbidden in this test");
++}
++extern "C" MySQLRequestResult __wrap__ZN6DBcore13QueryDatabaseERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEb(
++	DBcore*, const std::string& query, bool) {
++	static const std::regex clear(R"(DELETE FROM inventory WHERE `character_id` = 424242 AND \(`slot_id` = (\d+) OR `slot_id` BETWEEN (\d+) AND (\d+)\))");
++	static const std::regex single(R"(DELETE FROM inventory WHERE `character_id` = 424242 AND `slot_id` = (\d+))");
++	static const std::regex range(R"(DELETE FROM inventory WHERE `character_id` = 424242 AND `slot_id` BETWEEN (\d+) AND (\d+))");
++	static const std::regex replace(R"(REPLACE INTO inventory \(character_id, slot_id, item_id, charges, color, augment_one, augment_two, augment_three, augment_four, augment_five, augment_six, instnodrop, custom_data, ornament_icon, ornament_idfile, ornament_hero_model, guid\) +VALUES \(424242,(\d+),(\d+),(\d+),\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,'',\d+,\d+,\d+,\d+\))");
++	std::smatch match;
++	Kind kind;
++	int slot, low = 0, high = -1;
++	Row row{};
++	if (std::regex_match(query, match, clear)) {
++		kind = Kind::ClearCursor; slot = std::stoi(match[1]);
++		low = std::stoi(match[2]); high = std::stoi(match[3]);
++	} else if (std::regex_match(query, match, single)) {
++		kind = Kind::DeleteSlot; slot = std::stoi(match[1]);
++	} else if (std::regex_match(query, match, range)) {
++		kind = Kind::DeleteRange; slot = low = std::stoi(match[1]); high = std::stoi(match[2]);
++	} else if (std::regex_match(query, match, replace)) {
++		kind = Kind::Replace; slot = std::stoi(match[1]);
++		row = {static_cast<uint32_t>(std::stoul(match[2])), static_cast<uint16_t>(std::stoul(match[3]))};
++	} else {
++		throw std::runtime_error("unexpected synthetic query: " + query);
++	}
++	bool failed = fail && fail(kind, slot);
++	statements.push_back({kind, slot, failed});
++	if (failed) return MySQLRequestResult(); // Success=false, not success with zero affected rows.
++	uint32_t changed = 0;
++	if (kind == Kind::Replace) {
++		changed = rows.contains(slot) ? 2 : 1;
++		rows[slot] = row;
++	} else {
++		for (auto it = rows.begin(); it != rows.end();) {
++			bool exact = (kind == Kind::ClearCursor || kind == Kind::DeleteSlot) && it->first == slot;
++			bool in_range = (kind == Kind::ClearCursor || kind == Kind::DeleteRange) && it->first >= low && it->first <= high;
++			if (exact || in_range) { it = rows.erase(it); ++changed; }
++			else ++it;
++		}
++	}
++	return MySQLRequestResult(nullptr, changed); // Includes legitimate successful zero-row deletes.
++}
++
++int main() {
++	SharedDatabase db;
++	const int parent = EQ::invslot::slotGeneral1;
++	const int child = EQ::InventoryProfile::CalcSlotId(parent, 0);
++	const int cursor = EQ::invslot::slotCursor;
++	const int tail = EQ::invbag::CURSOR_BAG_BEGIN + 1;
++	std::vector<std::pair<const char*,std::function<void()>>> cases = {
++		{"empty cursor clear succeeds", [&] {
++			EQ::InventoryProfile inv; auto begin=inv.cursor_cbegin(), end=inv.cursor_cend();
++			require(db.SaveCursor(character_id, begin, end), "empty save failed");
++			require(rows.empty() && statements.size()==1, "empty clear footprint changed");
++		}},
++		{"failed cursor preclear stops before writes", [&] {
++			EQ::InventoryProfile inv; inv.PushCursor(item(100));
++			rows[cursor]={101,1}; rows[tail]={102,1}; auto before=rows;
++			fail=[](Kind kind,int) { return kind==Kind::ClearCursor; };
++			auto begin=inv.cursor_cbegin(), original=begin, end=inv.cursor_cend();
++			require(!db.SaveCursor(character_id,begin,end), "failed preclear claimed success");
++			require(begin==original && rows==before && statements.size()==1, "preclear failure changed saved state/iterator");
++		}},
++		{"zero-row ordinary delete succeeds", [&] {
++			require(db.DeleteInventorySlot(character_id,EQ::invslot::slotPrimary), "no-op delete failed");
++			require(rows.empty() && statements.size()==1, "ordinary delete touched other slots");
++		}},
++		{"absent container parent still clears orphan children", [&] {
++			rows[child]={110,1}; rows[child+1]={111,1}; rows[parent+1]={112,1};
++			require(db.DeleteInventorySlot(character_id,parent), "orphan clear failed");
++			require(rows.size()==1 && rows.at(parent+1).item==112, "orphan children survived or neighbor changed");
++		}},
++		{"failed parent delete prevents replacement", [&] {
++			rows[parent]={120,1}; rows[child]={121,1}; auto before=rows;
++			fail=[&](Kind kind,int slot) { return kind==Kind::DeleteSlot && slot==parent; };
++			auto replacement=item(122,true);
++			require(!db.SaveInventory(character_id,&replacement,parent), "failed parent clear claimed success");
++			require(rows==before && statements.size()==1, "work followed failed parent delete");
++		}},
++		{"failed child range clear reports partial deletion", [&] {
++			rows[parent]={130,1}; rows[child]={131,1};
++			fail=[&](Kind kind,int slot) { return kind==Kind::DeleteRange && slot==child; };
++			auto replacement=item(132,true);
++			require(!db.SaveInventory(character_id,&replacement,parent), "failed child range claimed success");
++			require(!rows.contains(parent) && rows.at(child).item==131, "unexpected partial-delete footprint");
++			require_failure_was_last(); // A false result is not a rollback.
++		}},
++		{"empty bag succeeds through zero-row child deletes", [&] {
++			auto bag=item(140,true);
++			require(db.SaveInventory(character_id,&bag,parent), "empty bag save failed");
++			require(rows.size()==1 && rows.at(parent).item==140, "empty bag wrote children");
++		}},
++		{"failed parent replace stops child writes", [&] {
++			auto bag=item(150,true); bag.PutItem(0,item(151)); bag.PutItem(1,item(152));
++			fail=[&](Kind kind,int slot) { return kind==Kind::Replace && slot==parent; };
++			require(!db.SaveInventory(character_id,&bag,parent), "failed parent replace claimed success");
++			require(rows.empty(), "children saved after failed parent replace");
++			require_failure_was_last();
++		}},
++		{"failed child replace retains honest partial footprint", [&] {
++			auto bag=item(160,true); bag.PutItem(0,item(161)); bag.PutItem(1,item(162));
++			fail=[&](Kind kind,int slot) { return kind==Kind::Replace && slot==child+1; };
++			require(!db.SaveInventory(character_id,&bag,parent), "failed child save claimed success");
++			require(rows.size()==2 && rows.at(parent).item==160 && rows.at(child).item==161, "earlier writes were not retained as expected");
++			require_failure_was_last();
++		}},
++		{"failed null-child delete propagates", [&] {
++			auto bag=item(170,true); bag.PutItem(1,item(172));
++			fail=[&](Kind kind,int slot) { return kind==Kind::DeleteSlot && slot==child; };
++			require(!db.SaveInventory(character_id,&bag,parent), "null-child delete failure claimed success");
++			require(rows.size()==1 && rows.at(parent).item==170, "later child saved after delete failure");
++			require_failure_was_last();
++		}},
++		{"ordinary bag and cursor queue saves remain successful", [&] {
++			auto bag=item(180,true); bag.PutItem(0,item(181)); bag.PutItem(1,item(182));
++			require(db.SaveInventory(character_id,&bag,parent), "ordinary bag failed");
++			require(rows.size()==3 && rows.at(child).item==181 && rows.at(child+1).item==182, "bag contents changed");
++			EQ::InventoryProfile inv; inv.PushCursor(item(183)); inv.PushCursor(item(184));
++			auto begin=inv.cursor_cbegin(), end=inv.cursor_cend();
++			require(db.SaveCursor(character_id,begin,end) && begin==end, "ordinary cursor save failed");
++			require(rows.size()==5 && rows.at(cursor).item==183 && rows.at(tail).item==184, "cursor save altered carried bag");
++		}},
++		{"later root failure preserves failed-root iterator", [&] {
++			EQ::InventoryProfile inv; inv.PushCursor(item(190)); inv.PushCursor(item(191)); inv.PushCursor(item(192));
++			fail=[&](Kind kind,int slot) { return kind==Kind::Replace && slot==tail; };
++			auto begin=inv.cursor_cbegin(), second=std::next(begin), end=inv.cursor_cend();
++			require(!db.SaveCursor(character_id,begin,end) && begin==second, "failed root iterator changed");
++			require(rows.size()==1 && rows.at(cursor).item==190, "unexpected partial cursor footprint");
++			require_failure_was_last();
++		}}
++	};
++	int failures=0;
++	for (const auto& [name,test]:cases) {
++		reset();
++		try { test(); std::cout<<"PASS "<<name<<'\n'; }
++		catch (const std::exception& error) { ++failures; std::cout<<"FAIL "<<name<<": "<<error.what()<<'\n'; }
++		EQ::InventoryProfile::CleanDirty();
++	}
++	std::cout<<(cases.size()-failures)<<'/'<<cases.size()<<" passed; database_connections=0; live_sql=0\n";
++	return failures ? 1 : 0;
++}
+-- 
+2.54.0 (Apple Git-157)
+

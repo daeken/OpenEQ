@@ -9,6 +9,11 @@ reproductions are in [CURSOR_PERSISTENCE_AUDIT.md](CURSOR_PERSISTENCE_AUDIT.md).
 The [owned-state extension](OPENEQ_CURSOR_EXTENSION_V1.md) remains an observed
 state protocol, not a durability or quest-transaction guarantee.
 
+Follow-up implementation: [INVENTORY_SAVE_ERRORS_REVIEW.md](INVENTORY_SAVE_ERRORS_REVIEW.md)
+records an isolated, tested leaf error-propagation patch; [ITEM_CLONE_REVIEW.md](ITEM_CLONE_REVIEW.md)
+records the task-delivery copy fix. Both remain undeployed. They establish
+prerequisites, not the operation-level ownership/rollback contract below.
+
 ## Recommendation
 
 Use separate versioned cursor storage with explicit ordered roots and typed
@@ -26,6 +31,11 @@ Separate two milestones:
 2. A schema, codec, loader, caller and migration change proven against an
    isolated real database. General cursor mutation is enabled only for paths
    whose ownership transfer and failure handling have passed that proof.
+
+Containment must be introduced with the caller changes: some current trade and
+barter paths return a copy to the giver on insertion failure after the recipient
+already owns it in memory. Do not deploy leaf error checks alone or add a new
+deterministic oversized-queue failure before repairing that ownership boundary.
 
 Increasing `CURSOR_BAG_END`, widening a local counter, assigning another magic
 slot range, saving only the first 200 roots, or encoding only augment IDs cannot

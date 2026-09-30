@@ -1,0 +1,269 @@
+From b4201d7aa0d1dd0c66dd1676327a25a25cae5b39 Mon Sep 17 00:00:00 2001
+From: Sera Brocious <sera.brocious@gmail.com>
+Date: Wed, 30 Sep 2026 14:07:30 -0500
+Subject: [PATCH] Preserve task-delivery accounting when cloning items
+
+Carry the delivery counter through the copy constructor so copies retain the same remaining-item result. Cover direct copies, Clone, recursive bag and augment copies, inventory insertion, and existing identity and deep-copy semantics in the utility suite.
+---
+ common/item_instance.cpp   |   1 +
+ tests/CMakeLists.txt       |   1 +
+ tests/item_instance_test.h | 202 +++++++++++++++++++++++++++++++++++++
+ tests/main.cpp             |   2 +
+ 4 files changed, 206 insertions(+)
+ create mode 100644 tests/item_instance_test.h
+
+diff --git a/common/item_instance.cpp b/common/item_instance.cpp
+index 39271ba8e..37167b099 100644
+--- a/common/item_instance.cpp
++++ b/common/item_instance.cpp
+@@ -121,6 +121,7 @@ EQ::ItemInstance::ItemInstance(const ItemInstance& copy)
+ 	m_currentslot   = copy.m_currentslot;
+ 	m_attuned       = copy.m_attuned;
+ 	m_merchantcount = copy.m_merchantcount;
++	m_task_delivered_count = copy.m_task_delivered_count;
+ 
+ 	// Copy container contents
+ 	for (auto it = copy.m_contents.begin(); it != copy.m_contents.end(); ++it) {
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 346128d60..9a830c4a0 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -17,6 +17,7 @@ set(tests_headers
+ 	string_util_test.h
+ 	skills_util_test.h
+ 	task_state_test.h
++	item_instance_test.h
+ )
+ 
+ add_executable(tests ${tests_sources} ${tests_headers})
+diff --git a/tests/item_instance_test.h b/tests/item_instance_test.h
+new file mode 100644
+index 000000000..252057695
+--- /dev/null
++++ b/tests/item_instance_test.h
+@@ -0,0 +1,202 @@
++/* EQEmu: EQEmulator
++   Copyright (C) 2001-2026 EQEmu Development Team
++   SPDX-License-Identifier: GPL-3.0-or-later
++*/
++#pragma once
++
++#include "common/inventory_profile.h"
++#include "cppunit/cpptest.h"
++
++#include <memory>
++
++class ItemInstanceTest : public Test::Suite {
++public:
++	ItemInstanceTest()
++	{
++		TEST_ADD(ItemInstanceTest::CopyPreservesTaskDelivery);
++		TEST_ADD(ItemInstanceTest::ClonePreservesTaskReturnResult);
++		TEST_ADD(ItemInstanceTest::InventoryCopiesPreserveDeliveredContents);
++		TEST_ADD(ItemInstanceTest::CloneRetainsIdentityAndIndependentState);
++		TEST_ADD(ItemInstanceTest::WorldContainerCloneRetainsUsageAndSparseContents);
++	}
++
++private:
++	void tear_down() override { EQ::InventoryProfile::CleanDirty(); }
++
++	static EQ::ItemData Item(uint32 id, bool stackable = false)
++	{
++		EQ::ItemData item{};
++		item.ID = id;
++		item.ItemClass = EQ::item::ItemClassCommon;
++		item.Stackable = stackable;
++		item.StackSize = stackable ? 20 : 1;
++		return item;
++	}
++
++	void CopyPreservesTaskDelivery()
++	{
++		auto data = Item(100, true);
++		for (int delivered : {0, 1, 3, 5}) {
++			EQ::ItemInstance source(&data, 5);
++			source.SetTaskDeliveredCount(delivered);
++			EQ::ItemInstance copy(source);
++			TEST_ASSERT(copy.GetTaskDeliveredCount() == delivered);
++			TEST_ASSERT(copy.GetCharges() == 5);
++			TEST_ASSERT(copy.RemoveTaskDeliveredItems() == 5 - delivered);
++			TEST_ASSERT(copy.GetCharges() == 5 - delivered);
++			TEST_ASSERT(copy.GetTaskDeliveredCount() == 0);
++			TEST_ASSERT(source.GetCharges() == 5);
++			TEST_ASSERT(source.GetTaskDeliveredCount() == delivered);
++		}
++	}
++
++	void ClonePreservesTaskReturnResult()
++	{
++		for (bool stackable : {false, true}) {
++			auto data = Item(100, stackable);
++			EQ::ItemInstance source(&data, stackable ? 5 : -1);
++			source.SetTaskDeliveredCount(stackable ? 3 : 1);
++			std::unique_ptr<EQ::ItemInstance> clone(source.Clone());
++			TEST_ASSERT(clone->GetTaskDeliveredCount() == source.GetTaskDeliveredCount());
++			TEST_ASSERT(clone->RemoveTaskDeliveredItems() == (stackable ? 2 : 0));
++			TEST_ASSERT(clone->GetCharges() == (stackable ? 2 : -1));
++			TEST_ASSERT(clone->GetTaskDeliveredCount() == 0);
++			TEST_ASSERT(source.GetTaskDeliveredCount() == (stackable ? 3 : 1));
++		}
++	}
++
++	void InventoryCopiesPreserveDeliveredContents()
++	{
++		auto bag_data = Item(200);
++		bag_data.ItemClass = EQ::item::ItemClassBag;
++		bag_data.BagSlots = 10;
++		auto child_data = Item(300, true);
++		auto augment_data = Item(400);
++		EQ::ItemInstance bag(&bag_data, 1);
++		EQ::ItemInstance child(&child_data, 5);
++		EQ::ItemInstance augment(&augment_data, 1);
++		child.PutAugment(2, augment);
++		bag.PutItem(7, child);
++		// Set the counters on the owned graph, before either inventory copy.
++		bag.SetTaskDeliveredCount(1);
++		bag.GetItem(7)->SetTaskDeliveredCount(3);
++		bag.GetItem(7)->GetAugment(2)->SetTaskDeliveredCount(1);
++		EQ::InventoryProfile inventory;
++		inventory.SetInventoryVersion(EQ::versions::ClientVersion::RoF2);
++		TEST_ASSERT(inventory.PutItem(EQ::invslot::GENERAL_BEGIN, bag) == EQ::invslot::GENERAL_BEGIN);
++		TEST_ASSERT(inventory.PushCursor(bag) == EQ::invslot::slotCursor);
++		for (auto* copy : {inventory.GetItem(EQ::invslot::GENERAL_BEGIN), inventory.GetCursorItem()}) {
++			TEST_ASSERT(copy != nullptr);
++			if (!copy) { return; }
++			TEST_ASSERT(copy != &bag);
++			TEST_ASSERT(copy->GetTaskDeliveredCount() == 1);
++			TEST_ASSERT(copy->GetItem(0) == nullptr);
++			const auto copied_child = copy->GetItem(7);
++			TEST_ASSERT(copied_child != nullptr);
++			if (!copied_child) { return; }
++			TEST_ASSERT(copied_child != bag.GetItem(7));
++			TEST_ASSERT(copied_child->GetTaskDeliveredCount() == 3);
++			TEST_ASSERT(copied_child->RemoveTaskDeliveredItems() == 2);
++			const auto copied_augment = copied_child->GetAugment(2);
++			TEST_ASSERT(copied_augment != nullptr);
++			if (!copied_augment) { return; }
++			TEST_ASSERT(copied_augment != bag.GetItem(7)->GetAugment(2));
++			TEST_ASSERT(copied_augment->GetTaskDeliveredCount() == 1);
++		}
++		TEST_ASSERT(bag.GetItem(7)->GetCharges() == 5);
++		TEST_ASSERT(bag.GetItem(7)->GetTaskDeliveredCount() == 3);
++	}
++
++	void CloneRetainsIdentityAndIndependentState()
++	{
++		auto data = Item(100, true);
++		data.AC = 100;
++		EQ::ItemInstance source(&data, -1);
++		source.SetSerialNumber(123456);
++		source.SetPrice(231);
++		source.SetColor(0xff123456);
++		source.SetMerchantSlot(7);
++		source.SetMerchantCount(-1);
++		source.SetCurrentSlot(23);
++		source.SetAttuned(true);
++		source.SetExp(5000);
++		source.SetScaling(true);
++		source.ScaleItem();
++		source.SetOrnamentIcon(901);
++		source.SetOrnamentationIDFile(902);
++		source.SetNewIDFile(903);
++		source.SetOrnamentHeroModel(904);
++		source.SetRecastTimestamp(12345);
++		source.SetEvolveUniqueID(0x100000001ULL);
++		source.SetEvolveCharID(41);
++		source.SetEvolveItemID(42);
++		source.SetEvolveCurrentAmount(43);
++		source.SetEvolveProgression(12.5);
++		source.SetEvolveFinalItemID(44);
++		source.SetEvolveActivated(true);
++		source.GetTimers().emplace("quest", Timer(123, 456, true));
++		source.GetTimers().at("quest").Disable();
++		const std::string custom("left^right\0tail", 15);
++		source.SetCustomData("key", custom);
++		std::unique_ptr<EQ::ItemInstance> copy(source.Clone());
++		TEST_ASSERT(copy->GetSerialNumber() == 123456); // Clone retains identity; it is not a fresh grant.
++		TEST_ASSERT(copy->GetUnscaledItem() != source.GetUnscaledItem());
++		TEST_ASSERT(copy->GetItem() != source.GetItem());
++		TEST_ASSERT(copy->GetItem()->AC == 50);
++		TEST_ASSERT(copy->GetUnscaledItem()->AC == 100);
++		TEST_ASSERT(copy->GetID() == source.GetID());
++		TEST_ASSERT(copy->GetCharges() == -1);
++		TEST_ASSERT(copy->GetPrice() == 231);
++		TEST_ASSERT(copy->GetColor() == 0xff123456);
++		TEST_ASSERT(copy->GetMerchantSlot() == 7);
++		TEST_ASSERT(copy->GetMerchantCount() == -1);
++		TEST_ASSERT(copy->GetCurrentSlot() == 23);
++		TEST_ASSERT(copy->IsAttuned());
++		TEST_ASSERT(copy->GetExp() == 5000);
++		TEST_ASSERT(copy->IsScaling());
++		TEST_ASSERT(copy->GetOrnamentationIcon() == 901);
++		TEST_ASSERT(copy->GetOrnamentationIDFile() == 902);
++		TEST_ASSERT(copy->GetNewIDFile() == 903);
++		TEST_ASSERT(copy->GetOrnamentHeroModel() == source.GetOrnamentHeroModel());
++		TEST_ASSERT(copy->GetRecastTimestamp() == 12345);
++		TEST_ASSERT(copy->GetEvolveUniqueID() == 0x100000001ULL);
++		TEST_ASSERT(copy->GetEvolveCharID() == 41);
++		TEST_ASSERT(copy->GetEvolveItemID() == 42);
++		TEST_ASSERT(copy->GetEvolveCurrentAmount() == 43);
++		TEST_ASSERT(copy->GetEvolveProgression() == 12.5);
++		TEST_ASSERT(copy->GetEvolveFinalItemID() == 44);
++		TEST_ASSERT(copy->GetEvolveActivated());
++		TEST_ASSERT(copy->GetCustomData("key") == custom);
++		auto& timer = copy->GetTimers().at("quest");
++		TEST_ASSERT(timer.GetStartTime() == 123);
++		TEST_ASSERT(timer.GetDuration() == 456);
++		TEST_ASSERT(!timer.Enabled());
++		copy->SetCustomData("key", std::string("changed"));
++		copy->ClearTimers();
++		copy->SetEvolveProgression(99.);
++		copy->SetExp(10000);
++		copy->ScaleItem();
++		TEST_ASSERT(copy->GetItem()->AC == 100);
++		TEST_ASSERT(source.GetItem()->AC == 50);
++		TEST_ASSERT(source.GetCustomData("key") == custom);
++		TEST_ASSERT(source.GetTimers().size() == 1);
++		TEST_ASSERT(source.GetEvolveProgression() == 12.5);
++	}
++
++	void WorldContainerCloneRetainsUsageAndSparseContents()
++	{
++		EQ::ItemInstance source(ItemInstWorldContainer);
++		auto data = Item(100);
++		EQ::ItemInstance child(&data, 1);
++		source.PutItem(7, child);
++		// A null map entry has no owned item; Clone has always omitted it.
++		(*source.GetContents())[2] = nullptr;
++		std::unique_ptr<EQ::ItemInstance> copy(source.Clone());
++		TEST_ASSERT(copy->GetUnscaledItem() == nullptr);
++		TEST_ASSERT(copy->IsType(EQ::item::ItemClassBag));
++		TEST_ASSERT(copy->GetContents()->size() == 1);
++		TEST_ASSERT(copy->GetItem(2) == nullptr);
++		TEST_ASSERT(copy->GetItem(7) != source.GetItem(7));
++		TEST_ASSERT(copy->GetItem(7)->GetID() == 100);
++	}
++};
+diff --git a/tests/main.cpp b/tests/main.cpp
+index 9eb5c9080..5e007b9f1 100644
+--- a/tests/main.cpp
++++ b/tests/main.cpp
+@@ -25,6 +25,7 @@
+ #include "tests/skills_util_test.h"
+ #include "tests/string_util_test.h"
+ #include "tests/task_state_test.h"
++#include "tests/item_instance_test.h"
+ 
+ #include "common/path_manager.h"
+ #include "common/platform.h"
+@@ -50,6 +51,7 @@ int main()
+ 		tests.add(new IPCMutexTest());
+ 		tests.add(new FixedMemoryHashTest());
+ 		tests.add(new FixedMemoryVariableHashTest());
++		tests.add(new ItemInstanceTest());
+ 		tests.add(new atoboolTest());
+ 		tests.add(new hextoi_32_64_Test());
+ 		tests.add(new StringUtilTest());
+-- 
+2.54.0 (Apple Git-157)
+
