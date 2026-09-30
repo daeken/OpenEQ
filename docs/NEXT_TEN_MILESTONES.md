@@ -1,6 +1,7 @@
 # Next ten milestones
 
-Difficulty order, hardest first. Work proceeds in this order; discoveries and
+Historical difficulty order, hardest first. The September 30 world/audio focus
+in [WORLD_AUDIO_PARITY.md](WORLD_AUDIO_PARITY.md) now takes precedence. Discoveries and
 unfinished compatibility work stay visible here rather than silently becoming
 claims of full parity. This builds on the already working client; it does not
 replace the completed gameplay, commerce, trade, and exploration checklists.

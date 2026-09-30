@@ -5,15 +5,22 @@ each ships in bounded, verified slices. Discoveries become explicit work items.
 The preceding checkpoint is `f705d17`: 687 workspace tests passed with original
 assets/GPU, strict Clippy, format, normal build and playback-disabled checks.
 
-## Execution order
+## Current priority, September 30
 
-1. **Inventory transactions and NPC hand-ins — active.** Resolve ordered cursor
+The user moved world geometry/collision/movement and audio ahead of the other
+projects. Follow [WORLD_AUDIO_PARITY.md](WORLD_AUDIO_PARITY.md) until broad
+original-zone evidence supports appearance, traversal and sound. The earlier
+inventory-first order below remains backlog context, not the active order.
+
+## Earlier execution order
+
+1. **Inventory transactions and NPC hand-ins — deferred behind world/audio.** Resolve ordered cursor
    ownership and push/refresh ambiguity first; preserve bags, stack counts,
    instance identities, player refunds, loot and reconnect state. Then implement
    four-slot NPC Give with source-backed session/cancellation semantics and real
    quest proof. Acceptance includes server persistence and exact restoration of
    dedicated fixtures. See `QUEST_HANDIN_PLAN.md`.
-2. **Newer geometry, collision and liquids — research in parallel.** Complete
+2. **Newer geometry, collision and liquids — active priority.** Complete
    the native terrain-diagonal/region-precedence traces, retain authored metadata,
    then add explicitly supported liquid volumes and border triggers. Verify
    original finite/rotated/overlapping volumes, shores and NPC movement. Keep
@@ -41,8 +48,8 @@ assets/GPU, strict Clippy, format, normal build and playback-disabled checks.
    original-zone routes and performance measurements; fold findings back into
    the relevant milestone.
 
-The order follows the agreed recommendation: cursor/hand-ins first with native
-world research alongside it. Work on an independent later slice can continue
+This earlier order followed the cursor/hand-ins recommendation; the world/audio
+priority above supersedes it. Work on an independent later slice can continue
 while a specific earlier unknown is being researched; unfinished scope remains
 listed rather than being treated as complete.
 

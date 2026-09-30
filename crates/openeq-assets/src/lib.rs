@@ -14,6 +14,7 @@
 //! can be exercised from tests and command line tools as well as the game.
 
 pub mod audio;
+pub mod audit;
 mod bsp_regions;
 pub mod collision;
 pub mod environment;

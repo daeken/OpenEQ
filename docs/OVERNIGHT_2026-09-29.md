@@ -664,3 +664,30 @@ overnight cutoff.
   reviewable diagnostic, proposed opt-in protocol and lossless repair plan
   preserve the distinction between observed state and durable storage. No
   server patch, schema migration or hand-in extension was deployed.
+
+## September 30 continuation: world and audio take priority
+
+The user moved world geometry/collision/movement and audio ahead of the gameplay
+backlog. Follow `WORLD_AUDIO_PARITY.md` and its verified gaps; successful loading
+alone does not establish original-client fidelity.
+
+- Authored terrain diagonal selection now agrees across rendering, collision,
+  height sampling, prop/light anchoring and height-driven material painting.
+  The Feerrott seam witness fixes a 4.220995-unit error; direct/baked GPU checks
+  and preserved legacy collision/texture evidence pass.
+- Thirteen renamed binary dungeon archives and Housegarden now load. Native
+  type 1 material words are retained distinctly. Dranik Catacombs A retains an
+  explicit mismatched-banner-reference error, verified against archive CRCs.
+- Classic EFF periods use their independent kinds and native raw clock boundary;
+  selector 0 means XMI ordinal 0. Bounded XMI parsing covers 79 files / 389 sequences;
+  native scheduling supports 384, explicitly rejecting unsupported loop/SysEx
+  and unverified zero-delay constructs. macOS offline synthesis is integrated
+  with bounded workers/queues, file+ordinal identity and cancellation safeguards.
+- The 523-zone structural survey completed without timeouts: 501 passed structure,
+  21 had nonfinite mesh attributes, one had the banner mismatch. Animated WLD
+  vegetation, grouped/binary liquid regions, material identity and attribute
+  faults remain concrete next work. This is not a visual parity certificate.
+- **920 workspace tests passed**, zero failures/ignored, including originals,
+  GPU and silent audio. Strict lint, formatting, normal build and all-target
+  playback-free checks passed. No character/server state changed; no original
+  audio reached speakers. Evidence prefix: `/tmp/openeq-world-audio-`.
