@@ -64,3 +64,5 @@ pub mod progression_interaction;
 
 pub mod hotbutton_input;
 pub mod hotbutton_interaction;
+
+pub mod account_creation;

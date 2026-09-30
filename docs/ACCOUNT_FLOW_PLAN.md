@@ -497,9 +497,10 @@ standalone “Check name” network button.
 | Creation outcome | `HandleCharacterCreatePacket` sends a fresh `SendCharInfo` on success; on failure it deletes the reserved name and sends `ApproveName(0)`. A transport send or approved name alone is not successful creation. Match the fresh roster to the immutable submitted name and expected identity before offering Play. |
 | RandomNameGenerator `0x5954` |72 bytes: race u32, gender u32, name[64]. Server replaces the name and echoes the packet; generation is not reservation and does not establish availability for a later request. Optional after the basic creation flow. |
 
-`WorldClient::characters()` currently discards capability packets while awaiting
-SendCharInfo. Creation first needs a bounded `CharacterSelection` snapshot that
-retains capabilities with the roster. Do not infer missing data as all-enabled.
+`WorldClient::characters()` now retains capability packets while awaiting
+SendCharInfo in a bounded `CharacterSelection` snapshot. The snapshot also
+retains a strictly parsed creation catalog requested by the account selection
+pump. Missing or malformed capability data never means all-enabled.
 `world/worlddb.cpp::LoadCharacterCreateAllocations/Combos` obtains the creation
 catalog from the database; no fixed race/class/deity/start-zone table belongs in
 the client. `ExpansionRequired` is an expansion bit mask (e.g. historical
@@ -579,6 +580,61 @@ cancel before/after commit, stale roster and changed session. A fake server can
 prove that no retry or deletion follows ambiguous success. Live creation and
 deletion need their own disposable-account fixture and explicit test scope;
 camp proof requires neither.
+
+### Creation transport implementation status
+
+The strict RoF2 codec and immutable transaction state are implemented in
+`openeq-net/src/creation.rs` and `openeq/src/account_creation.rs`. Named stat
+fields preserve the different catalog/create orders. Validation checks the
+advertised exact combination, referenced allocation, checked point budget,
+expansion and membership masks, capacity, source-backed appearance limits and
+the current successful preview receipt before claiming name approval. Classic
+and Luclin palettes remain unavailable as controls; Drakkin choices require
+authored heritage/gender/class metadata. No renderer normalization is accepted
+as creation validation.
+
+`WorldClient` retains socket-identified capabilities/catalog/roster snapshots;
+roster revisions remain fresh across new connections. Catalog requests are
+read-only and sent once per selection connection. Capability/catalog changes
+invalidate older drafts and malformed replacements remove old permissive
+state. Existing characters remain playable when creation data is unavailable.
+
+Both initial login and camp return use `account/selection.rs`. Its single
+receive pump handles UI commands, socket packets and an absolute transaction
+deadline. One immutable draft owns name approval and the exact create payload
+on the same socket. Foreground and worker checks reject double submissions;
+Play is disabled while creation is pending. Cancelled panels detach, while
+Back/sign-out/closed UI finish an already claimed transaction before releasing
+the socket. Outer account cancellation retains that future for its bounded
+completion. Unexpected/malformed replies, timeout or connection loss produce an
+uncertain result; no retry, auto-delete or replacement transaction is sent.
+Success requires a newer roster matching the submitted identity. Actual zone
+and enabled state come from that roster, including disabled new characters.
+
+Local UDP fake-server tests exercise the production pump, including retained
+pre-roster capabilities, stale context, foreground and worker duplicate
+submissions, approval-to-frozen-create pairing, capability refresh before the
+success roster, detached completion, stale callbacks, Back before submission,
+rejection, malformed/unknown/duplicate approvals and socket failure. The
+production twenty-second deadline is verified while unrelated packets keep
+arriving. The test peer asserts that uncertain outcomes cause no retries or
+other application mutations. Pure codec/transaction tests also cover bounded
+parsing, stat/capability validation and appearance intersection.
+
+This transport checkpoint exposes internal account view/actions only. No
+creation button is activated yet: draft controls and a receipt from the actual
+loaded preview model family still need integration. No name reservation or
+character creation has been attempted live.
+
+The read-only `creation_catalog_smoke` passed against storage2 using only the
+dedicated Barterer account. The production controller retained all advertised
+capabilities and parsed641 combinations, with340 permitted for that account,
+capacity12, expansion mask522239 and membership tier2. Every advertised default
+stat allocation validated. The probe cancelled without selecting a character,
+approving a name or sending a creation packet. Private before/after snapshots
+confirmed all29 character tables exactly unchanged, including pose/resources
+and bookkeeping. Evidence is under `/tmp/openeq-training-proof/creation-catalog.log`
+and the adjacent private snapshot files; no credentials are recorded here.
 
 
 ### Camp implementation and verification status

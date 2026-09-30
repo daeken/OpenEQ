@@ -1,6 +1,10 @@
 //! Interactive login selection. Private credentials remain on one worker, whose
 //! Tokio runtime also owns the eventual live zone and its transport tasks.
 pub mod preferences;
+mod selection;
+#[cfg(test)]
+mod selection_tests;
+use crate::account_creation::{self, CreationState, Submission};
 use crate::live::LiveWorld;
 use anyhow::{Context, Result, bail, ensure};
 use openeq_net::{
@@ -8,6 +12,7 @@ use openeq_net::{
     world::{Character, WorldClient},
     zone::ZoneClient,
 };
+pub use selection::CreationView;
 use serde::{Deserialize, Serialize};
 use std::{
     net::SocketAddr,
@@ -110,6 +115,7 @@ pub struct View {
     /// Back on a resumed roster ends the authenticated session; the old login
     /// socket is not assumed to survive an arbitrarily long play session.
     pub resumed: bool,
+    pub creation: Option<CreationView>,
 }
 pub struct Ready {
     pub identity: SessionIdentity,
@@ -121,6 +127,8 @@ pub enum Action {
     ChooseCharacter(String),
     RefreshWorlds,
     Back,
+    Create(Box<Submission>),
+    CancelCreation(account_creation::Token),
 }
 struct Request {
     token: Token,
@@ -132,6 +140,7 @@ enum Event {
         world_name: String,
         characters: Vec<Character>,
     },
+    Creation(Box<CreationView>),
     Ready(Box<Ready>),
     Returning {
         disconnected: bool,
@@ -205,9 +214,10 @@ impl AccountController {
                 tokio::pin!(connection);
                 let result = tokio::select! {
                     _ = cancelled.changed() => {
-                        // EnterWorld may already have committed on the server.
-                        // Finish that handshake only to log out; never publish
-                        // its foreground world after cancellation.
+                        // Name approval may have reserved a character, or
+                        // EnterWorld may have committed. Retain the same
+                        // bounded future: creation finishes detached; a zone
+                        // handshake finishes only to log out.
                         if entering.load(Ordering::Relaxed)
                             && let Ok(Ok(connected)) = tokio::time::timeout(std::time::Duration::from_secs(45),connection).await {
                             cleanup_entry(connected.zone).await;
@@ -252,29 +262,52 @@ impl AccountController {
         if token != self.view.token {
             return false;
         }
-        let next = match (&action, self.view.stage) {
-            (Action::ChooseWorld(id), Stage::Worlds)
-                if self
-                    .view
-                    .servers
-                    .iter()
-                    .any(|s| s.server_id == *id && s.is_up()) =>
-            {
-                Stage::JoiningWorld
-            }
-            (Action::RefreshWorlds, Stage::Worlds) => Stage::JoiningWorld,
-            (Action::ChooseCharacter(name), Stage::Characters)
-                if self
-                    .view
-                    .characters
-                    .iter()
-                    .any(|c| c.enabled && c.name == *name) =>
-            {
-                Stage::EnteringZone
-            }
-            (Action::Back, Stage::Characters) => Stage::JoiningWorld,
-            _ => return false,
-        };
+        let next =
+            match (&action, self.view.stage) {
+                (Action::ChooseWorld(id), Stage::Worlds)
+                    if self
+                        .view
+                        .servers
+                        .iter()
+                        .any(|s| s.server_id == *id && s.is_up()) =>
+                {
+                    Stage::JoiningWorld
+                }
+                (Action::RefreshWorlds, Stage::Worlds) => Stage::JoiningWorld,
+                (Action::ChooseCharacter(name), Stage::Characters)
+                    if self
+                        .view
+                        .characters
+                        .iter()
+                        .any(|c| c.enabled && c.name == *name)
+                        && !self
+                            .view
+                            .creation
+                            .as_ref()
+                            .is_some_and(CreationView::pending) =>
+                {
+                    Stage::EnteringZone
+                }
+                (Action::Back, Stage::Characters) => Stage::JoiningWorld,
+                (Action::Create(_), Stage::Characters)
+                    if self
+                        .view
+                        .creation
+                        .as_ref()
+                        .is_some_and(|view| !view.pending()) =>
+                {
+                    Stage::Characters
+                }
+                (Action::CancelCreation(operation), Stage::Characters)
+                    if self.view.creation.as_ref().is_some_and(|view| {
+                        view.operation == Some(*operation) && view.pending()
+                    }) =>
+                {
+                    Stage::Characters
+                }
+                _ => return false,
+            };
+        let creating = matches!(action, Action::Create(_));
         if self
             .requests
             .as_ref()
@@ -283,6 +316,11 @@ impl AccountController {
             return false;
         }
         self.view.stage = next;
+        if creating && let Some(view) = &mut self.view.creation {
+            // Close the foreground double-click window before the worker can
+            // publish its immutable transaction token.
+            view.submitting = true;
+        }
         self.view.notice = None;
         true
     }
@@ -310,6 +348,7 @@ impl AccountController {
                         .or_else(|| servers.iter().find(|s| s.is_up()).map(|s| s.server_id));
                     self.view.servers = servers;
                     self.view.characters.clear();
+                    self.view.creation = None;
                     self.view.notice = None;
                 }
                 Event::Characters {
@@ -341,6 +380,7 @@ impl AccountController {
                     // A later failure in this batch must supersede this Ready.
                     self.view.token = reply.token;
                     self.view.notice = None;
+                    self.view.creation = None;
                     ready = Some(*returned);
                 }
                 Event::Returning { disconnected } => {
@@ -351,6 +391,16 @@ impl AccountController {
                         "Connection closed while camping; returning to character selection.".into()
                     });
                     self.view.characters.clear();
+                    self.view.creation = None;
+                }
+                Event::Creation(creation) => {
+                    self.view.token = reply.token;
+                    if let Some(account_creation::Phase::Completed(character)) = &creation.phase
+                        && character.enabled
+                    {
+                        self.view.selected_character = Some(character.name.clone());
+                    }
+                    self.view.creation = Some(*creation);
                 }
                 Event::SignedOut => self.cancel(),
                 Event::Failed(notice) => {
@@ -382,6 +432,7 @@ struct Connected {
     world_address: SocketAddr,
     world_name: String,
     requests: tokio::sync::mpsc::Receiver<Request>,
+    creation: CreationState,
 }
 
 async fn connect_stages(
@@ -401,6 +452,7 @@ async fn connect_stages(
     let session = login.login(&username, &password).await?;
     drop(password);
     drop(username);
+    let mut creation = CreationState::default();
     'worlds: loop {
         let servers = login.server_list().await?;
         token.revision = token.revision.wrapping_add(1);
@@ -432,36 +484,21 @@ async fn connect_stages(
         let world_address = SocketAddr::new(server.address, endpoint.world_port);
         let mut world =
             WorldClient::connect(world_address, session.account_id, &session.key).await?;
-        let characters = world.characters().await?;
-        token.revision = token.revision.wrapping_add(1);
-        sender
-            .send(Reply {
-                token,
-                event: Event::Characters {
-                    world_name: server.name.clone(),
-                    characters: characters.clone(),
-                },
-            })
-            .map_err(|_| anyhow::anyhow!("Sign-in cancelled."))?;
-        let character = loop {
-            let request = requests.recv().await.context("Sign-in cancelled.")?;
-            if request.token != token {
-                continue;
-            }
-            match request.action {
-                Action::Back => continue 'worlds,
-                Action::ChooseCharacter(name) => {
-                    if let Some(character) =
-                        characters.iter().find(|character| character.name == name)
-                    {
-                        if !character.enabled {
-                            bail!("That character is disabled by the server.");
-                        }
-                        break character.name.clone();
-                    }
-                }
-                _ => {}
-            }
+        world.characters().await?;
+        let character = match selection::run(
+            &mut world,
+            &server.name,
+            &mut token,
+            &mut requests,
+            sender,
+            entering,
+            &mut creation,
+        )
+        .await?
+        {
+            selection::Exit::Character(name) => name,
+            selection::Exit::Back => continue 'worlds,
+            selection::Exit::Cancelled => bail!("Sign-in cancelled."),
         };
         entering.store(true, Ordering::Relaxed);
         let zone =
@@ -480,6 +517,7 @@ async fn connect_stages(
             world_address,
             world_name: server.name.clone(),
             requests,
+            creation,
         });
     }
 }
@@ -543,44 +581,42 @@ async fn play_session(
             let characters = world.characters().await?;
             Ok::<_, anyhow::Error>((world, characters))
         };
-        let (mut world, characters) = tokio::select! {
+        let (mut world, _) = tokio::select! {
             _ = cancelled.changed() => return Ok(()),
             result = reconnect => result.context("Could not return to character selection; sign in again")?,
         };
-        connected.token.revision = connected.token.revision.wrapping_add(1);
-        sender
-            .send(Reply {
-                token: connected.token,
-                event: Event::Characters {
-                    world_name: connected.world_name.clone(),
-                    characters: characters.clone(),
-                },
-            })
-            .map_err(|_| anyhow::anyhow!("Account screen closed."))?;
-        let character = loop {
-            let request = tokio::select! {
-                _ = cancelled.changed() => return Ok(()),
-                request = connected.requests.recv() => request.context("Account screen closed.")?,
-            };
-            if request.token != connected.token {
-                continue;
-            }
-            match request.action {
-                Action::Back => {
-                    let _ = sender.send(Reply {
-                        token: connected.token,
-                        event: Event::SignedOut,
-                    });
+        let committing = AtomicBool::new(false);
+        let selection = selection::run(
+            &mut world,
+            &connected.world_name,
+            &mut connected.token,
+            &mut connected.requests,
+            sender,
+            &committing,
+            &mut connected.creation,
+        );
+        let selected = {
+            tokio::pin!(selection);
+            tokio::select! {
+                _ = cancelled.changed() => {
+                    if committing.load(Ordering::Relaxed) {
+                        // Approval can reserve durable state. Keep the exact
+                        // socket and frozen draft alive until its bounded end.
+                        let _ = tokio::time::timeout(std::time::Duration::from_secs(45), &mut selection).await;
+                    }
                     return Ok(());
-                }
-                Action::ChooseCharacter(name)
-                    if characters
-                        .iter()
-                        .any(|entry| entry.enabled && entry.name == name) =>
-                {
-                    break name;
-                }
-                _ => {}
+                },
+                result = &mut selection => result?,
+            }
+        };
+        let character = match selected {
+            selection::Exit::Character(name) => name,
+            selection::Exit::Back | selection::Exit::Cancelled => {
+                let _ = sender.send(Reply {
+                    token: connected.token,
+                    event: Event::SignedOut,
+                });
+                return Ok(());
             }
         };
         let entry = openeq_net::session::enter_character(

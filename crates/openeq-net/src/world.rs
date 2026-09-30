@@ -1,9 +1,17 @@
 //! The world server: character select and the handoff to a zone.
 
-use std::{collections::HashSet, net::SocketAddr};
+use std::{
+    collections::HashSet,
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use tokio::time::{Duration, timeout};
 
+use crate::creation::{self, Capabilities, Catalog, CreationError};
 use crate::opcodes::WorldOp;
 use crate::packet::AppPacket;
 use crate::stream::{EqStream, StreamError};
@@ -19,6 +27,23 @@ const LOGIN_INFO_SIZE: usize = 464;
 const CHARACTER_TAIL: usize = 274;
 /// EQEmu common/patches/rof2_limits.h::CHARACTER_CREATION_LIMIT.
 const MAX_CHARACTERS: usize = 12;
+static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(1);
+static NEXT_ROSTER: AtomicU64 = AtomicU64::new(1);
+
+/// Creation data belongs to the same authenticated socket as this roster.
+/// Missing or malformed advertisements never imply permissive defaults.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CharacterSelection {
+    pub connection: u64,
+    pub roster_revision: u64,
+    /// Advances for either catalog or capability replacement, invalidating
+    /// drafts and preview receipts based on an older advertisement.
+    pub catalog_revision: u64,
+    pub capabilities: Capabilities,
+    pub catalog: Option<Arc<Catalog>>,
+    pub catalog_error: Option<CreationError>,
+    pub characters: Vec<Character>,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorldError {
@@ -116,6 +141,8 @@ impl CharacterAppearance {
 /// A connected world-server session.
 pub struct WorldClient {
     stream: EqStream,
+    selection: CharacterSelection,
+    catalog_requested: bool,
 }
 
 impl WorldClient {
@@ -145,7 +172,14 @@ impl WorldClient {
         zoning: bool,
     ) -> Result<Self, WorldError> {
         let stream = EqStream::connect(address).await?;
-        let client = Self { stream };
+        let client = Self {
+            stream,
+            selection: CharacterSelection {
+                connection: NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed),
+                ..Default::default()
+            },
+            catalog_requested: false,
+        };
 
         // The payload is a fixed-size buffer holding "account\0key".
         let mut payload = vec![0u8; LOGIN_INFO_SIZE];
@@ -165,11 +199,61 @@ impl WorldClient {
 
     /// Reads the next packet, whatever it is.
     pub async fn next_packet(&mut self, what: &'static str) -> Result<AppPacket, WorldError> {
-        match timeout(REPLY_TIMEOUT, self.stream.recv()).await {
-            Ok(Some(packet)) => Ok(packet),
-            Ok(None) => Err(WorldError::Closed),
+        match timeout(REPLY_TIMEOUT, self.selection_packet()).await {
+            Ok(result) => result,
             Err(_) => Err(WorldError::Timeout(what)),
         }
+    }
+
+    pub fn selection(&self) -> &CharacterSelection {
+        &self.selection
+    }
+
+    /// Read without a relative per-packet timeout. Account selection uses its
+    /// own absolute transaction deadline, which unrelated traffic cannot renew.
+    pub async fn selection_packet(&mut self) -> Result<AppPacket, WorldError> {
+        let packet = self.stream.recv().await.ok_or(WorldError::Closed)?;
+        self.observe_selection(&packet)?;
+        Ok(packet)
+    }
+
+    /// Read-only request, sent at most once on a connection. The normal roster
+    /// remains usable when creation capability data is absent or malformed.
+    pub async fn request_creation_catalog(&mut self) -> Result<(), WorldError> {
+        if !self.catalog_requested {
+            self.catalog_requested = true;
+            self.send(&Catalog::request()).await?;
+        }
+        Ok(())
+    }
+
+    fn observe_selection(&mut self, packet: &AppPacket) -> Result<(), WorldError> {
+        if let Some(result) = self
+            .selection
+            .capabilities
+            .observe(packet.opcode, &packet.data)
+        {
+            self.selection.catalog_revision += 1;
+            if let Err(error) = result {
+                self.selection.catalog_error = Some(error);
+            }
+        } else if packet.opcode == creation::OP_CATALOG {
+            self.selection.catalog_revision += 1;
+            match Catalog::parse(&packet.data) {
+                Ok(catalog) => {
+                    self.selection.catalog = Some(Arc::new(catalog));
+                    self.selection.catalog_error = None;
+                }
+                Err(error) => {
+                    self.selection.catalog = None;
+                    self.selection.catalog_error = Some(error);
+                }
+            }
+        } else if packet.opcode == WorldOp::SendCharInfo as u16 {
+            self.selection.characters = parse_characters(&packet.data)?;
+            self.selection.roster_revision = NEXT_ROSTER.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(())
     }
 
     /// Waits for the character list, logging the message of the day on the way.
@@ -178,7 +262,7 @@ impl WorldClient {
             let packet = self.next_packet("character list").await?;
             match packet.opcode {
                 op if op == WorldOp::SendCharInfo as u16 => {
-                    return parse_characters(&packet.data);
+                    return Ok(self.selection.characters.clone());
                 }
                 op if op == WorldOp::MessageOfTheDay as u16 => {
                     let text: Vec<u8> = packet

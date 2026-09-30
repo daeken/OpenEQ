@@ -854,6 +854,13 @@ fn selected_index(view: &View) -> Option<usize> {
     }
 }
 fn playable(view: &View) -> bool {
+    if view
+        .creation
+        .as_ref()
+        .is_some_and(|creation| creation.pending())
+    {
+        return false;
+    }
     selected_index(view)
         .and_then(|index| row_intent(view, index))
         .is_some()
