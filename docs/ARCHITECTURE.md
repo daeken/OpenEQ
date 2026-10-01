@@ -1,5 +1,11 @@
 # Architecture
 
+This overview includes historical implementation snapshots. For current feature
+coverage, source entry points, validation and known superseded statements, begin
+with the [October 1 agent handoff](AGENT_HANDOFF.md). In particular, the older
+account, invisible-collision, renderer-pass and audio summaries below are not
+current completion checklists.
+
 ## Goals and constraints
 
 The client must be faithful to the original EverQuest client where that is

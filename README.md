@@ -5,6 +5,11 @@ wgpu renderer. It reads your existing EverQuest assets and speaks EQEmu's RoF2
 protocol. The previous C# mainline is preserved on branch
 `codex/legacy-csharp-mainline-2026-09-28`; `master` is the Rust client.
 
+For development or migration to another agent runtime, start with the
+[current agent handoff](docs/AGENT_HANDOFF.md). It covers the verified checkpoint,
+environment, evidence migration, test fixtures and ordered remaining work.
+Autonomous development is currently paused at the user's request.
+
 ## Play on the development server
 
 The populated EQEmu world on `storage2.daeken.dev` is running with PEQ NPCs,
@@ -38,7 +43,8 @@ cargo run -p openeq -- --connect "$HOME/.config/openeq/storage2-credentials.json
 ```
 
 Use `--dir /path/to/EverQuest` or `OPENEQ_CLIENT_DIR` to select an installation.
-The default lookup includes `~/EverQuest`. Connection files contain `host`,
+The current development fallback is `/Users/daeken/EverQuest`; set the directory
+explicitly on another machine. Connection files contain `host`,
 `login_port`, `username`, `password`, and `character`; optional `world_port`
 defaults to 9000 and `server_id` selects a particular world. Keep these files
 private and outside the repository.
@@ -60,8 +66,9 @@ current levels, `/audio music 25` or `/audio ambience 50` to adjust a channel,
 and `/audio mute` or `/audio unmute`. `/audio master 0` silences all channels;
 `/audio environment off` disables environment-controlled emitters. Levels are
 saved in `~/.config/openeq/audio.json`. `--no-audio` prevents opening an output
-device, useful for unattended runs. XMI loop/SysEx support, original instrument
-fidelity, other-platform synthesis and combat/spell sounds remain pending.
+device, useful for unattended runs. Native XMI loops and complete-packet SysEx
+are supported. Original instrument fidelity, remaining host controls,
+other-platform synthesis and combat/spell sounds remain pending.
 See the [audio notes](docs/AUDIO_RUNTIME.md) for coverage.
 
 Controls:
@@ -222,7 +229,7 @@ NPC quest hand-ins, augmentation, raid subgroup/loot administration, guild
 management, quest journals,
 account registration, alternate-ability purchases,
 EQG/absolute-destination border
-triggers, XMI music and event sounds, advanced XML widgets, remaining EQG liquid formats and environmental
+triggers, original music timbres and event sounds, advanced XML widgets, remaining EQG liquid formats and environmental
 damage rules. Luclin hair/beard colors, Hero's Forge, animated equipment, weather,
 terrain ecosystem effects and water refraction remain incomplete. Door motion
 classes include approximations; ordinary door collision switches to the final
