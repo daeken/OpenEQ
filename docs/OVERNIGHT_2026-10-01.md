@@ -326,3 +326,28 @@ cohesive commits and pushing to `master`.
   a pure native-witness particle sampler, xml_ui tracing original TER lighting
   colors and precision-sensitive normal/tangent upload. Production particles
   remain disabled until the complete bounded integration is verified.
+
+## 04:20 source lighting and particle-chain integration
+
+- Original terrain lighting is a distinct indexed stream, not the TER-v3
+  vertex-color word. `EQG_TER_VERTEX_CHANNELS.md` freezes executed copy/upload,
+  normal/tangent precision and shader findings. Embedded ZON-v2 data takes
+  precedence; a count mismatch uses the native default without retrying LIT.
+- Root added bounded EQGP parsing and lossless ZON-v2 lighting, TER-v3 packed
+  colors and secondary UV retention. Four focused tests pass including full
+  original embedded-stream comparisons. Independent review passes. This does
+  not change the image yet; source selection/remapping/shading remain separate.
+- Particle-chain fields now retain flags, optional words and opaque suffixes.
+  All seven parser tests pass; independent raw comparison of 11,334 original
+  bitmap/animation/link records found no metadata mismatch. The chain resolver
+  preserves exact source identities and reports unsupported effect metadata
+  without dropping validated static mesh siblings. Integration tests pending.
+- The bounded native particle sampler remains diagnostic. A review identified
+  subnormal owner-scale normalization overflow; cursor_review is fixing it and
+  adding real-placement coverage. xml_ui is tracing the native GPU color-space
+  and projected-quad contract before any new particle rendering path.
+- Integrated source checkpoint passes all 319 assets tests (none failed/ignored)
+  and strict assets Clippy. Particle-chain code and raw source preservation have
+  independent review. Logs `/tmp/openeq-lighting-source-assets-final.log` and
+  `/tmp/openeq-source-metadata-clippy.log`. Native load/cache context and the
+  new pure sampler remain separate active investigations.

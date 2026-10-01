@@ -632,3 +632,26 @@ lint correction has its three affected tests rerun successfully. Evidence:
 `no-default.log`, and `final-tests.log`, all using the same sysex prefix.
 Independent code/native review found no blockers. Original assets remain
 outside git, and no live character/server state changed.
+
+## October 1 source-channel and particle-texture checkpoint
+
+Particle attachments now retain bounded full authored texture chains, preserving
+signed references, duplicate identities, flags, intervals, filenames and opaque
+record suffixes. Broken/unsupported effect chains remain explicit issues without
+hiding independently validated static meshes or collision. All 623 installed
+object-cloud chains resolve as source metadata; this is not native cache emulation
+or enabled playback. See `WLD_PARTICLE_TEXTURE_METADATA.md`.
+
+Native terrain research distinguishes original-index baked-light words from
+TER-v3 stored colors. The parser now retains ZON-v2 lighting, TER-v3 color/UV1,
+and separate EQGP streams without changing render behavior. Causeway's original
+LIT and all embedded lighting words in Guild Hall, Guild Lobby and The Nest
+match independent raw offsets. Native source selection/remapping, light-weight
+shading, normal/tangent precision and GPU parity remain separate work. See
+`EQG_TER_VERTEX_CHANNELS.md`.
+
+All **319 assets tests pass**, none failed/ignored, with strict assets all-target
+Clippy and independent code/native review. Logs:
+`/tmp/openeq-lighting-source-assets-final.log` and
+`/tmp/openeq-source-metadata-clippy.log`. This narrower checkpoint follows the
+1,037-test workspace run; it does not imply a new complete workspace count.

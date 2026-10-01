@@ -101,6 +101,8 @@ mod tests {
             positions: vec![[0., 0., 0.], [2., 0., 0.], [0., 2., 0.]],
             normals: vec![[0., 0., 1.]; 3],
             tex_coords: vec![[0.; 2]; 3],
+            vertex_colors: None,
+            secondary_tex_coords: None,
             polygons: vec![(0, 1, 2, 0, 0)],
         }
     }

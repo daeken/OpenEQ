@@ -164,6 +164,7 @@ fn hidden_mods_retain_ownership_local_winding_and_all_instance_transforms() {
                 position: [1000.; 3],
                 rotation: [0.; 3],
                 scale: 20.,
+                vertex_lighting: None,
             },
             Placeable {
                 object_id: 1,
@@ -171,6 +172,7 @@ fn hidden_mods_retain_ownership_local_winding_and_all_instance_transforms() {
                 position: [10., 20., 5.],
                 rotation: [0., 0., std::f32::consts::FRAC_PI_2],
                 scale: 2.,
+                vertex_lighting: None,
             },
         ],
     );
@@ -277,6 +279,7 @@ fn source_triangle_scale_does_not_preempt_valid_world_space_collision() {
                 position: [10., 20., 5.],
                 rotation: [0.; 3],
                 scale: 100.,
+                vertex_lighting: None,
             },
             Placeable {
                 object_id: 1,
@@ -284,6 +287,7 @@ fn source_triangle_scale_does_not_preempt_valid_world_space_collision() {
                 position: [500., 600., 7.],
                 rotation: [0.; 3],
                 scale: 1e-18,
+                vertex_lighting: None,
             },
         ],
     );

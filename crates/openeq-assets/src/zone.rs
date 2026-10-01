@@ -19,6 +19,46 @@ pub const ZON_MAGIC: u32 = 0x5A47_5145;
 pub const TER_MAGIC: u32 = 0x5447_5145;
 /// Magic for a `.mod` object file: the ASCII bytes "EQGM".
 pub const MOD_MAGIC: u32 = 0x4D47_5145;
+/// Magic for a separate indexed lighting stream: the ASCII bytes "EQGP".
+pub const LIT_MAGIC: u32 = 0x5047_5145;
+
+/// Original-index packed lighting words, distinct from TER vertex colors.
+/// Native region shaders use alpha as a lighting weight, not surface opacity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VertexLighting {
+    pub colors: Vec<u32>,
+    /// Uninterpreted bytes after the declared stream.
+    pub tail: Vec<u8>,
+}
+
+impl VertexLighting {
+    pub fn parse(data: &[u8]) -> Result<Self> {
+        let mut reader = Reader::new(data);
+        let magic = reader.u32()?;
+        if magic != LIT_MAGIC {
+            return Err(Error::BadMagic {
+                found: magic,
+                expected: LIT_MAGIC,
+            });
+        }
+        let colors = read_lighting_words(&mut reader)?;
+        let tail = reader.take(reader.remaining())?.to_vec();
+        Ok(Self { colors, tail })
+    }
+}
+
+fn read_lighting_words(reader: &mut Reader<'_>) -> Result<Vec<u32>> {
+    let count = reader.bounded_count()?;
+    let len = count
+        .checked_mul(4)
+        .ok_or_else(|| Error::Format("lighting length overflow".into()))?;
+    // Validate all bytes before allocating from an untrusted declared count.
+    Ok(reader
+        .take(len)?
+        .chunks_exact(4)
+        .map(|word| u32::from_le_bytes(word.try_into().unwrap()))
+        .collect())
+}
 
 /// A material property value.
 #[derive(Debug, Clone)]
@@ -60,6 +100,10 @@ pub struct TerMod {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub tex_coords: Vec<[f32; 2]>,
+    /// Version 3 source colors in original vertex order; not the LIT channel.
+    pub vertex_colors: Option<Vec<u32>>,
+    /// Version 3 secondary UVs, with original float words preserved.
+    pub secondary_tex_coords: Option<Vec<[f32; 2]>>,
     /// `(a, b, c, material_ordinal, flags)`; the ordinal indexes source records.
     pub polygons: Vec<(u32, u32, u32, u32, u32)>,
 }
@@ -93,6 +137,9 @@ pub struct Placeable {
     pub position: [f32; 3],
     pub rotation: [f32; 3],
     pub scale: f32,
+    /// Version 2 original-index lighting words, including an authored empty set.
+    /// Absence means version 1. Selection and count validation are separate.
+    pub vertex_lighting: Option<Vec<u32>>,
 }
 
 /// A static light inside a zone.
@@ -162,22 +209,18 @@ impl ZoneFile {
             let raw_rotation = reader.vec3()?;
             let rotation = [raw_rotation[2], raw_rotation[1], raw_rotation[0]];
             let scale = reader.f32()?;
-            if version >= 2 {
-                // Per-instance lighting data. Preserve stream alignment even
-                // though the renderer currently uses dynamic zone lighting.
-                let lighting_count = reader.bounded_count()?;
-                reader.skip(
-                    lighting_count
-                        .checked_mul(4)
-                        .ok_or_else(|| Error::Format(".zon lighting length overflow".into()))?,
-                )?;
-            }
+            let vertex_lighting = if version >= 2 {
+                Some(read_lighting_words(&mut reader)?)
+            } else {
+                None
+            };
             placeables.push(Placeable {
                 object_id,
                 name,
                 position,
                 rotation,
                 scale,
+                vertex_lighting,
             });
         }
 
@@ -274,15 +317,17 @@ impl TerMod {
         let mut positions = Vec::with_capacity(vertex_count);
         let mut normals = Vec::with_capacity(vertex_count);
         let mut tex_coords = Vec::with_capacity(vertex_count);
+        let mut vertex_colors = has_extra.then(|| Vec::with_capacity(vertex_count));
+        let mut secondary_tex_coords = has_extra.then(|| Vec::with_capacity(vertex_count));
         for _ in 0..vertex_count {
             positions.push(reader.vec3()?);
             normals.push(reader.vec3()?);
-            if has_extra {
-                reader.u32()?; // Packed vertex color.
+            if let Some(colors) = &mut vertex_colors {
+                colors.push(reader.u32()?);
             }
             tex_coords.push(reader.vec2()?);
-            if has_extra {
-                reader.skip(8)?; // Secondary coverage/detail UV set.
+            if let Some(coords) = &mut secondary_tex_coords {
+                coords.push(reader.vec2()?);
             }
         }
 
@@ -303,6 +348,8 @@ impl TerMod {
             positions,
             normals,
             tex_coords,
+            vertex_colors,
+            secondary_tex_coords,
             polygons,
         })
     }

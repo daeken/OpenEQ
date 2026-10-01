@@ -178,6 +178,8 @@ pub fn model(is_terrain: bool) -> TerMod {
         positions: vec![],
         normals: vec![],
         tex_coords: vec![],
+        vertex_colors: None,
+        secondary_tex_coords: None,
         polygons: vec![],
     }
 }
