@@ -98,12 +98,49 @@ impl Texture {
             source,
         })?;
         let rgba = image.to_rgba8();
-        Ok(Self {
+        let mut texture = Self {
             name: name.to_owned(),
             width: rgba.width(),
             height: rgba.height(),
             rgba: rgba.into_raw(),
-        })
+        };
+        if data.starts_with(b"DDS ") && data.len() >= 128 && &data[84..88] == b"DXT1" {
+            texture.restore_dxt1_alpha(data)?;
+        }
+        Ok(texture)
+    }
+
+    /// `image` decodes legacy DXT1 into RGB8, losing its one-bit alpha. Keep
+    /// its existing RGB palette and restore only the transparent BC1 selector.
+    fn restore_dxt1_alpha(&mut self, data: &[u8]) -> Result<()> {
+        let blocks_x = self.width.div_ceil(4) as usize;
+        let blocks_y = self.height.div_ceil(4) as usize;
+        let size = blocks_x
+            .checked_mul(blocks_y)
+            .and_then(|n| n.checked_mul(8))
+            .filter(|size| *size <= data.len().saturating_sub(128))
+            .ok_or_else(|| Error::Format(format!("truncated DXT1 pixels: {}", self.name)))?;
+        // Only level zero belongs to this decoded image. Mip levels and other
+        // cubemap faces cannot contribute selectors to its alpha channel.
+        for (index, block) in data[128..128 + size].chunks_exact(8).enumerate() {
+            let first = u16::from_le_bytes([block[0], block[1]]);
+            let second = u16::from_le_bytes([block[2], block[3]]);
+            if first > second {
+                continue;
+            }
+            let selectors = u32::from_le_bytes(block[4..8].try_into().unwrap());
+            for pixel in 0..16 {
+                if (selectors >> (2 * pixel)) & 3 != 3 {
+                    continue;
+                }
+                let x = index % blocks_x * 4 + pixel % 4;
+                let y = index / blocks_x * 4 + pixel / 4;
+                if x < self.width as usize && y < self.height as usize {
+                    self.rgba[(y * self.width as usize + x) * 4 + 3] = 0;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// WLD character BMPs are authored against bottom-origin texture rows.
@@ -239,6 +276,50 @@ mod tests {
             data[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
         }
         data
+    }
+
+    #[test]
+    fn dxt1_restores_only_transparent_selectors_and_keeps_opaque_black() {
+        for flags in [4u32, 5] {
+            let mut data = header(8, 8);
+            data[80..84].copy_from_slice(&flags.to_le_bytes());
+            data[84..88].copy_from_slice(b"DXT1");
+            // First block: index0 is opaque black, index3 transparent black.
+            // Second: equal endpoints still use transparent index3.
+            // Third: four-color mode index3 remains opaque.
+            // Fourth: transparent index3 is the very last texel.
+            for (a, b, indices) in [
+                (0u16, 0xffffu16, 0x03020100u32),
+                (0, 0, u32::MAX),
+                (0xffff, 0, u32::MAX),
+                (0, 0xffff, 0xc0000000),
+            ] {
+                data.extend(a.to_le_bytes());
+                data.extend(b.to_le_bytes());
+                data.extend(indices.to_le_bytes());
+            }
+            for end in 128..data.len() {
+                assert!(Texture::decode("short.bmp", &data[..end]).is_err());
+            }
+            // A trailing fully transparent mip must not affect level zero.
+            data.extend([0, 0, 0, 0, 255, 255, 255, 255]);
+            let texture = Texture::decode("dds_named.bmp", &data).unwrap();
+            let pixel = |x: usize, y: usize| &texture.rgba[(y * 8 + x) * 4..(y * 8 + x) * 4 + 4];
+            assert_eq!(pixel(0, 0), [0, 0, 0, 255]);
+            assert_eq!(pixel(0, 3), [0, 0, 0, 0]);
+            for y in 0..4 {
+                for x in 4..8 {
+                    assert_eq!(pixel(x, y)[3], 0);
+                }
+            }
+            for y in 4..8 {
+                for x in 0..4 {
+                    assert_eq!(pixel(x, y)[3], 255);
+                }
+            }
+            assert_eq!(pixel(7, 7), [0, 0, 0, 0]);
+            assert_eq!(pixel(6, 7), [0, 0, 0, 255]);
+        }
     }
 
     #[test]
