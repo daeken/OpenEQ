@@ -65,6 +65,7 @@ const FLAG_ALPHA_MASK: u32 = 1u;
 const FLAG_TRANSPARENT: u32 = 2u;
 const FLAG_EMISSIVE: u32 = 4u;
 const FLAG_WATER: u32 = 8u;
+const FLAG_TER_COLOR_BLEND: u32 = 64u;
 
 struct Vertex {
     @location(0) position: vec3<f32>,
@@ -75,6 +76,8 @@ struct Vertex {
     @location(5) frame_count: u32,
     @location(6) flags: u32,
     @location(7) frame_ms: u32,
+    @location(12) secondary_uv: u32,
+    @location(13) secondary_layer: u32,
 };
 
 struct Instance {
@@ -92,6 +95,8 @@ struct Fragment {
     @location(3) @interpolate(flat) layer: u32,
     @location(4) @interpolate(flat) flags: u32,
     @location(5) @interpolate(flat) material: u32,
+    @location(6) secondary_uv: vec2<f32>,
+    @location(7) @interpolate(flat) secondary_layer: u32,
 };
 
 @vertex
@@ -107,6 +112,10 @@ fn vs_main(vertex: Vertex, instance: Instance) -> Fragment {
     out.uv = vertex.uv;
     out.flags = vertex.flags;
     out.material = vertex.material;
+    out.secondary_uv = vec2<f32>(
+        f32(bitcast<i32>(vertex.secondary_uv << 16u) >> 16u),
+        f32(bitcast<i32>(vertex.secondary_uv) >> 16u)) / 256.0;
+    out.secondary_layer = vertex.secondary_layer;
 
     // Animated textures are stored as consecutive layers; pick the frame.
     let count = max(vertex.frame_count, 1u);
@@ -147,6 +156,8 @@ fn fs_main(in: Fragment) -> Targets {
     let water_dy = dpdy(in.world.xz / 80.0);
     let asset_dx = dpdx(in.uv);
     let asset_dy = dpdy(in.uv);
+    let secondary_dx = dpdx(in.secondary_uv);
+    let secondary_dy = dpdy(in.secondary_uv);
     if ((in.flags & FLAG_TERRAIN) != 0u) {
         var out: Targets;
         out.albedo = vec4<f32>(terrain_albedo(in.material, in.uv, in.world.y, in.normal, asset_dx, asset_dy), 0.0);
@@ -221,6 +232,15 @@ fn fs_main(in: Fragment) -> Targets {
         // Baked tiles also retain their base-level edge inset until mip-safe
         // clamping is supported with the repeating atlas sampler.
         texel = textureSampleLevel(atlas, atlas_sampler, uv, i32(in.layer), 0.0);
+    }
+    if ((in.flags & FLAG_TER_COLOR_BLEND) != 0u) {
+        let second = textureSampleGrad(atlas, atlas_sampler, in.secondary_uv,
+            i32(in.secondary_layer), secondary_dx, secondary_dy);
+        // Keep the product <= 1 in the normalized G-buffer. The lighting pass
+        // applies the native factor 2 before lighting/fog, avoiding an early
+        // clamp that would erase bright authored detail. Existing sRGB texture
+        // decoding/linear lighting remains OpenEQ's color-space approximation.
+        texel = texel * second;
     }
     // Preserve opaque interiors of alpha materials in the depth buffer. Their
     // fractional edges and decals are shaded later with true alpha blending.

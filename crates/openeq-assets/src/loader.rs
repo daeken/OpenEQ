@@ -95,12 +95,22 @@ pub struct PackedTerLighting {
 /// These are source float words, not native packed SHORT2 values or GPU inputs.
 #[derive(Debug, Clone)]
 pub struct PackedTerSecondaryUv {
+    /// Complete authored CB1_2UV color bindings. Other dual-UV families retain
+    /// coordinates without opting into this renderer's bounded color path.
+    pub color_blend: Option<TerColorBlend>,
     /// One pair per baked vertex, including original NaN and signed-zero bits.
     pub tex_coords: Vec<[f32; 2]>,
     /// Representative original TER indices. Geometry and both UV pairs must
     /// match before sharing one; future lighting/tangent channels need their
     /// own additional identity checks before reusing these representatives.
     pub source_indices: Vec<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerColorBlend {
+    pub diffuse: String,
+    pub normal: String,
+    pub second: String,
 }
 
 /// Everything needed to render a zone.
@@ -116,7 +126,8 @@ pub struct Scene {
     /// meshes must clear/remap this sidecar. No shader consumes this channel yet.
     pub native_ter_lighting: BTreeMap<usize, PackedTerLighting>,
     /// Raw secondary TER UVs keyed by mesh index. Mesh replacement/remapping
-    /// must clear/remap this sidecar. No shader consumes this channel yet.
+    /// must clear/remap this sidecar. Complete CB1_2UV bindings opt into the
+    /// bounded second-color path; other families remain source metadata.
     pub secondary_ter_uv: BTreeMap<usize, PackedTerSecondaryUv>,
     /// Malformed auxiliary lighting remains explicit without hiding valid TER
     /// geometry. Such payloads have no selected channel or claimed native default.
@@ -875,7 +886,12 @@ fn append_eqg_object(
             );
             (vertices, indices)
         } else if let Some(channel) = ter_secondary_uv::channel(object, material) {
-            let (vertices, indices, metadata) = ter_secondary_uv::pack(object, indices, channel);
+            let (vertices, indices, mut metadata) =
+                ter_secondary_uv::pack(object, indices, channel);
+            metadata.color_blend = ter_secondary_uv::color_blend(material);
+            if let Some(blend) = &metadata.color_blend {
+                register_texture(scene, archive_index, &blend.second);
+            }
             scene.secondary_ter_uv.insert(scene.meshes.len(), metadata);
             (vertices, indices)
         } else {

@@ -368,11 +368,14 @@ fn original_restored_terrain_fixed_cameras_and_serialized_gpu_timings() {
             .unwrap();
         }
         drop(gpu);
-        // The source-light and secondary-UV channels are metadata only here.
-        // Compare the same full scene after restoring the former eight-word
-        // deduplication; it must not accidentally change current shading.
+        // Isolate vertex packing from the separately enabled second-color path.
+        // With source sidecars removed in both comparisons, former eight-word
+        // deduplication must still preserve primary geometry shading.
         let lighting = std::mem::take(&mut source.native_ter_lighting);
         let secondary_uv = std::mem::take(&mut source.secondary_ter_uv);
+        let primary_gpu = GpuScene::build(renderer.device(), renderer.queue(), &source).unwrap();
+        let primary_only = capture(&mut renderer, &primary_gpu, &camera);
+        drop(primary_gpu);
         for (mesh_id, vertices, indices) in &mut former_packing {
             std::mem::swap(&mut source.meshes[*mesh_id].vertices, vertices);
             std::mem::swap(&mut source.meshes[*mesh_id].indices, indices);
@@ -380,8 +383,8 @@ fn original_restored_terrain_fixed_cameras_and_serialized_gpu_timings() {
         let former = GpuScene::build(renderer.device(), renderer.queue(), &source).unwrap();
         assert_eq!(
             capture(&mut renderer, &former, &camera),
-            full,
-            "source lighting/secondary-UV retention changed current pixels in {zone}"
+            primary_only,
+            "source identity retention changed primary-only pixels in {zone}"
         );
         drop(former);
         for (mesh_id, vertices, indices) in &mut former_packing {

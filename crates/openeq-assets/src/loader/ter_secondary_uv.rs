@@ -1,8 +1,27 @@
-//! Source-only dual-coordinate preservation; shader admission stays unchanged.
+//! Preserve dual coordinates and complete bindings for the bounded CB color path.
 use std::collections::HashMap;
 
-use super::PackedTerSecondaryUv;
+use super::{PackedTerSecondaryUv, TerColorBlend};
 use crate::zone::{TerMaterial, TerMod};
+
+pub(super) fn color_blend(material: &TerMaterial) -> Option<TerColorBlend> {
+    if material.shader != "Opaque_MaxCB1_2UV.fx" {
+        return None;
+    }
+    let text = |key| {
+        material
+            .properties
+            .get(key)?
+            .as_text()
+            .filter(|name| !name.is_empty() && !name.eq_ignore_ascii_case("none"))
+            .map(str::to_owned)
+    };
+    Some(TerColorBlend {
+        diffuse: text("e_TextureDiffuse0")?,
+        normal: text("e_TextureNormal0")?,
+        second: text("e_TextureSecond0")?,
+    })
+}
 
 pub(super) fn channel<'a>(object: &'a TerMod, material: &TerMaterial) -> Option<&'a [[f32; 2]]> {
     if !object.is_terrain
@@ -29,6 +48,7 @@ pub(super) fn pack(
     let mut vertices = Vec::new();
     let mut out_indices = Vec::with_capacity(indices.len());
     let mut metadata = PackedTerSecondaryUv {
+        color_blend: None,
         tex_coords: Vec::new(),
         source_indices: Vec::new(),
     };
@@ -84,6 +104,48 @@ mod tests {
                 [f32::from_bits(0x7f800001), -0.0],
             ]),
             polygons: vec![(2, 1, 0, 0, 0), (3, 1, 2, 0, 1)],
+        }
+    }
+
+    #[test]
+    fn color_bindings_require_complete_authored_cb_family() {
+        use crate::zone::Property;
+        let mut object = fixture();
+        let material = &mut object.materials[0];
+        let keys = ["e_TextureDiffuse0", "e_TextureNormal0", "e_TextureSecond0"];
+        for key in keys {
+            material
+                .properties
+                .insert(key.into(), Property::Text(format!("{key}.dds")));
+        }
+        let complete = material.clone();
+        assert_eq!(
+            color_blend(material).unwrap().second,
+            "e_TextureSecond0.dds"
+        );
+        for key in keys {
+            for invalid in [
+                None,
+                Some(Property::Text(String::new())),
+                Some(Property::Text("NoNe".into())),
+                Some(Property::IntegerBits(1)),
+            ] {
+                *material = complete.clone();
+                material.properties.remove(key);
+                if let Some(value) = invalid {
+                    material.properties.insert(key.into(), value);
+                }
+                assert!(color_blend(material).is_none(), "{key}");
+            }
+        }
+        *material = complete;
+        for shader in [
+            "Opaque_MaxCBSG1_2UV.fx",
+            "Opaque_MaxCB1.fx",
+            "opaque_maxcb1_2uv.fx",
+        ] {
+            material.shader = shader.into();
+            assert!(color_blend(material).is_none());
         }
     }
 

@@ -6,7 +6,8 @@ use crate::{
 
 pub(super) fn encoding(object: &TerMod, material: &TerMaterial) -> UvEncoding {
     // Proven primary SHORT2 upload: ordinary bump terrain and the non-bump
-    // waterfall family. MOD and two-UV families require their own evidence.
+    // waterfall family. MOD requires its own evidence. The renderer selects
+    // two-UV conversion separately only with validated mesh/source bindings.
     // See EQG_TER_UV_PACKING.md and EQG_WATERFALL_UPLOAD.md.
     if object.is_terrain
         && matches!(object.version, 1..=3)

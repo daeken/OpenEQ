@@ -25,7 +25,7 @@ pub const VERTEX_STRIDE: usize = 8;
 pub enum UvEncoding {
     #[default]
     Float32,
-    /// Proven TER ordinary bump/waterfall families: signed SHORT2 / 256.
+    /// Proven TER ordinary bump/waterfall and dual-UV routes: SHORT2 / 256.
     /// Reproduces the SSE2 conversion with masked exceptions, independent of
     /// this process's CPU. Legacy x87 overflow behavior is a separate target.
     NativeTerShort2Sse2,

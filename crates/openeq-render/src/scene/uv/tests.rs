@@ -46,6 +46,10 @@ fn native_instruction_witnesses_cover_quantization_wrapping_and_invalids() {
             shader_uv(UvEncoding::Float32, [value; 2]).map(f32::to_bits),
             [word; 2]
         );
+        assert_eq!(
+            packed_short2([value; 2]),
+            u32::from(packed as u16) * 0x0001_0001
+        );
     }
 }
 

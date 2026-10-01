@@ -94,5 +94,7 @@ fn fs_main(in: Fragment) -> @location(0) vec4<f32> {
     let world = world_h.xyz / world_h.w;
     let normal = normalize(packed.xyz * 2.0 - 1.0);
 
-    return vec4<f32>(shade_surface(world, normal, albedo.rgb, albedo.a > 0.5), 1.0);
+    let flags = u32(round(packed.w * 255.0));
+    let color_factor = select(1.0, 2.0, (flags & 64u) != 0u);
+    return vec4<f32>(shade_surface(world, normal, albedo.rgb * color_factor, albedo.a > 0.5), 1.0);
 }

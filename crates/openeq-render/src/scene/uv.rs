@@ -9,6 +9,14 @@ pub(super) fn shader_uv(encoding: UvEncoding, raw: [f32; 2]) -> [f32; 2] {
 }
 
 fn short2_sse2(value: f32) -> f32 {
+    f32::from(short2_word(value)) / 256.0
+}
+
+pub(super) fn packed_short2(raw: [f32; 2]) -> u32 {
+    u32::from(short2_word(raw[0]) as u16) | (u32::from(short2_word(raw[1]) as u16) << 16)
+}
+
+fn short2_word(value: f32) -> i16 {
     // Native x87 multiplication followed by FSTP double preserves every
     // finite f32 * 256 exactly; doing the multiply in f32 could overflow.
     let scaled = f64::from(value) * 256.0;
@@ -20,7 +28,7 @@ fn short2_sse2(value: f32) -> f32 {
     } else {
         i32::MIN
     };
-    f32::from(integer as i16) / 256.0
+    integer as i16
 }
 
 #[cfg(test)]

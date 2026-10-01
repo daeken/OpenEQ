@@ -15,6 +15,7 @@ use glam::{Mat4, Quat, Vec3};
 use openeq_assets::Scene;
 
 mod bounds;
+mod layered_color;
 mod placed_animation;
 mod uv;
 
@@ -27,6 +28,7 @@ pub const FLAG_EMISSIVE: u32 = 4;
 pub const FLAG_WATER: u32 = 8;
 pub const FLAG_CLAMP_UV: u32 = 16;
 pub const FLAG_TERRAIN: u32 = 32;
+pub const FLAG_TER_COLOR_BLEND: u32 = 64;
 
 /// Water parameters and waterfall offsets, indexed by the vertex's material ID.
 #[repr(C)]
@@ -56,6 +58,9 @@ pub struct Vertex {
     pub flags: u32,
     /// Milliseconds per animation frame.
     pub frame_ms: u32,
+    /// Independent native SHORT2 coordinate pair, low word U and high word V.
+    pub secondary_uv: u32,
+    pub secondary_layer: u32,
 }
 
 /// Per-instance model matrix in EverQuest space.
@@ -317,6 +322,7 @@ impl GpuScene {
 
         for (mesh_index, geometry) in scene.meshes.iter().enumerate() {
             let material = &scene.materials[geometry.material];
+            let color_blend = layered_color::channel(scene, mesh_index);
             let (layer, frame_count) = if terrain.contains(geometry.material) {
                 (0, 1) // Opaque terrain never samples the fallback atlas.
             } else {
@@ -341,21 +347,36 @@ impl GpuScene {
             if terrain.contains(geometry.material) {
                 flags |= FLAG_TERRAIN;
             }
+            if color_blend.is_some() {
+                flags |= FLAG_TER_COLOR_BLEND;
+            }
 
             let base_vertex = vertices.len() as i32;
-            for vertex in geometry
+            for (vertex_index, vertex) in geometry
                 .vertices
                 .chunks_exact(openeq_assets::mesh::VERTEX_STRIDE)
+                .enumerate()
             {
+                let encoding = if color_blend.is_some() {
+                    openeq_assets::mesh::UvEncoding::NativeTerShort2Sse2
+                } else {
+                    material.uv_encoding
+                };
                 vertices.push(Vertex {
                     position: [vertex[0], vertex[1], vertex[2]],
                     normal: [vertex[3], vertex[4], vertex[5]],
-                    uv: uv::shader_uv(material.uv_encoding, [vertex[6], vertex[7]]),
+                    uv: uv::shader_uv(encoding, [vertex[6], vertex[7]]),
                     layer,
                     material: geometry.material as u32,
                     frame_count,
                     flags,
                     frame_ms: material.anim_speed.max(1),
+                    secondary_uv: color_blend.map_or(0, |(channel, _)| {
+                        uv::packed_short2(channel.tex_coords[vertex_index])
+                    }),
+                    secondary_layer: color_blend.map_or(0, |(_, blend)| {
+                        atlas.layers[&blend.second.to_ascii_lowercase()]
+                    }),
                 });
             }
             mesh_ranges.push(base_vertex as usize..vertices.len());
@@ -593,6 +614,18 @@ fn build_atlas(
             }
         };
         mapping.insert(key, (base, material.textures.len().max(1) as u32));
+    }
+
+    // Authored second colors are independent layers, never animation frames.
+    for mesh_index in 0..scene.meshes.len() {
+        let Some((_, blend)) = layered_color::channel(scene, mesh_index) else {
+            continue;
+        };
+        let key = blend.second.to_ascii_lowercase();
+        if let std::collections::hash_map::Entry::Vacant(entry) = layer_of_name.entry(key) {
+            entry.insert(layers.len() as u32);
+            layers.push(decode_texture(scene, &blend.second));
+        }
     }
 
     // Water's normal and reflection maps are separate layers, never frames of

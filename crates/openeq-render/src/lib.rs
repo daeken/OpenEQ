@@ -1392,7 +1392,7 @@ fn draw_scene(pass: &mut wgpu::RenderPass<'_>, scene: &GpuScene) {
 
 fn vertex_layouts() -> [wgpu::VertexBufferLayout<'static>; 2] {
     use std::mem::size_of;
-    const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
+    const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 10] = wgpu::vertex_attr_array![
         0 => Float32x3, // position
         1 => Float32x3, // normal
         2 => Float32x2, // uv
@@ -1401,6 +1401,8 @@ fn vertex_layouts() -> [wgpu::VertexBufferLayout<'static>; 2] {
         5 => Uint32,    // frame count
         6 => Uint32,    // flags
         7 => Uint32,    // milliseconds per frame
+        12 => Uint32,   // secondary native SHORT2 coordinates
+        13 => Uint32,   // independent second color atlas layer
     ];
     const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
         8 => Float32x4,
