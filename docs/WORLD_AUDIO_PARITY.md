@@ -1158,3 +1158,21 @@ Native clock/directional lifecycle and controlled rollover now have independent
 witnesses. They expose a distinction between angle updates and cached-vector
 publication, including unsafe unsigned deadlines at wrap. No renderer direction
 or scheduler behavior is inferred from that research alone.
+
+## October 1 afternoon checkpoint
+
+The daytime window ended at13:30 America/Chicago; its heartbeat is paused.
+All verified changes and frozen research are pushed to master. The final
+implementation record remains **1,238 passing tests**, plus strict lint,
+builds, no-default, formatting/diff and original-asset/GPU/silent-audio checks.
+The523-zone structural survey retains501 passes and the same22 known cases.
+
+Further evidence covers crate channel optimization and precision, measured
+per-definition animation cost, native directional clocks/rollover and exact
+normal-frame prerequisites, and concrete2D/3D gain ramps. Those research scopes
+do not silently enable unsupported runtime behavior. See
+`DAYTIME_2026-10-01.md` for full verification and the ordered continuation:
+collision-deflected liquids, remaining actors/particles, native rendering
+lifecycle/channels, then complete audio emitter/voice/resource behavior.
+Explorer and other live characters were not used; original assets stayed
+read-only and no audible audio or credential exposure occurred.
