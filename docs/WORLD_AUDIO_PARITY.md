@@ -814,3 +814,38 @@ reproduced the directional witness. No unproven live lighting is enabled.
 Next active integration is a server-synchronized local day clock and background
 minute-based sky refresh, so colors advance between TimeOfDay packets without
 decoding textures on the event loop. It is outside this checkpoint until tested.
+
+
+## October 1 06:30 advancing day clock and background sky
+
+The client now advances one EQ minute per three real seconds between valid
+server TimeOfDay packets. Receipt timestamps survive foreground queue delays;
+authoritative corrections replace the anchor and invalid samples preserve it.
+Raw one-based hours remain unchanged for existing sky/audio consumers. The
+monotonic clock intentionally avoids the original wall-clock-jump sensitivity;
+server subminute phase is absent from the packet and cannot be recovered.
+See `EQ_DAY_CLOCK.md` for executed client and EQEmu evidence.
+
+Sky colors refresh each raw minute on a background worker. Stale zone/minute
+results cannot replace the current sky, and account/zone resets retain and
+drain the single worker before launching another. Failed stamps are terminal
+until the minute/visit changes. GPU resource installation stays on the event
+loop; no shader pipeline recompilation is involved. Native fractional-minute
+sky updates, fixed-zone time overrides and weather simulation remain open.
+
+All **1,148 workspace tests pass, zero failed/ignored, across 109 suites**,
+including original assets, GPU and offline/digitally silent audio. Strict
+workspace Clippy, client build, all-target no-default, format and diff checks
+pass. Logs: `/tmp/openeq-day-clock-{workspace-final,clippy,build,no-default,fmt}.log`.
+The initial default test run also passed but skipped opt-in original/GPU cases;
+`workspace-final.log` includes every ignored test explicitly. Independent code
+review cleared the clock and final invalidation fix. No live character/server
+state was touched and no original asset bytes were committed.
+
+Native sky geometry research separately recovers 962 vertices, 1,861 triangles
+and exact source-color addressing, including modulo-29 ring columns and one
+extra bottom-fan triangle. Root and an independent reviewer reproduced all
+frozen buffer hashes. This shows that the current pole-ring texture suppression
+is an approximation; no renderer change follows solely from that finding.
+D3DX numerical/singular behavior and inherited draw state are the active
+follow-ups. See `SKY_DOME_GEOMETRY.md`.
