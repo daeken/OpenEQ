@@ -1,0 +1,267 @@
+# Native WLD particle GPU contract: bounded diagnostic evidence
+
+2026-10-01. The four verified Plane of Knowledge particle definitions use
+preprojected screen-space quads and source-alpha additive blending under the
+native default material alias. The particle pass **inherits both sRGB-read and
+sRGB-write state**. A diagnostic can make the documented D3D9 defaults explicit,
+but that is not a capture of the complete original client's framebuffer state.
+
+This extends [materials and submission](WLD_PARTICLE_MATERIALS.md),
+[CPU runtime](WLD_PARTICLE_RUNTIME.md), [placement](WLD_PARTICLE_PLACEMENT.md)
+and the [bounded sampler](WLD_PARTICLE_SAMPLER.md). It changes no production
+code and does not authorize automatic scene effects, spell-renderer reuse,
+effect-generated lights, or a pixel-parity claim.
+
+## Evidence boundaries
+
+The installed `EQGraphicsDX9.dll` has image base `0x10000000` and SHA-256
+`615e7ba9e20745ec03a908cf47c038cc764358ad820d9d4d3232734fadff5383`.
+Temporary Unicorn probes reuse the frozen material/runtime harness setup. They
+execute native instructions, replacing allocation, selected platform APIs,
+loaded-image objects, and D3D calls as documented in those earlier notes.
+Neither an original GPU nor a live original-client frame is executed.
+
+Projection cases use the original four source definitions, converter, emitter
+factory, owner getters, camera-to-particle-frame helper and update function.
+Synthetic camera/owner values are explicitly recorded. Math executes with x87
+PC64 round-nearest; effective original-client FPU lifecycle is not established.
+State controls execute native cache setters, state flush and draw dispatch;
+recorded state is the software device state at the actual draw call boundary.
+The probes do not overwrite the older frozen evidence outputs.
+
+## sRGB: inherited state, explicit diagnostic assumption
+
+The relevant D3D9 controls are:
+
+| Control | Numeric selector | Documented initial value |
+| --- | ---: | ---: |
+| D3DSAMP_SRGBTEXTURE, stage 0 | 11 | 0: no texture gamma conversion |
+| D3DRS_SRGBWRITEENABLE | 194 | 0: no sRGB render-target write conversion |
+
+The defaults are documented by Microsoft in
+[D3DSAMPLERSTATETYPE](https://learn.microsoft.com/en-us/windows/win32/direct3d9/d3dsamplerstatetype)
+and [D3DRENDERSTATETYPE](https://learn.microsoft.com/en-us/windows/win32/direct3d9/d3drenderstatetype).
+They are API defaults, not state writes attributed to particles.
+
+The executed native initialization prefix `0x10092050..0x10092512`, texture
+resolution/registration and four original draws perform **zero writes** to
+either selector. That prefix stops before unrelated fog setup; it is not the
+entire device initialization or intervening frame history. Each following
+control seeds the state through native setters `0x1009f2d0` and `0x1009f350`,
+flushes with `0x1009edb0`, then executes particle dispatcher `0x10072a60`:
+
+| Seeded texture sRGB read | Seeded framebuffer sRGB write | Captured at draw |
+| ---: | ---: | --- |
+| 0 | 0 | 0 / 0 |
+| 1 | 0 | 1 / 0 |
+| 0 | 1 | 0 / 1 |
+| 1 | 1 | 1 / 1 |
+| 0, restored | 0, restored | 0 / 0 |
+
+No particle draw issues either state write in these controls. Consequently,
+“native-default diagnostic” can explicitly mean both disabled, but “the native
+pass always disables sRGB” is false. Complete host state, effects/state blocks,
+actual device capabilities and target formats remain unclosed.
+
+For that explicit default, texture RGB and packed diffuse RGB enter modulation
+as normalized stored values, without an sRGB decode. Alpha likewise uses its
+normalized stored value. A standalone `Rgba8Unorm` target with a non-sRGB source
+view is a suitable controlled target for this byte-domain blend experiment.
+The existing OpenEQ spell atlas is `Rgba8UnormSrgb`, and current headless output
+is also sRGB. Changing only source sampling cannot reproduce non-sRGB target
+blending: automatic target conversion and destination decoding change the
+operation. Any diagnostic copied into the current sRGB scene needs an explicit
+presentation policy; that copy is not evidence of in-frame native parity.
+
+## Texture, sampler and fixed-function contract
+
+The original single-frame resolutions remain:
+
+| Definition | Source image | Original dimensions | Source DDS format |
+| --- | --- | --- | --- |
+| CSMOKE | CSMOKE.DDS | 16 × 32 | DXT1 |
+| L301, L308, L500 | GENG00.DDS | 64 × 64 | DXT1 |
+
+The native resolver assembles a 1 × 1 frame grid with those exact dimensions.
+It requests levels 0 and usage OR `0x400` (`D3DUSAGE_AUTOGENMIPMAP`), then copies
+the complete level-zero image into it. The controlled image/D3D boundaries
+prove the requested format and dimensions, not hardware acceptance, fallback
+format, actual DDS decoding/row orientation, driver-generated mip pixels, or
+copy-filter behavior. A one-mip diagnostic must identify itself as a level-zero
+experiment; it does not reproduce native minification merely by setting a
+linear sampler. Autogenerated lower levels are a separate validation target.
+
+The captured baseline has WRAP U/V, LINEAR min/mag and POINT mip filtering.
+Particle preset 5 can set mip filtering to POINT when renderer `+0xee5` is
+nonzero. It inherits addressing and min/mag; when that byte is zero, it also
+inherits mip filtering. No half-texel UV inset or cell-edge clamp appears in
+this original single-frame vertex stream. The spell renderer's atlas resizing,
+cell clamp, explicit LOD zero and fog are separate behavior and should not be
+inherited by a WLD diagnostic.
+
+Under the established native material aliases and baseline:
+
+- Texture-stage RGB and alpha each multiply TEXTURE by DIFFUSE.
+- Alpha test is enabled, GREATEREQUAL, reference 1 (nominally 1/255).
+- Blending is SRCALPHA / ONE; ADD and disabled separate-alpha blending are
+  inherited D3D defaults, independently shown mutable in the material controls.
+- Depth test is enabled with LESSEQUAL; depth writes are disabled.
+- Culling is NONE and fog is explicitly disabled by the particle preset.
+
+Let `Srgb = texture.rgb * diffuse.rgb` and `Sa = texture.a * diffuse.a`.
+For the explicit ADD/default-alpha baseline, RGB is `Srgb*Sa + destination.rgb`.
+Because separate alpha blending is disabled, the analogous alpha equation is
+`Sa*Sa + destination.a`; simply reusing a premultiplied-alpha pipeline's alpha
+factors need not match. Target clamping, fixed-function rounding, alpha-test
+precision and rasterization remain GPU boundaries. The packed vertex RGB is
+100/255 for smoke and 1 for the flames; its life/owner alpha is independent of
+the source definition's packed high byte.
+
+## Camera factor and projected quad layout
+
+Frame preparation `0x10070ab0`, called from the native clock/update wrapper at
+`0x10076322`, builds the 88-byte particle frame. Its fields are:
+
+| Frame offset | Native camera source / calculation |
+| --- | --- |
+| +0, +4, +8 | left, center X, right from camera +0x30 and half-width +0x38 |
+| +0xc, +0x10, +0x14 | top, center Y, bottom from +0x34 and half-height +0x3c |
+| +0x18 | half-width / tan(camera[+4] × 0.703125f × 0.01745329238474369f) |
+| +0x1c | camera +0x10, the depth coefficient used below |
+| +0x20 | camera +0xc, the near value used in depth mapping |
+| +0x24 | camera +0x14, distance-limit input |
+| +0x28..+0x30 | camera position from +0xbc..+0xc4 |
+| +0x34..+0x54 | nine camera transform floats from +0x40..+0x60 |
+
+The factor's constants are at `0x10133c70` and `0x10133c6c`. The angle field is
+**not degrees**: its formula is consistent with 256 units per turn. A value of
+64 gives a horizontal 90-degree field of view and factor 400 for width 800.
+The same horizontal factor scales X and Y; height sets center/clipping bounds,
+not a separately calculated vertical factor. This note does not trace the host
+API that populates the camera or claim all of its conventions are established.
+
+For the four supported nonrotating billboard definitions, let
+`(vx,vy,vz) = (worldPosition - cameraPosition) * cameraMatrix`, interpreting the
+nine floats as a row-major matrix applied to a row vector. With factor F,
+center `(cx,cy)`, near value N and depth coefficient Q, native code computes:
+
+```text
+screenCenterX = cx + vx * F / vz
+screenCenterY = cy - vy * F / vz
+screenDepth   = Q * (1 - N / vz)
+rhw           = 1 / vz
+halfExtent    = sourceSize * currentOwnerScale * F / vz / 2
+```
+
+Center/depth calculation is `0x1007539f..0x100753ee`, size calculation begins
+at `0x100753ff` and the billboard half-extent path at `0x100755d0`. These are
+mathematical relationships; intermediate stores and x87 operations determine
+exact float rounding. In particular, the source size is full width/height,
+not a radius. CSMOKE's nonsquare image still uses a square projected quad.
+
+The output writer `0x10075f70..0x100760c6` emits four 32-byte vertices:
+FLOAT4 `x,y,z,rhw`, packed diffuse, packed specular (zero here), FLOAT2 UV.
+FVF is `0x1c4` (`XYZRHW | DIFFUSE | SPECULAR | TEX1`). For WLD list flag 1:
+
+| Vertex | Screen corner | UV |
+| ---: | --- | --- |
+| 0 | top-left | (0,1) |
+| 1 | top-right | (1,1) |
+| 2 | bottom-right | (1,0) |
+| 3 | bottom-left | (0,0) |
+
+The flag controls an x87 exchange at `0x10075f64..0x10075f6e`. Executing the
+same definition with flag 0 gives top V=0 and bottom V=1. The active wrapper
+passes flag 1 specifically for the WLD list at `0x100763e4`; other lists receive
+zero. This is an established vertical UV reversal in the **vertex stream**;
+actual decoded texture row orientation was substituted by the material probe
+and still requires confirmation before claiming final image orientation.
+
+At native camera angle 64, viewport 800 × 600, world position (2,3,30), unit
+owner scale, Q=N=1, the L301 witness emits approximately:
+
+```text
+(420.00000, 253.33333), (433.33331, 253.33333),
+(433.33331, 266.66666), (420.00000, 266.66666)
+z = 0.96666664, rhw = 0.033333335, diffuse = ffffffff, specular = 0
+```
+
+Twenty-six executed cases check these equations against independent arithmetic:
+all four definitions, translated/rotated cameras, viewport offset/aspect,
+60/90/120-degree-equivalent factors, depth coefficient/near changes, doubled
+depth and owner scale, the WLD UV switch, and boundary cases below. Draw
+submission's two-triangle/four-vertex count is already proven, but the shared
+native index buffer's actual contents were supplied by the material harness;
+this note does not claim it executed index-buffer construction.
+
+## Drawing cutoffs are distinct from GPU depth mapping
+
+The projected-size test at `0x1007561e..0x10075642` rejects either half-extent
+below `0.949999988079071` (the f32 constant 0.95 at `0x1013c7c4`). A controlled
+factor 1.9 at depth 1 accepts equality; factor 1.8999 rejects it. At factor
+400 and source size 1, depth 210 draws, whereas depth 211 fails this test.
+The size control overrides the prepared factor explicitly; it is not a claim
+that a host supplies that unusual camera.
+
+Minimum drawing depth comes from the update's final float argument for the
+exercised emitter (`+0x94` byte zero). The other branch uses 1.0. It is selected
+at `0x10072d32..0x10072d4b`, then compared against per-particle depth at
+`0x100752c3..0x100752d1`. A depth equal to the threshold draws; below it does
+not. Controls with threshold 1 and 2 establish that it is **not** the camera
+near value used in the depth equation. Setting camera near to 5 while threshold
+is 1 emits a particle at depth 3 with negative projected depth; CPU emission
+alone therefore does not establish final GPU visibility.
+
+The native wrapper supplies manager +0xc to the WLD call (`0x100763dd`), whose
+constructor initializes it to 2 at `0x10070bd7..0x10070be6`. The isolated runtime
+witness instead explicitly supplied 1. A caller that consumes sampled world
+positions must preserve this distinction rather than treating that witness's
+threshold as the unconditional native default.
+
+The distance-limit input is capped at 500 in update setup
+`0x10072b1b..0x10072b4a`; the per-particle upper comparison is
+`0x100752d7..0x100752e7`. Controlled limit 30 includes depth 30 and limit 29.9
+rejects it. Separate emitter visibility/bounds checks, screen bounds, context
+and owner gates also exist; these cases do not replace their complete policy.
+
+## Pixel centers and smallest useful GPU experiment
+
+Native vertices are already in D3D9 screen coordinates. The executed writer
+performs no observed half-pixel adjustment. Microsoft's
+[Directly Mapping Texels to Pixels](https://learn.microsoft.com/en-us/windows/win32/direct3d9/directly-mapping-texels-to-pixels)
+defines D3D9's top-left pixel center as (0,0), with the outer corner at
+(-0.5,-0.5). Merely obtaining matching CPU vertices does **not** validate the
+conversion to WebGPU clip coordinates, its different pixel-center convention,
+edge coverage, MSAA, top-left filling rule, or depth clipping. Any proposed
+half-pixel correction requires a separately labeled rasterization comparison.
+Do not hide it inside a world-camera adjustment or declare it proven here.
+
+The smallest independent diagnostic can consume the captured projected vertex
+records directly, with explicit viewport, target/depth format, depth buffer,
+sampler, mip policy and both sRGB assumptions. That avoids introducing a world
+camera conversion while testing texture modulation, alpha cutoff and blend
+state. Preserve original-sized textures; use no fog, guessed clamp, atlas
+resizing or automatic lights. A later world-space diagnostic can compare its
+projected results with the 26 native cases before drawing them.
+
+Even that standalone experiment would validate its stated WebGPU contract,
+not original-client pixels. Actual texture decode/upload, generated mip levels,
+complete host state, default-versus-overridden aliases, GPU interpolation and
+quantization, and cross-API pixel centers remain explicit gaps.
+
+## Frozen temporary artifacts
+
+Run the two scripts with `PYTHONPATH=/tmp/openeq-re-tools python3`. The color
+probe executes the frozen material harness through its four original draws;
+the projection probe executes only the runtime harness's setup prefix, then
+its own controlled cases. Original assets and native disassembly are not
+committed. Supporting Microsoft pages were downloaded to `/tmp` for inspection.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `/tmp/openeq-particle-gpu-colorspace.py` | `676d9c9486860fe51261fc1d761392dd94485578dde87b970145c6cb138dd1df` |
+| `/tmp/openeq-particle-gpu-colorspace.json` | `46402d8db91efbf89ebb0bd4a210536c629738ca4773622ae430dc6a2a6ff472` |
+| `/tmp/openeq-particle-gpu-projection.py` | `5e1421f4fee309e27f32d13be9446c1c10a27bac34953316021e65a73cbe283d` |
+| `/tmp/openeq-particle-gpu-projection.json` | `4b4d02367021f54278d44a6b3e5bdc449806c1c9fb14bd1b0fa16cd7bf88ea12` |
+| `/tmp/openeq-native-particle-materials.py` | `9a7becda9a62dc3983309ca8abf47512c468fd91d00572018d1cc350b9f8e8be` |
+| `/tmp/openeq-native-particle-witness.py` | `9e7b3158d9022e3f99c9939e45fbf7618e4c143a25ab2813f919a760e21efcd0` |
