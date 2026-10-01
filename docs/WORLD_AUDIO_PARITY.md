@@ -938,3 +938,14 @@ use SHORT2 upload, and CBSG has distinct normal-map glow/specular channels.
 This research does not yet enable those layered shaders. Next material work
 must preserve second coordinates through deduplication and upload, and keep
 native normal/light membership limitations explicit. Lava remains unsupported.
+
+
+The waterfall production-bake follow-up passes all 74 affected archives:
+91 draw batches in 51 active archives, 117,568 triangles, exact rate/texture/
+attribute comparisons, and unchanged complete collision streams containing
+8,697,825 triangles. The full 523-zone CPU audit also matches every preexisting
+non-timing field: 501 structural passes, the same 21 nonfinite cases and known
+Dranikcatacombsa dependency. Reports use `/tmp/openeq-waterfall-zone-survey/`.
+A newly identified missing source texture affects two Somnium triangles:
+`somnium_energy_02_c.dds`, unresolved even through a full real-client load.
+No guessed substitute was added. See `EQG_WATERFALL_RENDERING.md`.

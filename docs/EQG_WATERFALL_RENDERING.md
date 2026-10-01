@@ -111,3 +111,38 @@ and wrapped clocks, plus the complete 400,000-word Nest output digest
 Root also replayed the original property, upload, draw-state and preshader
 witnesses and reproduced their frozen hashes. Complete workspace results are
 recorded in `WORLD_AUDIO_PARITY.md` at integration.
+
+
+## Production bake and whole-zone follow-up
+
+A separate production-loader survey loaded all 74 affected original archives
+through temporary TER-only declarations, avoiding unrelated missing object
+assets. All 134 admissible definitions reconcile to 91 actual draw batches in
+51 active archives, containing all 117,568 expected waterfall triangles.
+113,000 referenced vertices compact to 89,206 vertices without changing their
+per-triangle texture identity, rate words, position, normal or primary UV.
+Every triangle is compared against an independent raw-byte source walk.
+
+All 8,697,825 physical terrain triangles in these declarations also match the
+independent complete collision streams. Waterfall-source polygons comprise
+53,227 physical faces, 64,339 passable faces and two degenerate physical faces
+in Crystallos that remain excluded. The Nest's 916 waterfall faces are all
+passable. This survey does not simulate full zones, objects or player movement.
+
+The survey found a real missing texture dependency: Somnium material `bbb`
+names `somnium_energy_02_c.dds` on two triangles. A separate complete load using
+the real client directory confirms that shared/loose fallback does not resolve
+it. Keep the missing-asset behavior explicit; no replacement texture or alias
+has been invented. Other referenced waterfall textures decode in this survey.
+
+Frozen survey source: `/tmp/openeq-waterfall-loader-survey.rs`, SHA-256
+`f95a192ea68c5147e854391a948aef1b6aeae3188bd480eb52969c3a08a6d151`.
+Output `/tmp/openeq-waterfall-loader-survey.json`, SHA-256
+`80903de73811239c7d5f987dcf4759bcbc28cb7ffc68561b79782416272894a6`.
+
+The full 523-zone CPU audit still has 501 structural passes, 21 existing
+nonfinite-source cases and the known Dranikcatacombsa banner dependency.
+Every preexisting non-timing field matches the earlier lighting survey exactly.
+Reports: `/tmp/openeq-waterfall-zone-survey/`, including `comparison.json`.
+Texture appearance, native lighting, traversal and audio remain outside that
+structural audit.
