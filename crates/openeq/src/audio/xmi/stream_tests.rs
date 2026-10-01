@@ -46,6 +46,7 @@ struct FakeSynth {
     frame: usize,
     value: f32,
     fail_render_at: Option<usize>,
+    fail_midi_at: Option<usize>,
     _thread_local: Rc<()>,
 }
 impl FakeSynth {
@@ -56,17 +57,17 @@ impl FakeSynth {
             frame: 0,
             value: 0.0,
             fail_render_at: None,
+            fail_midi_at: None,
             _thread_local: Rc::new(()),
         }
     }
 }
 impl RenderSynth for FakeSynth {
     fn midi_event(&mut self, status: u8, data1: u8, data2: u8) -> Result<()> {
-        self.probe
-            .messages
-            .lock()
-            .unwrap()
-            .push((self.frame, status, data1, data2));
+        let mut messages = self.probe.messages.lock().unwrap();
+        let call = messages.len();
+        messages.push((self.frame, status, data1, data2));
+        ensure!(self.fail_midi_at != Some(call), "injected MIDI failure");
         match status & 0xf0 {
             0x90 => self.value = f32::from(data1),
             0x80 => self.value = 0.0,
@@ -131,7 +132,7 @@ fn invalid_selection_and_unsupported_events_never_construct_a_synth() {
     for (bytes, ordinal) in [
         (vec![], 0),
         (xmi(&[0xff, 0x2f, 0]), 1),
-        (xmi(&[0xb0, 116, 127, 0xff, 0x2f, 0]), 0),
+        (xmi(&[0xb0, 109, 127, 0xff, 0x2f, 0]), 0),
     ] {
         let count = Arc::clone(&constructed);
         let result = stream_with(
@@ -219,7 +220,191 @@ fn receiver_cancellation_stops_after_one_block_and_discards_future_events() {
     .unwrap();
     assert_eq!(publications, 1);
     assert_eq!(synth.frame, MAX_RENDER_FRAMES);
-    assert_eq!(*probe.messages.lock().unwrap(), [(0, 0x90, 60, 100)]);
+    assert_eq!(
+        *probe.messages.lock().unwrap(),
+        [(0, 0x90, 60, 100), (MAX_RENDER_FRAMES, 0x80, 60, 0)]
+    );
+}
+
+#[test]
+fn finite_loop_renders_through_execution_eot_and_then_the_release_tail() {
+    let (mut schedule, source_end) = prepared(&[
+        0xb0, 116, 2, 0x90, 60, 100, 1, 2, 0xb0, 117, 127, 0xff, 0x2f, 0,
+    ]);
+    assert_eq!(source_end, 800);
+    assert_eq!(schedule.known_end_frame(), None);
+    let probe = Arc::new(Probe::default());
+    let mut synth = FakeSynth::new(Arc::clone(&probe));
+    let mut total = 0;
+    render(&mut schedule, &mut synth, u64::from(SAMPLE_RATE), |block| {
+        total += block.len() / 2;
+        true
+    })
+    .unwrap();
+    assert_eq!(
+        total,
+        4000 + RELEASE_SECONDS as usize * SAMPLE_RATE as usize
+    );
+    assert_eq!(
+        *probe.messages.lock().unwrap(),
+        (0..5)
+            .flat_map(|n| [(n * 800, 0x90, 60, 100), (n * 800 + 400, 0x80, 60, 0),])
+            .collect::<Vec<_>>()
+    );
+    assert!(schedule.is_finished());
+}
+
+#[test]
+fn infinite_loop_continues_after_source_eot_and_policy_cutoff_releases_notes_and_pedal() {
+    let (mut schedule, source_end) = prepared(&[
+        0xb0, 64, 127, 0xb0, 116, 0, 0x90, 60, 100, 100, 2, 0xb0, 117, 127, 0xff, 0x2f, 0,
+    ]);
+    assert_eq!(source_end, 800);
+    let probe = Arc::new(Probe::default());
+    let mut synth = FakeSynth::new(Arc::clone(&probe));
+    let mut total = 0;
+    render(&mut schedule, &mut synth, 1000, |block| {
+        total += block.len() / 2;
+        true
+    })
+    .unwrap();
+    assert_eq!(
+        *probe.messages.lock().unwrap(),
+        [
+            (0, 0xb0, 64, 127),
+            (0, 0x90, 60, 100),
+            (800, 0x90, 60, 100),
+            (1000, 0x80, 60, 0),
+            (1000, 0x80, 60, 0),
+            (1000, 0xb0, 64, 0),
+        ]
+    );
+    assert_eq!(
+        total,
+        1000 + RELEASE_SECONDS as usize * SAMPLE_RATE as usize
+    );
+    assert!(schedule.is_finished());
+    assert!(schedule.cancel().is_empty());
+}
+
+#[test]
+fn control_only_loop_is_bounded_and_cleans_notes_without_publishing_partial_audio() {
+    let (mut schedule, _) = prepared(&[
+        0x90, 60, 100, 100, 0xb0, 64, 127, 0xb0, 116, 0, 0xb0, 117, 127, 0xff, 0x2f, 0,
+    ]);
+    let probe = Arc::new(Probe::default());
+    let mut synth = FakeSynth::new(Arc::clone(&probe));
+    let mut publications = 0;
+    let error = render(&mut schedule, &mut synth, u64::from(SAMPLE_RATE), |_| {
+        publications += 1;
+        true
+    })
+    .unwrap_err();
+    assert_eq!(
+        error
+            .downcast_ref::<super::super::schedule::ScheduleError>()
+            .unwrap()
+            .issue,
+        super::super::schedule::ScheduleIssue::SameTickWorkLimit
+    );
+    assert_eq!(publications, 0);
+    assert_eq!(synth.frame, 0);
+    assert_eq!(
+        *probe.messages.lock().unwrap(),
+        [
+            (0, 0x90, 60, 100),
+            (0, 0xb0, 64, 127),
+            (0, 0x80, 60, 0),
+            (0, 0xb0, 64, 0),
+        ]
+    );
+    assert!(schedule.is_finished());
+}
+
+#[test]
+fn per_block_work_limit_survives_advancing_ticks() {
+    let mut bytes = vec![0xb0, 116, 0];
+    for _ in 0..16_384 {
+        bytes.extend_from_slice(&[0xff, 1, 0]);
+    }
+    bytes.extend_from_slice(&[1, 0xb0, 117, 127, 0xff, 0x2f, 0]);
+    let (mut schedule, _) = prepared(&bytes);
+    let probe = Arc::new(Probe::default());
+    let mut synth = FakeSynth::new(Arc::clone(&probe));
+    let error = render(&mut schedule, &mut synth, u64::from(SAMPLE_RATE), |_| {
+        panic!("bounded work failure must discard its partial PCM block")
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("event-work limit"));
+    assert!(synth.frame > 0 && synth.frame < MAX_RENDER_FRAMES);
+    assert!(schedule.is_finished());
+}
+
+#[test]
+fn cutoff_attempts_all_cleanup_messages_even_if_one_is_rejected_by_synth() {
+    let (mut schedule, _) = prepared(&[
+        0xb0, 64, 127, 0xb0, 116, 0, 0x90, 60, 100, 100, 2, 0xb0, 117, 127, 0xff, 0x2f, 0,
+    ]);
+    let probe = Arc::new(Probe::default());
+    let mut synth = FakeSynth::new(Arc::clone(&probe));
+    synth.fail_midi_at = Some(3); // First cutoff release after pedal and two notes.
+    let error = render(&mut schedule, &mut synth, 1000, |_| true).unwrap_err();
+    assert!(error.to_string().contains("injected MIDI failure"));
+    assert_eq!(
+        probe.messages.lock().unwrap()[3..],
+        [
+            (1000, 0x80, 60, 0),
+            (1000, 0x80, 60, 0),
+            (1000, 0xb0, 64, 0),
+        ]
+    );
+    assert!(schedule.is_finished());
+    assert!(schedule.cancel().is_empty());
+}
+
+#[test]
+fn looping_receiver_cancellation_stops_after_one_block_and_metadata_has_no_false_endpoint() {
+    use rodio::Source;
+    let bytes = [
+        0xb0, 116, 0, 0x90, 60, 100, 100, 2, 0xb0, 117, 127, 0xff, 0x2f, 0,
+    ];
+    let (mut schedule, _) = prepared(&bytes);
+    let probe = Arc::new(Probe::default());
+    let mut synth = FakeSynth::new(Arc::clone(&probe));
+    let mut publications = 0;
+    render(
+        &mut schedule,
+        &mut synth,
+        MAX_SECONDS * u64::from(SAMPLE_RATE),
+        |_| {
+            publications += 1;
+            false
+        },
+    )
+    .unwrap();
+    assert_eq!(publications, 1);
+    assert_eq!(synth.frame, MAX_RENDER_FRAMES);
+    let messages = probe.messages.lock().unwrap();
+    assert_eq!(messages.len(), 12);
+    assert_eq!(
+        messages[..6],
+        (0..6).map(|n| (n * 800, 0x90, 60, 100)).collect::<Vec<_>>()
+    );
+    assert_eq!(messages[6..], [(MAX_RENDER_FRAMES, 0x80, 60, 0); 6]);
+    assert!(schedule.is_finished());
+    drop(messages);
+
+    let workers = Arc::new(AtomicUsize::new(0));
+    let source = stream_with(
+        xmi(&bytes),
+        XmiSequenceOrdinal(0),
+        Arc::clone(&workers),
+        || Ok(FakeSynth::new(Arc::default())),
+    )
+    .unwrap();
+    assert_eq!(source.total_duration(), None);
+    drop(source);
+    wait_for_pool(&workers);
 }
 
 #[test]

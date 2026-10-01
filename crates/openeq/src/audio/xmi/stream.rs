@@ -1,5 +1,5 @@
 //! Bounded offline synthesis worker. The output callback only consumes PCM.
-use super::schedule::{SampleClock, XmiScheduler};
+use super::schedule::{MAX_SOURCE_EVENTS_PER_TICK, SampleClock, XmiScheduler};
 use crate::audio::{
     decode::MusicStream,
     midi_synth::{MAX_RENDER_FRAMES, MidiSynth},
@@ -20,6 +20,8 @@ const SAMPLE_RATE: u32 = 48_000;
 const MAX_SECONDS: u64 = 30 * 60;
 // Finite release tail is a client policy, not a native Miles timing claim.
 const RELEASE_SECONDS: u64 = 2;
+/// Includes metadata, consumed controls and releases across the whole PCM block.
+const MAX_BLOCK_EVENTS: usize = MAX_SOURCE_EVENTS_PER_TICK * 2;
 static WORKERS: OnceLock<Arc<AtomicUsize>> = OnceLock::new();
 #[derive(Debug)]
 pub(crate) struct Busy;
@@ -84,12 +86,13 @@ fn stream_with<S: RenderSynth + 'static>(
         .nth(ordinal.index())
         .ok_or_else(|| anyhow::anyhow!("XMI sequence {} is absent", ordinal.0))?;
     let clock = SampleClock::miles_default(SAMPLE_RATE)?;
-    let end = clock.frame_at_tick(sequence.end_tick)?;
+    let mut schedule = XmiScheduler::new(Arc::new(sequence), clock)?;
+    let known_end = schedule.known_end_frame();
+    let end = known_end.unwrap_or(MAX_SECONDS * u64::from(SAMPLE_RATE));
     ensure!(
         end <= MAX_SECONDS * u64::from(SAMPLE_RATE),
         "XMI sequence exceeds 30 minute limit"
     );
-    let mut schedule = XmiScheduler::new(Arc::new(sequence), clock)?;
     let (sender, receiver) = mpsc::sync_channel(8);
     let failure = Arc::new(AtomicBool::new(false));
     let worker_failure = Arc::clone(&failure);
@@ -120,9 +123,9 @@ fn stream_with<S: RenderSynth + 'static>(
         receiver,
         NonZero::new(2).unwrap(),
         NonZero::new(SAMPLE_RATE).unwrap(),
-        Some(Duration::from_secs_f64(
-            end as f64 / f64::from(SAMPLE_RATE) + RELEASE_SECONDS as f64,
-        )),
+        known_end.map(|end| {
+            Duration::from_secs_f64(end as f64 / f64::from(SAMPLE_RATE) + RELEASE_SECONDS as f64)
+        }),
         failure,
     ))
 }
@@ -133,13 +136,44 @@ fn render(
     end: u64,
     mut publish: impl FnMut(Vec<f32>) -> bool,
 ) -> Result<()> {
+    let result = render_inner(schedule, synth, end, &mut publish);
+    // Receiver cancellation, policy cutoff and runtime guard errors must all
+    // stop the active native-style note slots before the worker is disposed.
+    let cleanup = cancel_schedule(schedule, synth);
+    result.and(cleanup)
+}
+
+fn cancel_schedule(schedule: &mut XmiScheduler, synth: &mut impl RenderSynth) -> Result<()> {
+    let mut cleanup_error = None;
+    for message in schedule.cancel() {
+        if let Err(error) = synth.midi_event(message.status, message.data1, message.data2) {
+            cleanup_error.get_or_insert(error);
+        }
+    }
+    cleanup_error.map_or(Ok(()), Err)
+}
+
+fn render_inner(
+    schedule: &mut XmiScheduler,
+    synth: &mut impl RenderSynth,
+    limit: u64,
+    publish: &mut impl FnMut(Vec<f32>) -> bool,
+) -> Result<()> {
     let mut frame = 0;
-    let final_frame = end + RELEASE_SECONDS * u64::from(SAMPLE_RATE);
+    let tail = RELEASE_SECONDS * u64::from(SAMPLE_RATE);
+    let mut final_frame = limit
+        .checked_add(tail)
+        .ok_or_else(|| anyhow::anyhow!("XMI stream limit overflow"))?;
+    let mut ending = false;
+    let mut block_events = 0;
     let mut block = Vec::with_capacity(MAX_RENDER_FRAMES * 2);
     while frame < final_frame {
-        // Scheduler is preflighted and has a fixed source-event bound, so a
-        // dense event tick cannot create an unbounded callback/work queue.
-        while schedule.next_frame().is_some_and(|next| next <= frame) {
+        while schedule.next_frame()?.is_some_and(|next| next <= frame) {
+            ensure!(
+                block_events < MAX_BLOCK_EVENTS,
+                "XMI render event-work limit exceeded"
+            );
+            block_events += 1;
             let Some(event) = schedule.next_event()? else {
                 break;
             };
@@ -147,10 +181,21 @@ fn render(
                 synth.midi_event(message.status, message.data1, message.data2)?;
             }
         }
-        let boundary = schedule
-            .next_frame()
-            .unwrap_or(final_frame)
-            .min(final_frame);
+        if !ending && (schedule.is_finished() || frame >= limit) {
+            if !schedule.is_finished() {
+                tracing::warn!("XMI loop stream reached its 30 minute playback limit");
+                cancel_schedule(schedule, synth)?;
+            }
+            ending = true;
+            final_frame = frame
+                .checked_add(tail)
+                .ok_or_else(|| anyhow::anyhow!("XMI release-tail overflow"))?;
+        }
+        let boundary = if ending {
+            final_frame
+        } else {
+            schedule.next_frame()?.unwrap_or(limit).min(limit)
+        };
         ensure!(boundary > frame, "XMI sample timeline made no progress");
         let room = MAX_RENDER_FRAMES - block.len() / 2;
         let frames = (boundary - frame).min(room as u64) as usize;
@@ -163,6 +208,7 @@ fn render(
                 return Ok(());
             }
             block = Vec::with_capacity(MAX_RENDER_FRAMES * 2);
+            block_events = 0;
         }
     }
     Ok(())

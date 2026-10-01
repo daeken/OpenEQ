@@ -1,6 +1,7 @@
 //! Bounded Miles-compatible event ordering, without synthesis or a device.
 //!
-//! Native evidence: `docs/XMI_NATIVE_SELECTION.md`. Each tick expires notes in
+//! Native evidence: `docs/XMI_NATIVE_SELECTION.md` and `docs/XMI_NATIVE_LOOPS.md`.
+//! Each tick expires notes in
 //! ascending slot order before authored events. Zero-duration notes expire on
 //! the next tick. Same-key overlap retains independent slots and unconditional
 //! MIDI releases; no modern voice-stealing policy is substituted.
@@ -12,6 +13,9 @@ use std::{cmp::Reverse, collections::BinaryHeap, fmt, sync::Arc};
 pub const MAX_ACTIVE_NOTES: usize = 32;
 pub const MAX_BATCH_EVENTS: usize = 512;
 pub const MAX_DIAGNOSTICS: usize = 32;
+/// Includes controls/metadata that produce no MIDI. This persists across pull
+/// batches so a caller cannot accidentally spin forever at one execution tick.
+pub const MAX_SOURCE_EVENTS_PER_TICK: usize = MAX_XMI_SEQUENCE_EVENTS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SampleClock {
@@ -67,6 +71,9 @@ pub enum ScheduleIssue {
     TickOverflow,
     ActiveNoteLimit,
     BatchLimit,
+    UnmatchedLoopBreak,
+    SameTickWorkLimit,
+    IdentityOverflow,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScheduleError {
@@ -95,6 +102,8 @@ pub struct PreflightReport {
     pub diagnostics: Vec<ScheduleDiagnostic>,
     pub suppressed: usize,
     pub peak_active_notes: usize,
+    /// Exact for straight-through sequences only. Loop execution can finish
+    /// later or remain indefinite; its clock and note bounds are checked live.
     pub end_frame: Option<u64>,
 }
 impl PreflightReport {
@@ -133,14 +142,26 @@ pub fn preflight(sequence: &XmiSequence, clock: SampleClock) -> PreflightReport 
         report.add(None, ScheduleIssue::EventLimit);
         return report;
     }
+    let has_loops = sequence.events.iter().any(|event| {
+        matches!(
+            event.kind,
+            XmiEventKind::Controller {
+                controller: 116 | 117,
+                ..
+            }
+        )
+    });
     let mut active = [None::<u64>; MAX_ACTIVE_NOTES];
-    let mut previous_tick = 0;
+    let mut previous_tick = 0u64;
     let mut eot = false;
     for (index, event) in sequence.events.iter().enumerate() {
         if event.has_zero_delay_byte {
             report.add(Some(index), ScheduleIssue::UnsupportedZeroDelay);
         }
-        if eot || event.tick < previous_tick || event.tick > sequence.end_tick {
+        if eot
+            || previous_tick.checked_add(event.delay_ticks) != Some(event.tick)
+            || event.tick > sequence.end_tick
+        {
             report.add(Some(index), ScheduleIssue::InvalidSequence);
         }
         previous_tick = event.tick;
@@ -160,7 +181,7 @@ pub fn preflight(sequence: &XmiSequence, clock: SampleClock) -> PreflightReport 
                         report.peak_active_notes = report
                             .peak_active_notes
                             .max(active.iter().flatten().count());
-                    } else {
+                    } else if !has_loops {
                         report.add(Some(index), ScheduleIssue::ActiveNoteLimit);
                     }
                 } else {
@@ -168,10 +189,7 @@ pub fn preflight(sequence: &XmiSequence, clock: SampleClock) -> PreflightReport 
                 }
             }
             XmiEventKind::Controller { controller, .. }
-                if matches!(
-                    controller,
-                    106 | 109 | 110 | 111 | 115 | 116 | 117 | 118 | 119
-                ) =>
+                if matches!(controller, 106 | 109 | 110 | 111 | 115 | 118 | 119) =>
             {
                 report.add(
                     Some(index),
@@ -193,6 +211,11 @@ pub fn preflight(sequence: &XmiSequence, clock: SampleClock) -> PreflightReport 
     }
     if !eot {
         report.add(None, ScheduleIssue::InvalidSequence);
+    }
+    if has_loops {
+        // This occupancy estimate describes only the source's linear pass.
+        // It cannot certify execution across repeats or predict its endpoint.
+        report.end_frame = None;
     }
     report
 }
@@ -246,6 +269,8 @@ fn midi_message(kind: &XmiEventKind) -> Result<Option<MidiMessage>, ()> {
 pub struct NoteIdentity {
     pub source_event: usize,
     pub slot: u8,
+    /// Distinguishes repeated visits to a source event, even after slot reuse.
+    pub occurrence: u64,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScheduledKind {
@@ -305,15 +330,28 @@ struct Release {
     id: NoteIdentity,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct LoopSlot {
+    start: usize,
+    remaining: u8,
+}
+
 pub struct XmiScheduler {
     sequence: Arc<XmiSequence>,
     clock: SampleClock,
     source_index: usize,
+    source_tick: u64,
+    known_end_frame: Option<u64>,
+    loops: [Option<LoopSlot>; 4],
+    work_tick: u64,
+    source_work: usize,
+    next_note_id: u64,
     active: [Option<ActiveNote>; MAX_ACTIVE_NOTES],
     releases: BinaryHeap<Reverse<Release>>,
     sustain: [u8; 16],
     ending: bool,
     finished: bool,
+    failure: Option<ScheduleError>,
 }
 impl XmiScheduler {
     pub fn new(sequence: Arc<XmiSequence>, clock: SampleClock) -> Result<Self, ScheduleError> {
@@ -325,34 +363,45 @@ impl XmiScheduler {
             });
         }
         Ok(Self {
+            source_tick: sequence.events[0].tick,
+            known_end_frame: report.end_frame,
             sequence,
             clock,
             source_index: 0,
+            loops: [None; 4],
+            work_tick: 0,
+            source_work: 0,
+            next_note_id: 0,
             active: [None; MAX_ACTIVE_NOTES],
             releases: BinaryHeap::with_capacity(MAX_ACTIVE_NOTES),
             sustain: [0; 16],
             ending: false,
             finished: false,
+            failure: None,
         })
     }
     pub fn is_finished(&self) -> bool {
         self.finished
     }
+    pub fn known_end_frame(&self) -> Option<u64> {
+        self.known_end_frame
+    }
     /// Useful for splitting a bounded synthesis block exactly at an event.
-    pub fn next_frame(&self) -> Option<u64> {
+    pub fn next_frame(&self) -> Result<Option<u64>, ScheduleError> {
         if self.finished {
-            return None;
+            return Ok(None);
+        }
+        if let Some(error) = &self.failure {
+            return Err(error.clone());
         }
         let tick = if self.ending {
-            self.sequence.end_tick
+            self.source_tick
         } else {
-            let source_tick = self.sequence.events[self.source_index].tick;
-            self.releases
-                .peek()
-                .map_or(source_tick, |release| release.0.tick.min(source_tick))
+            self.releases.peek().map_or(self.source_tick, |release| {
+                release.0.tick.min(self.source_tick)
+            })
         };
-        // Preflight validated the clock through EOT; all emitted ticks <= EOT.
-        self.clock.frame_at_tick(tick).ok()
+        self.clock.frame_at_tick(tick).map(Some)
     }
     pub fn next_batch(&mut self, max_events: usize) -> Result<Vec<ScheduledEvent>, ScheduleError> {
         if max_events == 0 || max_events > MAX_BATCH_EVENTS {
@@ -370,102 +419,173 @@ impl XmiScheduler {
         }
         Ok(events)
     }
+    /// One call performs at most one source command or note release. Consumed
+    /// loop controls remain visible as metadata, so even control-only loops
+    /// yield to bounded batches and can be cancelled between calls.
     pub fn next_event(&mut self) -> Result<Option<ScheduledEvent>, ScheduleError> {
         if self.finished {
             return Ok(None);
         }
-        let (tick, kind) =
-            if self.ending {
-                (
-                    self.sequence.end_tick,
-                    self.cleanup_event().unwrap_or_else(|| {
-                        self.finished = true;
-                        ScheduledKind::End
-                    }),
-                )
-            } else {
-                let event = &self.sequence.events[self.source_index];
-                if self
-                    .releases
-                    .peek()
-                    .is_some_and(|release| release.0.tick <= event.tick)
-                {
-                    let release = self.releases.pop().unwrap().0;
-                    let note = self.active[usize::from(release.slot)].take().unwrap();
-                    debug_assert_eq!(note.id, release.id);
-                    (
-                        release.tick,
-                        ScheduledKind::Release {
-                            note: note.id,
-                            message: note.release(),
-                        },
-                    )
-                } else {
-                    let index = self.source_index;
-                    let tick = event.tick;
-                    let message = midi_message(&event.kind).map_err(|_| ScheduleError {
-                        event_index: Some(index),
-                        issue: ScheduleIssue::InvalidChannelData,
-                    })?;
-                    let mut identity = None;
-                    match event.kind {
-                        XmiEventKind::NoteOn {
-                            channel,
-                            key,
-                            duration_ticks,
-                            ..
-                        } => {
-                            let slot = self.active.iter().position(Option::is_none).ok_or(
-                                ScheduleError {
-                                    event_index: Some(index),
-                                    issue: ScheduleIssue::ActiveNoteLimit,
-                                },
-                            )?;
-                            let id = NoteIdentity {
-                                source_event: index,
-                                slot: slot as u8,
-                            };
-                            let release_tick = tick
-                                .checked_add(u64::from(duration_ticks.max(1)))
-                                .ok_or(ScheduleError {
-                                event_index: Some(index),
-                                issue: ScheduleIssue::TickOverflow,
-                            })?;
-                            self.active[slot] = Some(ActiveNote { id, channel, key });
-                            self.releases.push(Reverse(Release {
-                                tick: release_tick,
-                                slot: slot as u8,
-                                id,
-                            }));
-                            identity = Some(id);
-                        }
-                        XmiEventKind::Controller {
-                            channel,
-                            controller: 64,
-                            value,
-                        } => self.sustain[usize::from(channel)] = value,
-                        XmiEventKind::Meta { kind: 0x2f, .. } => {
-                            self.ending = true;
-                            self.releases.clear();
-                        }
-                        _ => {}
-                    }
-                    self.source_index += 1;
-                    (
-                        tick,
-                        ScheduledKind::Source {
-                            event_index: index,
-                            message,
-                            note: identity,
-                        },
-                    )
-                }
+        if let Some(error) = &self.failure {
+            return Err(error.clone());
+        }
+        let result = self.next_event_checked();
+        if let Err(error) = &result {
+            self.failure = Some(error.clone());
+        }
+        result
+    }
+    fn next_event_checked(&mut self) -> Result<Option<ScheduledEvent>, ScheduleError> {
+        let frame = self
+            .next_frame()?
+            .expect("unfinished scheduler has an event");
+        let (tick, kind) = if self.ending {
+            (
+                self.source_tick,
+                self.cleanup_event().unwrap_or_else(|| {
+                    self.finished = true;
+                    ScheduledKind::End
+                }),
+            )
+        } else if self
+            .releases
+            .peek()
+            .is_some_and(|release| release.0.tick <= self.source_tick)
+        {
+            let release = self.releases.pop().unwrap().0;
+            let note = self.active[usize::from(release.slot)].take().unwrap();
+            debug_assert_eq!(note.id, release.id);
+            (
+                release.tick,
+                ScheduledKind::Release {
+                    note: note.id,
+                    message: note.release(),
+                },
+            )
+        } else {
+            let index = self.source_index;
+            let tick = self.source_tick;
+            let fail = |issue| ScheduleError {
+                event_index: Some(index),
+                issue,
             };
-        Ok(Some(ScheduledEvent {
-            tick,
-            frame: self.clock.frame_at_tick(tick)?,
-            kind,
-        }))
+            if self.work_tick != tick {
+                self.work_tick = tick;
+                self.source_work = 0;
+            }
+            if self.source_work == MAX_SOURCE_EVENTS_PER_TICK {
+                return Err(fail(ScheduleIssue::SameTickWorkLimit));
+            }
+            self.source_work += 1;
+            let event = &self.sequence.events[index];
+            let mut message =
+                midi_message(&event.kind).map_err(|_| fail(ScheduleIssue::InvalidChannelData))?;
+            let mut identity = None;
+            let mut jump = None;
+            match event.kind {
+                XmiEventKind::NoteOn {
+                    channel,
+                    key,
+                    duration_ticks,
+                    ..
+                } => {
+                    let slot = self
+                        .active
+                        .iter()
+                        .position(Option::is_none)
+                        .ok_or_else(|| fail(ScheduleIssue::ActiveNoteLimit))?;
+                    let id = NoteIdentity {
+                        source_event: index,
+                        slot: slot as u8,
+                        occurrence: self.next_note_id,
+                    };
+                    self.next_note_id = self
+                        .next_note_id
+                        .checked_add(1)
+                        .ok_or_else(|| fail(ScheduleIssue::IdentityOverflow))?;
+                    let release_tick = tick
+                        .checked_add(u64::from(duration_ticks.max(1)))
+                        .ok_or_else(|| fail(ScheduleIssue::TickOverflow))?;
+                    self.active[slot] = Some(ActiveNote { id, channel, key });
+                    self.releases.push(Reverse(Release {
+                        tick: release_tick,
+                        slot: slot as u8,
+                        id,
+                    }));
+                    identity = Some(id);
+                }
+                XmiEventKind::Controller {
+                    controller: 116,
+                    value,
+                    ..
+                } => {
+                    message = None;
+                    if let Some(slot) = self.loops.iter_mut().find(|slot| slot.is_none()) {
+                        // The native cursor saves CC116 itself, not its body.
+                        *slot = Some(LoopSlot {
+                            start: index,
+                            remaining: value,
+                        });
+                    }
+                }
+                XmiEventKind::Controller {
+                    controller: 117,
+                    value,
+                    ..
+                } => {
+                    message = None;
+                    let slot = self.loops.iter().rposition(Option::is_some);
+                    match slot {
+                        None if value < 64 => return Err(fail(ScheduleIssue::UnmatchedLoopBreak)),
+                        None => {}
+                        Some(slot) => {
+                            let state = self.loops[slot].as_mut().unwrap();
+                            if value < 64 || state.remaining == 1 {
+                                self.loops[slot] = None;
+                            } else {
+                                if state.remaining != 0 {
+                                    state.remaining -= 1;
+                                }
+                                jump = Some(state.start);
+                            }
+                        }
+                    }
+                }
+                XmiEventKind::Controller {
+                    channel,
+                    controller: 64,
+                    value,
+                } => {
+                    self.sustain[usize::from(channel)] = value;
+                }
+                XmiEventKind::Meta { kind: 0x2f, .. } => {
+                    self.ending = true;
+                    self.releases.clear();
+                }
+                _ => {}
+            }
+            if let Some(target) = jump {
+                self.source_index = target;
+                // Status-byte reentry excludes the start marker's preceding
+                // delay. The first body event resumes on this same tick.
+            } else {
+                self.source_index += 1;
+                if !self.ending {
+                    self.source_tick = tick
+                        .checked_add(self.sequence.events[self.source_index].delay_ticks)
+                        .ok_or_else(|| fail(ScheduleIssue::TickOverflow))?;
+                }
+            }
+            (
+                tick,
+                ScheduledKind::Source {
+                    event_index: index,
+                    message,
+                    note: identity,
+                },
+            )
+        };
+        Ok(Some(ScheduledEvent { tick, frame, kind }))
     }
     fn cleanup_event(&mut self) -> Option<ScheduledKind> {
         if let Some(slot) = self.active.iter().position(Option::is_some) {
@@ -494,6 +614,8 @@ impl XmiScheduler {
     pub fn cancel(&mut self) -> Vec<MidiMessage> {
         self.finished = true;
         self.releases.clear();
+        self.loops.fill(None);
+        self.failure = None;
         self.source_index = self.sequence.events.len();
         let mut messages = Vec::with_capacity(MAX_ACTIVE_NOTES + 16);
         while let Some(ScheduledKind::Cleanup { message, .. }) = self.cleanup_event() {
@@ -506,3 +628,7 @@ impl XmiScheduler {
 #[cfg(test)]
 #[path = "schedule_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "schedule_loop_tests.rs"]
+mod loop_tests;

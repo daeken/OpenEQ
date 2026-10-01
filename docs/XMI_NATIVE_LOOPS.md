@@ -2,9 +2,9 @@
 
 Offline investigation, 2026-10-01. This extends the controller findings in
 [XMI_NATIVE_SELECTION.md](XMI_NATIVE_SELECTION.md) and resolves the saved-cursor
-question for the installed Miles build. **There is no production loop
-implementation in this change.** `XmiScheduler::preflight` must continue rejecting
-controllers 116/117 until a bounded interpreter and its tests are implemented.
+question for the installed Miles build. The bounded production interpreter and
+silent conformance tests are now implemented; their limits and results appear
+below and in [XMI_PLAN.md](XMI_PLAN.md).
 
 The important result is unusual: the saved loop cursor points to the **CC116
 status byte itself**. CC117 resumes there without advancing past it. Consequently
@@ -237,27 +237,41 @@ with zero. EOT was not reached. The zero-counter branch has no decrement or
 exit condition; the bounded trace verifies repeated execution, while the
 handler establishes the indefinite behavior absent an external stop/control.
 
-## Remaining implementation boundary
+## Production execution and remaining boundary
 
-The current parser already retains status offsets, additive delays and source
-indices. A later interpreter can represent the native cursor and four slots
-without expanding loops into a huge event vector. It must retain a separate
-monotonic execution clock rather than treating source absolute ticks as the
-repeated timeline. The loop start's preceding delay cannot simply be replayed
-with that source event.
+`XmiScheduler` now executes the native four-slot state while preserving the
+parser's source records. Its separate monotonic execution tick skips the delay
+before the restarted CC116 and keeps active-note expirations across jumps.
+Every pull executes one bounded command/release; consumed loop controls remain
+observable source records. Work is capped at 65,536 source events per tick across
+batches, plus 131,072 scheduled events per PCM block. Runtime retains the 32-note
+limit and rejects malformed unmatched breaks. Overflow or bound failures stop
+the stream with cleanup. Cancellation clears loop state and pending events.
 
-Before admitting these controls, verify the above finite/infinite/nested traces,
-cross-boundary note releases, capacity behavior, same-tick continuation and
-cancellation under small/large pull batches. Preflight's existing linear
-active-note occupancy analysis is not sufficient for arbitrary looped input:
-repeats can overlap earlier notes. Execution must keep the 32-note bound and
-bounded source work even on control-only loops. Malformed unmatched breaks
-need a safe diagnostic. RBRN/controller109 execution, callback-enabled prefix
-overrides, arbitrary host tempo changes, pause/resume and external branches
-into/out of loop bodies are outside this witness and remain separate gates.
+Synthetic tests verify all positive native counts, nested cross-channel loops,
+infinity/cancellation, delay placement, release ordering, slot reuse and checked
+clocks. The ignored `original_loop_sequences_match_native_midi_and_execution_ticks`
+test reads local originals and compares the full finite pair plus both infinite
+copies through tick 69,686. It streams each MIDI output into FNV-1a using an
+eight-byte little-endian effective tick followed by status/data1/data2. The
+unused native data2 argument for C0/D0 is normalized to zero. Expected digests:
 
-Nothing here enables the four sequences, changes automatic music selection,
-asserts original instrument timbre, or adds background playback.
+| Trace | MIDI count | FNV-1a 64 |
+| --- | ---: | --- |
+| `thurgadinb` ordinal 0 / `thurgadina` ordinal 5, full | 261,313 | `5111761a887c4982` |
+| `templeveeshan` ordinal 0 / `thurgadina` ordinal 0, through tick 69,686 | 14,195 | `fca1b8a525ce5142` |
+
+The test also verifies source/control counts, NEXT tick sequences, execution
+monotonicity and unchanged source records. All four traces match. Production
+stream duration is unknown for loops, and the existing 30-minute playback cap
+stops even the long finite pair before its natural EOT, logging that cutoff and
+rendering a two-second release tail. The pure scheduler has no duration cap.
+
+RBRN/controller109 execution, callback-enabled prefix overrides, arbitrary host
+tempo changes, pause/resume and external branches into/out of loop bodies remain
+outside this witness. SysEx is still gated at this checkpoint. These changes
+admit the four loop sequences without altering automatic music selection or
+claiming original instrument timbre. No audible playback occurred.
 
 ## Independent review
 

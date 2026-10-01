@@ -1,6 +1,6 @@
 use super::*;
 use openeq_assets::audio::xmi::{XmiEvent, XmiSequenceOrdinal};
-fn note(key: u8, duration: u32) -> XmiEventKind {
+pub(super) fn note(key: u8, duration: u32) -> XmiEventKind {
     XmiEventKind::NoteOn {
         channel: 0,
         key,
@@ -8,14 +8,14 @@ fn note(key: u8, duration: u32) -> XmiEventKind {
         duration_ticks: duration,
     }
 }
-fn cc(channel: u8, controller: u8, value: u8) -> XmiEventKind {
+pub(super) fn cc(channel: u8, controller: u8, value: u8) -> XmiEventKind {
     XmiEventKind::Controller {
         channel,
         controller,
         value,
     }
 }
-fn seq(values: &[(u64, XmiEventKind)], end: u64) -> Arc<XmiSequence> {
+pub(super) fn seq(values: &[(u64, XmiEventKind)], end: u64) -> Arc<XmiSequence> {
     let mut previous = 0;
     let mut events = values
         .iter()
@@ -56,17 +56,17 @@ fn seq(values: &[(u64, XmiEventKind)], end: u64) -> Arc<XmiSequence> {
         has_eot_padding: false,
     })
 }
-fn scheduler(values: &[(u64, XmiEventKind)], end: u64) -> XmiScheduler {
+pub(super) fn scheduler(values: &[(u64, XmiEventKind)], end: u64) -> XmiScheduler {
     XmiScheduler::new(seq(values, end), SampleClock::miles_default(48000).unwrap()).unwrap()
 }
-fn drain(s: &mut XmiScheduler, chunk: usize) -> Vec<ScheduledEvent> {
+pub(super) fn drain(s: &mut XmiScheduler, chunk: usize) -> Vec<ScheduledEvent> {
     let mut output = Vec::new();
     while !s.is_finished() {
         output.extend(s.next_batch(chunk).unwrap());
     }
     output
 }
-fn midis(events: &[ScheduledEvent]) -> Vec<(u64, u8, u8, u8)> {
+pub(super) fn midis(events: &[ScheduledEvent]) -> Vec<(u64, u8, u8, u8)> {
     events
         .iter()
         .filter_map(|event| {
@@ -155,7 +155,7 @@ fn releases_precede_source_ties_and_expiry_uses_slot_order_not_note_age() {
     assert!(events.iter().all(|event| event.frame == event.tick * 400));
     assert!(matches!(events.last().unwrap().kind, ScheduledKind::End));
     assert!(s.next_event().unwrap().is_none());
-    assert_eq!(s.next_frame(), None);
+    assert_eq!(s.next_frame().unwrap(), None);
 }
 
 #[test]
@@ -239,7 +239,7 @@ fn eot_and_cancel_release_slots_then_pedals_without_fabricated_all_sound_off() {
     assert_eq!(cancelled.cancel(), cleanup);
     assert!(cancelled.cancel().is_empty());
     assert!(cancelled.next_event().unwrap().is_none());
-    assert!(cancelled.next_frame().is_none());
+    assert!(cancelled.next_frame().unwrap().is_none());
 }
 
 #[test]
@@ -392,10 +392,10 @@ fn explicit_zero_delays_fail_preflight_but_zero_duration_still_schedules() {
 #[test]
 fn unsupported_constructs_fail_before_any_output_and_report_occurrences() {
     let mut values = Vec::new();
-    for controller in [106, 109, 110, 111, 115, 116, 117, 118, 119] {
+    for controller in [106, 109, 110, 111, 115, 118, 119] {
         values.push((0, cc(0, controller, 0)));
     }
-    values.push((0, cc(0, 116, 127)));
+    values.push((0, cc(0, 109, 127)));
     values.push((
         0,
         XmiEventKind::SysEx {
@@ -406,12 +406,12 @@ fn unsupported_constructs_fail_before_any_output_and_report_occurrences() {
     let sequence = seq(&values, 1);
     let report = preflight(&sequence, SampleClock::miles_default(48000).unwrap());
     assert!(!report.is_supported());
-    assert_eq!(report.diagnostics.len(), 10);
+    assert_eq!(report.diagnostics.len(), 8);
     assert_eq!(
         report
             .diagnostics
             .iter()
-            .find(|d| d.issue == ScheduleIssue::UnsupportedController(116))
+            .find(|d| d.issue == ScheduleIssue::UnsupportedController(109))
             .unwrap()
             .occurrences,
         2
@@ -443,9 +443,9 @@ fn capacity_work_and_sequence_guards_are_bounded() {
     let mut s = scheduler(&values, 10);
     assert!(s.next_batch(0).is_err());
     assert!(s.next_batch(MAX_BATCH_EVENTS + 1).is_err());
-    assert_eq!(s.next_frame(), Some(0));
+    assert_eq!(s.next_frame().unwrap(), Some(0));
     assert_eq!(s.next_batch(32).unwrap().len(), 32);
-    assert_eq!(s.next_frame(), Some(4000));
+    assert_eq!(s.next_frame().unwrap(), Some(4000));
     assert_eq!(s.cancel().len(), 32);
     let clock = SampleClock::miles_default(48000).unwrap();
     for sequence in [
@@ -512,7 +512,7 @@ fn original_xmi_scheduler_coverage() {
     paths.sort();
     assert_eq!(paths.len(), 79);
     let mut counts = BTreeMap::<String, usize>::new();
-    let (mut total, mut supported, mut peak, mut output_count) = (0, 0, 0, 0);
+    let (mut total, mut supported, mut linear, mut peak, mut output_count) = (0, 0, 0, 0, 0);
     for path in paths {
         let file =
             openeq_assets::audio::xmi::XmiFile::parse(&std::fs::read(&path).unwrap()).unwrap();
@@ -537,6 +537,12 @@ fn original_xmi_scheduler_coverage() {
                 continue;
             }
             supported += 1;
+            if report.end_frame.is_none() {
+                // Original loops have dedicated bounded/native trace tests;
+                // two intentionally never reach EOT.
+                continue;
+            }
+            linear += 1;
             let mut scheduler = XmiScheduler::new(
                 Arc::new(sequence),
                 SampleClock::miles_default(48000).unwrap(),
@@ -559,13 +565,9 @@ fn original_xmi_scheduler_coverage() {
     println!(
         "XMI scheduler coverage: {supported}/{total} sequences, peak{peak}/32 active notes, {output_count} scheduled outputs; reasons {counts:?}"
     );
-    assert_eq!((supported, peak, output_count), (384, 31, 927_156));
     assert_eq!(
-        counts,
-        BTreeMap::from([
-            ("UnsupportedController(116)".into(), 4),
-            ("UnsupportedController(117)".into(), 4),
-            ("UnsupportedSysEx".into(), 1),
-        ])
+        (supported, linear, peak, output_count),
+        (388, 384, 31, 927_156)
     );
+    assert_eq!(counts, BTreeMap::from([("UnsupportedSysEx".into(), 1)]));
 }

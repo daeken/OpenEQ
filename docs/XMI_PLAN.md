@@ -9,7 +9,8 @@ The bounded container/event parser is now implemented. The installed Miles
 library establishes a default clock of 120 ticks per second. Subsequent
 [native lookup research](XMI_NATIVE_SELECTION.md) establishes that nonnegative
 EFF/EMT music selectors map directly to zero-based container ordinals, including
-zero. Extended looping/branching playback is still a separate implementation.
+zero. The native four-slot loop interpreter is implemented; arbitrary branch
+execution remains gated.
 
 Current audio metadata retains `AudioReference::XmiSequence { file, sequence }`.
 The `sequence` value is an authored selector; native lookup passes it unchanged
@@ -102,27 +103,24 @@ the observed Miles 120 Hz; an explicit nonzero clock rate can be supplied.
 
 Controller 120 follows common MIDI output, matching the new native dispatch
 evidence. Controller 108 also follows common output under EQ's observed lack of
-a prefix callback. The unimplemented native controls 106, 109, 110, 111, 115–119 and
+a prefix callback. The unimplemented native controls 106, 109, 110, 111, 115, 118, 119 and
 all SysEx are rejected before emitting any events. Passive RBRN metadata alone
 does not imply a branch; executing controller 109 remains unsupported. Rejected
 controls are not relabelled as ordinary MIDI or silently skipped. Preflight
 reports the first source index and occurrence count for each bounded issue kind.
 
-Nine portable tests passed for clock drift/overflow, native release ordering,
+The initial nine portable tests passed for clock drift/overflow, native release ordering,
 slot reuse, same-key overlap, zero duration, EOT/cancellation/sustain cleanup,
 source metadata/channel shapes, unsupported controls and explicit zero delays,
 capacity/work guards and
 batch partition independence. The ignored `original_xmi_scheduler_coverage`
 audit passed against the installed 79 files/389 sequences without a synthesizer
-or device. It fully scheduled 384 sequences into 927,156 ordered outputs; peak
-active-note occupancy was 31 of 32 slots. Exactly five sequences were rejected:
-
-| Original file / ordinal | Explicit reason |
-| --- | --- |
-| `templeveeshan.xmi` / 0 | Controllers 116/117 (loop interpreter not implemented) |
-| `thurgadina.xmi` / 0 and 5 | Controllers 116/117 |
-| `thurgadinb.xmi` / 0 | Controllers 116/117 |
-| `thedeep.xmi` / 0 | SysEx (native instrument setup not reproduced) |
+or device. It fully scheduled 384 straight-through sequences into 927,156
+ordered outputs; peak linear active-note occupancy was 31 of 32 slots. The
+loop extension below admits four more sequences, bringing coverage to 388/389.
+Only `thedeep.xmi` ordinal 0 remains rejected for SysEx. Loop sequences use
+separate bounded/native comparisons instead of blindly draining an infinite
+sequence in the corpus sweep.
 
 These are scheduling checks, not a claim of original timbre parity or listening
 validation. The renderer/stream integration and system synthesizer remain
@@ -135,7 +133,53 @@ additive ticks and records any literal zero among delay bytes, including zeros
 mixed with positive delays. Preflight rejects these sequences with
 `UnsupportedZeroDelay`; zero-duration notes still use the verified one-tick
 minimum. The original parser sweep asserts that none of the 79 installed files
-contains a zero delay byte, so supported corpus coverage remains 384/389.
+contains a zero delay byte, so this gate does not reduce original coverage.
+
+## Implemented native loop execution, 2026-10-01
+
+The interpreter consumes CC116/117 using the four sequence-wide slots proven in
+[XMI_NATIVE_LOOPS.md](XMI_NATIVE_LOOPS.md). It restarts at CC116 itself, chooses
+the first free slot on start and highest occupied slot on NEXT, ignores a fifth
+start, and preserves native count-zero infinity and the 64 NEXT threshold.
+Unmatched NEXT values below 64 fail safely instead of reproducing the native
+out-of-bounds write. Every other unknown controller/callback/branch path remains
+under its existing gate; passive RBRN records remain immutable metadata.
+
+Source records, their authored ticks and offsets never change. A separate
+checked execution tick advances across repeats; restart skips only the delay
+before CC116. Note expirations continue across jumps and retain release-before-
+source ties and first-free-slot identities. Every note occurrence has a distinct
+identity even when its source index and active slot are reused. Runtime always
+enforces 32 active notes; preflight's linear occupancy cannot prove a loop's
+peak or endpoint. Consequently loop duration metadata is unknown.
+
+Each scheduler pull executes at most one source command, release or cleanup.
+Consumed controls remain visible as source events without MIDI output. At most
+65,536 source events may execute at one tick, persisting across pull batches;
+the PCM worker also limits all scheduled events to 131,072 per output block.
+These explicit errors bound control-only loops and dense advancing loops without
+expanding repeats. Cancellation clears loop state and pending releases and
+attempts all note/pedal cleanup messages, including after render/guard failure
+or receiver cancellation.
+
+The worker keeps its existing 30-minute playback policy: known longer linear
+sequences are rejected before rendering; loops stop and log at that runtime cap.
+Natural finite EOT or the policy cap receives the existing two-second release
+tail. Pure scheduler conformance has no playback-duration cap, so it verifies
+the full roughly 236.66-minute finite original trace offline.
+
+The focused synthetic scheduler/stream suite passes 28 tests, including all
+positive native counts 1–127, zero-count infinity, cross-channel nesting, four-
+slot capacity, delay placement, overlapping releases, unique identities,
+batch independence, malformed breaks, clock overflow and bounded cancellation.
+Fake-synth tests cover EOT beyond the source duration, unknown stream duration,
+runtime cutoff, control-only/per-block work limits, cleanup failures and receiver
+drop; none opens an audio device. The two ignored original scheduler audits
+also pass: both finite original copies reproduce 261,313 MIDI outputs through
+tick 1,703,932, and both infinite copies reproduce 14,195 outputs through tick
+69,686, including complete same-tick restarted events. Canonical trace digests
+and source/control counts match the isolated native execution. This establishes
+the captured scheduling behavior, not original timbre parity or listening quality.
 
 ## Container structure
 
@@ -301,11 +345,9 @@ dispatch tracing disproves that correlation as a branch rule: controller 120
 uses common MIDI output; controller 109 executes `AIL_branch_index`.
 Controllers 116/117 occur in
 `templeveeshan.xmi` ordinal 0, `thurgadina.xmi` ordinals 0 and 5, and
-`thurgadinb.xmi` ordinal 0. Preserve these commands and branch tables; establish
-their control-flow semantics before implementing looping or branching. Until
-then, report unsupported control sequences rather than flattening them silently.
-Any eventual loop interpreter needs a per-render event-work limit and a finite
-zero-time-jump limit, even when authored playback intentionally repeats forever.
+`thurgadinb.xmi` ordinal 0. The later native loop evidence and bounded interpreter
+above resolve those controls. Branch tables remain preserved; unimplemented
+branch execution is still rejected explicitly.
 
 The 22 SysEx events are in `thedeep.xmi`, with Roland manufacturer `0x41`
 messages including GS-like initialization. Keep payloads and diagnose unsupported

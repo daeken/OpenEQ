@@ -593,3 +593,13 @@ including original assets, GPU and silent audio. Strict lint, client build,
 all-target no-default and formatting pass. Logs `/tmp/openeq-uv-loops-*`.
 This test count includes the separate XMI loop and complete-packet synth API
 work; it does not certify original timbre, particle rendering, or other shaders.
+
+
+The XMI scheduler now executes the original four-slot loop behavior, including
+re-entering CC116 itself, while preserving a monotonic clock and active notes.
+All four original looping sequences match native trace digests. The scheduler
+can complete the full236-minute finite witness offline; streaming retains the
+explicit30-minute safety cutoff and bounded cancellation/release tail. Original
+sequence admission rises to388/389; The Deep remains gated for SysEx integration.
+Independent code review and the1,031-test integrated checkpoint pass. See
+`XMI_NATIVE_LOOPS.md` and `XMI_PLAN.md`; original timbre is still separate.

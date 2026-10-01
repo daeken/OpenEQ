@@ -275,3 +275,10 @@ cohesive commits and pushing to `master`.
   Evidence `/tmp/openeq-uv-loops-*`. Counts include the separately pending loop
   scheduler and silent SysEx synthesis API; those await their own checkpoints.
   Normal/tangent/color/light fidelity and other shader families remain separate.
+
+- Native four-slot XMI loop playback is independently reviewed and verified.
+  All four original looped sequences match native output digests; the finite
+  Thurgadin pair reaches tick1,703,932 and the Temple of Veeshan pair repeats
+  indefinitely. Execution keeps bounded work, notes and cleanup. Streams retain
+  the explicit30-minute safety cutoff. Original sequence admission is388/389;
+  The Deep's SysEx remains gated pending the next transport integration.
