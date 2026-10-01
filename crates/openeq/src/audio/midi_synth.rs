@@ -165,7 +165,13 @@ fn validate_buffer(samples: usize) -> Result<(), SynthError> {
 #[cfg(target_os = "macos")]
 mod macos {
     use super::{CHANNELS, MAX_RENDER_FRAMES, SynthError};
-    use std::{ffi::c_void, mem::size_of, ptr::NonNull};
+    use std::{ffi::c_void, mem::size_of, ptr::NonNull, sync::Mutex};
+
+    // DLSSynth instances share a native sound-bank cache whose final release
+    // races with acquisition by another instance. Serialize creation/configuration
+    // and teardown, while keeping rendering and MIDI on independent workers.
+    // See docs/COREAUDIO_SYNTH_LIFECYCLE.md for the native crash evidence.
+    static SYNTH_LIFECYCLE: Mutex<()> = Mutex::new(());
 
     // ABI verified against AudioComponent.h, AUComponent.h, MusicDevice.h,
     // AudioUnitProperties.h and CoreAudioBaseTypes.h in the local macOS SDK.
@@ -308,6 +314,16 @@ mod macos {
 
     impl Synth {
         pub(super) fn create(sample_rate: u32) -> Result<Self, SynthError> {
+            // Declare the owner before the guard: any early return or unwind
+            // must release the lifecycle lock before Drop reacquires it.
+            let mut synth = Self {
+                unit: None,
+                initialized: false,
+                failed: false,
+                frame: 0,
+                scratch: Box::new(AlignedSamples([[0.0; MAX_RENDER_FRAMES]; CHANNELS])),
+            };
+            let _lifecycle = SYNTH_LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
             let description = ComponentDescription {
                 kind: u32::from_be_bytes(*b"aumu"),
                 subtype: u32::from_be_bytes(*b"dls "),
@@ -326,13 +342,7 @@ mod macos {
                 AudioComponentInstanceNew(component, &mut instance)
             })?;
             let unit = NonNull::new(instance).ok_or(SynthError::ComponentUnavailable)?;
-            let mut synth = Self {
-                unit: Some(unit),
-                initialized: false,
-                failed: false,
-                frame: 0,
-                scratch: Box::new(AlignedSamples([[0.0; MAX_RENDER_FRAMES]; CHANNELS])),
-            };
+            synth.unit = Some(unit);
             let format = StreamDescription {
                 sample_rate: sample_rate as f64,
                 format_id: u32::from_be_bytes(*b"lpcm"),
@@ -516,6 +526,7 @@ mod macos {
         }
 
         pub(super) fn close(&mut self) -> Result<(), SynthError> {
+            let _lifecycle = SYNTH_LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
             let Some(unit) = self.unit.take() else {
                 return Ok(());
             };
@@ -675,6 +686,40 @@ mod tests {
             MidiSynth::create(48_000),
             Err(SynthError::UnsupportedPlatform)
         ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "opt-in: concurrent OS synth lifecycle stress, renders only to memory"]
+    fn concurrent_offline_synth_lifecycle() {
+        use std::sync::{Arc, Barrier};
+        let barrier = Arc::new(Barrier::new(4));
+        let workers: Vec<_> = (0..4)
+            .map(|worker| {
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    // Only synchronize startup; a failed worker must not strand
+                    // its peers at a later barrier. Each worker owns its synth.
+                    barrier.wait();
+                    for iteration in 0..32 {
+                        let rate = [44_100, 48_000][(worker + iteration) % 2];
+                        let mut synth = MidiSynth::create(rate).expect("offline concurrent synth");
+                        synth.midi_event(0x90, 60 + worker as u8, 100).unwrap();
+                        let mut samples = vec![0.; 256 * CHANNELS];
+                        synth.render(&mut samples).unwrap();
+                        assert!(samples.iter().all(|sample| sample.is_finite()));
+                        if iteration % 2 == 0 {
+                            synth.close().unwrap();
+                        } else {
+                            drop(synth);
+                        }
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().unwrap();
+        }
     }
 
     #[cfg(target_os = "macos")]
