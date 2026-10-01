@@ -201,3 +201,24 @@ cohesive commits and pushing to `master`.
   XMI loop research is testing native cursor restart semantics; do not substitute
   conventional FOR/NEXT behavior. Agents own separate docs; preserve unfinished
   research and avoid treating preliminary findings as implementation authority.
+
+## 03:00 follow-up in progress
+
+- `8ffca1a` pushed: live placed animation and exact additive glass; verified
+  989-test renderer checkpoint, final affected GPU checks, lint/build/no-default.
+- A newly discovered WLD parser issue is fixed separately: fragment decoding
+  was allowed to borrow bytes beyond its declared record. Bounded child readers
+  preserve absolute offsets; oversized reads cannot overflow length addition.
+  Five regressions pass. Independent before/after comparison of 1,804 WLDs /
+  6,337,278 fragments produces identical parsed output. The same three existing
+  PFS archive count failures occur in both versions. See WLD_FRAGMENT_BOUNDARIES.md.
+- Frozen research now exists in WLD_PARTICLE_ACTORS.md,
+  EQG_NONFINITE_TER_UPLOAD.md and XMI_NATIVE_LOOPS.md. XMI research has an
+  independent evidence review in progress; native loop cursor restart is unusual
+  and production loop playback remains rejected.
+- `cursor_review` is implementing partial static particle-linked actor geometry
+  in wld.rs/wld_objects.rs plus assets regressions. Root owns a new original PoK
+  GPU fixture in tests/wld_particle_actors.rs. Preserve this unfinished work;
+  it is not covered by the published 989-test checkpoint. Only proven static
+  sibling meshes may be restored; typed unsupported emitter ownership stays
+  explicit. Native particle playback/light/bounds remain future work.

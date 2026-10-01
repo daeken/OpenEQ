@@ -288,28 +288,16 @@ impl Wld {
         for index in 0..fragment_count {
             let size = reader.u32()? as usize;
             let type_code = reader.u32()?;
-            let payload_start = reader.pos();
-
-            let name_ref = reader.i32()?;
+            // References remain global, but a malformed fragment cannot read
+            // fields from the next fragment's header or payload.
+            let mut payload = reader.window(size)?;
+            let name_ref = payload.i32()?;
             let name = if name_ref <= 0 && type_code != 0x35 {
                 string_at(&strings, (-name_ref) as usize).to_owned()
             } else {
                 String::new()
             };
-
-            let fragment = read_fragment(&mut reader, type_code, new_format, &strings)?;
-
-            let end = payload_start
-                .checked_add(size)
-                .ok_or_else(|| Error::Format("fragment size overflow".into()))?;
-            if end > data.len() {
-                return Err(Error::Truncated {
-                    offset: payload_start,
-                    needed: size,
-                    available: data.len().saturating_sub(payload_start),
-                });
-            }
-            reader.set_pos(end);
+            let fragment = read_fragment(&mut payload, type_code, new_format, &strings)?;
 
             name_index.insert(name.clone(), index);
             chunks.push(Chunk { name, fragment });

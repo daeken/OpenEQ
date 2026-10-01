@@ -20,6 +20,17 @@ impl<'a> Reader<'a> {
         }
     }
 
+    /// Consume a bounded child record while retaining absolute error offsets.
+    pub fn window(&mut self, len: usize) -> Result<Reader<'a>> {
+        let origin = self.origin + self.pos;
+        let data = self.take(len)?;
+        Ok(Reader {
+            data,
+            pos: 0,
+            origin,
+        })
+    }
+
     pub fn pos(&self) -> usize {
         self.pos
     }
@@ -33,7 +44,7 @@ impl<'a> Reader<'a> {
     }
 
     pub fn take(&mut self, len: usize) -> Result<&'a [u8]> {
-        if self.pos + len > self.data.len() {
+        if self.pos > self.data.len() || len > self.remaining() {
             return Err(Error::Truncated {
                 offset: self.origin + self.pos,
                 needed: len,
@@ -112,5 +123,45 @@ impl<'a> Reader<'a> {
             )));
         }
         Ok(raw as usize)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oversized_window_is_an_error_without_consuming_parent_bytes() {
+        let mut reader = Reader::new(&[0; 32]);
+        reader.skip(1).unwrap();
+        assert!(matches!(
+            reader.window(usize::MAX),
+            Err(Error::Truncated {
+                offset: 1,
+                needed: usize::MAX,
+                available: 31
+            })
+        ));
+        assert_eq!(reader.pos(), 1);
+    }
+
+    #[test]
+    fn nested_windows_keep_absolute_failure_offsets_and_bounded_cursors() {
+        let mut reader = Reader::new(&[0; 32]);
+        reader.skip(4).unwrap();
+        let mut first = reader.window(8).unwrap();
+        first.skip(2).unwrap();
+        let mut second = first.window(4).unwrap();
+        second.u32().unwrap();
+        assert!(matches!(
+            second.u8(),
+            Err(Error::Truncated {
+                offset: 10,
+                needed: 1,
+                available: 0
+            })
+        ));
+        assert_eq!(reader.pos(), 12);
+        assert_eq!(first.pos(), 6);
     }
 }
