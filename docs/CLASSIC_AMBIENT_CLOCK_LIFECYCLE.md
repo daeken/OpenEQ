@@ -124,3 +124,9 @@ Frozen compact log:
 
 Independent agent replays reproduce both frozen result hashes. Source/model
 review and original update/release disassembly agree with these bounded claims.
+
+A later [concrete 2D sample witness](CLASSIC_SAMPLE_GAIN_RAMPS.md) now executes
+the original gain setter and instance update reached by this release call.
+It establishes finite gain-ramp timing and end/init endpoint requests with
+controlled sample status. Actual Miles execution, asset-class admission and
+manager/device ownership remain outside that follow-up too.
