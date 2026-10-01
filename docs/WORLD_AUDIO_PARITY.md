@@ -50,7 +50,9 @@ that a zone looks, moves or sounds right.
    the uploaded mip levels, reducing distant shimmer. The exact authored TER
    waterfall family now has independent color/opacity scrolling and a dedicated
    blend pass; the proven additive glass family has its native blend/depth/cutoff.
-   Original sky table sampling and local EQ time advance are integrated. The
+   Original sky table sampling and local EQ time advance are integrated.
+   Authored ambient now feeds ordinary lighting for native types 1/2/5 under
+   the normal-vision renderer policy; see `SKY_AMBIENT_RENDERING.md`. The
    exact native dome has CPU/GPU diagnostics but remains outside live rendering.
    Exact CB1_2UV now renders its authored second color with independent UVs:
    673 batches / 2,050,190 triangles across 15 original terrain payloads.
@@ -71,7 +73,11 @@ that a zone looks, moves or sounds right.
    branches/host controls and event bindings remain separate.
    See `XMI_NATIVE_LOOPS.md` and `XMI_NATIVE_SYSEX.md`.
    Classic kind-0 base gain now matches native default/sign/cutoff behavior;
-   zero levels use 20%, avoiding the former full-volume ambience. See
+   zero levels use 20%, avoiding the former full-volume ambience. Native
+   constructor/repeat timing is now documented in `CLASSIC_AMBIENT_COOLDOWNS.md`
+   but not yet integrated. Native macOS synth calls now share one gate across
+   MIDI, SysEx, rendering and lifecycle after reproducing shared lazy-waveform
+   corruption; see `COREAUDIO_SYNTH_LIFECYCLE.md` and the daytime record. See
    `CLASSIC_AMBIENT_LEVELS.md`. Automated original-audio checks remain offline
    or digital silence.
 
@@ -1066,3 +1072,20 @@ checkpointed. The final 1,177-test and 523-zone results above remain current.
 See `OVERNIGHT_2026-10-01.md` for the completed runtime changes, exact support
 boundaries and ordered continuation plan. World/audio parity remains the active
 priority; the broader gameplay backlog has not been substituted for it.
+
+
+## October 1 daytime lighting and stability checkpoint
+
+Authored sky ambient now reaches normal-vision surface lighting for native
+time types 1/2/5, with the recovered per-byte floor and explicit fallback reset.
+See `SKY_AMBIENT_RENDERING.md`. Original PoK day/night GPU captures confirm
+visible surface changes without changing empty sky; fixed sunlight remains
+separate work. A newly reproduced macOS lazy-instrument-cache crash is fixed
+by gating every synth native entry point, with silent before/after reproduction.
+See `COREAUDIO_SYNTH_LIFECYCLE.md`.
+
+All 1,195 workspace tests pass, zero failed/ignored, plus strict lint, builds,
+no-default, formatting and diff checks. See `DAYTIME_2026-10-01.md` for logs,
+limits and the active continuation. Frozen native cooldown and proposed timed
+liquid-contact work are in `CLASSIC_AMBIENT_COOLDOWNS.md` and
+`THIN_LIQUID_CONTACT_TRACE_PLAN.md`; those notes alone enable no behavior.
