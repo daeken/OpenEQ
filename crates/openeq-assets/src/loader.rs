@@ -739,6 +739,10 @@ fn append_eqg_object(scene: &mut Scene, object: &TerMod, object_name: &str, arch
                 shader.starts_with("alpha") || shader.starts_with("chroma")
             },
             transparent: false,
+            // Native region descriptor 0xc7; MOD/character and other AddAlpha
+            // variants have not been established by this evidence.
+            additive: object.is_terrain
+                && material.shader.eq_ignore_ascii_case("AddAlpha_MaxCB1.fx"),
             emissive: false,
             clamp_uv: false,
         });
@@ -1136,6 +1140,7 @@ fn load_heightmap(base: &Path, name: &str, archive: Archive, zon: &[u8]) -> Resu
                 anim_speed: 0,
                 alpha_mask: false,
                 transparent: false,
+                additive: false,
                 emissive: false,
                 clamp_uv: false,
             });

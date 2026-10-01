@@ -10,6 +10,7 @@
 //! whole pipeline can be exercised headlessly by tests and tools.
 
 pub mod actors;
+mod additive;
 pub mod doors;
 pub mod environment;
 mod light_grid;
@@ -158,6 +159,7 @@ pub struct Renderer {
     lighting_bind_group: Option<wgpu::BindGroup>,
     pipelines: Pipelines,
     transparency: transparency::Transparency,
+    additive: additive::Additive,
     particles: particles::ParticleRenderer,
     profiler: Option<profiling::GpuProfiler>,
     start: std::time::Instant,
@@ -655,6 +657,7 @@ impl Renderer {
             width,
             height,
         );
+        let additive = additive::Additive::new(&device, &pipeline_geometry, config.format);
         let particles = particles::ParticleRenderer::new(&device, &globals_layout, config.format);
         Self {
             device: device.clone(),
@@ -680,6 +683,7 @@ impl Renderer {
                 lighting: lighting_pipeline,
             },
             transparency,
+            additive,
             particles,
             profiler: None,
             ui: None,
@@ -930,9 +934,10 @@ impl Renderer {
     }
 
     /// Renders a reproducible scene frame at a chosen animation time. Ordinary
-    /// interactive rendering continues to use the renderer's elapsed clock.
+    /// interactive effects use the renderer clock; placed actors share a clock
+    /// starting when their GPU scene finishes loading.
     pub fn render_at(&mut self, scene: &GpuScene, camera: &Camera, elapsed: std::time::Duration) {
-        self.render_with_actors_at(scene, camera, &[], elapsed);
+        self.render_with_actors_at(scene, camera, &[], elapsed, elapsed);
     }
 
     /// Present UI before a world exists, or while a replacement loads.
@@ -988,7 +993,13 @@ impl Renderer {
     }
 
     pub fn render_with_actors(&mut self, scene: &GpuScene, camera: &Camera, actors: &[&GpuActor]) {
-        self.render_with_actors_at(scene, camera, actors, self.start.elapsed());
+        self.render_with_actors_at(
+            scene,
+            camera,
+            actors,
+            self.start.elapsed(),
+            scene.animation_elapsed(),
+        );
     }
 
     fn render_with_actors_at(
@@ -997,6 +1008,7 @@ impl Renderer {
         camera: &Camera,
         actors: &[&GpuActor],
         elapsed: std::time::Duration,
+        object_elapsed: std::time::Duration,
     ) {
         if self.scene_bind_group.is_none() || self.lighting_bind_group.is_none() {
             self.set_scene(scene);
@@ -1013,6 +1025,8 @@ impl Renderer {
             },
             Target::Offscreen { .. } => None,
         };
+
+        scene.update_placed_objects(&self.queue, object_elapsed);
 
         let swapchain_view = frame
             .as_ref()
@@ -1203,7 +1217,21 @@ impl Renderer {
             self.profiler.as_ref(),
         );
 
-        // 5. Emissive spell billboards use opaque depth and never write it.
+        // 5. Proven region glass adds lit RGB without fog or depth writes.
+        self.additive.render(
+            &mut encoder,
+            transparency::BlendInputs {
+                depth: &self.targets.depth_view,
+                output: final_view,
+                globals: &self.globals_bind_group,
+                lighting: scene_bind_group,
+                zone: (scene, atlas_bind_group),
+                actors,
+            },
+            self.profiler.as_ref(),
+        );
+
+        // 6. Emissive spell billboards use opaque depth and never write it.
         self.particles.render(
             &mut encoder,
             final_view,
@@ -1212,7 +1240,7 @@ impl Renderer {
             self.profiler.as_ref(),
         );
 
-        // 6. UI always stays above transparent geometry and particles.
+        // 7. UI always stays above forward surfaces and particles.
         if let Some(ui) = &self.ui {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("world UI"),
@@ -1323,7 +1351,8 @@ fn draw_scene(pass: &mut wgpu::RenderPass<'_>, scene: &GpuScene) {
     pass.set_vertex_buffer(0, scene.vertices.slice(..));
     pass.set_vertex_buffer(1, scene.instances.slice(..));
     pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint32);
-    for draw in &scene.draws {
+    // Additive surfaces must never write opaque geometry or shadow depth.
+    for draw in scene.draws.iter().filter(|draw| !draw.additive) {
         pass.draw_indexed(
             draw.index_start..draw.index_start + draw.index_count,
             draw.base_vertex,

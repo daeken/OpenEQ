@@ -38,6 +38,7 @@ fn striped_plane(repeat: f32) -> Scene {
             anim_speed: 0,
             alpha_mask: false,
             transparent: false,
+            additive: false,
             emissive: true,
             clamp_uv: false,
         }],

@@ -47,6 +47,7 @@ fn scene(uv: [f32; 2], expected: [u8; 3], paints: Vec<MaterialLayer>) -> Scene {
             anim_speed: 0,
             alpha_mask: false,
             transparent: false,
+            additive: false,
             emissive: false,
             clamp_uv: true,
         }],

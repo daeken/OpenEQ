@@ -15,6 +15,7 @@ use glam::{Mat4, Quat, Vec3};
 use openeq_assets::Scene;
 
 mod bounds;
+mod placed_animation;
 
 /// Side length of every layer in the texture array.
 pub const ATLAS_SIZE: u32 = 256;
@@ -94,6 +95,8 @@ pub struct DrawCall {
     pub instance_count: u32,
     /// Non-water materials with fractional alpha need the forward blend pass.
     pub transparent: bool,
+    /// Draw only in the dedicated lit additive region pass.
+    pub additive: bool,
 }
 
 /// GPU-resident scene: geometry, instances, draws, textures and lights.
@@ -119,9 +122,25 @@ pub struct GpuScene {
     pub bounds_min: Vec3,
     pub bounds_max: Vec3,
     vertex_data: Vec<Vertex>,
+    placed_animations: Vec<placed_animation::PlacedAnimation>,
+    animation_started: std::time::Instant,
 }
 
 impl GpuScene {
+    pub fn placed_animation_count(&self) -> usize {
+        self.placed_animations.len()
+    }
+
+    pub(crate) fn animation_elapsed(&self) -> std::time::Duration {
+        self.animation_started.elapsed()
+    }
+
+    pub(crate) fn update_placed_objects(&self, queue: &wgpu::Queue, elapsed: std::time::Duration) {
+        for animation in &self.placed_animations {
+            animation.update(queue, &self.vertices, elapsed);
+        }
+    }
+
     pub fn terrain_stats(&self) -> &TerrainStats {
         &self.terrain.stats
     }
@@ -248,6 +267,7 @@ impl GpuScene {
         let mut draws: Vec<DrawCall> = Vec::new();
         let mut instances: Vec<Instance> = Vec::new();
         let mut scene_bounds = bounds::DrawBounds::default();
+        let mut mesh_ranges = Vec::with_capacity(scene.meshes.len());
 
         // Which geometry indices belong to placeable objects rather than to the
         // zone itself; those get instanced, the rest are drawn once.
@@ -316,6 +336,7 @@ impl GpuScene {
                     frame_ms: material.anim_speed.max(1),
                 });
             }
+            mesh_ranges.push(base_vertex as usize..vertices.len());
             let index_start = indices.len() as u32;
             indices.extend_from_slice(&geometry.indices);
             let index_count = geometry.indices.len() as u32;
@@ -353,8 +374,33 @@ impl GpuScene {
                 base_vertex,
                 instance_start,
                 instance_count,
-                transparent: material.transparent && material.water.is_none(),
+                transparent: material.transparent && material.water.is_none() && !material.additive,
+                additive: material.additive,
             });
+        }
+
+        let mut placed_animations = Vec::new();
+        for (index, object) in scene.objects.iter().enumerate() {
+            if object_instances[index].is_empty() {
+                continue;
+            }
+            match placed_animation::PlacedAnimation::prepare(scene, object, &mesh_ranges, &vertices)
+            {
+                Ok(Some(animation)) => {
+                    let local = bounds::DrawBounds::from_radius(animation.radius());
+                    for instance in &object_instances[index] {
+                        scene_bounds.include_transformed(
+                            &local,
+                            Mat4::from_cols_array_2d(&instance.columns),
+                        );
+                    }
+                    placed_animations.push(animation);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(object=%object.name, %error, "placed animation remains static")
+                }
+            }
         }
 
         let lights: Vec<[f32; 8]> = scene
@@ -428,6 +474,8 @@ impl GpuScene {
             name: scene.name.clone(),
             vertices: vertex_buffer,
             vertex_data: vertices,
+            placed_animations,
+            animation_started: std::time::Instant::now(),
             indices: index_buffer,
             instances: instance_buffer,
             draws,

@@ -25,7 +25,7 @@ fn profile(renderer: &mut Renderer, gpu: &GpuScene, camera: &Camera) {
     renderer.enable_profiling(false);
     let supported = renderer.enable_profiling(true);
     renderer.set_scene(gpu);
-    let mut values = vec![Vec::new(); 9];
+    let mut values = vec![Vec::new(); 10];
     for frame in 0..WARMUP + SAMPLES {
         let start = Instant::now();
         renderer.render_at(gpu, camera, TIME);
@@ -63,6 +63,7 @@ fn profile(renderer: &mut Renderer, gpu: &GpuScene, camera: &Camera) {
                 t.gbuffer_ms,
                 t.lighting_ms,
                 t.transparency_ms,
+                t.additive_ms,
                 t.total_ms,
                 t.frame_span_ms,
                 t.raw_pass_sum_ms,
@@ -81,6 +82,7 @@ fn profile(renderer: &mut Renderer, gpu: &GpuScene, camera: &Camera) {
         "gpu_gbuffer",
         "gpu_lighting",
         "gpu_transparency",
+        "gpu_additive",
         "gpu_attributed_total",
         "gpu_frame_span",
         "gpu_raw_pass_sum",

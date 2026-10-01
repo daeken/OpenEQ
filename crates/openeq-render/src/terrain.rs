@@ -176,6 +176,7 @@ impl Plan {
             ensure!(
                 material.water.is_none()
                     && !material.transparent
+                    && !material.additive
                     && !material.alpha_mask
                     && !material.emissive,
                 "terrain recipe requires an opaque surface"
@@ -515,6 +516,7 @@ mod tests {
                 anim_speed: 0,
                 alpha_mask: false,
                 transparent: false,
+                additive: false,
                 emissive: false,
                 clamp_uv: true,
             }],

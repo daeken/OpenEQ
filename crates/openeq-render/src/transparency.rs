@@ -76,8 +76,9 @@ impl Transparency {
             label: Some("transparent surface lighting"),
             source: wgpu::ShaderSource::Wgsl(
                 format!(
-                    "{}\n{}",
+                    "{}\n{}\n{}",
                     include_str!("shaders/surface_lighting.wgsl"),
+                    include_str!("shaders/forward_surface.wgsl"),
                     include_str!("shaders/transparency.wgsl")
                 )
                 .into(),

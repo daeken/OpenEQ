@@ -18,6 +18,7 @@ fn plane(color: [u8; 4], y: f32, transparent: bool, emissive: bool) -> Scene {
             anim_speed: 0,
             alpha_mask: transparent,
             transparent,
+            additive: false,
             emissive,
             clamp_uv: false,
         }],

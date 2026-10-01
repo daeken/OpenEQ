@@ -145,6 +145,7 @@ fn materials(
             anim_speed: 0,
             alpha_mask: shader.starts_with("chroma") || shader.starts_with("alpha"),
             transparent: shader.starts_with("alpha"),
+            additive: false,
             emissive: shader.contains("add"),
             clamp_uv: false,
         });

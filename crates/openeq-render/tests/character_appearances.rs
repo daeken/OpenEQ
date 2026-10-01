@@ -32,6 +32,7 @@ fn stage(renderer: &Renderer) -> GpuScene {
             anim_speed: 0,
             alpha_mask: false,
             transparent: false,
+            additive: false,
             emissive: false,
             clamp_uv: false,
         }],

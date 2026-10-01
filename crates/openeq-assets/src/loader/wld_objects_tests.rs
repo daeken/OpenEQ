@@ -421,6 +421,255 @@ fn timed_br1_matches_original_d3dx_scalar_output_witness() {
     }
 }
 
+#[test]
+fn live_animation_rejects_static_collision_vertices_under_an_animated_ancestor() {
+    let mut source = short_animation_source(true);
+    let skeleton = source.skeleton.as_mut().unwrap();
+    let root = &mut skeleton.tracks[0];
+    root.definition.frames.push(Frame {
+        rotation: Quat::from_rotation_x(0.8).to_array(),
+        ..root.definition.frames[0]
+    });
+    root.reference_flags = 5;
+    root.speed = Some(1000);
+    let child = &mut skeleton.tracks[1];
+    child.definition.frames.truncate(1);
+    child.reference_flags = 4;
+    child.speed = None;
+    // Every vertex belongs to the locally static child, but its parent moves.
+    assert_eq!(source.parts[0].mesh.vertex_pieces, [(6, 1)]);
+    assert_eq!(source.animation_period().unwrap(), Duration::from_secs(2));
+    assert_ne!(
+        source.sample_animation(Duration::ZERO).unwrap()[0].vertices,
+        source
+            .sample_animation(Duration::from_millis(1000))
+            .unwrap()[0]
+            .vertices
+    );
+    assert!(
+        source
+            .stationary_collision_animation_radius()
+            .unwrap_err()
+            .to_string()
+            .contains("moves collision ancestry")
+    );
+}
+
+#[test]
+fn live_animation_collision_gate_includes_invisible_faces() {
+    let wld = tree_fixture(true);
+    let mut source = short_animation_source(true);
+    let part = &mut source.parts[0];
+    part.mesh.vertex_pieces = vec![(3, 0), (3, 1)];
+    part.mesh.polygons[0].collidable = false;
+    // The visible triangle is attached to the static root. Only the invisible
+    // material's triangle is collidable, and it follows the animated child.
+    let initial = source.sample_animation(Duration::ZERO).unwrap();
+    let (_, drawable) = mesh::bake_wld_meshes(&wld, &initial);
+    let hidden = mesh::bake_wld_collision_meshes(&wld, &initial);
+    assert_eq!(drawable.len(), 1);
+    assert!(!drawable[0].collidable);
+    assert_eq!(drawable[0].indices.len(), 3);
+    assert_eq!(hidden.len(), 1);
+    assert_eq!(hidden[0].indices.len(), 3);
+    assert!(
+        source
+            .stationary_collision_animation_radius()
+            .unwrap_err()
+            .to_string()
+            .contains("moves collision ancestry")
+    );
+    // Removing that physical triangle is sufficient to admit the animation;
+    // visibility was never the criterion for the rejected model.
+    source.parts[0].mesh.polygons[1].collidable = false;
+    assert!(source.stationary_collision_animation_radius().is_ok());
+}
+
+#[test]
+fn live_animation_without_collision_has_bounds_for_nested_intermediate_poses() {
+    for weighted in [false, true] {
+        let mut source = short_animation_source(weighted);
+        for polygon in &mut source.parts[0].mesh.polygons {
+            polygon.collidable = false;
+        }
+        let root = &mut source.skeleton.as_mut().unwrap().tracks[0];
+        root.definition.frames.push(Frame {
+            rotation: Quat::from_rotation_y(1.3).to_array(),
+            ..root.definition.frames[0]
+        });
+        root.reference_flags = 5;
+        root.speed = Some(1000);
+        let radius = source.stationary_collision_animation_radius().unwrap();
+        assert!(radius.is_finite() && radius > 0.);
+        let initial = source.sample_animation(Duration::ZERO).unwrap();
+        let mut changed = false;
+        // These are containment witnesses, including fractional-key poses and
+        // closure; the production radius comes from an analytic ancestry bound.
+        for milliseconds in [0, 1, 137, 250, 503, 777, 999, 1000, 1251, 1500, 1999, 2000] {
+            let sampled = source
+                .sample_animation(Duration::from_millis(milliseconds))
+                .unwrap();
+            changed |= sampled[0].vertices != initial[0].vertices;
+            for mesh in sampled {
+                for point in mesh.vertices {
+                    let length = point
+                        .into_iter()
+                        .map(|v| f64::from(v).powi(2))
+                        .sum::<f64>()
+                        .sqrt();
+                    assert!(
+                        length <= f64::from(radius),
+                        "{point:?} at {milliseconds} ms exceeds radius {radius}"
+                    );
+                }
+            }
+        }
+        assert!(changed);
+    }
+}
+
+#[test]
+fn live_animation_bindings_keep_coincident_source_vertices_distinct_across_poses() {
+    let wld = tree_fixture(true);
+    let mut source = short_animation_source(true);
+    let skeleton = source.skeleton.as_mut().unwrap();
+    skeleton.tracks[0].definition.frames[0] = frame([0.; 3], 1.);
+    for frame in &mut skeleton.tracks[1].definition.frames {
+        frame.translation = [0.; 3];
+        frame.scale = 1.;
+    }
+    let part = &mut source.parts[0];
+    // Two coincident triangles with identical initial vertex attributes but
+    // different weighted motion owners. Put both on the visible material.
+    for index in 0..3 {
+        part.mesh.vertices[index + 3] = part.mesh.vertices[index];
+    }
+    part.mesh.vertex_pieces = vec![(3, 0), (3, 1)];
+    part.mesh.polygon_textures = vec![(2, 0)];
+    for polygon in &mut part.mesh.polygons {
+        polygon.collidable = false;
+    }
+    // A second coincident part also needs its own flattened source offsets.
+    let mut static_part = part.clone();
+    static_part.mesh.vertex_pieces.clear();
+    static_part.rigid_track = Some(0);
+    source.parts.push(static_part);
+    assert!(source.stationary_collision_animation_radius().is_ok());
+
+    let initial = source.sample_animation(Duration::ZERO).unwrap();
+    let (_, ordinary) = mesh::bake_wld_meshes(&wld, &initial);
+    let (_, geometries, bindings) = mesh::bake_wld_meshes_with_sources(&wld, &initial);
+    assert_eq!(ordinary.len(), 1);
+    assert_eq!(ordinary[0].vertices.len() / mesh::VERTEX_STRIDE, 3);
+    assert_eq!(geometries.len(), 1);
+    assert_eq!(bindings.len(), geometries.len());
+    assert_eq!(geometries[0].vertices.len() / mesh::VERTEX_STRIDE, 12);
+    assert_eq!(geometries[0].indices.len(), 12);
+    let mapped = &bindings[0];
+    assert_eq!(
+        mapped.iter().copied().collect::<BTreeSet<_>>(),
+        (0..12).collect()
+    );
+    let flat_initial: Vec<_> = initial.iter().flat_map(|mesh| &mesh.vertices).collect();
+    for (vertex, &original) in geometries[0]
+        .vertices
+        .chunks_exact(mesh::VERTEX_STRIDE)
+        .zip(mapped)
+    {
+        assert_eq!(vertex[..3], *flat_initial[original]);
+    }
+    let later = source
+        .sample_animation(Duration::from_millis(1000))
+        .unwrap();
+    let flat_later: Vec<_> = later.iter().flat_map(|mesh| &mesh.vertices).collect();
+    let static_slot = mapped.iter().position(|index| *index == 0).unwrap();
+    let moving_slot = mapped.iter().position(|index| *index == 3).unwrap();
+    let second_part_slot = mapped.iter().position(|index| *index == 6).unwrap();
+    assert_ne!(static_slot, moving_slot);
+    assert_ne!(static_slot, second_part_slot);
+    assert_eq!(
+        flat_initial[mapped[static_slot]],
+        flat_initial[mapped[moving_slot]]
+    );
+    assert_eq!(
+        flat_initial[mapped[static_slot]],
+        flat_initial[mapped[second_part_slot]]
+    );
+    assert_eq!(
+        flat_later[mapped[static_slot]],
+        flat_later[mapped[second_part_slot]]
+    );
+    assert_ne!(
+        flat_later[mapped[static_slot]],
+        flat_later[mapped[moving_slot]]
+    );
+    // Repacking a later pose changes attribute deduplication. The original
+    // source map still has one stable slot for each independently owned vertex.
+    let (_, later_ordinary) = mesh::bake_wld_meshes(&wld, &later);
+    assert_eq!(later_ordinary[0].vertices.len() / mesh::VERTEX_STRIDE, 6);
+    assert_eq!(bindings[0].len(), 12);
+}
+
+#[test]
+#[ignore = "requires original City of Mist object archive in EQ_DIR; CPU animation bindings"]
+fn original_citymist_live_animation_admits_static_trunks_and_rejects_moving_colliders() {
+    let base = std::env::var_os("EQ_DIR").expect("set EQ_DIR");
+    let scene = super::super::load_object_library(&base, "citymist").unwrap();
+    let source = &scene.wld_object_sources["jntree103"];
+    let bindings = source
+        .render_animation()
+        .expect("static trunk permits live animation");
+    let radius = source.stationary_collision_animation_radius().unwrap();
+    assert_eq!(bindings.radius(), radius);
+    let object = scene
+        .objects
+        .iter()
+        .find(|object| object.name == "jntree103")
+        .unwrap();
+    assert_eq!(bindings.vertices().len(), object.meshes.len());
+    let initial = source.sample_animation(Duration::ZERO).unwrap();
+    let flat: Vec<_> = initial
+        .iter()
+        .flat_map(|mesh| mesh.vertices.iter().zip(&mesh.normals))
+        .collect();
+    for (&mesh_index, map) in object.meshes.iter().zip(bindings.vertices()) {
+        let geometry = &scene.meshes[mesh_index];
+        assert_eq!(geometry.vertices.len() / mesh::VERTEX_STRIDE, map.len());
+        for (vertex, &source_index) in geometry.vertices.chunks_exact(mesh::VERTEX_STRIDE).zip(map)
+        {
+            assert_eq!(vertex[..3], *flat[source_index].0);
+            assert_eq!(vertex[3..6], *flat[source_index].1);
+        }
+    }
+    for milliseconds in [0, 500, 1000, 1500, 2000, 2500, 3000, 3500, 3999, 4000] {
+        let sampled = source
+            .sample_animation(Duration::from_millis(milliseconds))
+            .unwrap();
+        for mesh in sampled {
+            assert!(
+                mesh.vertices
+                    .into_iter()
+                    .all(|point| Vec3::from_array(point).length() <= radius)
+            );
+        }
+    }
+    for name in ["jntree101", "jntree102"] {
+        let source = &scene.wld_object_sources[name];
+        assert_eq!(source.animation_period().unwrap(), Duration::from_secs(4));
+        assert!(
+            source.render_animation().is_none(),
+            "{name} moves physical vertices"
+        );
+        assert!(
+            source
+                .stationary_collision_animation_radius()
+                .unwrap_err()
+                .to_string()
+                .contains("moves collision ancestry")
+        );
+    }
+}
+
 fn triangles(geometry: &mesh::Geometry) -> Vec<Vec<u32>> {
     let mut triangles: Vec<_> = geometry
         .indices

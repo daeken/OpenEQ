@@ -314,9 +314,9 @@ Time truncates to whole milliseconds, matching the host clock, then wraps by
 the one animation-set period. Rotation blends the source components before
 normalizing; normalizing each packed key before interpolation would subtly
 change the native result. Pairwise quaternion signs include the closing seam.
-This API does not select per-instance phases, advance a runtime controller,
-upload vertices, alter bounds or rebuild collision. Production actors continue
-to use their first pose.
+The sampler itself does not select per-instance phases or rebuild collision.
+The bounded placed-actor integration below now supplies a shared scene clock,
+source-bound vertex uploads and conservative animation bounds.
 
 The 16 focused CPU checks include synthetic rigid and weighted parts,
 parent/local transforms, immutable independent actor bakes, bad selections,
@@ -343,8 +343,48 @@ CARGO_INCREMENTAL=0 EQ_DIR=/path/to/EverQuest cargo test -p openeq-assets --lib 
 CARGO_INCREMENTAL=0 EQ_DIR=/path/to/EverQuest cargo test -p openeq-render --test wld_objects -- --include-ignored
 ```
 
-Autonomous playback remains disabled. Future renderer integration needs
-explicit source-vertex bindings through material baking, animated bounds and
-a collision policy for actors whose
-collidable parts move; the static Citymist trunk does not establish a general
-collision policy.
+## Live placed-actor integration
+
+Supported named, placed actors now animate from one shared clock starting when
+GPU scene construction completes. Explicit `render_at` time drives both world
+animation and visual effects for reproducible checks. This establishes shared
+phase and elapsed milliseconds; it does not claim exact synchronization with
+an original client's wall-clock startup. Standalone extracted models, unplaced
+definitions, character models and door attachments do not gain controllers.
+
+The loader enables this only when **every collidable original polygon vertex**
+(including invisible polygons) binds to an entirely one-frame ancestry. A
+static child of an animated parent fails the gate. Objects with no collision
+can qualify. Citymist's JNTREE103 qualifies; JNTREE101/102 remain in their initial
+poses because their collidable geometry moves. Sampling a few frames is not
+used to certify stationary collision. Collision buffers stay unchanged.
+
+Eligible material bakes deduplicate by original part/vertex identity rather
+than equal initial attributes. Distinct vertices that coincide at time zero
+therefore retain independent motion. The renderer validates each binding
+against the initial pose, then samples each shared definition once per frame
+and updates only its assigned position/normal ranges before shadow rendering.
+UVs, material selectors, topology and other vertex flags stay fixed. A failed
+pose stops that definition's updates at its last valid frame; validation builds
+all range uploads before any are submitted.
+
+An origin-centered conservative radius follows each hierarchy chain's positive
+uniform scales and translation lengths, then encloses every original vertex.
+It includes accumulated numeric margin and outward rounding. The resulting
+box is transformed through each actual instance, including reflected or
+nonuniform scale, and included in startup bounds. This avoids choosing sampled
+rotation extrema. Ordinary static geometry keeps its prior bounds policy.
+
+The original Citymist GPU regression checks 50 shared instances, visible
+intermediate branch motion, byte-identical four-second loop closure, unchanged
+42-triangle collision, no autoplay on extracted/unplaced objects, and sampled
+pose containment under reflected/nonuniform placements. The independently
+rebaked authored-frame diagnostic explicitly removes runtime animation metadata.
+
+The corpus survey in `WLD_ANIMATION_SURVEY.md` identifies 86 static/no-collision
+supported definition occurrences and 53,940 corresponding metadata placements.
+These are eligibility counts, not a claim that every placement was visually
+checked. Moving collision, long/mixed clips, particle-linked actors and other
+unsupported source behavior retain their first-pose fallback or existing explicit
+assembly diagnostics. CPU upload cost and exact original light/shader behavior
+remain separate work.

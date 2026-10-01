@@ -36,6 +36,7 @@ fn edge_scene(axis: usize, high: bool, alpha: u8, solid: bool) -> Scene {
             anim_speed: 0,
             alpha_mask: false,
             transparent: alpha < 255,
+            additive: false,
             emissive: true,
             clamp_uv: true,
         }],

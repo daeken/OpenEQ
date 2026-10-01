@@ -14,6 +14,10 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[path = "wld_object_animation.rs"]
+mod animation;
+pub use animation::RenderAnimation;
+
 const MAX_TRACKS: usize = 4096;
 const MAX_PARTS: usize = 4096;
 const MAX_FRAMES: usize = 1_000_000;
@@ -27,6 +31,7 @@ pub struct ObjectSource {
     pub actor: ActorDef,
     pub skeleton: Option<ObjectSkeleton>,
     pub parts: Vec<ObjectPart>,
+    render_animation: Option<RenderAnimation>,
 }
 
 #[derive(Debug, Clone)]
@@ -424,12 +429,39 @@ fn actor_source(wld: &Wld, chunk: &Chunk, actor: &ActorDef) -> Result<ObjectSour
         actor: actor.clone(),
         skeleton,
         parts,
+        render_animation: None,
     })
 }
 
 fn posed_meshes(source: &ObjectSource) -> Result<Vec<Mesh>> {
     let transforms = source.skeleton.as_ref().map(first_pose).transpose()?;
     transform_meshes(source, transforms.as_deref())
+}
+
+fn part_bindings(part: &ObjectPart, track_count: usize) -> Result<Vec<usize>> {
+    let mesh = &part.mesh;
+    let bindings = if mesh.vertex_pieces.is_empty() {
+        let track = part
+            .rigid_track
+            .filter(|track| *track < track_count)
+            .ok_or_else(|| invalid("unweighted object part has no track"))?;
+        vec![track; mesh.vertices.len()]
+    } else {
+        let mut bindings = Vec::with_capacity(mesh.vertices.len());
+        for &(count, track) in &mesh.vertex_pieces {
+            if track as usize >= track_count
+                || bindings.len() + count as usize > mesh.vertices.len()
+            {
+                return Err(invalid("invalid object vertex-piece run"));
+            }
+            bindings.extend(std::iter::repeat_n(track as usize, count as usize));
+        }
+        if bindings.len() != mesh.vertices.len() {
+            return Err(invalid("object vertex-piece runs do not cover mesh"));
+        }
+        bindings
+    };
+    Ok(bindings)
 }
 
 fn transform_meshes(source: &ObjectSource, transforms: Option<&[Mat4]>) -> Result<Vec<Mesh>> {
@@ -462,27 +494,7 @@ fn transform_meshes(source: &ObjectSource, transforms: Option<&[Mat4]>) -> Resul
                 }
                 return Ok(mesh);
             };
-            let bindings = if mesh.vertex_pieces.is_empty() {
-                let track = part
-                    .rigid_track
-                    .filter(|track| *track < transforms.len())
-                    .ok_or_else(|| invalid("unweighted object part has no track"))?;
-                vec![track; mesh.vertices.len()]
-            } else {
-                let mut bindings = Vec::with_capacity(mesh.vertices.len());
-                for &(count, track) in &mesh.vertex_pieces {
-                    if track as usize >= transforms.len()
-                        || bindings.len() + count as usize > mesh.vertices.len()
-                    {
-                        return Err(invalid("invalid object vertex-piece run"));
-                    }
-                    bindings.extend(std::iter::repeat_n(track as usize, count as usize));
-                }
-                if bindings.len() != mesh.vertices.len() {
-                    return Err(invalid("object vertex-piece runs do not cover mesh"));
-                }
-                bindings
-            };
+            let bindings = part_bindings(part, transforms.len())?;
             for (index, &track) in bindings.iter().enumerate() {
                 // read_mesh already included center in every decoded vertex.
                 mesh.vertices[index] = transforms[track]
@@ -504,18 +516,35 @@ fn transform_meshes(source: &ObjectSource, transforms: Option<&[Mat4]>) -> Resul
 }
 
 fn append_group(scene: &mut Scene, archive: usize, wld: &Wld, name: String, meshes: &[Mesh]) {
+    append_group_bound(scene, archive, wld, name, meshes, false);
+}
+
+fn append_group_bound(
+    scene: &mut Scene,
+    archive: usize,
+    wld: &Wld,
+    name: String,
+    meshes: &[Mesh],
+    preserve_sources: bool,
+) -> Vec<Vec<usize>> {
     let collision_start = scene.collision_meshes.len();
     scene
         .collision_meshes
         .extend(mesh::bake_wld_collision_meshes(wld, meshes));
     let start = scene.meshes.len();
-    let (materials, geometries) = mesh::bake_wld_meshes(wld, meshes);
+    let (materials, geometries, bindings) = if preserve_sources {
+        mesh::bake_wld_meshes_with_sources(wld, meshes)
+    } else {
+        let (materials, geometries) = mesh::bake_wld_meshes(wld, meshes);
+        (materials, geometries, Vec::new())
+    };
     append_baked(scene, archive, materials, geometries);
     scene.objects.push(SceneObject {
         name,
         meshes: (start..scene.meshes.len()).collect(),
         collision_meshes: (collision_start..scene.collision_meshes.len()).collect(),
     });
+    bindings
 }
 
 /// Unsupported actor variants are diagnosed independently. Their original
@@ -534,14 +563,19 @@ pub(super) fn append_objects(scene: &mut Scene, archive: usize, wld: &Wld) -> Re
         }
         let result = actor_source(wld, chunk, actor)
             .and_then(|source| posed_meshes(&source).map(|meshes| (source, meshes)));
-        let (source, meshes) = match result {
+        let (mut source, meshes) = match result {
             Ok(value) => value,
             Err(error) => {
                 tracing::warn!(wld=%wld.filename,actor=%chunk.name,%error,"unsupported WLD placed actor");
                 continue;
             }
         };
-        append_group(scene, archive, wld, name.clone(), &meshes);
+        let radius = source.stationary_collision_animation_radius().ok();
+        let bindings =
+            append_group_bound(scene, archive, wld, name.clone(), &meshes, radius.is_some());
+        if let Some(radius) = radius {
+            source.render_animation = Some(RenderAnimation::new(bindings, radius));
+        }
         names.insert(name.clone());
         scene.wld_object_sources.insert(name, Arc::new(source));
     }

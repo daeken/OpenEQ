@@ -143,6 +143,7 @@ impl CharacterLibrary {
                 anim_speed: 0,
                 alpha_mask: shader.starts_with("alpha") || shader.starts_with("chroma"),
                 transparent: shader.starts_with("addalpha"),
+                additive: false,
                 emissive: shader.starts_with("addalpha"),
                 clamp_uv: false,
             });

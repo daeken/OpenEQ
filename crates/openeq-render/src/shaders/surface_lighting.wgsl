@@ -1,4 +1,4 @@
-// Shared by opaque deferred lighting and transparent forward lighting.
+// Shared by opaque deferred, transparent forward and additive lighting.
 const EQ_TO_WORLD: mat4x4<f32> = mat4x4<f32>(
     vec4<f32>(1.0, 0.0, 0.0, 0.0),
     vec4<f32>(0.0, 0.0, -1.0, 0.0),
@@ -57,10 +57,10 @@ fn apply_fog(color: vec3<f32>, distance: f32) -> vec3<f32> {
     return mix(color, env.fog_color.rgb, amount);
 }
 
-fn shade_surface(world: vec3<f32>, normal: vec3<f32>, albedo: vec3<f32>, emissive: bool) -> vec3<f32> {
+fn shade_surface_unfogged(world: vec3<f32>, normal: vec3<f32>, albedo: vec3<f32>, emissive: bool) -> vec3<f32> {
     if (emissive) {
         // Emissive geometry is unaffected by lighting.
-        return apply_fog(albedo, distance(world, globals.camera_pos.xyz));
+        return albedo;
     }
 
     var accum = globals.ambient.rgb;
@@ -139,5 +139,9 @@ fn shade_surface(world: vec3<f32>, normal: vec3<f32>, albedo: vec3<f32>, emissiv
         accum += light.color.rgb * falloff * intensity;
     }
 
-    return apply_fog(albedo * accum, distance(world, globals.camera_pos.xyz));
+    return albedo * accum;
+}
+
+fn shade_surface(world: vec3<f32>, normal: vec3<f32>, albedo: vec3<f32>, emissive: bool) -> vec3<f32> {
+    return apply_fog(shade_surface_unfogged(world, normal, albedo, emissive), distance(world, globals.camera_pos.xyz));
 }

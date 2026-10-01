@@ -38,6 +38,7 @@ fn placed_bounds_ignore_unplaced_duplicates_unused_vertices_and_hidden_geometry(
             anim_speed: 0,
             alpha_mask: false,
             transparent: false,
+            additive: false,
             emissive: true,
             clamp_uv: false,
         }],

@@ -100,6 +100,7 @@ impl FrameProfiler {
                 ("gbuffer", gpu.gbuffer_ms),
                 ("lighting", gpu.lighting_ms),
                 ("transparency", gpu.transparency_ms),
+                ("additive", gpu.additive_ms),
                 ("particles", gpu.particles_ms),
                 ("ui", gpu.ui_ms),
                 ("gpu_frame", gpu.total_ms),

@@ -17,9 +17,10 @@ Empty visible scenes produce zero bounds rather than sentinel extrema.
 This computes conservative transformed mesh boxes. It does not claim the
 smallest possible box for a rotated irregular mesh, account for transparent
 texels, or change geometry/indices/materials/collision. Authored nonfinite mesh
-values remain intact and are still reported by the asset audit. Dynamic pose and
-instance updates do not refresh these startup bounds; actor pose bounds and
-runtime culling are separate concerns. Correct center calculation also does not
+values remain intact and are still reported by the asset audit. Supported placed WLD animation adds a conservative all-pose envelope through
+each instance (see `WLD_OBJECT_ANIMATION.md`). Other dynamic pose and instance
+updates do not refresh these startup bounds; character bounds and runtime
+culling remain separate concerns. Correct center calculation also does not
 prove that a zone's geometric center is a safe walkable spawn location.
 
 Verification includes portable cases for translation, nonuniform/reflected

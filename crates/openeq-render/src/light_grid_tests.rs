@@ -19,6 +19,7 @@ fn floor(z: f32, transparent: bool) -> Scene {
             anim_speed: 0,
             alpha_mask: transparent,
             transparent,
+            additive: false,
             emissive: false,
             clamp_uv: false,
         }],

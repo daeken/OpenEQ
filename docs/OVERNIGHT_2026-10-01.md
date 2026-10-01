@@ -151,3 +151,53 @@ cohesive commits and pushing to `master`.
   Runtime tree wiring still needs explicit bake-time vertex identity, motion
   ownership and bounds/collision handling; do not re-bake and zip arbitrary
   packed vertices merely because group order is now deterministic.
+
+## 02:40 active integration
+
+- Root has wired live WLD playback for the verified short-track actors with
+  stationary collision ancestry. Source-aware packing preserves coincident
+  vertices on distinct motion owners; all-pose envelopes include actual instance
+  transforms. A shared scene clock updates the vertices before shadow rendering.
+  Original Citymist GPU checks pass: 50 instances, intermediate branch motion,
+  exact four-second image closure, extracted/unplaced opt-out and reflected/
+  nonuniform bounds. The separate authored-pose diagnostic disables autoplay.
+- `npc_assets` completed `WLD_ANIMATION_SURVEY.md`: 86 eligible static/no-collision
+  definition occurrences, corresponding to 53,940 original metadata placements.
+  Another 29 short-track actors move physical geometry (including Citymist
+  JNTREE101/102) and must remain static. 173 retained animated actors exceed the
+  current short-clip bound. 376 particle-linked actors remain unsupported.
+- `xml_ui` completed exact TER `AddAlpha_MaxCB1.fx` rendering, with native
+  ONE/ONE RGB, filtered alpha cutoff, read-only depth and no fog. Six new
+  regressions and 14 neighboring checks passed. `cursor_review` found one
+  omitted profiler field, now fixed, and cleared both additive and live-animation
+  code reviews. Native lighting/color-space parity remains limited.
+- Root is running the full original-asset/GPU/silent-audio suite plus lint,
+  client build and no-default checks (`/tmp/openeq-placed-additive-*.log`).
+  Do not treat this pending integration as covered by the prior 978-test count.
+  Preserve uncommitted shared Material/scene edits until the checkpoint finishes.
+- `npc_assets` is adding focused CPU live-animation safety/binding regressions.
+  `cursor_review` has a new read-only particle0x34/native ownership investigation.
+  `xml_ui` has a new read-only nonfinite upload/channel investigation. These
+  research follow-ups own separate evidence docs and should not delay committing
+  the independently verified renderer checkpoint once tests finish.
+
+## 02:50 verified renderer checkpoint
+
+- Integration complete: **989 workspace tests passed, zero failed or ignored**,
+  with original assets, GPU and offline/silent audio. Final bounds/object GPU
+  reruns also pass after excluding no-triangle definitions from animation
+  envelopes. Strict lint, normal client build, all-target no-default, formatting
+  and diff checks pass. Logs use `/tmp/openeq-placed-additive-*`; the complete
+  run is `workspace-final.log`. One earlier run stopped because its invocation
+  omitted EQ_DIR; the corrected complete run passed.
+- All 293 object archives were reloaded using the integrated loader: all 86
+  eligible definition occurrences / 8,604 mapped vertices exactly match their
+  initial pose, and eleven pose times fit their analytic bounds. No failures.
+  Probe: `/tmp/openeq-live-binding-survey/`.
+- Active next evidence: particle0x34 research now identifies an independent
+  child emitter path and supports restoring static PoK mesh siblings separately
+  from emitter behavior. Nonfinite research recovered native SHORT2 UV packing
+  in Causeway's RegionCB1 path, including huge finite values as well as NaNs.
+  XMI loop research is testing native cursor restart semantics; do not substitute
+  conventional FOR/NEXT behavior. Agents own separate docs; preserve unfinished
+  research and avoid treating preliminary findings as implementation authority.

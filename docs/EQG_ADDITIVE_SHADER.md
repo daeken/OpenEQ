@@ -1,6 +1,6 @@
 # Native EQG additive glass
 
-2026-10-01. Frozen research checkpoint; this document changes no rendering code.
+2026-10-01. Native evidence and the bounded region-glass implementation.
 Thundercrest's 72 glass triangles use `AddAlpha_MaxCB1.fx`. The native region
 path selects **ONE/ONE blending**, enables an alpha test with reference 16 and
 comparison GREATEREQUAL, disables fog, and disables depth writes. Its diffuse
@@ -201,16 +201,68 @@ descriptor alternatives; this work does not establish the active single-pass
 versus multipass choice for the affected NaN fixtures, or finish their packed
 vertex-layout bridge. It does not justify changing raw parser attributes.
 
-## Implementation boundary
+## Bounded implementation and verification
 
-A follow-up should preserve the established region material binding and add a
-dedicated additive path with the RGB blend factors, cutoff, depth-write and
-fog behavior above. It should verify background preservation, full-strength
-addition for alpha 0.4, alpha-cutoff rejection, depth occlusion, and the absence
-of depth writes with GPU regressions. The existing weighted transparency path
-cannot express this contract merely by assigning opacity 0.4. Exact light
-intensity, native color-space behavior, other AddAlpha variants, and original
-client frame parity require separate validation.
+The loader now sets explicit `Material.additive` metadata only when the source
+is a TER region and its shader is exactly `AddAlpha_MaxCB1.fx` (case-insensitive).
+MODs, character/equipment materials, other AddAlpha variants, and names with
+extra suffixes retain their existing behavior. The material deduplication key
+includes additive behavior. Sharing diffuse atlas layers does not share draw
+routing: opaque and additive materials can use the same texture independently.
+
+The dedicated forward pass uses ONE/ONE RGB, rejects sampled alpha below
+16/255, uses read-only LessEqual opaque depth and back-face culling, and loads
+the existing output color. Additive draws are excluded from the G-buffer,
+shadow generation, and weighted transparency. It reuses current geometric-normal
+lighting, zone point lights, sun and received shadows through an unfogged helper;
+it does not mark glass emissive. The pass runs after weighted transparency and
+before spell billboards/UI, and has a separate GPU timing slot included in
+all timing totals and diagnostic consumers. Destination alpha is preserved for
+the compositor because the native research establishes only the RGB contract.
+
+Verification used `CARGO_INCREMENTAL=0` and actual headless GPU renders:
+
+- The synthetic archive loader checks the region gate, exact shader match,
+  shared textures, rejection of neighboring shader names, and first exact-name
+  material identity. One test passes.
+- Four synthetic GPU tests check full RGB strength at alpha 102, rejection at
+  0/1/15 and acceptance at 16/17/102/254/255; bilinear samples at alpha 8/16/24;
+  destination-color preservation; depth occlusion and equal-depth acceptance;
+  overlapping near/far draws in both orders without depth writes; independent
+  opaque/additive draws sharing one diffuse; current lighting and colored zone
+  lights; fog exclusion; opaque-shadow exclusion; resize and UI ordering.
+- The ignored original-asset test checks the exact source polygon/material,
+  all 72 loaded glass triangles and their packed source geometry, all 16,384
+  alpha-102 diffuse texels, and the constant flat normal map. Its offline glass
+  capture changes **58,666 pixels** compared with the hidden glass, and changing
+  only the original diffuse alpha from 102 to 255 produces an **identical full
+  image**. The inspected capture is local at
+  `/tmp/openeq-thundercrest-additive-glass.png`, not a native-client golden.
+- Neighboring weighted-transparency (2), GPU profiling (2), profiling decode
+  (2), environment including original PoK sky (5), tile addressing including
+  original Feerrott2 (2), and opaque minification (1) tests pass. Renderer
+  and asset all-target strict Clippy, client all-target type checking, and
+  workspace formatting also pass. Independent read-only review found no
+  remaining actionable issues.
+
+The new regressions are `openeq-assets/tests/additive.rs` and
+`openeq-render/tests/additive.rs`. The original witness is opt-in:
+
+```sh
+CARGO_INCREMENTAL=0 cargo test -p openeq-assets --test additive
+CARGO_INCREMENTAL=0 cargo test -p openeq-render --test additive --test transparency --test profiling
+CARGO_INCREMENTAL=0 cargo test -p openeq-render --test additive original_thundercrest_glass_binding_and_full_strength_alpha_witness -- --ignored --exact --nocapture
+```
+
+This reproduces the proven blend, cutoff, fog and depth behavior, not the full
+original shader. The present renderer uses geometric normals and its existing
+lighting model; native tangent-space bump mapping, baked vertex-light terms
+and exact light intensity remain separate work. Thundercrest's verified normal
+map is flat; nonflat normal maps on this shader are not yet reproduced. Texture
+sampling and blending use the renderer's existing linear/sRGB pipeline; native
+color-space parity remains unproven. Native interleaving with other transparent
+families, framebuffer alpha, and original-client frame parity also remain
+unverified. No generic AddAlpha policy is inferred from this one region shader.
 
 Research utilities and full diagnostic output remain local under
 `/tmp/openeq-addalpha-*`, `/tmp/openeq-terrain-{effect,shader}-audit.py`, and

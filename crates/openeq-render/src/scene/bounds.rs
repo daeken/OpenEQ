@@ -1,4 +1,4 @@
-//! Startup bounds of submitted finite triangles, without changing their data.
+//! Startup bounds of submitted finite triangles and supported animation envelopes.
 use glam::{Mat4, Vec3};
 use openeq_assets::mesh::{Geometry, VERTEX_STRIDE};
 
@@ -6,6 +6,10 @@ use openeq_assets::mesh::{Geometry, VERTEX_STRIDE};
 pub(super) struct DrawBounds(Option<(Vec3, Vec3)>);
 
 impl DrawBounds {
+    pub fn from_radius(radius: f32) -> Self {
+        Self(Some((Vec3::splat(-radius), Vec3::splat(radius))))
+    }
+
     pub fn from_geometry(geometry: &Geometry) -> Self {
         let mut bounds = Self::default();
         for triangle in geometry.indices.chunks_exact(3) {

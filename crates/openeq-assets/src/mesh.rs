@@ -50,13 +50,15 @@ pub struct Material {
     pub alpha_mask: bool,
     /// Blend using the texture's alpha channel.
     pub transparent: bool,
+    /// Proven EQG region additive color with alpha cutoff, no fog or depth writes.
+    pub additive: bool,
     /// Unlit/emissive surface, e.g. fire.
     pub emissive: bool,
     /// Clamp diffuse sampling to its edges (for nonperiodic baked terrain tiles).
     pub clamp_uv: bool,
 }
 
-type MaterialKey = (u32, u32, String, bool, bool, bool, bool);
+type MaterialKey = (u32, u32, String, bool, bool, bool, bool, bool);
 
 impl Material {
     fn key(&self) -> MaterialKey {
@@ -66,6 +68,7 @@ impl Material {
             self.textures.join(","),
             self.alpha_mask,
             self.transparent,
+            self.additive,
             self.emissive,
             self.clamp_uv,
         )
@@ -297,6 +300,25 @@ pub fn bake_wld_meshes<'a, I>(wld: &Wld, meshes: I) -> (Vec<Material>, Vec<Geome
 where
     I: IntoIterator<Item = &'a Mesh>,
 {
+    let (materials, geometries, _) = bake_wld_meshes_inner(wld, meshes, false);
+    (materials, geometries)
+}
+
+/// Animation packing preserves original vertex identity even when two source
+/// vertices have identical first-pose attributes but different motion owners.
+/// Bindings use flattened input-mesh vertex indices, in input order.
+pub(crate) fn bake_wld_meshes_with_sources<'a>(
+    wld: &Wld,
+    meshes: impl IntoIterator<Item = &'a Mesh>,
+) -> (Vec<Material>, Vec<Geometry>, Vec<Vec<usize>>) {
+    bake_wld_meshes_inner(wld, meshes, true)
+}
+
+fn bake_wld_meshes_inner<'a>(
+    wld: &Wld,
+    meshes: impl IntoIterator<Item = &'a Mesh>,
+    preserve_sources: bool,
+) -> (Vec<Material>, Vec<Geometry>, Vec<Vec<usize>>) {
     let pieces: Vec<Piece> = meshes
         .into_iter()
         .map(|mesh| Piece::from_mesh(wld, mesh))
@@ -383,6 +405,7 @@ where
     let mut materials = Vec::new();
     let mut material_index: HashMap<MaterialKey, usize> = HashMap::new();
     let mut geometries = Vec::new();
+    let mut sources = Vec::new();
 
     // Stable ordering keeps output deterministic between runs.
     let mut keys: Vec<_> = merged.keys().copied().collect();
@@ -420,6 +443,7 @@ where
             anim_speed: entry.anim_speed,
             alpha_mask,
             transparent,
+            additive: false,
             emissive,
             clamp_uv: false,
         };
@@ -429,7 +453,33 @@ where
         });
 
         let indices = &merged[&(texture, collidable)];
-        let (vertices, indices) = pack(&positions, &normals, &uvs, indices);
+        let (vertices, indices) = if preserve_sources {
+            let mut source_vertices = Vec::new();
+            let mut remap = HashMap::new();
+            let indices = indices
+                .iter()
+                .map(|&index| {
+                    *remap.entry(index).or_insert_with(|| {
+                        let next = source_vertices.len() as u32;
+                        source_vertices.push(index as usize);
+                        next
+                    })
+                })
+                .collect();
+            let vertices = source_vertices
+                .iter()
+                .flat_map(|&index| {
+                    positions[index]
+                        .into_iter()
+                        .chain(normals[index])
+                        .chain(uvs[index])
+                })
+                .collect();
+            sources.push(source_vertices);
+            (vertices, indices)
+        } else {
+            pack(&positions, &normals, &uvs, indices)
+        };
         geometries.push(Geometry {
             vertices,
             indices,
@@ -438,7 +488,7 @@ where
         });
     }
 
-    (materials, geometries)
+    (materials, geometries, sources)
 }
 
 /// Resolves a reference and returns the mesh fragment it points at.

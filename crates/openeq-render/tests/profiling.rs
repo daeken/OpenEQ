@@ -26,7 +26,7 @@ fn complete(renderer: &mut Renderer) -> openeq_render::profiling::GpuProfileStat
     panic!("GPU timestamp readback did not complete");
 }
 
-fn plane(renderer: &Renderer, y: f32, transparent: bool) -> GpuScene {
+fn plane(renderer: &Renderer, y: f32, transparent: bool, additive: bool) -> GpuScene {
     let scene = Scene::from_geometry(
         "GPU profiling fixture".into(),
         vec![Material {
@@ -37,6 +37,7 @@ fn plane(renderer: &Renderer, y: f32, transparent: bool) -> GpuScene {
             anim_speed: 0,
             alpha_mask: transparent,
             transparent,
+            additive,
             emissive: true,
             clamp_uv: false,
         }],
@@ -74,7 +75,7 @@ fn gpu_profiling_is_opt_in_async_bounded_and_preserves_pixels() {
     let Ok(mut renderer) = Renderer::new_headless(64, 64) else {
         return;
     };
-    let world = plane(&renderer, 8., false);
+    let world = plane(&renderer, 8., false, false);
     let camera = Camera {
         pitch: 0.,
         ..Default::default()
@@ -98,11 +99,13 @@ fn gpu_profiling_is_opt_in_async_bounded_and_preserves_pixels() {
     assert_eq!(timing.frame_id, 1);
     assert!(timing.total_ms > 0.);
     assert_eq!(timing.transparency_ms, 0.);
+    assert_eq!(timing.additive_ms, 0.);
     assert_eq!(timing.particles_ms, 0.);
     assert_eq!(timing.ui_ms, 0.);
     assert_eq!(renderer.read_rgba().unwrap().2, initial);
 
-    let actor = renderer.prepare_actor(plane(&renderer, 6., true));
+    let actor = renderer.prepare_actor(plane(&renderer, 6., true, false));
+    let glass = renderer.prepare_actor(plane(&renderer, 5., false, true));
     renderer.set_particles(&ParticleFrame {
         textures: Arc::new(vec![Texture {
             name: "particle".into(),
@@ -126,7 +129,7 @@ fn gpu_profiling_is_opt_in_async_bounded_and_preserves_pixels() {
         ..Default::default()
     });
     for _ in 0..12 {
-        renderer.render_with_actors(&world, &camera, &[&actor]);
+        renderer.render_with_actors(&world, &camera, &[&actor, &glass]);
         assert!(renderer.profiling_stats().in_flight <= 4);
     }
     let stats = complete(&mut renderer);
@@ -145,6 +148,7 @@ fn gpu_profiling_is_opt_in_async_bounded_and_preserves_pixels() {
         + timing.gbuffer_ms
         + timing.lighting_ms
         + timing.transparency_ms
+        + timing.additive_ms
         + timing.particles_ms
         + timing.ui_ms;
     assert!((sum - timing.total_ms).abs() < 1e-8);
@@ -153,7 +157,7 @@ fn gpu_profiling_is_opt_in_async_bounded_and_preserves_pixels() {
     assert!(timing.frame_span_ms > 0.);
     let profiled = renderer.read_rgba().unwrap().2;
     assert!(!renderer.enable_profiling(false));
-    renderer.render_with_actors(&world, &camera, &[&actor]);
+    renderer.render_with_actors(&world, &camera, &[&actor, &glass]);
     assert_eq!(renderer.read_rgba().unwrap().2, profiled);
     assert!(renderer.latest_gpu_timings().is_none());
     assert!(renderer.enable_profiling(true));
@@ -162,6 +166,7 @@ fn gpu_profiling_is_opt_in_async_bounded_and_preserves_pixels() {
     let timing = complete(&mut renderer).latest.unwrap();
     assert_eq!(timing.frame_id, 1);
     assert_eq!(timing.transparency_ms, 0.);
+    assert_eq!(timing.additive_ms, 0.);
     assert_eq!(timing.particles_ms, 0.);
     // Dropping a profiler with queued callbacks must remain safe too.
     renderer.render(&world, &camera);

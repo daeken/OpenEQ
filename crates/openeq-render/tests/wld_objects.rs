@@ -9,6 +9,9 @@ fn original_citymist_tree_assembles_visible_branches_and_all_fifty_instances() {
     let base = loader::default_client_dir().expect("original client assets");
     let scene = loader::load_zone(&base, "citymist").unwrap();
     let mut tree = scene.object_model("jntree103").unwrap();
+    let mut renderer = Renderer::new_headless(640, 480).unwrap();
+    let standalone = GpuScene::build(renderer.device(), renderer.queue(), &tree).unwrap();
+    assert_eq!(standalone.placed_animation_count(), 0);
     assert_eq!(tree.triangle_count(), 72);
     assert_eq!(tree.wld_object_sources["jntree103"].parts.len(), 7);
     tree.objects.push(SceneObject {
@@ -23,7 +26,6 @@ fn original_citymist_tree_assembles_visible_branches_and_all_fifty_instances() {
         .cloned()
         .collect();
     assert_eq!(tree.instances.len(), 50);
-    let mut renderer = Renderer::new_headless(640, 480).unwrap();
     renderer.set_environment(
         EnvironmentSettings {
             sky_enabled: false,
@@ -32,6 +34,19 @@ fn original_citymist_tree_assembles_visible_branches_and_all_fifty_instances() {
         None,
     );
     let gpu = GpuScene::build(renderer.device(), renderer.queue(), &tree).unwrap();
+    assert_eq!(gpu.placed_animation_count(), 1);
+    let saved_indices: Vec<_> = tree
+        .meshes
+        .iter_mut()
+        .map(|mesh| std::mem::take(&mut mesh.indices))
+        .collect();
+    let undrawn_gpu = GpuScene::build(renderer.device(), renderer.queue(), &tree).unwrap();
+    for (mesh, indices) in tree.meshes.iter_mut().zip(saved_indices) {
+        mesh.indices = indices;
+    }
+    assert_eq!(undrawn_gpu.placed_animation_count(), 0);
+    assert_eq!(undrawn_gpu.bounds_min, Vec3::ZERO);
+    assert_eq!(undrawn_gpu.bounds_max, Vec3::ZERO);
     assert_eq!(
         gpu.draws
             .iter()
@@ -84,8 +99,50 @@ fn original_citymist_tree_assembles_visible_branches_and_all_fifty_instances() {
     renderer.set_scene(&gpu);
     renderer.render_at(&gpu, &camera, std::time::Duration::ZERO);
     let (width, height, visible) = renderer.read_rgba().unwrap();
+    assert_eq!(gpu.placed_animation_count(), 1);
+    for millis in [500, 1000, 2500, 4000] {
+        renderer.render_at(&gpu, &camera, std::time::Duration::from_millis(millis));
+        let (_, _, animated) = renderer.read_rgba().unwrap();
+        let changed = animated
+            .chunks_exact(4)
+            .zip(visible.chunks_exact(4))
+            .filter(|(a, b)| a != b)
+            .count();
+        if millis == 4000 {
+            assert_eq!(changed, 0, "shared controller must wrap exactly");
+        } else {
+            assert!(changed > 50, "branches must move at {millis}ms: {changed}");
+        }
+    }
+    // The origin-centered animation envelope also contains intermediate poses
+    // after reflected/nonuniform placement transforms.
+    let original_instances = tree.instances.clone();
+    tree.instances[0].position = [100., -20., 35.];
+    tree.instances[0].scale = [-2., 0.5, 3.];
+    tree.instances[0].rotation = Quat::from_rotation_z(0.7).to_array();
+    let stretched = GpuScene::build(renderer.device(), renderer.queue(), &tree).unwrap();
+    let placement = &tree.instances[0];
+    let transform = Mat4::from_scale_rotation_translation(
+        placement.scale.into(),
+        Quat::from_array(placement.rotation),
+        placement.position.into(),
+    );
+    for millis in (0..4000).step_by(137) {
+        for part in tree.wld_object_sources["jntree103"]
+            .sample_animation(std::time::Duration::from_millis(millis))
+            .unwrap()
+        {
+            for point in part.vertices {
+                let point = transform.transform_point3(point.into());
+                assert!(stretched.bounds_min.cmple(point).all());
+                assert!(stretched.bounds_max.cmpge(point).all());
+            }
+        }
+    }
+    tree.instances = original_instances;
     tree.instances.clear();
     let empty = GpuScene::build(renderer.device(), renderer.queue(), &tree).unwrap();
+    assert_eq!(empty.placed_animation_count(), 0);
     assert!(
         empty.draws.is_empty(),
         "unplaced components must not leak into the world"
@@ -116,8 +173,9 @@ fn original_citymist_tree_assembles_visible_branches_and_all_fifty_instances() {
     .unwrap();
 
     // Exact authored poses are a diagnostic, not a native playback timeline.
-    // Rebuild only this isolated test scene; production still uses frame zero.
+    // Disable automatic animation on these separately rebaked diagnostic poses.
     let source = tree.wld_object_sources["jntree103"].clone();
+    tree.wld_object_sources.clear();
     let skeleton = source.skeleton.as_ref().unwrap();
     let archive = openeq_assets::pfs::Archive::open(base.join("citymist_obj.s3d")).unwrap();
     let wld = openeq_assets::wld::Wld::open(&archive, &source.wld_filename).unwrap();

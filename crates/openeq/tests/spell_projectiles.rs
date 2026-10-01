@@ -31,6 +31,7 @@ fn backdrop(renderer: &Renderer) -> GpuScene {
             anim_speed: 0,
             alpha_mask: false,
             transparent: false,
+            additive: false,
             emissive: true,
             clamp_uv: false,
         }],

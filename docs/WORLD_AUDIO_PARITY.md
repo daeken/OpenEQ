@@ -17,8 +17,9 @@ that a zone looks, moves or sounds right.
    expected endpoint. General deflected crossing integration is still pending.
 2. Complete WLD placed-actor behavior: first-pose geometry now resolves supported
    skeletons, with a native-time sampler for verified short packed tracks.
-   Runtime source-vertex bindings/uploads, animated bounds, collision policy
-   and particle-linked fragment families remain unfinished. See `WLD_OBJECT_ANIMATION.md`.
+   Source-bound runtime playback now covers supported actors whose collision
+   ancestry stays static. Moving collision, longer clips and particle-linked
+   fragment families remain unfinished. See `WLD_OBJECT_ANIMATION.md`.
 3. Follow authored nonfinite mesh attributes through native vertex upload and
    material/channel selection. Preserve the 21 original outliers; do not invent
    normals/UVs or remove geometry without recovering native behavior.
@@ -28,7 +29,7 @@ that a zone looks, moves or sounds right.
    Fixed-camera GPU appearance and timing checks now cover restored Bazaar,
    The Nest and Thundercrest terrain. Opaque repeating diffuse textures now use
    the uploaded mip levels, reducing distant shimmer. Unimplemented
-   MaxLava/MaxWaterFall/additive shaders, normal mapping, alpha-safe/clamped
+   MaxLava/MaxWaterFall and other additive shader families, normal mapping, alpha-safe/clamped
    filtering, linear/periodic mip construction and Thundercrest's missing
    `clz-0` sky selection remain follow-ups. See `RESTORED_EQG_GPU_AUDIT.md`,
    `EQG_ADDITIVE_SHADER.md` and `SKY_PATTERN_FOLLOWUP.md`. Failed native weather
@@ -466,3 +467,44 @@ collision policy. A corpus survey is in progress to identify additional
 supported actors. Dedicated additive-glass rendering is also in progress from
 `EQG_ADDITIVE_SHADER.md`; these new uncommitted changes are not covered by the
 978-test checkpoint.
+
+## October 1 live-animation and additive-glass checkpoint
+
+Supported classic placed actors now animate through stable source-vertex
+bindings, with a shared scene clock and conservative all-pose instance bounds.
+The collision gate checks every physical source vertex, including hidden faces
+and animated ancestors. It enables only static-collision or collision-free
+actors; Citymist JNTREE101/102 remain static while JNTREE103 animates. Extracted
+models, unplaced definitions and objects without submitted triangles do not gain
+controllers. See `WLD_OBJECT_ANIMATION.md` and `WLD_ANIMATION_SURVEY.md`.
+
+The independent corpus probe checks 293 archives, 86 eligible definition
+occurrences and 8,604 packed vertex bindings, with zero binding/bounds failures.
+The corresponding 53,940 metadata placements are survey coverage, not individual
+GPU validation. Original Citymist GPU coverage includes its 50 instances,
+visible intermediate branch motion, exact four-second image closure, stationary
+trunk collision and reflected/nonuniform instance bounds.
+
+The proven TER `AddAlpha_MaxCB1.fx` family now uses its own forward glass pass:
+ONE/ONE RGB addition, sampled alpha cutoff at 16/255, read-only depth and no fog.
+Thundercrest's original 72 glass triangles are covered by GPU regression; changing
+its texture alpha from 102 to 255 leaves the image identical, confirming full
+RGB contribution. Four synthetic GPU tests cover the surrounding rendering
+contract. Other shader families and native lighting/color-space agreement remain
+outside this implementation. GPU profiling includes the new pass in every
+consumer. See `EQG_ADDITIVE_SHADER.md`.
+
+The full original-asset/GPU/silent-audio workspace run passed **989 tests, zero
+failed or ignored**. Evidence: `/tmp/openeq-placed-additive-workspace-final.log`;
+UI captures: `/tmp/openeq-placed-additive-ui/`. An earlier invocation omitted
+`EQ_DIR` and stopped at the original-XMI fixture's explicit configuration check;
+the corrected complete run passed. The subsequent no-visible-triangle animation
+bound guard is covered by a focused rerun recorded separately in
+`/tmp/openeq-placed-additive-bounds-final.log`. No asset bytes or captures are
+committed, and no live character/server state changed.
+
+The final affected GPU suites, strict workspace Clippy, normal client build,
+all-target no-default-feature checks, formatting and diff checks pass. Logs:
+`/tmp/openeq-placed-additive-{bounds-final,clippy-final,build,no-default}.log`.
+Independent review cleared the animation identity/collision/bounds/clock logic
+and the additive render contract, including the final no-triangle guard.
