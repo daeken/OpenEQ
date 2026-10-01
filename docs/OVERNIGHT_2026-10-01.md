@@ -708,3 +708,28 @@ Two other native boundaries are now recorded without enabling guessed behavior:
   Conditional preview cameras can affect world-particle motion. Root replay
   matches the frozen hash; actual live preview enablement and tick refresh
   remain open. No automatic scene particle rendering is enabled.
+
+
+## October 1 07:50 verified secondary-coordinate preservation
+
+Exact TER CB1_2UV/CBSG1_2UV materials now retain secondary source coordinates
+through mesh packing. Deduplication includes their raw bits, preserving 20,831
+vertices whose distinct second coordinates previously merged. The independent
+228-payload scan admits 15 TERs / 727 batches / 2,167,611 triangles, with every
+primary corner unchanged across all 2,869,912 triangles in those payloads.
+No layered shader is enabled yet: native upload, second-texture binding and
+normal/light fidelity remain required. See `EQG_TER_SECONDARY_UV_BAKE.md`.
+
+All **1,177 workspace tests pass, zero failed or ignored, across 113 suites**,
+including original assets, GPU and offline/digitally silent audio. Independent
+code review and raw original-Nest comparison pass. The fixed-camera Bazaar,
+Nest and Thundercrest GPU test confirms pixel-identical output when restoring
+former primary-only packing. Strict workspace Clippy, client/audit builds,
+all-target no-default, formatting and diff checks pass. Logs:
+`/tmp/openeq-secondary-{workspace,gpu,clippy,build,no-default,fmt}.log`.
+
+The complete 523-zone CPU survey matches every preexisting non-timing field:
+501 structural passes, the same 21 nonfinite cases and known Dranikcatacombsa
+dependency. Comparison and reports are in `/tmp/openeq-secondary-zone-survey/`.
+The added source identities do increase vertex memory; unchanged pixels and
+structure do not claim performance equivalence or original framebuffer parity.

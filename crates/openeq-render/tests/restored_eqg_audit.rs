@@ -216,7 +216,7 @@ fn original_restored_terrain_fixed_cameras_and_serialized_gpu_timings() {
                 &terrain.tex_coords,
                 indices,
             );
-            // Lighting adds vertex identity; triangle-corner attributes and
+            // Lighting and secondary UVs add vertex identity; corner attributes and
             // order must remain bit-identical to the former geometry bake.
             assert_eq!(mesh.indices.len(), packed_indices.len());
             for (&actual, &previous) in mesh.indices.iter().zip(&packed_indices) {
@@ -368,10 +368,11 @@ fn original_restored_terrain_fixed_cameras_and_serialized_gpu_timings() {
             .unwrap();
         }
         drop(gpu);
-        // The new source-light channel is metadata only at this checkpoint.
+        // The source-light and secondary-UV channels are metadata only here.
         // Compare the same full scene after restoring the former eight-word
         // deduplication; it must not accidentally change current shading.
         let lighting = std::mem::take(&mut source.native_ter_lighting);
+        let secondary_uv = std::mem::take(&mut source.secondary_ter_uv);
         for (mesh_id, vertices, indices) in &mut former_packing {
             std::mem::swap(&mut source.meshes[*mesh_id].vertices, vertices);
             std::mem::swap(&mut source.meshes[*mesh_id].indices, indices);
@@ -380,7 +381,7 @@ fn original_restored_terrain_fixed_cameras_and_serialized_gpu_timings() {
         assert_eq!(
             capture(&mut renderer, &former, &camera),
             full,
-            "source lighting retention changed current pixels in {zone}"
+            "source lighting/secondary-UV retention changed current pixels in {zone}"
         );
         drop(former);
         for (mesh_id, vertices, indices) in &mut former_packing {
@@ -388,6 +389,7 @@ fn original_restored_terrain_fixed_cameras_and_serialized_gpu_timings() {
             std::mem::swap(&mut source.meshes[*mesh_id].indices, indices);
         }
         source.native_ter_lighting = lighting;
+        source.secondary_ter_uv = secondary_uv;
         // This isolates the cost/appearance of the added source terrain. It
         // does not replay the former bindings on geometry that already drew.
         for mesh_id in restored {

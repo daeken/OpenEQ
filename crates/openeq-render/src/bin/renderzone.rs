@@ -119,6 +119,7 @@ fn main() -> anyhow::Result<()> {
         // This diagnostic replaces mesh indices; retained source-light bindings
         // must not refer to the unfiltered scene.
         scene.native_ter_lighting.clear();
+        scene.secondary_ter_uv.clear();
         scene.meshes = kept
             .into_iter()
             .enumerate()

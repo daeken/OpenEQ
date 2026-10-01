@@ -91,6 +91,18 @@ pub struct PackedTerLighting {
     pub source_indices: Vec<u32>,
 }
 
+/// Raw secondary coordinates retained for the two proven TER shader families.
+/// These are source float words, not native packed SHORT2 values or GPU inputs.
+#[derive(Debug, Clone)]
+pub struct PackedTerSecondaryUv {
+    /// One pair per baked vertex, including original NaN and signed-zero bits.
+    pub tex_coords: Vec<[f32; 2]>,
+    /// Representative original TER indices. Geometry and both UV pairs must
+    /// match before sharing one; future lighting/tangent channels need their
+    /// own additional identity checks before reusing these representatives.
+    pub source_indices: Vec<u32>,
+}
+
 /// Everything needed to render a zone.
 pub struct Scene {
     pub name: String,
@@ -103,6 +115,9 @@ pub struct Scene {
     /// Native original-index lighting, keyed by mesh index. Replacing/remapping
     /// meshes must clear/remap this sidecar. No shader consumes this channel yet.
     pub native_ter_lighting: BTreeMap<usize, PackedTerLighting>,
+    /// Raw secondary TER UVs keyed by mesh index. Mesh replacement/remapping
+    /// must clear/remap this sidecar. No shader consumes this channel yet.
+    pub secondary_ter_uv: BTreeMap<usize, PackedTerSecondaryUv>,
     /// Malformed auxiliary lighting remains explicit without hiding valid TER
     /// geometry. Such payloads have no selected channel or claimed native default.
     pub ter_lighting_issues: BTreeMap<String, String>,
@@ -140,6 +155,7 @@ impl Scene {
             terrain_materials: BTreeMap::new(),
             meshes,
             native_ter_lighting: BTreeMap::new(),
+            secondary_ter_uv: BTreeMap::new(),
             ter_lighting_issues: BTreeMap::new(),
             collision_meshes: Vec::new(),
             objects: Vec::new(),
@@ -331,6 +347,7 @@ pub fn load_object_library(base: impl AsRef<Path>, zone: &str) -> Result<Scene> 
         terrain_materials: BTreeMap::new(),
         meshes: Vec::new(),
         native_ter_lighting: BTreeMap::new(),
+        secondary_ter_uv: BTreeMap::new(),
         ter_lighting_issues: BTreeMap::new(),
         collision_meshes: Vec::new(),
         objects: Vec::new(),
@@ -429,6 +446,7 @@ fn load_wld(base: &Path, name: &str, primary: &Path) -> Result<Scene> {
         terrain_materials: BTreeMap::new(),
         meshes: Vec::new(),
         native_ter_lighting: BTreeMap::new(),
+        secondary_ter_uv: BTreeMap::new(),
         ter_lighting_issues: BTreeMap::new(),
         collision_meshes: Vec::new(),
         objects: Vec::new(),
@@ -567,6 +585,7 @@ fn load_eqg_archive(base: &Path, name: &str, archive: Archive) -> Result<Scene> 
         terrain_materials: BTreeMap::new(),
         meshes: Vec::new(),
         native_ter_lighting: BTreeMap::new(),
+        secondary_ter_uv: BTreeMap::new(),
         ter_lighting_issues: BTreeMap::new(),
         collision_meshes: Vec::new(),
         objects: Vec::new(),
@@ -855,6 +874,10 @@ fn append_eqg_object(
                 },
             );
             (vertices, indices)
+        } else if let Some(channel) = ter_secondary_uv::channel(object, material) {
+            let (vertices, indices, metadata) = ter_secondary_uv::pack(object, indices, channel);
+            scene.secondary_ter_uv.insert(scene.meshes.len(), metadata);
+            (vertices, indices)
         } else {
             mesh::pack(
                 &object.positions,
@@ -949,6 +972,7 @@ mod eqg_collision;
 mod indexed_water;
 pub mod ter_lighting;
 mod ter_lighting_pack;
+mod ter_secondary_uv;
 mod ter_uv;
 #[cfg(test)]
 mod waterfall_tests;
