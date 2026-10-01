@@ -5,6 +5,9 @@ use crate::wld::{Frame, Track, WLD_MAGIC};
 #[path = "wld_object_particles_tests.rs"]
 mod particles;
 
+#[path = "wld_object_key_reduction_tests.rs"]
+mod key_reduction_tests;
+
 fn words(values: &[u32]) -> Vec<u8> {
     values
         .iter()
@@ -355,7 +358,7 @@ fn timed_frames_reject_unsupported_or_invalid_tracks_without_affecting_first_pos
     }
     let mut long = source.clone();
     let frames = &mut long.skeleton.as_mut().unwrap().tracks[1].definition.frames;
-    frames.resize(5, frames[0]);
+    frames.resize(6, frames[0]);
     mutations.push(long);
     let mut static_flags = source.clone();
     static_flags.skeleton.as_mut().unwrap().tracks[0].reference_flags = 5;

@@ -1,5 +1,11 @@
 # Installed WLD object animation survey
 
+This is the historical checkpoint inventory. Production now animates supported
+actors whose collision ancestry is stationary. The later
+[five-frame extension](WLD_LONG_OBJECT_ANIMATION.md) additionally admits nine
+definitions with 2,424 original metadata placements, using native key reduction
+and conservative numeric admission. The snapshot counts below remain unchanged.
+
 The bounded sampler at checkpoint `f35062c` supports **115 actor definitions
 across 26 installed zone families**. All use four authored frames at a
 1000-millisecond interval, with a four-second closed loop. This is an asset

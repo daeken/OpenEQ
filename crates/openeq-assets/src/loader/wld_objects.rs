@@ -1,8 +1,9 @@
-//! Actor-owned WLD objects, sampled at the first authored skeletal frame.
+//! Actor-owned WLD objects with retained skeletal sources and bounded animation.
 //!
 //! This retains the source tracks and meshes for future animation and permits
 //! explicit authored-frame inspection and bounded native-compatible time
-//! sampling. Production actors remain at their first pose. This does not flatten
+//! sampling. Stationary-collision actors may animate through render bindings.
+//! This does not flatten
 //! LOD variants or turn mesh names into actor aliases. See
 //! `docs/WLD_OBJECT_ANIMATION.md` for timing evidence and supported bounds.
 
@@ -19,6 +20,9 @@ use std::time::Duration;
 #[path = "wld_object_animation.rs"]
 mod animation;
 pub use animation::RenderAnimation;
+
+#[path = "wld_object_key_reduction.rs"]
+mod key_reduction;
 
 #[path = "wld_particle_textures.rs"]
 mod particle_textures;
@@ -84,7 +88,10 @@ impl ObjectSource {
     /// Shared loop period for the supported short packed-WLD animation family.
     ///
     /// All animated tracks must have the same explicit positive interval and
-    /// two to four frames, reference flags 5, and constant scale/translation.
+    /// two to five frames, reference flags 5, and constant scale/translation.
+    /// Five-frame tracks use the native six-to-five rotation-key reduction.
+    /// They additionally require packed near-unit keys and a well-separated
+    /// reduction choice (or structurally identical tied candidates).
     /// Static tracks require reference flags 4 and no interval. Unknown flags,
     /// floating-point track layouts, long/mixed clips, changing scale or
     /// translation, and degenerate/ambiguous rotations are rejected.
@@ -118,7 +125,9 @@ impl ObjectSource {
         let transforms = pose_with(skeleton, |track| {
             let frames = &skeleton.tracks[track].definition.frames;
             let mut frame = frames[0];
-            if frames.len() > 1 {
+            if frames.len() == 5 {
+                frame.rotation = key_reduction::FiveFrameKeys::new(frames)?.sample(phase, interval);
+            } else if frames.len() > 1 {
                 let a = Quat::from_array(frames[index].rotation);
                 let mut b = Quat::from_array(frames[(index + 1) % count].rotation);
                 if a.dot(b) < 0. {
@@ -282,7 +291,7 @@ fn animation_timing(source: &ObjectSkeleton) -> Result<(usize, u32)> {
     let mut timing = None;
     for track in &source.tracks {
         let frames = &track.definition.frames;
-        if track.definition.flags != 8 || frames.is_empty() || frames.len() > 4 {
+        if track.definition.flags != 8 || frames.is_empty() || frames.len() > 5 {
             return Err(invalid(
                 "unsupported object animation track layout or length",
             ));
@@ -321,6 +330,9 @@ fn animation_timing(source: &ObjectSkeleton) -> Result<(usize, u32)> {
             if !dot.is_finite() || dot.abs() < 1e-6 {
                 return Err(invalid("ambiguous object animation quaternion hemisphere"));
             }
+        }
+        if frames.len() == 5 {
+            key_reduction::FiveFrameKeys::new(frames)?;
         }
     }
     timing.ok_or_else(|| invalid("object has no animated tracks"))
