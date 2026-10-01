@@ -57,6 +57,7 @@ fn main() -> anyhow::Result<()> {
     let mut renderer = Renderer::new_headless(1280, 720)?;
     let env = live.environment.as_ref().unwrap();
     let settings = openeq_render::environment::EnvironmentSettings {
+        zone_type: Some(env.zone_type),
         fog_color: env.fog_color[0],
         fog_start: env.fog_start[0],
         fog_end: env.fog_end[0],

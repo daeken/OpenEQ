@@ -6,8 +6,14 @@ use openeq_assets::{
     texture::Texture,
 };
 
+/// Retained OpenEQ fallback while native non-sky/vision lighting is separate.
+pub const DEFAULT_AMBIENT: [f32; 3] = [0.22, 0.24, 0.30];
+
 #[derive(Debug, Clone, Copy)]
 pub struct EnvironmentSettings {
+    /// Native environment/time type (NewZone byte 520, PEQ time_type), not ztype.
+    /// None leaves authored ambient admission disabled for standalone fixtures.
+    pub zone_type: Option<u8>,
     /// Server fog color, normalized sRGB.
     pub fog_color: [f32; 3],
     pub fog_start: f32,
@@ -23,6 +29,7 @@ pub struct EnvironmentSettings {
 impl Default for EnvironmentSettings {
     fn default() -> Self {
         Self {
+            zone_type: None,
             fog_color: [0.42, 0.50, 0.62],
             fog_start: 0.0,
             fog_end: 2000.0,
@@ -87,6 +94,7 @@ impl EnvironmentSettings {
             return Self::default();
         };
         Self {
+            zone_type: Some(zone.time_type),
             fog_color: zone.fog_color[0],
             fog_start: zone.fog_start[0],
             fog_end: zone.fog_end[0],
@@ -95,6 +103,22 @@ impl EnvironmentSettings {
             sky_enabled: !matches!(zone.time_type, 0 | 3 | 4) && zone.sky != 0,
             ..Self::default()
         }
+    }
+
+    /// Authored ambient under the current normal-vision rendering policy.
+    /// Native packed RGB uses a per-channel floor of 20, independent of alpha.
+    /// Keep normalized bytes in our existing linear lighting pipeline: native
+    /// encoded-color arithmetic, vision effects and display transfer are separate.
+    /// Missing/malformed/unsupported sky inputs reset to the retained fallback;
+    /// this does not emulate native cached-sky or hourly-fallback lifecycle.
+    pub fn normal_vision_ambient(&self, sky: Option<&SkyAssets>) -> [f32; 3] {
+        if !matches!(self.zone_type, Some(1 | 2 | 5)) {
+            return DEFAULT_AMBIENT;
+        }
+        let Some(colors) = sky.and_then(SkyAssets::raw_light_colors) else {
+            return DEFAULT_AMBIENT;
+        };
+        [16, 8, 0].map(|shift| ((colors.ambient >> shift) as u8).max(20) as f32 / 255.)
     }
 
     pub fn apply_sky(&mut self, assets: &SkyAssets) {

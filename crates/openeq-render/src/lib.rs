@@ -171,6 +171,7 @@ pub struct Renderer {
     height: u32,
     ui: Option<ui::UiRenderer>,
     environment: EnvironmentSettings,
+    ambient: [f32; 3],
     view_liquid: Option<openeq_assets::liquid_regions::LiquidKind>,
     sky: SkyResources,
 }
@@ -694,6 +695,7 @@ impl Renderer {
             profiler: None,
             ui: None,
             environment: EnvironmentSettings::default(),
+            ambient: environment::DEFAULT_AMBIENT,
             view_liquid: None,
             sky,
             start: std::time::Instant::now(),
@@ -707,6 +709,7 @@ impl Renderer {
         settings: EnvironmentSettings,
         sky: Option<&openeq_assets::environment::SkyAssets>,
     ) {
+        self.ambient = settings.normal_vision_ambient(sky);
         self.environment = settings;
         if let Some(assets) = sky {
             self.environment.apply_sky(assets);
@@ -1073,7 +1076,7 @@ impl Renderer {
             light_view_projection: light_view_projection.to_cols_array_2d(),
             inverse_view_projection: view_projection.inverse().to_cols_array_2d(),
             camera_position: Camera::to_world(camera.position).extend(1.0).into(),
-            ambient: Vec4::new(0.22, 0.24, 0.30, 1.0).into(),
+            ambient: [self.ambient[0], self.ambient[1], self.ambient[2], 1.0],
             sun_direction: Vec4::new(sun.x, sun.y, sun.z, 1.0).into(),
             sun_color: Vec4::new(1.0, 0.96, 0.86, 1.0).into(),
             environment,

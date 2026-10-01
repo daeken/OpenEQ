@@ -230,6 +230,7 @@ impl Profile {
         )?;
         renderer.set_environment(
             EnvironmentSettings {
+                zone_type: Some(env.zone_type),
                 fog_color: env.fog_color[0],
                 fog_start: env.fog_start[0],
                 fog_end: env.fog_end[0],
