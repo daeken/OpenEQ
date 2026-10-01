@@ -212,3 +212,8 @@ Git.
 Root independently replayed the complete probe to a separate output path;
 the JSON matches `a32d15c12381b1b92b4ccef5dda551b301c683bc82cd01be206aff85857f8c37`.
 No direction or clock implementation is enabled by this research checkpoint.
+
+The later [normal-frame prerequisite attempt](NATIVE_DIRECTIONAL_FRAME_PREREQUISITES.md)
+executes original player construction and native CRT initialization, but stops
+at the AudioTrigger directory-enumeration boundary before clock publication.
+It documents the next fixture requirements without claiming a full-frame result.
