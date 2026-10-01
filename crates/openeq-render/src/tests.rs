@@ -24,6 +24,7 @@ fn flat_ground_does_not_reveal_the_camera_shadow_rectangle() {
         .position(|material| material.water.is_some())
         .expect("Anguish has a large flat water plane");
     scene.meshes.retain(|mesh| mesh.material == water);
+    scene.native_ter_lighting.clear();
     scene.objects.clear();
     scene.instances.clear();
     scene.lights.clear();

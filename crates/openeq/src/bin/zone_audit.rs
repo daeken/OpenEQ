@@ -76,6 +76,8 @@ fn main() -> Result<()> {
                     "invalid_object_references":g.invalid_object_references,
                     "unresolved_objects":g.unresolved_objects,
                     "unsupported_particle_placements":g.unsupported_particle_placements,
+                    "native_ter_lighting_meshes":g.native_ter_lighting_meshes,
+                    "ter_lighting_issues":g.ter_lighting_issues,
                     "invalid_lights":g.invalid_lights});
             }
             Err(error) => {

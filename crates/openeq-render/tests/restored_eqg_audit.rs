@@ -205,6 +205,7 @@ fn original_restored_terrain_fixed_cameras_and_serialized_gpu_timings() {
         let mut restored = Vec::new();
         let mut restored_shaders = BTreeMap::new();
         let mut selected = None;
+        let mut former_packing = Vec::new();
         for ((id, indices), &mesh_id) in groups.iter().zip(&terrain_meshes) {
             let mesh = &source.meshes[mesh_id];
             let (packed, packed_indices) = mesh::pack(
@@ -213,8 +214,24 @@ fn original_restored_terrain_fixed_cameras_and_serialized_gpu_timings() {
                 &terrain.tex_coords,
                 indices,
             );
-            assert_eq!(mesh.vertices, packed);
-            assert_eq!(mesh.indices, packed_indices);
+            // Lighting adds vertex identity; triangle-corner attributes and
+            // order must remain bit-identical to the former geometry bake.
+            assert_eq!(mesh.indices.len(), packed_indices.len());
+            for (&actual, &previous) in mesh.indices.iter().zip(&packed_indices) {
+                let a = actual as usize * 8;
+                let b = previous as usize * 8;
+                assert_eq!(
+                    mesh.vertices[a..a + 8]
+                        .iter()
+                        .map(|v| v.to_bits())
+                        .collect::<Vec<_>>(),
+                    packed[b..b + 8]
+                        .iter()
+                        .map(|v| v.to_bits())
+                        .collect::<Vec<_>>()
+                );
+            }
+            former_packing.push((mesh_id, packed, packed_indices));
             if !old_ids.contains(id) {
                 restored.push(mesh_id);
                 *restored_shaders
@@ -349,6 +366,26 @@ fn original_restored_terrain_fixed_cameras_and_serialized_gpu_timings() {
             .unwrap();
         }
         drop(gpu);
+        // The new source-light channel is metadata only at this checkpoint.
+        // Compare the same full scene after restoring the former eight-word
+        // deduplication; it must not accidentally change current shading.
+        let lighting = std::mem::take(&mut source.native_ter_lighting);
+        for (mesh_id, vertices, indices) in &mut former_packing {
+            std::mem::swap(&mut source.meshes[*mesh_id].vertices, vertices);
+            std::mem::swap(&mut source.meshes[*mesh_id].indices, indices);
+        }
+        let former = GpuScene::build(renderer.device(), renderer.queue(), &source).unwrap();
+        assert_eq!(
+            capture(&mut renderer, &former, &camera),
+            full,
+            "source lighting retention changed current pixels in {zone}"
+        );
+        drop(former);
+        for (mesh_id, vertices, indices) in &mut former_packing {
+            std::mem::swap(&mut source.meshes[*mesh_id].vertices, vertices);
+            std::mem::swap(&mut source.meshes[*mesh_id].indices, indices);
+        }
+        source.native_ter_lighting = lighting;
         // This isolates the cost/appearance of the added source terrain. It
         // does not replay the former bindings on geometry that already drew.
         for mesh_id in restored {

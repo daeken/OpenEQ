@@ -179,6 +179,8 @@ pub struct GeometryAudit {
     /// Restored mesh placements whose attached native effects remain unsupported.
     pub unsupported_particle_placements: BTreeMap<String, usize>,
     pub invalid_lights: usize,
+    pub native_ter_lighting_meshes: usize,
+    pub ter_lighting_issues: BTreeMap<String, String>,
 }
 
 pub fn geometry(base: &Path, zone: &str) -> Result<GeometryAudit> {
@@ -194,6 +196,8 @@ pub fn geometry(base: &Path, zone: &str) -> Result<GeometryAudit> {
         instances: scene.instances.len(),
         lights: scene.lights.len(),
         texture_references: scene.texture_names().len(),
+        native_ter_lighting_meshes: scene.native_ter_lighting.len(),
+        ter_lighting_issues: scene.ter_lighting_issues.clone(),
         ..Default::default()
     };
     for mesh in &scene.meshes {

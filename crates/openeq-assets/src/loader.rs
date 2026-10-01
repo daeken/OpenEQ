@@ -56,6 +56,17 @@ pub struct SceneObject {
     pub collision_meshes: Vec<usize>,
 }
 
+/// Original lighting attached to the vertices of one packed TER material group.
+/// This channel is retained for native shader integration, not used as opacity.
+#[derive(Debug, Clone)]
+pub struct PackedTerLighting {
+    pub selection: Arc<ter_lighting::Selection>,
+    /// One representative original TER index per packed vertex. Only vertices
+    /// with identical geometry AND lighting may share a representative.
+    /// Future tangent channels must also participate in deduplication identity.
+    pub source_indices: Vec<u32>,
+}
+
 /// Everything needed to render a zone.
 pub struct Scene {
     pub name: String,
@@ -65,6 +76,12 @@ pub struct Scene {
     /// object extraction starts with an empty map.
     pub terrain_materials: BTreeMap<usize, terrain::TerrainMaterial>,
     pub meshes: Vec<Geometry>,
+    /// Native original-index lighting, keyed by mesh index. Replacing/remapping
+    /// meshes must clear/remap this sidecar. No shader consumes this channel yet.
+    pub native_ter_lighting: BTreeMap<usize, PackedTerLighting>,
+    /// Malformed auxiliary lighting remains explicit without hiding valid TER
+    /// geometry. Such payloads have no selected channel or claimed native default.
+    pub ter_lighting_issues: BTreeMap<String, String>,
     /// Physical geometry independent of drawable materials, never uploaded for
     /// drawing. Includes hidden WLD faces and EQG's separate physical bake.
     pub collision_meshes: Vec<CollisionGeometry>,
@@ -98,6 +115,8 @@ impl Scene {
             materials,
             terrain_materials: BTreeMap::new(),
             meshes,
+            native_ter_lighting: BTreeMap::new(),
+            ter_lighting_issues: BTreeMap::new(),
             collision_meshes: Vec::new(),
             objects: Vec::new(),
             wld_object_sources: BTreeMap::new(),
@@ -287,6 +306,8 @@ pub fn load_object_library(base: impl AsRef<Path>, zone: &str) -> Result<Scene> 
         materials: Vec::new(),
         terrain_materials: BTreeMap::new(),
         meshes: Vec::new(),
+        native_ter_lighting: BTreeMap::new(),
+        ter_lighting_issues: BTreeMap::new(),
         collision_meshes: Vec::new(),
         objects: Vec::new(),
         wld_object_sources: BTreeMap::new(),
@@ -311,7 +332,7 @@ pub fn load_object_library(base: impl AsRef<Path>, zone: &str) -> Result<Scene> 
                 wld_objects::append_objects(&mut scene, index, &wld)?;
             } else if lower.ends_with(".mod") {
                 let object = TerMod::parse(&scene.archives[index].read(&filename)?, false)?;
-                append_eqg_object(&mut scene, &object, &object_key(&filename), index);
+                append_eqg_object(&mut scene, &object, &object_key(&filename), index, None);
             }
         }
     }
@@ -383,6 +404,8 @@ fn load_wld(base: &Path, name: &str, primary: &Path) -> Result<Scene> {
         materials: Vec::new(),
         terrain_materials: BTreeMap::new(),
         meshes: Vec::new(),
+        native_ter_lighting: BTreeMap::new(),
+        ter_lighting_issues: BTreeMap::new(),
         collision_meshes: Vec::new(),
         objects: Vec::new(),
         wld_object_sources: BTreeMap::new(),
@@ -499,10 +522,13 @@ fn load_eqg_archive(base: &Path, name: &str, archive: Archive) -> Result<Scene> 
         return load_heightmap(base, name, archive, &zon_data);
     }
 
+    let mut object_sources = Vec::new();
     let zone = ZoneFile::parse(&zon_data, |file_name| {
         if let Ok(data) = archive.read(file_name) {
+            object_sources.push((file_name.to_owned(), true));
             return Ok(data);
         }
+        object_sources.push((file_name.to_owned(), false));
         let fallback = base.join(file_name);
         std::fs::read(&fallback).map_err(|source| Error::Io {
             path: fallback,
@@ -515,6 +541,8 @@ fn load_eqg_archive(base: &Path, name: &str, archive: Archive) -> Result<Scene> 
         materials: Vec::new(),
         terrain_materials: BTreeMap::new(),
         meshes: Vec::new(),
+        native_ter_lighting: BTreeMap::new(),
+        ter_lighting_issues: BTreeMap::new(),
         collision_meshes: Vec::new(),
         objects: Vec::new(),
         wld_object_sources: BTreeMap::new(),
@@ -526,7 +554,38 @@ fn load_eqg_archive(base: &Path, name: &str, archive: Archive) -> Result<Scene> 
     };
     // Terrain contributes directly; objects retain reusable definitions.
     for (id, object) in zone.objects.iter().enumerate() {
-        append_eqg_object(&mut scene, object, &format!("object_{id}"), 0);
+        let lighting = object
+            .materials
+            .iter()
+            .any(|material| {
+                ter_uv::encoding(object, material) == mesh::UvEncoding::NativeTerShort2Sse2
+            })
+            .then(|| {
+                let (member, from_archive) = &object_sources[id];
+                ter_lighting::select(
+                    base,
+                    name,
+                    &scene.archives[0],
+                    member,
+                    *from_archive,
+                    object.positions.len(),
+                )
+                .map(Arc::new)
+                .map_err(|error| {
+                    scene
+                        .ter_lighting_issues
+                        .insert(member.clone(), error.to_string());
+                })
+                .ok()
+            })
+            .flatten();
+        append_eqg_object(
+            &mut scene,
+            object,
+            &format!("object_{id}"),
+            0,
+            lighting.as_ref(),
+        );
     }
 
     for placeable in &zone.placeables {
@@ -674,7 +733,13 @@ fn unique_heightmap_declaration(
     Ok(selected)
 }
 
-fn append_eqg_object(scene: &mut Scene, object: &TerMod, object_name: &str, archive_index: usize) {
+fn append_eqg_object(
+    scene: &mut Scene,
+    object: &TerMod,
+    object_name: &str,
+    archive_index: usize,
+    lighting: Option<&Arc<ter_lighting::Selection>>,
+) {
     let collision_start = scene.collision_meshes.len();
     scene
         .collision_meshes
@@ -714,12 +779,28 @@ fn append_eqg_object(scene: &mut Scene, object: &TerMod, object_name: &str, arch
             .map(|value| value.to_owned());
 
         let indices = &groups[material_id];
-        let (vertices, indices) = mesh::pack(
-            &object.positions,
-            &object.normals,
-            &object.tex_coords,
-            indices,
-        );
+        let native_lighting = lighting.filter(|_| {
+            ter_uv::encoding(object, material) == mesh::UvEncoding::NativeTerShort2Sse2
+        });
+        let (vertices, indices) = if let Some(selection) = native_lighting {
+            let (vertices, indices, source_indices) =
+                ter_lighting_pack::pack(object, indices, &selection.colors);
+            scene.native_ter_lighting.insert(
+                scene.meshes.len(),
+                PackedTerLighting {
+                    selection: Arc::clone(selection),
+                    source_indices,
+                },
+            );
+            (vertices, indices)
+        } else {
+            mesh::pack(
+                &object.positions,
+                &object.normals,
+                &object.tex_coords,
+                indices,
+            )
+        };
 
         let id = scene.materials.len();
         if let Some(environment) = water
@@ -773,6 +854,8 @@ fn append_eqg_object(scene: &mut Scene, object: &TerMod, object_name: &str, arch
 
 mod eqg_collision;
 mod indexed_water;
+pub mod ter_lighting;
+mod ter_lighting_pack;
 mod ter_uv;
 pub mod wld_objects;
 
@@ -1069,7 +1152,7 @@ fn load_heightmap(base: &Path, name: &str, archive: Archive, zon: &[u8]) -> Resu
             continue;
         };
         let object = TerMod::parse(&data, false)?;
-        append_eqg_object(&mut scene, &object, &model, 0);
+        append_eqg_object(&mut scene, &object, &model, 0, None);
         loaded.insert(model);
     }
     for placement in placements {

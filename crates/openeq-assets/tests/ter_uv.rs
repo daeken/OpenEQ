@@ -180,14 +180,23 @@ fn original_version_three_ter_materials_preserve_primary_uvs() {
             assert!(
                 scene.meshes.iter().any(|draw| {
                     scene.materials[draw.material].uv_encoding == UvEncoding::NativeTerShort2Sse2
-                        && draw.indices == indices
+                        && draw.indices.len() == indices.len()
                         && draw
-                            .vertices
+                            .indices
                             .iter()
-                            .map(|v| v.to_bits())
-                            .eq(vertices.iter().map(|v| v.to_bits()))
+                            .zip(&indices)
+                            .all(|(&actual, &previous)| {
+                                let a = actual as usize * mesh::VERTEX_STRIDE;
+                                let b = previous as usize * mesh::VERTEX_STRIDE;
+                                draw.vertices[a..a + mesh::VERTEX_STRIDE]
+                                    .iter()
+                                    .map(|v| v.to_bits())
+                                    .eq(vertices[b..b + mesh::VERTEX_STRIDE]
+                                        .iter()
+                                        .map(|v| v.to_bits()))
+                            })
                 }),
-                "{zone} material {ordinal} changed raw vertices"
+                "{zone} material {ordinal} changed raw triangle-corner attributes"
             );
         }
         assert_eq!(selected, expected_groups, "{zone}");

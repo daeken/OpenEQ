@@ -698,3 +698,18 @@ and no-default checks pass; logs use `/tmp/openeq-bc1-diagnostic-*`. Subsequent
 index-topology and TER-lighting edits are explicitly outside this checkpoint.
 The original loading-loop FPU mode is better established, but preservation
 across intervening callbacks is still open; see `EQG_TER_FPU_LIFECYCLE.md`.
+
+Native lighting selection and packing now retain the established exact-family
+input without applying guessed shading. Independent source/color checks recover
+10,883 vertices whose distinct lighting previously merged; three original LIT
+count mismatches correctly use the native whole-stream default. Malformed
+auxiliary data remains an explicit issue while geometry survives. All329assets
+tests and strict workspace lint pass. Restored-zone GPU before/after packing
+captures are pixel-identical. See `EQG_TER_LIGHTING_SELECTION.md`.
+
+The particle diagnostic now follows the executed native shared triangle order.
+Original Microsoft D3DX level-zero creation and assembly copies preserve
+CSMOKE/GENG00 BC1 rows and bytes under the tested full-quality supported-format
+context. All8diagnostic tests and independent native reproducers pass. Driver
+mips, inherited whole-frame state and live integration remain separate; see
+`WLD_PARTICLE_TEXTURE_LOAD.md`.

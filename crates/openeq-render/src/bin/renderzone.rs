@@ -116,6 +116,9 @@ fn main() -> anyhow::Result<()> {
                     .map(|recipe| (index, recipe))
             })
             .collect();
+        // This diagnostic replaces mesh indices; retained source-light bindings
+        // must not refer to the unfiltered scene.
+        scene.native_ter_lighting.clear();
         scene.meshes = kept
             .into_iter()
             .enumerate()

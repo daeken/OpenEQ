@@ -410,3 +410,28 @@ cohesive commits and pushing to `master`.
   this source-binding step. npc_assets researches native longer-track compression;
   xml_ui verifies native particle index and D3DX copy behavior. Preserve their
   scopes; pending work is not covered by the 1,072-test checkpoint.
+
+## 05:10 source-lighting and native particle-copy checkpoint
+
+- Exact Opaque_MaxCB1 TER lighting now has source provenance and representative
+  original indices through packing. All329assets tests pass, including original
+  every-corner geometry/color checks. Native default/count/no-retry policies
+  match the nine-case original-code witness; malformed metadata instead remains
+  an explicit audit issue while valid geometry loads. An independent review
+  caught two filtered-scene sidecars and an old packed-array test expectation;
+  all are corrected. GPU images for restored Bazaar/Nest/Thundercrest are exact
+  matches to the former packing. Strict workspace lint passes. No lighting
+  shader behavior changed; see EQG_TER_LIGHTING_SELECTION.md and logs
+  /tmp/openeq-ter-lighting-{assets-verified,remap-final,gpu,clippy}.log.
+- c1287c6 adds the standalone particle GPU diagnostic and closes native shared
+  index and level-zero texture-copy gaps. Executed Microsoft D3DX preserves all
+  original CSMOKE/GENG00 BC1 bytes/row order on the tested full-quality path;
+  source mip chains are distinct from still-unverified assembled driver mips.
+  Root reproduced all three output hashes and reran all8diagnostic tests.
+  See WLD_PARTICLE_TEXTURE_LOAD.md; live scene effects remain separate.
+- npc_assets owns a bounded five-frame constant-scale/translation extension:
+  native6→5rotation-key reduction differs by branch, so dropping the first
+  repeated frame is wrong. Evidence covers18definition occurrences/108tracks
+  and6009metadata placements. cursor_review independently reviews native and
+  implementation; root owns original Dreadlands GPU loop/collision/bounds test.
+  This pending extension is outside the329assets/1072workspace checkpoints.
