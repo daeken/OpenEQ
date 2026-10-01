@@ -7,6 +7,11 @@
 use crate::{Error, Result, texture::Texture};
 use std::{collections::HashMap, path::Path};
 
+mod color_map;
+pub use color_map::{SkyColorMapInputs, SkyColorMapProvenance, SkyColorMapSource, SkyLightColors};
+#[cfg(test)]
+mod color_map_tests;
+
 /// Identifies usable sky colors without discarding the original source pixels.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SkyColorMapLayout {
@@ -43,9 +48,12 @@ pub struct SkyAssets {
     pub weather: String,
     pub color_map: Texture,
     pub color_map_layout: SkyColorMapLayout,
+    /// Authored inputs and native day-key sampling; absent for synthetic skies.
+    pub color_map_provenance: Option<SkyColorMapProvenance>,
     pub cloud_texture: Option<Texture>,
     pub cloud_color_map: Option<Texture>,
     pub cloud_color_map_layout: SkyColorMapLayout,
+    pub cloud_color_map_provenance: Option<SkyColorMapProvenance>,
     /// Texture-space movement per second (the INI expresses it per millisecond).
     pub cloud_velocity: f32,
 }
@@ -96,6 +104,10 @@ fn path_case_insensitive(directory: &Path, file: &str) -> Result<std::path::Path
 }
 fn read_texture(directory: &Path, file: &str) -> Result<Texture> {
     let path = path_case_insensitive(directory, file)?;
+    read_texture_path(&path, file)
+}
+
+fn read_texture_path(path: &Path, file: &str) -> Result<Texture> {
     let mut bytes = std::fs::read(path)?;
     // Cloud sprites use the D3D L8A8 format. Treat its luminance mask as all
     // three RGB masks so the general packed-DDS decoder preserves both planes.
@@ -120,39 +132,11 @@ fn original_color_map(texture: Texture) -> Result<Texture> {
     }
     Ok(texture)
 }
-fn color_map_file(ini: &Ini, color_set: &str, day_fraction: f32) -> Result<String> {
-    let section = format!("ColorSet-{color_set}");
-    let mut frames: Vec<(f32, &str)> = (0..32)
-        .filter_map(|index| {
-            let map = value(ini, &section, &format!("ColorMap{index}"))?;
-            let time = value(ini, &section, &format!("Time{index}"))?
-                .parse::<f32>()
-                .ok()?;
-            time.is_finite().then_some((time, map))
-        })
-        .collect();
-    frames.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let time = if day_fraction.is_finite() {
-        day_fraction.rem_euclid(1.0)
-    } else {
-        0.5
-    };
-    let map = frames
-        .iter()
-        .rev()
-        .find(|(start, _)| *start <= time)
-        .or_else(|| frames.last())
-        .map(|(_, map)| *map)
-        .or_else(|| value(ini, &section, "ColorMap0"))
-        .ok_or_else(|| Error::Format(format!("sky color set has no maps: {color_set}")))?;
-    let file = value(ini, &format!("ColorMap-{map}"), "File")
-        .ok_or_else(|| Error::Format(format!("sky color map has no file: {map}")))?;
-    Ok(format!("colormap-{file}.dds"))
-}
-
 /// Resolves a zone's clear-weather sky. Missing zone overrides inherit the
 /// client's default definition. `day_fraction=0.5` selects the midday assets.
-/// Color-map transitions and multi-layer cloud population are not simulated yet.
+/// Samples native day-key transitions at this explicit time. Finite inputs wrap
+/// to one day and nonfinite inputs use noon, preserving the existing API. Live
+/// time, weather-pattern transitions and multiple cloud layers are not simulated.
 pub fn load_sky(client_directory: &Path, zone: &str, day_fraction: f32) -> Result<SkyAssets> {
     let directory = client_directory.join("Resources/sky");
     let settings = parse_ini(&std::fs::read_to_string(directory.join("sky.ini"))?);
@@ -163,12 +147,11 @@ pub fn load_sky(client_directory: &Path, zone: &str, day_fraction: f32) -> Resul
     let section = format!("WeatherPattern-{pattern}");
     let color_set = value(&weather, &section, "ColorSet")
         .ok_or_else(|| Error::Format(format!("missing sky weather pattern: {pattern}")))?;
-    let color_map = original_color_map(read_texture(
-        &directory,
-        &color_map_file(&weather, color_set, day_fraction)?,
-    )?)?;
+    let (color_map, color_map_provenance) =
+        color_map::sample(&directory, &weather, color_set, day_fraction)?;
     let mut cloud_texture = None;
     let mut cloud_color_map = None;
+    let mut cloud_color_map_provenance = None;
     let mut cloud_color_map_layout = SkyColorMapLayout::FullTexture;
     let mut cloud_velocity = 0.001;
     if let Some(cloud) = value(&weather, &section, "Cloud0") {
@@ -177,10 +160,9 @@ pub fn load_sky(client_directory: &Path, zone: &str, day_fraction: f32) -> Resul
             cloud_texture = Some(read_texture(&directory, &format!("cloud-{texture}.dds"))?);
         }
         if let Some(set) = value(&weather, &cloud, "ColorSet") {
-            cloud_color_map = Some(original_color_map(read_texture(
-                &directory,
-                &color_map_file(&weather, set, day_fraction)?,
-            )?)?);
+            let (table, provenance) = color_map::sample(&directory, &weather, set, day_fraction)?;
+            cloud_color_map = Some(table);
+            cloud_color_map_provenance = Some(provenance);
             cloud_color_map_layout = SkyColorMapLayout::OriginalDome;
         }
         cloud_velocity = value(&weather, &cloud, "VelocityMin")
@@ -192,9 +174,11 @@ pub fn load_sky(client_directory: &Path, zone: &str, day_fraction: f32) -> Resul
         weather: pattern.to_owned(),
         color_map,
         color_map_layout: SkyColorMapLayout::OriginalDome,
+        color_map_provenance: Some(color_map_provenance),
         cloud_texture,
         cloud_color_map,
         cloud_color_map_layout,
+        cloud_color_map_provenance,
         cloud_velocity,
     })
 }
@@ -233,20 +217,6 @@ mod tests {
         assert!(original_color_map(generic).is_err());
     }
 
-    #[test]
-    fn day_cycle_wraps_to_previous_night_and_ini_is_case_insensitive() {
-        let ini = parse_ini(
-            "[ColorSet-Clear]\nColorMap0=Dawn\nTime0=0.2\nColorMap1=Day\nTime1=0.3\nColorMap2=Night\nTime2=0.8\n[ColorMap-Dawn]\nFile=red\n[ColorMap-Day]\nFile=blue\n[ColorMap-Night]\nFile=black\n",
-        );
-        assert_eq!(
-            color_map_file(&ini, "CLEAR", 0.1).unwrap(),
-            "colormap-black.dds"
-        );
-        assert_eq!(
-            color_map_file(&ini, "clear", 0.5).unwrap(),
-            "colormap-blue.dds"
-        );
-    }
     #[test]
     fn installed_client_skies_resolve_authored_textures() {
         let directory = std::env::var_os("EQ_CLIENT_DIR")

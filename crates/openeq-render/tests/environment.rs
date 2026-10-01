@@ -115,9 +115,11 @@ fn sky_is_attached_to_world_direction_not_screen_or_camera_position() {
             ],
         },
         color_map_layout: SkyColorMapLayout::FullTexture,
+        color_map_provenance: None,
         cloud_texture: None,
         cloud_color_map: None,
         cloud_color_map_layout: SkyColorMapLayout::FullTexture,
+        cloud_color_map_provenance: None,
         cloud_velocity: 0.,
     };
     renderer.set_environment(EnvironmentSettings::default(), Some(&assets));
@@ -245,9 +247,11 @@ fn native_sky_helper_swatches_and_pole_ring_colors_never_reach_sky_pixels() {
         weather: "fixture".into(),
         color_map: table.clone(),
         color_map_layout: SkyColorMapLayout::OriginalDome,
+        color_map_provenance: None,
         cloud_texture: None,
         cloud_color_map: None,
         cloud_color_map_layout: SkyColorMapLayout::FullTexture,
+        cloud_color_map_provenance: None,
         cloud_velocity: 0.,
     };
     for clouds in [false, true] {
