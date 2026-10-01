@@ -130,7 +130,10 @@ texture pointer returned by its resolver call.
 This witness deliberately starts with the early definitions. It does not prove
 the actual client's full load order or that every later duplicate follows the
 same miss path. The conditional reuse and low-byte cloud texture-reference
-behavior remain as documented in the runtime follow-up.
+behavior are further established with the real native cache and full PoK WLD
+assembly in [WLD_PARTICLE_LOAD_CONTEXT.md](WLD_PARTICLE_LOAD_CONTEXT.md). The
+earlier runtime dictionary used an exact-context policy supplied by its harness;
+native visibility accepts stored scopes less than or equal to the request.
 
 ## Material alias and descriptor conversion
 

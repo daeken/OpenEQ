@@ -48,7 +48,9 @@ This is **not a running original client**. Its controlled boundaries are:
   material word 0; the actual negative material handle is not resolved.
 - The reader experiment supplies controlled resource lookup, texture resolver
   and registration interfaces. Native traversal, cache checks and byte reads
-  execute. This proves conditional behavior, not every real load context.
+  execute. The supplied dictionary uses exact `(name, context)` keys; this is
+  not the native cache visibility policy. Native cache and actual PoK loader
+  evidence are now in [WLD_PARTICLE_LOAD_CONTEXT.md](WLD_PARTICLE_LOAD_CONTEXT.md).
 
 ## Active frame path and clock
 
@@ -258,7 +260,8 @@ Both readers call this helper before decoding: bulk cache call `0x1001e6dd`,
 on-demand cache call `0x1001d9ee`. On a miss, the actual texture reads at
 `0x1001e7ae` and `0x1001dac3` are one byte wide.
 
-The controlled bulk witness supplies all eight original cloud records at
+The controlled bulk witness uses a supplied exact `(name, context)` resource
+dictionary and supplies all eight original cloud records at
 their original fragment indices, other entry kinds zero, scan bounds 5..471,
 no name filter and resource context `0x1234`. It registers four definitions
 and calls the texture resolver only with `[4, 9, 14, 19]`. The later runtime
@@ -276,8 +279,16 @@ On-demand reads of fragment 411 distinguish the conditions:
 | Controlled lookup result | Native result |
 | --- | --- |
 | Same name/context, correct type | Returns 0, reuses fragment 10's runtime pointer, no texture call |
-| Context changed to `0x5678`, cache miss | Attempts texture 154 (`410 & 255`); mocked resolver rejects; returns -1 |
+| Context changed to `0x5678`; supplied dictionary forces a miss | Attempts texture 154 (`410 & 255`); mocked resolver rejects; returns -1 |
 | Same name/context, wrong resource type `0x9999` | Rejects cached object, attempts texture 154; returns -1 |
+
+The changed-context miss above is a property of the supplied dictionary, not
+of native resource visibility. The later native-cache witness in
+[WLD_PARTICLE_LOAD_CONTEXT.md](WLD_PARTICLE_LOAD_CONTEXT.md) proves signed
+`stored scope <= requested scope`: a definition registered at scope 2 is
+reused by the on-demand reader at scope 3 and missed at scope 1. It also
+executes full assembly against the complete original PoK WLD and reproduces
+the four shared definitions using real native registration and lookup.
 
 Named reuse therefore can avoid the narrow texture read, but it cannot justify
 assuming that arbitrary references above 255 decode correctly. The real
@@ -302,10 +313,11 @@ visibility, owner movement and cache hit/miss assertions. The three L500
 converter controls share descriptor-tail SHA-256
 `315e2a9c61c2ec98bae1d23900b1228e5ecd0cbac6d4d113f0b3312f43a90d9c`.
 
-Before enabling production effects, the unresolved integration work includes
-the actual material/texture and blend path, manager registration and bounds,
-the meaning and lifecycle of the manager `+0xbc` drawing gate, native owner
-transform composition at real placements, and which load contexts permit
-definition reuse. Exact client random initialization and unsupported source
+Subsequent bounded witnesses document the
+[material/texture and blend path](WLD_PARTICLE_MATERIALS.md),
+[drawing gate and native placement](WLD_PARTICLE_PLACEMENT.md), and
+[registration, cache scope and load order](WLD_PARTICLE_LOAD_CONTEXT.md).
+Complete client startup/cache history, full scene assembly and actual renderer
+integration remain unresolved. Exact client random initialization and unsupported source
 selectors/modes also remain unproven. No light behavior follows from the
 particle colors or torch names alone.

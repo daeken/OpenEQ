@@ -225,8 +225,11 @@ script abf53f5e09ae584933b7b172c2b92b86c1cc3a7866a6f56c529c168cefbdb164
 JSON   cf45ba930a6d2fbc323a4445b8a61b00862280c14ee7cddede7620b65a843b1e
 ```
 
-Remaining work includes full resource-registration/load-context behavior,
-broader placement and animation modes, and integration with an actual renderer.
+Native resource registration, scope visibility, loader selection and bounded
+full-WLD assembly are now documented in
+[WLD_PARTICLE_LOAD_CONTEXT.md](WLD_PARTICLE_LOAD_CONTEXT.md). Remaining work
+includes complete startup/import cache history, broader placement and animation
+modes, and integration with an actual renderer.
 The material/blend path is documented separately in
 [WLD_PARTICLE_MATERIALS.md](WLD_PARTICLE_MATERIALS.md). These results do not
 authorize guessed emission parameters, generated lights or visual parity claims
