@@ -24,6 +24,10 @@ pub use animation::RenderAnimation;
 #[path = "wld_object_key_reduction.rs"]
 mod key_reduction;
 
+#[path = "wld_particle_poses.rs"]
+mod particle_poses;
+pub use particle_poses::ObjectParticleOwnerTransform;
+
 #[path = "wld_particle_textures.rs"]
 mod particle_textures;
 use particle_textures::particle_texture_source;
