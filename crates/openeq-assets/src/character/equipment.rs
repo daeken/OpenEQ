@@ -103,8 +103,7 @@ impl CharacterLibrary {
                 continue;
             }
             let surface = source
-                .materials
-                .get(&id)
+                .material_for_polygon(id)
                 .ok_or_else(|| Error::Format(format!("{code}: invalid item material {id}")))?;
             if indices
                 .iter()
@@ -378,7 +377,7 @@ mod tests {
                 assert!(
                     model
                         .materials
-                        .values()
+                        .iter()
                         .all(|material| material.shader == "AddAlpha_MPLBasicA.fx")
                 );
                 assert!(

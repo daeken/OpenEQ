@@ -64,7 +64,7 @@ fn fixture(terrain: bool, version: u32, integer: u32) -> (Vec<u8>, usize) {
             words(&mut data, &[0; 2]);
         }
     }
-    words(&mut data, &[0, 1, 2, 7, 0]);
+    words(&mut data, &[0, 1, 2, 0, 0]);
     (data, integer_record)
 }
 
@@ -75,7 +75,8 @@ fn distinct_integer_words_preserve_every_bit_and_following_material_geometry_ali
             for integer in [0, 1, 2, 0xffff_fffd, 0x8000_0000, 0x7fc0_1234] {
                 let (data, _) = fixture(terrain, version, integer);
                 let model = TerMod::parse(&data, terrain).unwrap();
-                let material = &model.materials[&7];
+                let material = &model.materials[0];
+                assert_eq!(material.stored_id, 7);
                 assert!(
                     matches!(material.properties["channel"], Property::IntegerBits(value) if value == integer)
                 );
@@ -92,7 +93,7 @@ fn distinct_integer_words_preserve_every_bit_and_following_material_geometry_ali
                 assert_eq!(model.positions, [[1., 2., 3.], [4., 5., 6.], [7., 8., 9.]]);
                 assert_eq!(model.normals, [[0., 0., 1.]; 3]);
                 assert_eq!(model.tex_coords, [[0.25, 0.75]; 3]);
-                assert_eq!(model.polygons, [(0, 1, 2, 7, 0)]);
+                assert_eq!(model.polygons, [(0, 1, 2, 0, 0)]);
             }
         }
     }
@@ -127,7 +128,7 @@ fn original_housegarden_retains_channel_properties_and_loads_authored_geometry()
     assert_eq!(source.placeables.len(), 6267);
     let mut channels = [0; 3];
     for model in &source.objects {
-        for material in model.materials.values() {
+        for material in &model.materials {
             for (name, value) in &material.properties {
                 if let Property::IntegerBits(word) = value {
                     match (name.as_str(), word) {
@@ -140,10 +141,9 @@ fn original_housegarden_retains_channel_properties_and_loads_authored_geometry()
             }
         }
     }
-    // One affected MOD is unreferenced. The TER repeats material IDs and the
-    // existing map retains the last record per ID, replacing its six words.
-    // This parser extension does not change that material-identity policy.
-    assert_eq!(channels, [46, 46, 46]);
+    // One affected MOD is unreferenced. The six words in TER records whose
+    // stored IDs repeat are retained alongside every other source record.
+    assert_eq!(channels, [48, 48, 48]);
     let scene = loader::load_zone(base, "housegarden").unwrap();
     assert_eq!(scene.instances.len(), 6267);
     assert!(scene.triangle_count() > 20_000);

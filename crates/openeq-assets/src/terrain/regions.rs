@@ -8,7 +8,7 @@
 //! See `docs/EQG_LIQUID_TRANSFORMS.md` for native addresses and original fixtures.
 //! The bounded box implementation accepts only unit stored scale, yaw-only
 //! rotations, positive extents, matching grids and strict interior anchors.
-//! AFG's special box constructor is unsupported and rejects the whole set.
+//! AFG uses the native signed horizontal extent equalization before rotation.
 //! Whole-set queries require proof that placed object groups contain no areas;
 //! embedded transforms and registration interleaving are not yet decoded.
 //! EQGZ is a separate format.
@@ -103,6 +103,18 @@ pub fn native_type_word(name: &str, raw: u32) -> Option<u32> {
     })
 }
 
+/// Shared native constructor 0x10021de0 changes only AFG's horizontal extents:
+/// compare signed X/Y, then copy the larger into both slots before rotation.
+/// Callers validate finite input and the resulting transform separately.
+pub(crate) fn native_box_half_extents(name: &str, mut half: [f32; 3]) -> [f32; 3] {
+    if name.starts_with("AFG") {
+        let horizontal = half[0].max(half[1]);
+        half[0] = horizontal;
+        half[1] = horizontal;
+    }
+    half
+}
+
 /// Native top-level registration order, expressed as indices into `map.regions`.
 /// This is not a complete order for embedded object-group regions. Metadata is
 /// never rearranged, so its original stream order remains independently usable.
@@ -182,6 +194,7 @@ pub struct NativeRegionBox {
     pub raw_type: u32,
     pub effective_type: Option<u32>,
     pub center: [f32; 3],
+    /// Registered extents after AFG normalization; the map retains authored size.
     pub half_extents: [f32; 3],
     /// Truncated 512-unit angle, before wrapping to the trig table.
     pub yaw_units: i32,
@@ -202,11 +215,6 @@ impl NativeRegionBox {
             .get(record_index)
             .ok_or_else(|| invalid("missing region record"))?;
         region.validate_finite()?;
-        // Native AFG construction equalizes horizontal extents before the
-        // shared box builder. An ordinary box could expose water behind it.
-        if region.name.starts_with("AFG") {
-            return Err(invalid("unsupported AFG special box constructor"));
-        }
         let tile = map
             .tiles
             .get(region.tile_index)
@@ -233,7 +241,7 @@ impl NativeRegionBox {
             (f64::from(tile.latitude) * width + f64::from(region.position[1])) as f32,
             height + region.position[2],
         ];
-        let half_extents = region.full_size.map(|v| v * 0.5);
+        let half_extents = native_box_half_extents(&region.name, region.full_size.map(|v| v * 0.5));
         let units = region.rotation_degrees[2] * (512_f32 / 360.);
         if !center.iter().all(|v| v.is_finite())
             || half_extents.contains(&0.)

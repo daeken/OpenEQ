@@ -43,6 +43,8 @@ impl Property {
 /// A named material with engine-specific properties.
 #[derive(Debug, Clone)]
 pub struct TerMaterial {
+    /// Authored first word, retained as metadata. Polygon references do not use it.
+    pub stored_id: u32,
     pub name: String,
     pub shader: String,
     pub properties: HashMap<String, Property>,
@@ -53,15 +55,26 @@ pub struct TerMaterial {
 pub struct TerMod {
     pub is_terrain: bool,
     pub version: u32,
-    pub materials: HashMap<u32, TerMaterial>,
+    /// Every source record, in file order, including repeated IDs and names.
+    pub materials: Vec<TerMaterial>,
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub tex_coords: Vec<[f32; 2]>,
-    /// `(a, b, c, material_index, flags)`
+    /// `(a, b, c, material_ordinal, flags)`; the ordinal indexes source records.
     pub polygons: Vec<(u32, u32, u32, u32, u32)>,
 }
 
 impl TerMod {
+    /// Resolve a polygon's source ordinal as the native TER/MOD reader does:
+    /// select that record, then the first record with the same exact name.
+    /// Raw source records remain intact; invalid ordinals have no material.
+    pub fn material_for_polygon(&self, ordinal: u32) -> Option<&TerMaterial> {
+        let source = self.materials.get(ordinal as usize)?;
+        self.materials
+            .iter()
+            .find(|material| material.name == source.name)
+    }
+
     /// Index lists grouped by material index.
     pub fn mesh_groups(&self) -> HashMap<u32, Vec<u32>> {
         let mut groups: HashMap<u32, Vec<u32>> = HashMap::new();
@@ -223,9 +236,9 @@ impl TerMod {
             .map(|b| *b as char)
             .collect();
 
-        let mut materials = HashMap::with_capacity(material_count);
+        let mut materials = Vec::with_capacity(material_count);
         for _ in 0..material_count {
-            let index = reader.u32()?;
+            let stored_id = reader.u32()?;
             let name = string_at(&strings, reader.i32()? as usize);
             let shader = string_at(&strings, reader.i32()? as usize);
             let property_count = reader.bounded_count()?;
@@ -249,14 +262,12 @@ impl TerMod {
                 };
                 properties.insert(key, value);
             }
-            materials.insert(
-                index,
-                TerMaterial {
-                    name,
-                    shader,
-                    properties,
-                },
-            );
+            materials.push(TerMaterial {
+                stored_id,
+                name,
+                shader,
+                properties,
+            });
         }
 
         let has_extra = version == 3;

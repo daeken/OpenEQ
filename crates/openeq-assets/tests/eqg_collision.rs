@@ -373,7 +373,7 @@ fn original_bloodfields_flags_change_physics_without_changing_frozen_draw_inputs
         assert_eq!(source.version, 2);
         source_objects += 1;
         for &(_, _, _, material, flags) in &source.polygons {
-            let bucket = if source.materials.contains_key(&material) {
+            let bucket = if source.material_for_polygon(material).is_some() {
                 match flags {
                     0 => 0,
                     1 => 1,
@@ -415,7 +415,9 @@ fn original_bloodfields_flags_change_physics_without_changing_frozen_draw_inputs
         .map(|o| {
             o.polygons
                 .iter()
-                .filter(|p| p.4 & 1 == 0 && (p.3 == u32::MAX || o.materials.contains_key(&p.3)))
+                .filter(|p| {
+                    p.4 & 1 == 0 && (p.3 == u32::MAX || o.material_for_polygon(p.3).is_some())
+                })
                 .count()
         })
         .sum();

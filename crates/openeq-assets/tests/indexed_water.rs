@@ -455,7 +455,10 @@ fn original_feerrott_pond_bounds_seams_occluded_tile_and_noncollision() {
     }
     let base = loader::default_client_dir().unwrap();
     let mut scene = loader::load_zone(base, "feerrott2").unwrap();
-    assert_eq!(scene.triangle_count(), 211245 + 34132);
+    // Ordinal material lookup restores 524 arched-fence and 412 straight-fence
+    // source faces. The 34,132 indexed-water triangles are unchanged. See the
+    // original MOD/instance replay in eqg_material_identity.rs.
+    assert_eq!(scene.triangle_count(), 212181 + 34132);
     let meshes = indexed_meshes(&scene);
     assert_eq!(meshes.len(), 65);
     assert_eq!(
@@ -493,7 +496,9 @@ fn original_feerrott_pond_bounds_seams_occluded_tile_and_noncollision() {
         world.clip_camera([-720., -2900., -40.], [-720., -2900., -60.], 0.),
         [-720., -2900., -60.]
     );
-    assert_water_independent_collision_and_legacy_count("feerrott2", &mut scene, &map, 824400, -1);
+    // One arched fence + four straight fences restore 2,172 physical faces;
+    // the independently measured terrain-anchor rounding delta remains -1.
+    assert_water_independent_collision_and_legacy_count("feerrott2", &mut scene, &map, 826572, -1);
 }
 
 #[test]
@@ -547,14 +552,16 @@ fn original_buried_sea_selector_two_keeps_its_gray_material() {
     );
     assert_eq!(
         scene.triangle_count(),
-        663946
+        // Eight previously dropped mainmast faces; water geometry is unchanged.
+        663954
             + baked
                 .surfaces
                 .iter()
                 .map(|s| s.geometry.indices.len() / 3)
                 .sum::<usize>()
     );
-    assert_water_independent_collision_and_legacy_count("buriedsea", &mut scene, &map, 1567093, 4);
+    // Four mainmasts restore 32 physical faces; the terrain-anchor delta stays +4.
+    assert_water_independent_collision_and_legacy_count("buriedsea", &mut scene, &map, 1567125, 4);
 }
 
 #[test]

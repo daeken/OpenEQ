@@ -174,7 +174,10 @@ fn unsupported_record_anywhere_rejects_the_complete_set() {
     for variant in 0..10 {
         let mut bad = raw("AXX_dry");
         match variant {
-            0 => bad.name = "AFG_special",
+            0 => {
+                bad.name = "AFG_singular";
+                bad.half = [0., -2., 4.];
+            }
             1 => bad.center[0] = f32::NAN,
             2 => bad.orientation[1] = f32::INFINITY,
             3 => bad.orientation[2] = f32::MAX,
@@ -194,6 +197,161 @@ fn unsupported_record_anywhere_rejects_the_complete_set() {
             );
         }
     }
+}
+
+#[test]
+fn afg_signed_extents_are_equalized_before_cardinal_rotation() {
+    for (half, registered) in [
+        ([2., 7., 4.], [7., 7., 4.]),
+        ([7., 2., 4.], [7., 7., 4.]),
+        ([2., -7., -4.], [2., 2., -4.]),
+        ([-7., 2., 4.], [2., 2., 4.]),
+        ([-2., -7., -4.], [-2., -2., -4.]),
+        ([-7., -2., 4.], [-2., -2., 4.]),
+        ([0., 2., 4.], [2., 2., 4.]),
+    ] {
+        for (orientation, axes) in [
+            ([0., 0., 0.], [0, 1, 2]),
+            ([128., 0., 0.], [1, 0, 2]),
+            ([0., 128., 0.], [2, 1, 0]),
+            ([0., 0., -128.], [0, 2, 1]),
+        ] {
+            let mut record = raw("AFG_fog");
+            record.center = [10., -20., 30.];
+            record.half = half;
+            record.orientation = orientation;
+            let set = BinaryRegions::parse(&zon(2, &[record.clone()])).unwrap();
+            let volume = &set.boxes[0];
+            assert_eq!(volume.half_extents, half, "raw signed metadata");
+            assert_eq!(volume.registered_half_extents, registered);
+            assert_eq!(volume.orientation, orientation);
+            assert_eq!(volume.effective_type, Some(0));
+            for axis in 0..3 {
+                for sign in [-1., 1.] {
+                    let mut point = record.center.map(f64::from);
+                    point[axis] += sign * f64::from(registered[axes[axis]].abs()) * 0.99;
+                    assert!(volume.contains(point), "{half:?} {orientation:?} {point:?}");
+                    point[axis] += sign * f64::from(registered[axes[axis]].abs()) * 0.02;
+                    assert!(
+                        !volume.contains(point),
+                        "{half:?} {orientation:?} {point:?}"
+                    );
+                }
+            }
+        }
+    }
+    // Name comparison remains case-sensitive and uses exactly three bytes.
+    for name in ["AFG", "AFG_fog", "Afg_fog", "afg_fog"] {
+        let mut record = raw(name);
+        record.half = [2., 7., 4.];
+        let set = BinaryRegions::parse(&zon(1, &[record])).unwrap();
+        assert_eq!(
+            set.boxes[0].registered_half_extents,
+            if name.starts_with("AFG") {
+                [7., 7., 4.]
+            } else {
+                [2., 7., 4.]
+            }
+        );
+    }
+}
+
+#[test]
+fn afg_general_xyz_matches_independent_native_replay() {
+    // Native 0x10021e3a..0x10021e65 signed comparison, followed by independent
+    // instruction replay of 0x100c2889..0x100c2906. Neither a world-space square
+    // nor max(abs(X),abs(Y)) contains these same boundary probes.
+    for half in [[2., -7., 4.], [-2., -7., -4.]] {
+        let mut record = raw("AFG_xyz");
+        record.center = [10., -20., 30.];
+        record.orientation = [31.9, -73.8, 19.2];
+        record.half = half;
+        let set = BinaryRegions::parse(&zon(1, &[record])).unwrap();
+        let volume = &set.boxes[0];
+        assert_eq!(volume.angle_units, [31, -73, 19]);
+        for (point, expected) in [
+            (
+                [10.04443270802498, -18.84532758653164, 27.840102418661118],
+                true,
+            ),
+            (
+                [10.067640141248702, -18.8360467427969, 27.80887292981148],
+                false,
+            ),
+            (
+                [10.16484748840332, -17.95886244237423, 30.216755568683148],
+                true,
+            ),
+            (
+                [10.157096652984619, -17.920047854781153, 30.222530722916126],
+                false,
+            ),
+        ] {
+            assert_eq!(volume.contains(point), expected, "{half:?} {point:?}");
+        }
+        // The replay's registered local Y basis, used to cross both faces.
+        let y = [-0.3875417709350586, 1.9407293796539307, 0.28875771164894104];
+        let center = volume.center.map(f64::from);
+        let from = std::array::from_fn(|i| center[i] - 2. * y[i]);
+        let to = std::array::from_fn(|i| center[i] + 2. * y[i]);
+        let [enter, exit] = volume.segment(from, to).unwrap();
+        assert!((enter - 0.25).abs() < 1e-10 && (exit - 0.75).abs() < 1e-10);
+    }
+}
+
+#[test]
+fn afg_post_normalization_singular_regions_reject_the_complete_set() {
+    for half in [
+        [0., -2., 4.],
+        [-2., -0., 4.],
+        [f32::from_bits(1), -2., 4.],
+        [2., 7., 0.],
+        [2., 7., -0.],
+    ] {
+        let mut bad = raw("AFG_singular");
+        bad.half = half;
+        for records in [[bad.clone(), raw("AWT_pool")], [raw("AWT_pool"), bad]] {
+            let data = zon(2, &records);
+            assert!(BinaryRegions::parse(&data).is_err());
+            assert!(LiquidRegions::from_eqgz(&data).is_err());
+        }
+    }
+}
+
+#[test]
+fn afg_dry_regions_preserve_name_duplicates_and_liquid_precedence() {
+    let mut first = raw("AFG_same_name");
+    first.half = [3., 1., 2.];
+    let mut second = first.clone();
+    second.center = [8., 0., 0.];
+    second.half = [1., 2., 2.];
+    let bytes = zon(2, &[first.clone(), second, raw("AWT_pool")]);
+    let set = BinaryRegions::parse(&bytes).unwrap();
+    assert_eq!(set.boxes.len(), 3);
+    assert_eq!(set.at([0., 2., 0.], None).unwrap().record_index, 0);
+    assert_eq!(set.at([8., 0., 0.], None).unwrap().record_index, 1);
+    assert_eq!(set.at([0., 2., 0.], Some(*b"AWT")).unwrap().record_index, 2);
+    let regions = LiquidRegions::from_eqgz(&bytes).unwrap();
+    assert_eq!(regions.at([0., 2., 0.]), None);
+    assert_eq!(regions.at([8., 0., 0.]), None);
+    assert_eq!(regions.at([5., 2., 0.]), Some(LiquidKind::Water));
+    assert_eq!(
+        regions.segment([0., -10., 0.], [0., 10., 0.]),
+        vec![
+            LiquidSpan {
+                kind: LiquidKind::Water,
+                enter: 0.,
+                exit: 0.35
+            },
+            LiquidSpan {
+                kind: LiquidKind::Water,
+                enter: 0.65,
+                exit: 1.
+            },
+        ]
+    );
+    let reversed = LiquidRegions::from_eqgz(&zon(1, &[raw("AWT_pool"), first])).unwrap();
+    assert_eq!(reversed.at([0., 2., 0.]), Some(LiquidKind::Water));
 }
 
 #[test]
@@ -445,4 +603,58 @@ fn original_binary_files_and_runtime_load_match_finite_native_regions() {
         assert!((spans[0].enter - 0.25).abs() < 0.00001);
         assert!((spans[0].exit - 0.75).abs() < 0.00001);
     }
+}
+
+#[test]
+#[ignore = "requires original Pohealth EQG/ZON files; CPU only"]
+fn original_pohealth_afg_regions_parse_and_remain_dry() {
+    let base = openeq_assets::loader::default_client_dir().expect("original client assets");
+    let archive = Archive::open(base.join("pohealth.eqg")).unwrap();
+    let bytes = if archive.contains("pohealth.zon") {
+        archive.read("pohealth.zon").unwrap()
+    } else {
+        std::fs::read(base.join("pohealth.zon")).unwrap()
+    };
+    let set = BinaryRegions::parse(&bytes).unwrap();
+    assert_eq!(set.version, 2);
+    assert_eq!(set.boxes.len(), 19);
+    assert_eq!(
+        set.boxes
+            .iter()
+            .filter(|r| r.name.starts_with("AFG"))
+            .count(),
+        16
+    );
+    let volume = &set.boxes[3];
+    assert_eq!(volume.name, "AFG_10");
+    assert_eq!(volume.source_offset, 5_864_886);
+    assert_eq!(
+        volume.center,
+        f32s([1495.302978515625, 2190.63232421875, 25.553619384765625])
+    );
+    assert_eq!(
+        volume.half_extents,
+        f32s([832.6297607421875, 487.094482421875, 171.72036743164062])
+    );
+    assert_eq!(
+        volume.registered_half_extents,
+        f32s([832.6297607421875, 832.6297607421875, 171.72036743164062])
+    );
+    assert_eq!(volume.angle_units, [-128, 0, 0]);
+    // Native yaw maps local Y to world X. The authored shorter Y extent would
+    // omit this point if the pre-rotation AFG expansion were not applied.
+    let center = volume.center.map(f64::from);
+    let expanded = [center[0] + 600., center[1], center[2]];
+    assert!(volume.contains(expanded));
+    assert_eq!(set.at(expanded, None).unwrap().record_index, 3);
+    assert!(!volume.contains([center[0] + 833., center[1], center[2]]));
+    assert!(!volume.contains([center[0], center[1], center[2] + 172.]));
+    // Supported dry-only metadata stays empty in the public liquid API; it
+    // does not invent a water volume merely because parsing now succeeds.
+    assert!(LiquidRegions::from_eqgz(&bytes).unwrap().is_empty());
+    assert!(LiquidRegions::load(&base, "pohealth").unwrap().is_empty());
+    let metadata = openeq_assets::audit::metadata(&base, "pohealth").unwrap();
+    assert_eq!(metadata.authored_regions, Some(19));
+    assert_eq!(metadata.liquid_status, "no_supported_volumes");
+    assert!(metadata.liquid_detail.is_none());
 }

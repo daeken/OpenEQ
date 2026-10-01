@@ -685,7 +685,7 @@ fn append_eqg_object(scene: &mut Scene, object: &TerMod, object_name: &str, arch
 
     let mut object_meshes = Vec::new();
     for material_id in keys {
-        let Some(material) = object.materials.get(material_id) else {
+        let Some(material) = object.material_for_polygon(*material_id) else {
             continue;
         };
         let mut diffuse = material

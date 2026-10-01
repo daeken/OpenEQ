@@ -14,6 +14,8 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3};
 use openeq_assets::Scene;
 
+mod bounds;
+
 /// Side length of every layer in the texture array.
 pub const ATLAS_SIZE: u32 = 256;
 
@@ -110,6 +112,10 @@ pub struct GpuScene {
     pub(crate) light_grid: wgpu::Buffer,
     light_grid_dimensions: [u32; 2],
     pub light_count: u32,
+    /// Initial scene bounds from finite, indexed draw geometry in EQ world
+    /// space. Transformed mesh boxes conservatively enclose placed objects;
+    /// unplaced definitions and physical-only geometry do not contribute.
+    /// Dynamic pose/instance uploads do not refresh these startup bounds.
     pub bounds_min: Vec3,
     pub bounds_max: Vec3,
     vertex_data: Vec<Vertex>,
@@ -241,8 +247,7 @@ impl GpuScene {
         let mut indices: Vec<u32> = Vec::new();
         let mut draws: Vec<DrawCall> = Vec::new();
         let mut instances: Vec<Instance> = Vec::new();
-        let mut bounds_min = Vec3::splat(f32::MAX);
-        let mut bounds_max = Vec3::splat(f32::MIN);
+        let mut scene_bounds = bounds::DrawBounds::default();
 
         // Which geometry indices belong to placeable objects rather than to the
         // zone itself; those get instanced, the rest are drawn once.
@@ -300,8 +305,6 @@ impl GpuScene {
                 .vertices
                 .chunks_exact(openeq_assets::mesh::VERTEX_STRIDE)
             {
-                bounds_min = bounds_min.min(Vec3::new(vertex[0], vertex[1], vertex[2]));
-                bounds_max = bounds_max.max(Vec3::new(vertex[0], vertex[1], vertex[2]));
                 vertices.push(Vertex {
                     position: [vertex[0], vertex[1], vertex[2]],
                     normal: [vertex[3], vertex[4], vertex[5]],
@@ -333,6 +336,16 @@ impl GpuScene {
                     (start, 1)
                 }
             };
+
+            let local_bounds = bounds::DrawBounds::from_geometry(geometry);
+            for instance in
+                &instances[instance_start as usize..(instance_start + instance_count) as usize]
+            {
+                scene_bounds.include_transformed(
+                    &local_bounds,
+                    Mat4::from_cols_array_2d(&instance.columns),
+                );
+            }
 
             draws.push(DrawCall {
                 index_start,
@@ -410,6 +423,7 @@ impl GpuScene {
         });
         queue.write_buffer(&light_buffer, 0, bytemuck::cast_slice(&lights));
 
+        let (bounds_min, bounds_max) = scene_bounds.extents();
         Ok(Self {
             name: scene.name.clone(),
             vertices: vertex_buffer,
@@ -426,16 +440,8 @@ impl GpuScene {
             light_grid,
             light_grid_dimensions,
             light_count,
-            bounds_min: if bounds_min.x == f32::MAX {
-                Vec3::ZERO
-            } else {
-                bounds_min
-            },
-            bounds_max: if bounds_max.x == f32::MIN {
-                Vec3::ZERO
-            } else {
-                bounds_max
-            },
+            bounds_min,
+            bounds_max,
         })
     }
 }

@@ -102,8 +102,10 @@ Anguish/Crescent boundary fixtures. No axis exchange or extra half-size is appli
 Binary registration preserves file order. Generic selection excludes APV but
 retains dry/unknown winners; only explicit AWT/ALV/AVW names establish a supported
 liquid. Swept queries use that same precedence. Unsupported or malformed records
-reject the whole set, including unsupported AFG special-constructor records,
-nonfinite/singular transforms and invalid references. They cannot be skipped to
+reject the whole set, including nonfinite/singular transforms and invalid
+references. AFG uses its verified signed-maximum XY extent normalization before
+rotation and remains an ordered dry/unknown candidate; see
+[EQG_AFG_REGIONS.md](EQG_AFG_REGIONS.md). They cannot be skipped to
 expose a later water box. The metadata audit reports these limits separately from
 a successfully decoded set with no supported liquid.
 
@@ -117,7 +119,7 @@ unknown grammar or unsupported transforms reject the whole set. Parent transform
 for embedded group regions remain unresolved; no rendered surface substitutes.
 
 The October 1 installed metadata survey reports supported liquids in 92 binary
-zones and 27 heightmap zones, versus no binary zones and one heightmap zone before
+zones and 28 heightmap zones, versus no binary zones and one heightmap zone before
 these changes. This is format/query coverage, not a certificate of traversability
 or agreement with EQEmu's independently generated WTR boundaries. Zone-line side
 effects, drowning/damage and native movement rules remain separate work.

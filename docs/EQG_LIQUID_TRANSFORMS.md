@@ -3,8 +3,9 @@
 Research begun 2026-09-29; runtime support extended 2026-10-01.
 `LiquidRegions::load` supports the verified top-level heightmap DAT subset and
 binary EQGZ v1/v2. Heightmap groups are accepted only after proving their complete
-supported grammar contains no areas; unresolved groups/transforms and special
-AFG constructors reject the whole set. Water surfaces never invent a volume or
+supported grammar contains no areas; unresolved groups/transforms reject the
+whole set. AFG uses the recovered constructor described in
+[EQG_AFG_REGIONS.md](EQG_AFG_REGIONS.md). Water surfaces never invent a volume or
 lower bound. See [EQGZ_NATIVE_REGIONS.md](EQGZ_NATIVE_REGIONS.md) for the now
 recovered binary reader-to-constructor boundary and the October 1 section below
 for group validation.
@@ -624,3 +625,19 @@ deduplicate repeated group references, reject malformed/missing/area-bearing
 definitions and verify the original Feerrott pond's side/top/bottom boundaries
 and finite vertical crossing. Original Loping Plains river containment also
 passes through the runtime loader. No live character or server state changed.
+
+## October 1 follow-up: AFG support and embedded-area limit
+
+The native AFG branch is now recovered through its active constructor and direct
+containment calls. It replaces both horizontal half-extents with their signed
+maximum before applying the ordinary rotation/translation; it does not use an
+absolute-value maximum or discard rotation. This supersedes the conservative
+AFG rejection above, enabling Arelis's complete liquid set. Dry AFG winners
+continue to mask later liquid in point and swept queries.
+
+Embedded group areas remain unsupported. The detailed TOG investigation found
+the candidate parent/child transform routine and reproduced an original
+Oceangreen Hills fixture, but no active caller or stored pointer to that routine
+was found in this client build. Known group placement setters update objects
+only. Applying a plausible dormant routine would not establish runtime parity;
+see [EQG_GROUP_REGIONS.md](EQG_GROUP_REGIONS.md) for the exact remaining boundary.

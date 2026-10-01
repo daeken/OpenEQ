@@ -13,10 +13,11 @@ use crate::{mesh::CollisionGeometry, zone::TerMod};
 /// Collects physical terrain/object geometry in its original coordinate space.
 /// The loader owns its placement; no transform or winding change belongs here.
 pub(super) fn collect(object: &TerMod) -> Option<CollisionGeometry> {
-    let materials: HashMap<_, _> = object
-        .materials
-        .iter()
-        .map(|(&index, material)| (index, super::water_material(material).is_none()))
+    let materials: Vec<_> = (0..object.materials.len())
+        .map(|ordinal| {
+            let material = object.material_for_polygon(ordinal as u32).unwrap();
+            super::water_material(material).is_none()
+        })
         .collect();
     let mut geometry = CollisionGeometry::default();
     let mut vertices = HashMap::new();
@@ -30,7 +31,7 @@ pub(super) fn collect(object: &TerMod) -> Option<CollisionGeometry> {
         // Only the signed -1 sentinel is evidence of material-free geometry.
         // An arbitrary unresolved material must not become a hidden barrier.
         if material != u32::MAX {
-            match materials.get(&material) {
+            match materials.get(material as usize) {
                 Some(true) => {}
                 Some(false) => continue,
                 None => {
@@ -91,14 +92,12 @@ mod tests {
         TerMod {
             is_terrain: false,
             version: 2,
-            materials: HashMap::from([(
-                0,
-                TerMaterial {
-                    name: "ordinary".into(),
-                    shader: "Opaque_MaxCB1.fx".into(),
-                    properties: HashMap::new(),
-                },
-            )]),
+            materials: vec![TerMaterial {
+                stored_id: 0,
+                name: "ordinary".into(),
+                shader: "Opaque_MaxCB1.fx".into(),
+                properties: HashMap::new(),
+            }],
             positions: vec![[0., 0., 0.], [2., 0., 0.], [0., 2., 0.]],
             normals: vec![[0., 0., 1.]; 3],
             tex_coords: vec![[0.; 2]; 3],
@@ -171,13 +170,13 @@ mod tests {
     #[test]
     fn resolved_water_is_omitted_but_missing_diffuse_is_still_physical() {
         let mut object = object();
-        let material = object.materials.get_mut(&0).unwrap();
+        let material = &mut object.materials[0];
         material.properties.insert(
             "e_TextureDiffuse0".into(),
             Property::Text("unavailable.dds".into()),
         );
         assert_eq!(collect(&object).unwrap().indices, [0, 1, 2]);
-        object.materials.get_mut(&0).unwrap().shader = "oPaQuE_mAxWaTeR.Fx".into();
+        object.materials[0].shader = "oPaQuE_mAxWaTeR.Fx".into();
         assert!(collect(&object).is_none());
         // Material-free faces do not inherit another material's water shader.
         object.polygons[0].3 = u32::MAX;

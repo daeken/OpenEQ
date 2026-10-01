@@ -3,11 +3,17 @@
 //! This reads region metadata without resolving meshes, textures or lights.
 //! Binary angles reach the native box builder unchanged in Z/Y/X order and
 //! 512-unit turns; sizes are signed half-extents. Regions retain file order.
+//! AFG equalizes signed horizontal extents before rotation; raw sizes remain.
 //! See `docs/EQGZ_NATIVE_REGIONS.md` for the reader/factory trace and limits.
 
 use glam::{DMat3, DVec3};
 
-use crate::{Error, Result, read::Reader, terrain::regions::native_type_word, zone::ZON_MAGIC};
+use crate::{
+    Error, Result,
+    read::Reader,
+    terrain::regions::{native_box_half_extents, native_type_word},
+    zone::ZON_MAGIC,
+};
 
 /// One registered box and its original binary record. Native EQGZ registration
 /// supplies type zero; classification happens after choosing a winning box.
@@ -23,6 +29,8 @@ pub struct BinaryRegionBox {
     pub orientation: [f32; 3],
     /// Raw signed XYZ half-extents, including reflection axes.
     pub half_extents: [f32; 3],
+    /// Extents used by containment, after native AFG signed XY equalization.
+    pub registered_half_extents: [f32; 3],
     /// Truncated raw Z/Y/X values, before table wrapping and middle negation.
     pub angle_units: [i32; 3],
     inverse: DMat3,
@@ -54,10 +62,11 @@ impl BinaryRegionBox {
         {
             return Err(invalid("non-finite region transform"));
         }
-        if name.starts_with("AFG") {
-            return Err(invalid("unsupported AFG special box constructor"));
-        }
-        if half_extents.iter().any(|value| !value.is_normal()) {
+        let registered_half_extents = native_box_half_extents(&name, half_extents);
+        if registered_half_extents
+            .iter()
+            .any(|value| !value.is_normal())
+        {
             return Err(invalid("zero or subnormal region extent"));
         }
         // Both the raw angle and its negation must fit the native signed
@@ -85,7 +94,10 @@ impl BinaryRegionBox {
             [cx_sy * cz + sx * sz, cx_sy * sz - sx * cz, cx * cy],
         ];
         let scaled = std::array::from_fn::<_, 3, _>(|axis| {
-            DVec3::from(columns[axis].map(|value| f64::from((value as f32) * half_extents[axis])))
+            DVec3::from(
+                columns[axis]
+                    .map(|value| f64::from((value as f32) * registered_half_extents[axis])),
+            )
         });
         let basis = DMat3::from_cols(scaled[0], scaled[1], scaled[2]);
         let determinant = basis.determinant() as f32;
@@ -113,6 +125,7 @@ impl BinaryRegionBox {
             center,
             orientation,
             half_extents,
+            registered_half_extents,
             angle_units,
             inverse,
         })

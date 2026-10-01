@@ -1,4 +1,5 @@
 //! Original placed actors must reach instanced GPU draws with their assembled pose.
+use glam::{Mat4, Quat, Vec3};
 use openeq_assets::{Instance, SceneObject, loader};
 use openeq_render::{Camera, GpuScene, Renderer, environment::EnvironmentSettings};
 
@@ -39,6 +40,32 @@ fn original_citymist_tree_assembles_visible_branches_and_all_fifty_instances() {
         72 * 50
     );
     assert!(gpu.draws.iter().all(|draw| draw.instance_count == 50));
+    // Independently expand the actual original vertices into world space.
+    // Definition-space bounds used to omit these placements entirely.
+    let mut actual_min = Vec3::splat(f32::INFINITY);
+    let mut actual_max = Vec3::splat(f32::NEG_INFINITY);
+    for placement in &tree.instances {
+        let transform = Mat4::from_scale_rotation_translation(
+            Vec3::from(placement.scale),
+            Quat::from_array(placement.rotation),
+            Vec3::from(placement.position),
+        );
+        for geometry in &tree.meshes {
+            for &index in &geometry.indices {
+                let start = index as usize * openeq_assets::mesh::VERTEX_STRIDE;
+                let p = transform
+                    .transform_point3(Vec3::from_slice(&geometry.vertices[start..start + 3]));
+                actual_min = actual_min.min(p);
+                actual_max = actual_max.max(p);
+            }
+        }
+    }
+    assert!(gpu.bounds_min.cmple(actual_min + Vec3::splat(0.001)).all());
+    assert!(gpu.bounds_max.cmpge(actual_max - Vec3::splat(0.001)).all());
+    assert!(
+        (actual_max - actual_min).x > 1000.,
+        "fixture covers dispersed original placements"
+    );
 
     // Show one full assembled actor at a fixed camera; missing actor lookup
     // previously produced no draw at all, while raw components missed the pose.
@@ -63,6 +90,8 @@ fn original_citymist_tree_assembles_visible_branches_and_all_fifty_instances() {
         empty.draws.is_empty(),
         "unplaced components must not leak into the world"
     );
+    assert_eq!(empty.bounds_min, Vec3::ZERO);
+    assert_eq!(empty.bounds_max, Vec3::ZERO);
     renderer.set_scene(&empty);
     renderer.render(&empty, &camera);
     let (_, _, background) = renderer.read_rgba().unwrap();

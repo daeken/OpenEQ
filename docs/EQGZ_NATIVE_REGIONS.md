@@ -159,8 +159,10 @@ queries. An explicit original-assets test also checks the real files and
 `LiquidRegions::load` for wet centers, dry sides, finite tops/bottoms and swept
 vertical intervals. Original assets are not committed.
 
-The whole set is rejected on unknown versions, AFG's special constructor,
-nonfinite or overflowing angles, zero/subnormal extents, unusable basis or
+AFG records now use the recovered signed horizontal extent normalization before
+rotation; see [EQG_AFG_REGIONS.md](EQG_AFG_REGIONS.md). Raw extents remain available
+separately from registered extents. The whole set is rejected on unknown versions,
+nonfinite or overflowing angles, zero/subnormal registered extents, unusable basis or
 inverse arithmetic, invalid names, incomplete arrays, or unrecognized trailing
 bytes. Names must be NUL-terminated UTF-8 with at most 4096 bytes. This is a
 conservative resource/encoding boundary, not a recovered native name limit.

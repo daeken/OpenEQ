@@ -56,18 +56,20 @@ contain 150 tag-1 properties across `Housewall` and `roof` materials using
 | `e_TextureSecond0mapChannel` | 2 | 50 |
 
 One affected definition (`obj_hut_lod1.mod`) is not referenced by the ZON. The
-24 referenced meshes contain 144 words, but `ter_gardens.ter` has 33 material
-records with only 23 distinct IDs. The parser's existing last-record-per-ID map
-replaces the terrain's six channel words, leaving 138 retained words (46 of each
-property). Native material identity for these repeated IDs needs separate
-investigation; this change preserves that existing policy. The old parser
-stopped at the first tag-1 property. The original-asset regression checks the
-138 retained words, the model/placement counts, and successful
-creation of drawable and collision geometry. Synthetic TER/MOD fixtures verify
-all 32 bits survive, following float/string/color properties and vertices stay
-aligned, truncated words fail, and unverified property kinds remain errors.
+24 referenced meshes contain 144 words. The original parser's last-record-per-ID
+map retained only 138: `ter_gardens.ter` has 33 records but only 23 distinct IDs,
+so later records overwrote its six channel words.
+
+The native material-identity follow-up now preserves every source record in
+order and resolves polygon references by ordinal, then first exact material
+name. All 144 referenced words survive, as do the unused source records. See
+[EQG_MATERIAL_IDENTITY.md](EQG_MATERIAL_IDENTITY.md) for native reader evidence,
+corrected Housegarden bindings and the independent geometry regression. Synthetic
+TER/MOD fixtures still verify that all 32 property bits survive, following
+float/string/color properties and vertices stay aligned, truncated words fail,
+and unverified property kinds remain errors.
 
 This resolves the loading failure. The renderer still uses its existing
-material interpretation and primary texture coordinates; the channel words
+shader parameter binding and primary texture coordinates; the channel words
 are retained for later native shader work. No proprietary binary assets or
 disassembly dumps are committed.

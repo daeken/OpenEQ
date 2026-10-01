@@ -4,7 +4,7 @@ use openeq_assets::{
     Scene,
     zone::{MOD_MAGIC, Placeable, Property, TER_MAGIC, TerMaterial, TerMod, ZON_MAGIC},
 };
-use std::{collections::HashMap, io::Write, path::PathBuf};
+use std::{io::Write, path::PathBuf};
 
 pub struct Fixture(pub PathBuf);
 impl Fixture {
@@ -79,12 +79,9 @@ fn archive_bytes(files: &[(String, Vec<u8>)]) -> Vec<u8> {
 fn model_bytes(model: &TerMod) -> Vec<u8> {
     let mut strings = vec![0];
     let mut materials = Vec::new();
-    let mut ids: Vec<_> = model.materials.keys().copied().collect();
-    ids.sort_unstable();
-    for id in ids {
-        let material = &model.materials[&id];
+    for material in &model.materials {
         materials.extend(words(&[
-            id,
+            material.stored_id,
             string(&mut strings, &material.name),
             string(&mut strings, &material.shader),
             material.properties.len() as u32,
@@ -170,7 +167,7 @@ pub fn model(is_terrain: bool) -> TerMod {
     TerMod {
         is_terrain,
         version: 2,
-        materials: HashMap::new(),
+        materials: Vec::new(),
         positions: vec![],
         normals: vec![],
         tex_coords: vec![],
@@ -179,7 +176,8 @@ pub fn model(is_terrain: bool) -> TerMod {
 }
 pub fn material(shader: &str, diffuse: Option<&str>) -> TerMaterial {
     TerMaterial {
-        name: "fixture material".into(),
+        stored_id: 0,
+        name: format!("fixture {shader} {diffuse:?}"),
         shader: shader.into(),
         properties: diffuse
             .map(|d| ("e_TextureDiffuse0".into(), Property::Text(d.into())))

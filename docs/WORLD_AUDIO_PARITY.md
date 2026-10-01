@@ -7,8 +7,8 @@ that a zone looks, moves or sounds right.
 
 ## Current work
 
-1. Resolve the remaining native region/group transforms, AFG constructor and
-   border triggers, then verify thin/deflected liquid crossings. Registered
+1. Resolve the remaining native embedded region/group transforms and border
+   triggers, then verify thin/deflected liquid crossings. Registered
    binary boxes can extend below floors or differ from visible water surfaces;
    Crescent now has an original-floor movement fixture, while Anguish's authored
    basin/box relationship still needs a playable-route check.
@@ -18,8 +18,11 @@ that a zone looks, moves or sounds right.
 3. Follow authored nonfinite mesh attributes through native vertex upload and
    material/channel selection. Preserve the 21 original outliers; do not invent
    normals/UVs or remove geometry without recovering native behavior.
-4. Verify material table identity, shaders, fog/sky/light metadata, and scene
-   bounds across formats with fixed-camera GPU checks and controlled traversal.
+4. Verify shader channels, fog/sky/light metadata and rendering across formats
+   with fixed-camera GPU checks and controlled traversal. Material table
+   identity and startup scene bounds now have dedicated regression coverage.
+   The restored Bazaar, The Nest and Thundercrest terrain substantially raises
+   submitted geometry; add fixed-camera appearance and GPU timing checks there.
    Native adaptive terrain tessellation/normal generation remains separate from
    the supported full-grid topology.
 5. Finish native XMI loop/SysEx behavior, original-compatible timbres and audio
@@ -289,3 +292,93 @@ UI captures are `/tmp/openeq-native-regions-ui/`. Create the capture directory
 before setting `OPENEQ_UI_CAPTURE_DIR`; several existing screenshot tests expect
 it to exist. No original assets were committed, no live character/server state
 changed, and original audio verification remained offline/digital silence.
+
+## October 1 follow-up: material identity, AFG and rendered bounds
+
+- TER/MOD polygon material references are source-table ordinals, followed by
+  first exact-name canonicalization. Stored IDs are retained as metadata rather
+  than used as map keys. This restores Housegarden's 177 omitted triangles and
+  gives 2,210 stonewall triangles their authored stone material rather than a
+  later branch material. Anguish also resolves the native first-name normal-map
+  binding for 6,403 triangles sharing a duplicate material name. All source
+  records and their property words survive.
+  Draw batches, equipped models and collision water classification use the same
+  lookup; explicit material-free and invalid-reference policies remain distinct.
+  See `EQG_MATERIAL_IDENTITY.md` and `EQG_MATERIAL_PROPERTIES.md`.
+- AFG constructor support now uses the larger signed horizontal half-extent for
+  both horizontal axes before ordinary rotation. Original Arelis's water set
+  works; Pohealth's 19 records parse as a set with no supported liquid. Point and
+  swept queries preserve AFG dry precedence. This implements region geometry,
+  not the native fog transition behavior. See `EQG_AFG_REGIONS.md`.
+- GPU startup bounds now follow submitted finite indexed geometry and its actual
+  instance transforms. Unused models, unused vertices and physical-only geometry
+  no longer distort the offline camera center or extracted model dimensions.
+  Bounds conservatively transform each mesh box and do not refresh on dynamic
+  pose updates. Original tree placements, reflected/nonuniform transforms and
+  unchanged hidden-collision rendering have regressions. See `SCENE_BOUNDS.md`.
+- Embedded TOG area research recovered a candidate transform and original
+  fixture but could not establish that the native runtime calls it. The current
+  area-bearing-group rejection remains; native placement setters update only
+  object lists in the traced path. See `EQG_GROUP_REGIONS.md`.
+
+An original Housegarden GPU fixture uploads the entire corrected zone, then
+renders the first four stonewall source polygons with a fixed camera. Replaying
+the former stored-ID lookup produces transparent branch speckles where the
+corrected frame shows solid stone. Captures:
+`/tmp/openeq-housegarden-materials/{corrected,former-id-lookup}.png`.
+These verify the material identity change, not full original shader/UV fidelity.
+
+The frozen full CPU survey again covers **523 zones**: 501 pass structural
+checks; the same 21 authored nonfinite outliers and Dranikcatacombsa's known
+banner dependency remain. No new failure, invalid mesh/instance/light/reference,
+unresolved-object, or mesh-problem diagnostic appears. Geometry reports change
+in 102 EQG zones (89 binary, 13 heightmap), with 93 zones gaining a total of
+**1,819,692 drawable mesh-definition triangles**. These counts include reusable
+models once, not once per placement. The three largest recovered terrain
+examples have independently verified source counts: Bazaar +142,594, The Nest
++250,988, Thundercrest +270,445. Their additions are direct TER geometry;
+hidden material sentinels remain excluded.
+
+An independent raw-record audit also reconciles every draw-count delta across
+all **276 EQG zones** (220 binary plus 56 heightmap). Binary declarations match
+both absolute old/new triangle totals; heightmap checks use the actually loaded
+MOD definitions and match their whole-scene triangle deltas. Every one of the
+1,819,692 additions is accounted for by a formerly absent source-ordinal group;
+there are no removed drawable groups. Reports:
+`/tmp/openeq-material-source-delta.json` and
+`/tmp/openeq-material-source-delta.log`. This comparison checks material-linked
+geometry counts, not all pixels, collision outcomes or native shader behavior.
+
+The two initial indexed-water test failures were frozen whole-scene counts,
+not changes to water. Exact source-face/instance replay proves Feerrott2's
++936 drawable/+2,172 physical fence triangles, Buried Sea's +8/+32 mast
+triangles and Arelis's +16/+16 building triangles. Removing only those recovered
+faces recreates every previous total. Water surface vertices, indices, selector
+bindings and terrain-anchor rounding deltas remain unchanged. See
+`EQG_MATERIAL_SURVEY.md` for the source witnesses and original regressions.
+
+Liquid metadata now reports 177 supported WLD wet sets, 92 binary EQGZ wet sets,
+28 heightmap wet sets, 205 sets with no supported liquid, 20 explicitly
+unsupported heightmap sets and the known one metadata failure. There are no
+remaining unsupported binary-region sets in this installed survey. This does
+not certify all native region side effects, embedded areas, traversal, textures
+or GPU appearance.
+
+Survey: `/tmp/openeq-material-bounds-survey-final/`.
+Frozen audit binary SHA-256:
+`6709ff97c3f23f9844e6c4d99790a207eedef324ad616ee25dbad8bcd41d6cc4`.
+
+All **961 current workspace tests are verified passing**, including original
+assets, GPU checks and silent audio. The full run executed 960 tests: 958 passed
+and the two indexed-water tests stopped at their old whole-scene counts. After
+source/instance reconciliation, both complete affected suites passed all eight
+tests, including the newly added regression. No test remains ignored or failing.
+Evidence: `/tmp/openeq-material-bounds-workspace.log` and
+`/tmp/openeq-material-bounds-reconciled-tests.log`.
+
+Strict workspace Clippy passed again after the final test addition; normal
+client/audit builds, all-target no-default-feature checks, formatting and diff
+checks also passed. Logs use `/tmp/openeq-material-bounds-*.log`; UI captures
+are `/tmp/openeq-material-bounds-ui/`. The original assets remain outside the
+repository, no live character/server state changed, and original audio checks
+remained offline/digital silence.
