@@ -167,7 +167,10 @@ Initialization also has direct callers at `0x004bf205`, `0x004bffa6`,
 light-transfer call sites exist outside the updater. Their triggers, weather
 ordering, zone transitions, full device/render scheduling, and all paths that
 could refresh the light between these calls remain outside this witness.
-The unsigned deadline comparison is recovered, but clock rollover behavior is
+The unsigned deadline comparison is recovered. A separate
+[rollover witness](NATIVE_DIRECTIONAL_CLOCK_ROLLOVER.md) now executes controlled
+near-wrap inputs; live process uptime and other reset callers remain outside
+that scope. At this original checkpoint, clock rollover behavior was
 not exercised here. A runtime implementation needs an explicit state/lifetime
 design and additional caller validation; replacing the fixed renderer vector
 with a guessed daily orbit is not supported by these results.

@@ -1139,3 +1139,22 @@ Conservative wall-prefix enclosure and ambient clock/retained-loop witnesses
 are research-only additions; general liquid continuation and native audio
 resource/scheduling policy remain open. Follow `DAYTIME_2026-10-01.md` for
 the active 18:30 UTC continuation and final checkpoint.
+
+## October 1 Temple and GPU timing checkpoint — 1,238 tests
+
+North Qeynos's Temple of Life now rotates on its authored8-second loop, with
+certified scalar-reference reduction and conservative rejection of the native
+stale-neighbor heap boundary. Source/native and original GPU evidence are in
+`WLD_TEMPLE_ANIMATION_RESEARCH.md`. Transparent/additive/waterfall empty draws
+also skip invalid or misleading GPU timestamp work, including actor paths.
+
+The complete workspace passes **1,238 tests**, zero failed/ignored across121
+suites. Strict lint, builds, all-target no-default, formatting/diff and a final
+60-test original-assets follow-up pass. The prior523-zone structural results
+remain unchanged. See `DAYTIME_2026-10-01.md` for exact logs and test-only lint
+cleanup; no production behavior changed after the complete test run.
+
+Native clock/directional lifecycle and controlled rollover now have independent
+witnesses. They expose a distinction between angle updates and cached-vector
+publication, including unsafe unsigned deadlines at wrap. No renderer direction
+or scheduler behavior is inferred from that research alone.
