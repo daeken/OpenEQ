@@ -2,8 +2,8 @@
 //!
 //! A modern zone is a `.zon` file that references a number of `.ter` (terrain)
 //! and `.mod` (object) files, all stored inside a single `.eqg` archive. `TER`
-//! and `MOD` share one layout; the only difference is a leading unused field
-//! present in `MOD`.
+//! and `MOD` share the primary layout, with a leading unused field in `MOD`.
+//! Version 2 `TER` can append a secondary coordinate stream after its polygons.
 //!
 //! Unlike `WLD`, these files are flat indexed meshes with named materials, so
 //! they need no fragment graph to be walked.
@@ -102,7 +102,8 @@ pub struct TerMod {
     pub tex_coords: Vec<[f32; 2]>,
     /// Version 3 source colors in original vertex order; not the LIT channel.
     pub vertex_colors: Option<Vec<u32>>,
-    /// Version 3 secondary UVs, with original float words preserved.
+    /// Version 3 interleaved or version 2 TER trailing secondary UVs, in
+    /// original vertex order with every float word preserved.
     pub secondary_tex_coords: Option<Vec<[f32; 2]>>,
     /// `(a, b, c, material_ordinal, flags)`; the ordinal indexes source records.
     pub polygons: Vec<(u32, u32, u32, u32, u32)>,
@@ -350,6 +351,25 @@ impl TerMod {
             let material = reader.u32()?;
             let flags = reader.u32()?;
             polygons.push((a, b, c, material, flags));
+        }
+
+        // Native TER v2 accepts tags 1 and 2 for one float2 per source vertex.
+        // A wholly absent tail remains accepted for existing synthetic files;
+        // partial tags and recognized truncated streams fail checked reads.
+        // This rule is not established for MOD. See EQG_TER_TRAILING_CHANNELS.md.
+        if is_terrain && version == 2 && reader.remaining() != 0 {
+            let tag = reader.u32()?;
+            if matches!(tag, 1 | 2) {
+                let bytes = vertex_count
+                    .checked_mul(8)
+                    .ok_or_else(|| Error::Format("secondary UV length overflow".into()))?;
+                let mut stream = reader.window(bytes)?;
+                secondary_tex_coords = Some(
+                    (0..vertex_count)
+                        .map(|_| stream.vec2())
+                        .collect::<Result<_>>()?,
+                );
+            }
         }
 
         Ok(Self {

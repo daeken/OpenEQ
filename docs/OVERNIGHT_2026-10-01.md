@@ -612,3 +612,22 @@ follow-ups. See `SKY_DOME_GEOMETRY.md`.
   `npc_assets` is freezing native malformed-input evidence and corpus results
   before parser-only integration. Preserve raw words; do not render guessed
   secondary channels. This pending work is outside the checkpoint above.
+
+
+## October 1 07:00 TER-v2 secondary source coordinates
+
+The TER parser now retains the native tagged secondary coordinate stream in
+version 2 terrain files. Both native tags select one pair per source vertex;
+MOD and other versions retain their previous layouts. Checked bounds reject
+partial tags/streams while preserving the existing absent-tail compatibility
+policy. All source float words survive, including Thundercrest's authored NaN.
+Rendering remains unchanged pending exact dual-coordinate material integration.
+See `EQG_TER_TRAILING_CHANNELS.md`.
+
+Root independently replayed the native and corpus witnesses; all four frozen
+script/output hashes match. All **379 assets tests pass, zero failed/ignored**,
+including all 16 original streams / 4,473,834 pairs against independent counts
+and digests. Strict workspace Clippy, all-target no-default, formatting and
+diff checks pass. Logs: `/tmp/openeq-ter-trailing-{assets,clippy,no-default,fmt}.log`.
+This focused parser checkpoint follows the full 1,157-test workspace baseline;
+it does not claim new render or full-workspace verification.
