@@ -115,3 +115,24 @@ Next, resolve native animated quaternion output, host clock units and placed
 controller ownership before integrating runtime motion and collision policy.
 Particle-linked actors and other unsupported fragment families remain separate
 work; this implementation must not silently turn them into static mesh aliases.
+
+## Stable merged-material geometry order
+
+The October 1 follow-up fixes a bake-order defect: source piece/material groups
+were accumulated in a hash map, then merged by its randomized iteration order.
+Sorting only the final material groups did not stabilize triangle order or the
+first-seen order used by vertex packing. Repeated bakes could therefore produce
+different vertex/index layouts from identical input, even with identical pixels.
+
+Source groups are now sorted by their original texture slot and collision flag
+before merging. Slot ranges are assigned in source-piece order. The change
+preserves faces, winding, material selection, vertices and physical collision;
+it establishes a repeatable layout within each merged material. A 24-piece
+shared-material fixture checks both collision groups against the original
+triangle sequence across 16 independent bakes; it failed before this correction.
+
+This is a prerequisite for pose uploads, not permission to re-bake arbitrary
+animation into a fixed vertex buffer: attribute-based deduplication can still
+merge vertices with different skeletal bindings, or change its result as those
+vertices move. Runtime animation needs explicit stable source-vertex bindings
+and must preserve or split distinct motion ownership.

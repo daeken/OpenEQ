@@ -702,3 +702,47 @@ fn timorous_new_actor_meshes(base: &std::path::Path, scene: &Scene) -> Vec<usize
     assert_eq!(placements, 1_996);
     indices.into_iter().collect()
 }
+
+#[test]
+fn shared_wld_materials_keep_source_piece_order_across_repeated_bakes() {
+    let wld = Wld::parse("ordered-pieces.wld".into(), &wld_bytes(None)).unwrap();
+    let pieces: Vec<_> = (0..24)
+        .map(|index| {
+            let mut piece = source_mesh();
+            quad(&mut piece, wall(index as f32), 1, true);
+            quad(&mut piece, wall(index as f32 + 0.25), 1, false);
+            piece
+        })
+        .collect();
+    let expected = |collidable| {
+        pieces
+            .iter()
+            .flat_map(|piece| {
+                piece
+                    .polygons
+                    .iter()
+                    .filter(move |polygon| polygon.collidable == collidable)
+                    .flat_map(|polygon| {
+                        [polygon.a, polygon.c, polygon.b]
+                            .map(|index| piece.vertices[index as usize])
+                    })
+            })
+            .collect::<Vec<_>>()
+    };
+    for _ in 0..16 {
+        let (materials, geometries) = mesh::bake_wld_meshes(&wld, &pieces);
+        assert_eq!(materials.len(), 1);
+        assert_eq!(geometries.len(), 2);
+        for geometry in geometries {
+            let expanded: Vec<[f32; 3]> = geometry
+                .indices
+                .iter()
+                .map(|index| {
+                    let start = *index as usize * mesh::VERTEX_STRIDE;
+                    geometry.vertices[start..start + 3].try_into().unwrap()
+                })
+                .collect();
+            assert_eq!(expanded, expected(geometry.collidable));
+        }
+    }
+}

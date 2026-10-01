@@ -357,7 +357,12 @@ where
     }
 
     let mut merged: HashMap<(usize, bool), Vec<u32>> = HashMap::new();
-    for ((texture, collidable), indices) in groups {
+    // Keep source piece/material order when identical textures merge. Sorting
+    // only the final material keys leaves their triangles (and packed vertices)
+    // dependent on the intermediate HashMap's randomized iteration order.
+    let mut source_groups: Vec<_> = groups.into_iter().collect();
+    source_groups.sort_unstable_by_key(|(key, _)| *key);
+    for ((texture, collidable), indices) in source_groups {
         let Some(texture) = remap.get(texture) else {
             // A polygon run that points past the material list. Nothing sane to
             // draw, so drop the run rather than guess.
