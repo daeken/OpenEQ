@@ -279,3 +279,29 @@ Temporary reproducibility artifacts (no original texture bytes checked in):
 
 The probe accepts `--day-sweep` for the static day pass; otherwise it measures
 warm loading, resource replacement and fixed-elapsed GPU phase continuity.
+
+
+## Raw hour 24 color-table boundary
+
+The native host passes fractions from 1 through approximately 1.041 during
+raw hour 24. The existing public loader wraps finite fractions to one day.
+A follow-up executes the original sampler twice for every minute in hour 24
+and every resolvable installed color set: once with the exact native host f32
+multiply input, once with OpenEQ's existing f32 expression and normalization.
+All **4,680 full-table comparisons across 78 sets** match, from 9,360 original
+sampler executions. The missing PoDisease set is excluded explicitly.
+
+This establishes that the advancing clock does not introduce a color-table
+mismatch during hour 24 in the installed corpus. It does not make normalization
+native behavior for arbitrary authored keys or establish dome orientation;
+those are distinct inputs. No source/production behavior changes follow from
+this corpus equivalence.
+
+Reproducer: `PYTHONPATH=/tmp/openeq-re-tools python3 /tmp/openeq-sky-wire-midnight.py`.
+The script SHA-256 is
+`384fc9447ba52163ed5d2527953c21ed798c9bf2e42ad2943491144353f6bd4a`;
+its `/tmp/openeq-sky-wire-midnight.json` result SHA-256 is
+`91f273ef6baf78389a2ca17689a7864ecf9b63d60be10e01a7abd86b1aff537a`.
+The result records source-witness hashes and per-set aggregated native BGRA
+CRCs, without original pixel bytes. The log is
+`/tmp/openeq-sky-wire-midnight.log`.

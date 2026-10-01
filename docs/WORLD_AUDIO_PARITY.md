@@ -849,3 +849,38 @@ frozen buffer hashes. This shows that the current pole-ring texture suppression
 is an approximation; no renderer change follows solely from that finding.
 D3DX numerical/singular behavior and inherited draw state are the active
 follow-ups. See `SKY_DOME_GEOMETRY.md`.
+
+
+## October 1 06:55 effect timing, sky geometry and new source channels
+
+- Native effect time is now established independently of the EQ day clock:
+  cached unsigned milliseconds, reduced modulo 100,000 before the f32 seconds
+  conversion. Indexed water uses this exact conversion with OpenEQ's renderer
+  startup epoch, preserving phase after long uptimes and clock wraps. A GPU
+  regression fails before the fix and matches exactly afterward. Other shader
+  clocks remain unchanged. See `EQG_EFFECT_CLOCK.md`.
+- Integrated verification passes **1,157 tests, zero failed/ignored, 109 suites**,
+  including original assets, GPU and digitally silent audio. Strict lint,
+  client build, all-target no-default, format and diff checks pass. Logs:
+  `/tmp/openeq-effect-clock-{workspace,clippy,build,no-default,fmt}.log`.
+- `aa9fd46` adds the opt-in native sky dome CPU diagnostic: exact indices,
+  source addressing and packed colors. All 962 positions match the native
+  witness on this host; the API retains a cross-platform float tolerance.
+  Independent code/native review passes. Live rendering remains unchanged.
+- Original D3DX look-at and draw-state research is frozen in
+  `SKY_DOME_TRANSFORM.md` and `SKY_DOME_DRAW_STATE.md`. Singular-time behavior
+  differs across CPU backends; inherited sRGB/clip/color-write state and the
+  complete original framebuffer remain open. No guessed fallback transform
+  or color-space policy is enabled.
+- Lava/waterfall binding and compiled shader evidence is recorded in
+  `EQG_LAVA_WATERFALL.md`. Nest's waterfalls use separate scrolling color and
+  alpha coordinates, authored nondefault rates, alpha cutoff and no depth
+  writes; lava blends two layers using a distinct normal/light expression.
+  Independent review reproduces both probes and six static reports. Native
+  property upload and final shader fidelity remain follow-ups.
+- That source audit exposed a previously ignored post-polygon TER-v2 stream.
+  Native tracing confirms tags 1/2 feed secondary UVs. Sixteen installed TERs
+  contain tag-1 streams for 4,473,834 vertices; one Thundercrest UV is nonfinite.
+  `npc_assets` is freezing native malformed-input evidence and corpus results
+  before parser-only integration. Preserve raw words; do not render guessed
+  secondary channels. This pending work is outside the checkpoint above.
