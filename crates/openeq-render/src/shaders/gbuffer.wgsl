@@ -211,7 +211,17 @@ fn fs_main(in: Fragment) -> Targets {
     let inset = vec2<f32>(0.5) / vec2<f32>(textureDimensions(atlas));
     let uv = select(in.uv, clamp(in.uv, inset, vec2<f32>(1.0) - inset),
         (in.flags & FLAG_CLAMP_UV) != 0u);
-    let texel = textureSampleLevel(atlas, atlas_sampler, uv, i32(in.layer), 0.0);
+    var texel: vec4<f32>;
+    if ((in.flags & (FLAG_ALPHA_MASK | FLAG_TRANSPARENT | FLAG_CLAMP_UV)) == 0u) {
+        // Repeating opaque surfaces must use their pixel footprint to select
+        // the uploaded mips, or distant detail sparkles with camera movement.
+        texel = textureSampleGrad(atlas, atlas_sampler, uv, i32(in.layer), asset_dx, asset_dy);
+    } else {
+        // Keep alpha coverage consistent with the shadow/forward passes.
+        // Baked tiles also retain their base-level edge inset until mip-safe
+        // clamping is supported with the repeating atlas sampler.
+        texel = textureSampleLevel(atlas, atlas_sampler, uv, i32(in.layer), 0.0);
+    }
     // Preserve opaque interiors of alpha materials in the depth buffer. Their
     // fractional edges and decals are shaded later with true alpha blending.
     if ((in.flags & FLAG_TRANSPARENT) != 0u && texel.a < 1.0) {
