@@ -101,6 +101,7 @@ impl FrameProfiler {
                 ("lighting", gpu.lighting_ms),
                 ("transparency", gpu.transparency_ms),
                 ("waterfall", gpu.waterfall_ms),
+                ("lava", gpu.lava_ms),
                 ("additive", gpu.additive_ms),
                 ("particles", gpu.particles_ms),
                 ("ui", gpu.ui_ms),

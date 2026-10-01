@@ -3,8 +3,8 @@
 //! Textures all live in one array texture. EverQuest textures are mostly 256x256
 //! but not uniformly, so each is resized to fit for this first pass.
 //!
-//! Basic material selection lives on vertices; water parameters and waterfall
-//! offsets use a shared storage buffer indexed by that material ID. The asset
+//! Basic material selection lives on vertices; water/lava parameters and surface
+//! scroll offsets use a shared storage buffer indexed by that material ID. The asset
 //! pipeline already splits geometry per material.
 
 use std::collections::HashMap;
@@ -15,6 +15,7 @@ use glam::{Mat4, Quat, Vec3};
 use openeq_assets::Scene;
 
 mod bounds;
+mod lava;
 mod layered_color;
 mod placed_animation;
 mod uv;
@@ -30,7 +31,7 @@ pub const FLAG_CLAMP_UV: u32 = 16;
 pub const FLAG_TERRAIN: u32 = 32;
 pub const FLAG_TER_COLOR_BLEND: u32 = 64;
 
-/// Water parameters and waterfall offsets, indexed by the vertex's material ID.
+/// Surface parameters and scroll offsets, indexed by the vertex's material ID.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct WaterParams {
@@ -40,6 +41,7 @@ struct WaterParams {
     /// Fresnel bias, Fresnel power, reflection amount, indexed UV scale.
     params: [f32; 4],
     /// Normal map layer, environment map layer, indexed UV mode, reserved.
+    /// For the separate MaxLava pass, x instead names its second diffuse layer.
     layers: [u32; 4],
     scroll_offsets: [f32; 4],
 }
@@ -106,6 +108,8 @@ pub struct DrawCall {
     pub additive: bool,
     /// Draw in the dedicated source-alpha waterfall pass, with read-only depth.
     pub waterfall: bool,
+    /// Opaque forward lava; still participates in the opaque shadow pass.
+    pub lava: bool,
 }
 
 /// GPU-resident scene: geometry, instances, draws, textures and lights.
@@ -133,12 +137,12 @@ pub struct GpuScene {
     vertex_data: Vec<Vertex>,
     placed_animations: Vec<placed_animation::PlacedAnimation>,
     animation_started: std::time::Instant,
-    waterfall_rates: Vec<(usize, [f32; 4])>,
+    scroll_rates: Vec<(usize, [f32; 4])>,
 }
 
 impl GpuScene {
-    pub(crate) fn update_waterfalls(&self, queue: &wgpu::Queue, elapsed: std::time::Duration) {
-        for &(material, rates) in &self.waterfall_rates {
+    pub(crate) fn update_scrolls(&self, queue: &wgpu::Queue, elapsed: std::time::Duration) {
+        for &(material, rates) in &self.scroll_rates {
             let offsets = crate::waterfall::scroll_offsets(elapsed, rates);
             let offset = material * std::mem::size_of::<WaterParams>()
                 + std::mem::offset_of!(WaterParams, scroll_offsets);
@@ -240,11 +244,23 @@ impl GpuScene {
         mode: TerrainMode,
     ) -> anyhow::Result<Self> {
         let terrain = GpuTerrain::build(device, queue, scene, mode);
-        let atlas = build_atlas(device, queue, scene, &terrain)?;
+        let lava: std::collections::BTreeMap<_, _> = scene
+            .ter_lava
+            .keys()
+            .filter_map(|&index| lava::recipe(scene, index).map(|recipe| (index, recipe)))
+            .collect();
+        let atlas = build_atlas(device, queue, scene, &terrain, &lava)?;
         let water: Vec<WaterParams> = scene
             .materials
             .iter()
-            .map(|material| {
+            .enumerate()
+            .map(|(index, material)| {
+                if let Some(lava) = lava.get(&index) {
+                    return WaterParams {
+                        layers: [atlas.layers[&lava.bottom.to_ascii_lowercase()], 0, 0, 0],
+                        ..WaterParams::zeroed()
+                    };
+                }
                 let Some(water) = &material.water else {
                     return WaterParams {
                         scroll_offsets: [0.0; 4],
@@ -323,6 +339,7 @@ impl GpuScene {
         for (mesh_index, geometry) in scene.meshes.iter().enumerate() {
             let material = &scene.materials[geometry.material];
             let color_blend = layered_color::channel(scene, mesh_index);
+            let is_lava = lava.contains_key(&geometry.material);
             let (layer, frame_count) = if terrain.contains(geometry.material) {
                 (0, 1) // Opaque terrain never samples the fallback atlas.
             } else {
@@ -357,7 +374,7 @@ impl GpuScene {
                 .chunks_exact(openeq_assets::mesh::VERTEX_STRIDE)
                 .enumerate()
             {
-                let encoding = if color_blend.is_some() {
+                let encoding = if color_blend.is_some() || is_lava {
                     openeq_assets::mesh::UvEncoding::NativeTerShort2Sse2
                 } else {
                     material.uv_encoding
@@ -423,6 +440,7 @@ impl GpuScene {
                     && material.waterfall.is_none(),
                 additive: material.additive,
                 waterfall: material.waterfall.is_some(),
+                lava: is_lava,
             });
         }
 
@@ -523,11 +541,15 @@ impl GpuScene {
             vertex_data: vertices,
             placed_animations,
             animation_started: std::time::Instant::now(),
-            waterfall_rates: scene
+            scroll_rates: scene
                 .materials
                 .iter()
                 .enumerate()
-                .filter_map(|(i, m)| m.waterfall.map(|rates| (i, rates)))
+                .filter_map(|(i, m)| {
+                    m.waterfall
+                        .or_else(|| lava.get(&i).map(|lava| lava.rates))
+                        .map(|rates| (i, rates))
+                })
                 .collect(),
             indices: index_buffer,
             instances: instance_buffer,
@@ -568,6 +590,7 @@ fn build_atlas(
     queue: &wgpu::Queue,
     scene: &Scene,
     terrain: &GpuTerrain,
+    lava: &std::collections::BTreeMap<usize, &openeq_assets::loader::TerLava>,
 ) -> anyhow::Result<Atlas> {
     let mut layers: Vec<image::RgbaImage> = Vec::new();
     let mut mapping: HashMap<MaterialKey, (u32, u32)> = HashMap::new();
@@ -625,6 +648,15 @@ fn build_atlas(
         if let std::collections::hash_map::Entry::Vacant(entry) = layer_of_name.entry(key) {
             entry.insert(layers.len() as u32);
             layers.push(decode_texture(scene, &blend.second));
+        }
+    }
+
+    // MaxLava's second diffuse is independent of its primary animation slots.
+    for recipe in lava.values() {
+        let key = recipe.bottom.to_ascii_lowercase();
+        if let std::collections::hash_map::Entry::Vacant(entry) = layer_of_name.entry(key) {
+            entry.insert(layers.len() as u32);
+            layers.push(decode_texture(scene, &recipe.bottom));
         }
     }
 

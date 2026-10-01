@@ -142,7 +142,7 @@ fn gpu_profiling_is_opt_in_async_bounded_and_preserves_pixels() {
     let timing = stats.latest.unwrap();
     assert_eq!(timing.waterfall_ms, 0.);
     for (index, value) in timing.raw_pass_ms.into_iter().enumerate() {
-        if index == 5 {
+        if matches!(index, 3 | 6) {
             assert_eq!(value, 0.);
             continue;
         }
@@ -156,6 +156,7 @@ fn gpu_profiling_is_opt_in_async_bounded_and_preserves_pixels() {
         + timing.lighting_ms
         + timing.transparency_ms
         + timing.waterfall_ms
+        + timing.lava_ms
         + timing.additive_ms
         + timing.particles_ms
         + timing.ui_ms;

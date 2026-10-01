@@ -13,6 +13,7 @@ pub mod actors;
 mod additive;
 pub mod doors;
 pub mod environment;
+mod lava;
 mod light_grid;
 #[cfg(test)]
 mod light_grid_tests;
@@ -164,6 +165,7 @@ pub struct Renderer {
     transparency: transparency::Transparency,
     additive: additive::Additive,
     waterfall: waterfall::Waterfall,
+    lava: lava::Lava,
     particles: particles::ParticleRenderer,
     profiler: Option<profiling::GpuProfiler>,
     start: std::time::Instant,
@@ -670,6 +672,7 @@ impl Renderer {
             height,
         );
         let waterfall = waterfall::Waterfall::new(&device, &pipeline_geometry, config.format);
+        let lava = lava::Lava::new(&device, &pipeline_geometry, config.format);
         let additive = additive::Additive::new(&device, &pipeline_geometry, config.format);
         let particles = particles::ParticleRenderer::new(&device, &globals_layout, config.format);
         Self {
@@ -698,6 +701,7 @@ impl Renderer {
             transparency,
             additive,
             waterfall,
+            lava,
             particles,
             profiler: None,
             ui: None,
@@ -1045,9 +1049,9 @@ impl Renderer {
         };
 
         scene.update_placed_objects(&self.queue, object_elapsed);
-        scene.update_waterfalls(&self.queue, elapsed);
+        scene.update_scrolls(&self.queue, elapsed);
         for actor in actors {
-            actor.scene.update_waterfalls(&self.queue, elapsed);
+            actor.scene.update_scrolls(&self.queue, elapsed);
         }
 
         let swapchain_view = frame
@@ -1109,6 +1113,12 @@ impl Renderer {
         let plain_bind_group = self.scene_bind_group_plain.as_ref().unwrap();
         let atlas_bind_group = self.atlas_bind_group.as_ref().unwrap();
         let lighting_bind_group = self.lighting_bind_group.as_ref().unwrap();
+        let has_opaque_draws = |shadow| {
+            opaque_draws(scene, shadow).next().is_some()
+                || actors
+                    .iter()
+                    .any(|actor| opaque_draws(&actor.scene, shadow).next().is_some())
+        };
 
         if let Some(profiler) = &mut self.profiler {
             profiler.begin_frame(&self.device, &self.queue);
@@ -1136,6 +1146,7 @@ impl Renderer {
                 timestamp_writes: self
                     .profiler
                     .as_ref()
+                    .filter(|_| has_opaque_draws(true))
                     .and_then(|p| p.timestamps(profiling::Pass::Shadow)),
                 occlusion_query_set: None,
                 multiview_mask: None,
@@ -1145,10 +1156,10 @@ impl Renderer {
             pass.set_bind_group(1, plain_bind_group, &[]);
             // The shadow shader samples the same atlas for alpha cutouts.
             pass.set_bind_group(2, atlas_bind_group, &[]);
-            draw_scene(&mut pass, scene);
+            draw_scene(&mut pass, scene, true);
             for actor in actors {
                 pass.set_bind_group(2, &actor.atlas, &[]);
-                draw_scene(&mut pass, &actor.scene);
+                draw_scene(&mut pass, &actor.scene, true);
             }
         }
 
@@ -1187,6 +1198,7 @@ impl Renderer {
                 timestamp_writes: self
                     .profiler
                     .as_ref()
+                    .filter(|_| has_opaque_draws(false))
                     .and_then(|p| p.timestamps(profiling::Pass::Gbuffer)),
                 occlusion_query_set: None,
                 multiview_mask: None,
@@ -1195,10 +1207,10 @@ impl Renderer {
             pass.set_bind_group(0, &self.globals_bind_group, &[]);
             pass.set_bind_group(1, plain_bind_group, &[]);
             pass.set_bind_group(2, atlas_bind_group, &[]);
-            draw_scene(&mut pass, scene);
+            draw_scene(&mut pass, scene, false);
             for actor in actors {
                 pass.set_bind_group(2, &actor.atlas, &[]);
-                draw_scene(&mut pass, &actor.scene);
+                draw_scene(&mut pass, &actor.scene, false);
             }
         }
 
@@ -1230,6 +1242,21 @@ impl Renderer {
             pass.set_bind_group(3, &self.sky.group, &[]);
             pass.draw(0..3, 0..1);
         }
+
+        // Opaque lava combines lit top and luminous bottom before fog. Its
+        // depth must precede every transparent surface and particle pass.
+        self.lava.render(
+            &mut encoder,
+            transparency::BlendInputs {
+                depth: &self.targets.depth_view,
+                output: final_view,
+                globals: &self.globals_bind_group,
+                lighting: scene_bind_group,
+                zone: (scene, atlas_bind_group),
+                actors,
+            },
+            self.profiler.as_ref(),
+        );
 
         // 4. Fractional-alpha surfaces, shaded against opaque world depth.
         self.transparency.render(
@@ -1389,16 +1416,24 @@ fn device_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
     limits
 }
 
-fn draw_scene(pass: &mut wgpu::RenderPass<'_>, scene: &GpuScene) {
+// Share eligibility with timestamp admission. Metal can return invalid query
+// intervals for clear-only passes; keep their clears but do not record them as
+// measured raster work. Lava casts shadows while bypassing the G-buffer.
+fn opaque_draws(scene: &GpuScene, shadow: bool) -> impl Iterator<Item = &scene::DrawCall> {
+    scene.draws.iter().filter(move |draw| {
+        !draw.additive
+            && !draw.waterfall
+            && (shadow || !draw.lava)
+            && draw.index_count > 0
+            && draw.instance_count > 0
+    })
+}
+
+fn draw_scene(pass: &mut wgpu::RenderPass<'_>, scene: &GpuScene, shadow: bool) {
     pass.set_vertex_buffer(0, scene.vertices.slice(..));
     pass.set_vertex_buffer(1, scene.instances.slice(..));
     pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint32);
-    // Additive surfaces must never write opaque geometry or shadow depth.
-    for draw in scene
-        .draws
-        .iter()
-        .filter(|draw| !draw.additive && !draw.waterfall)
-    {
+    for draw in opaque_draws(scene, shadow) {
         pass.draw_indexed(
             draw.index_start..draw.index_start + draw.index_count,
             draw.base_vertex,

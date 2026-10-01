@@ -360,12 +360,13 @@ fn waterfall_pass_is_accounted_for_in_gpu_profiling() {
     assert_eq!(stats.failed, 0);
     assert_eq!(stats.in_flight, 0);
     let timing = stats.latest.unwrap();
-    assert!(timing.raw_pass_ms[5] > 0.);
+    assert!(timing.raw_pass_ms[6] > 0.);
     let total = timing.shadow_ms
         + timing.gbuffer_ms
         + timing.lighting_ms
         + timing.transparency_ms
         + timing.waterfall_ms
+        + timing.lava_ms
         + timing.additive_ms
         + timing.particles_ms
         + timing.ui_ms;

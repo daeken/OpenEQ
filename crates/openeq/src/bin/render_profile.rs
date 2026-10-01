@@ -37,10 +37,11 @@ const CPU_NAMES: [&str; 11] = [
     "gpu_collect",
     "total",
 ];
-const GPU_NAMES: [&str; 21] = [
+const GPU_NAMES: [&str; 23] = [
     "shadow",
     "gbuffer",
     "lighting",
+    "lava",
     "transparency",
     "waterfall",
     "additive",
@@ -51,6 +52,7 @@ const GPU_NAMES: [&str; 21] = [
     "raw_shadow",
     "raw_gbuffer",
     "raw_lighting",
+    "raw_lava",
     "raw_transparency_accum",
     "raw_transparency_resolve",
     "raw_waterfall",
@@ -526,6 +528,7 @@ fn gpu_values(gpu: GpuFrameTimings) -> [f64; GPU_NAMES.len()] {
         gpu.shadow_ms,
         gpu.gbuffer_ms,
         gpu.lighting_ms,
+        gpu.lava_ms,
         gpu.transparency_ms,
         gpu.waterfall_ms,
         gpu.additive_ms,
@@ -542,6 +545,7 @@ fn gpu_values(gpu: GpuFrameTimings) -> [f64; GPU_NAMES.len()] {
         gpu.raw_pass_ms[6],
         gpu.raw_pass_ms[7],
         gpu.raw_pass_ms[8],
+        gpu.raw_pass_ms[9],
         gpu.raw_pass_sum_ms,
         gpu.overlap_ms,
     ]

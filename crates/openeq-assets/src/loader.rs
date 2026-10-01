@@ -113,6 +113,15 @@ pub struct TerColorBlend {
     pub second: String,
 }
 
+/// Complete static MaxLava TER bindings; native bump lighting remains separate.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TerLava {
+    pub top: String,
+    pub bottom: String,
+    pub normal: String,
+    pub rates: [f32; 4],
+}
+
 /// Everything needed to render a zone.
 pub struct Scene {
     pub name: String,
@@ -129,6 +138,9 @@ pub struct Scene {
     /// must clear/remap this sidecar. Complete CB1_2UV bindings opt into the
     /// bounded second-color path; other families remain source metadata.
     pub secondary_ter_uv: BTreeMap<usize, PackedTerSecondaryUv>,
+    /// Complete MaxLava recipes keyed by material index. Material replacement
+    /// or remapping must clear/remap these keys; the renderer validates bindings.
+    pub ter_lava: BTreeMap<usize, TerLava>,
     /// Malformed auxiliary lighting remains explicit without hiding valid TER
     /// geometry. Such payloads have no selected channel or claimed native default.
     pub ter_lighting_issues: BTreeMap<String, String>,
@@ -167,6 +179,7 @@ impl Scene {
             meshes,
             native_ter_lighting: BTreeMap::new(),
             secondary_ter_uv: BTreeMap::new(),
+            ter_lava: BTreeMap::new(),
             ter_lighting_issues: BTreeMap::new(),
             collision_meshes: Vec::new(),
             objects: Vec::new(),
@@ -359,6 +372,7 @@ pub fn load_object_library(base: impl AsRef<Path>, zone: &str) -> Result<Scene> 
         meshes: Vec::new(),
         native_ter_lighting: BTreeMap::new(),
         secondary_ter_uv: BTreeMap::new(),
+        ter_lava: BTreeMap::new(),
         ter_lighting_issues: BTreeMap::new(),
         collision_meshes: Vec::new(),
         objects: Vec::new(),
@@ -458,6 +472,7 @@ fn load_wld(base: &Path, name: &str, primary: &Path) -> Result<Scene> {
         meshes: Vec::new(),
         native_ter_lighting: BTreeMap::new(),
         secondary_ter_uv: BTreeMap::new(),
+        ter_lava: BTreeMap::new(),
         ter_lighting_issues: BTreeMap::new(),
         collision_meshes: Vec::new(),
         objects: Vec::new(),
@@ -597,6 +612,7 @@ fn load_eqg_archive(base: &Path, name: &str, archive: Archive) -> Result<Scene> 
         meshes: Vec::new(),
         native_ter_lighting: BTreeMap::new(),
         secondary_ter_uv: BTreeMap::new(),
+        ter_lava: BTreeMap::new(),
         ter_lighting_issues: BTreeMap::new(),
         collision_meshes: Vec::new(),
         objects: Vec::new(),
@@ -904,6 +920,14 @@ fn append_eqg_object(
         };
 
         let id = scene.materials.len();
+        if let Some(lava) = lava::recipe(object, material) {
+            // Native texture sidecars select frame sequences. This first path
+            // admits static texture bindings only, with no invented defaults.
+            if lava::is_static(scene, &lava) {
+                register_texture(scene, archive_index, &lava.bottom);
+                scene.ter_lava.insert(id, lava);
+            }
+        }
         if let Some(environment) = water
             .as_ref()
             .and_then(|water| water.environment_map.as_ref())
@@ -986,6 +1010,7 @@ fn waterfall_material(object: &TerMod, material: &crate::zone::TerMaterial) -> O
 
 mod eqg_collision;
 mod indexed_water;
+mod lava;
 pub mod ter_lighting;
 mod ter_lighting_pack;
 mod ter_secondary_uv;

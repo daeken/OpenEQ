@@ -6,7 +6,7 @@ use std::sync::{
 };
 
 const SLOTS: usize = 4;
-const QUERY_COUNT: u32 = 18;
+const QUERY_COUNT: u32 = 20;
 const QUERY_BYTES: u64 = QUERY_COUNT as u64 * 8;
 
 /// GPU completion-boundary attribution, in milliseconds. An absent pass is
@@ -22,14 +22,15 @@ pub struct GpuFrameTimings {
     pub lighting_ms: f64,
     pub transparency_ms: f64,
     pub waterfall_ms: f64,
+    pub lava_ms: f64,
     pub additive_ms: f64,
     pub particles_ms: f64,
     pub ui_ms: f64,
     pub total_ms: f64,
     pub frame_span_ms: f64,
     /// Raw start-vertex to end-fragment intervals in order: shadow, G-buffer,
-    /// lighting, transparency accumulation, transparency resolve, waterfall, additive, particles, UI.
-    pub raw_pass_ms: [f64; 9],
+    /// lighting, lava, transparency accumulation, transparency resolve, waterfall, additive, particles, UI.
+    pub raw_pass_ms: [f64; 10],
     pub raw_pass_sum_ms: f64,
     pub overlap_ms: f64,
 }
@@ -52,12 +53,13 @@ pub(crate) enum Pass {
     Shadow = 0,
     Gbuffer = 1,
     Lighting = 2,
-    TransparencyAccumulate = 3,
-    TransparencyResolve = 4,
-    Waterfall = 5,
-    Additive = 6,
-    Particles = 7,
-    Ui = 8,
+    Lava = 3,
+    TransparencyAccumulate = 4,
+    TransparencyResolve = 5,
+    Waterfall = 6,
+    Additive = 7,
+    Particles = 8,
+    Ui = 9,
 }
 
 struct Pending {
@@ -237,8 +239,8 @@ fn decode(values: &[u64], mask: u32, period_ns: f64, frame_id: u64) -> Option<Gp
     {
         return None;
     }
-    let mut passes = [0.; 9];
-    let mut raw_pass_ms = [0.; 9];
+    let mut passes = [0.; 10];
+    let mut raw_pass_ms = [0.; 10];
     let mut first = u64::MAX;
     let mut last = 0;
     for (index, duration) in passes.iter_mut().enumerate() {
@@ -261,11 +263,12 @@ fn decode(values: &[u64], mask: u32, period_ns: f64, frame_id: u64) -> Option<Gp
         shadow_ms: passes[0],
         gbuffer_ms: passes[1],
         lighting_ms: passes[2],
-        transparency_ms: passes[3] + passes[4],
-        waterfall_ms: passes[5],
-        additive_ms: passes[6],
-        particles_ms: passes[7],
-        ui_ms: passes[8],
+        lava_ms: passes[3],
+        transparency_ms: passes[4] + passes[5],
+        waterfall_ms: passes[6],
+        additive_ms: passes[7],
+        particles_ms: passes[8],
+        ui_ms: passes[9],
         total_ms,
         frame_span_ms: (last - first) as f64 * period_ns / 1_000_000.,
         raw_pass_ms,
@@ -280,10 +283,10 @@ mod tests {
     #[test]
     fn timestamps_use_device_period_and_ignore_absent_passes_and_stale_slots() {
         let values = [
-            100, 300, 400, 800, 900, 1500, 2000, 2200, 2250, 2300, 99999, 0, 88888, 0, 77777, 0,
-            66666, 0,
+            100, 300, 400, 800, 900, 1500, 99999, 0, 2000, 2200, 2250, 2300, 99999, 0, 88888, 0,
+            77777, 0, 66666, 0,
         ];
-        let frame = decode(&values, 0b0011111, 1000., 42).unwrap();
+        let frame = decode(&values, 0b0110111, 1000., 42).unwrap();
         assert_eq!(frame.frame_id, 42);
         assert_eq!(frame.shadow_ms, 0.2);
         assert_eq!(frame.gbuffer_ms, 0.4);
@@ -300,7 +303,7 @@ mod tests {
     #[test]
     fn overlapping_tile_stages_are_retained_raw_but_not_double_counted() {
         let values = [
-            100, 400, 200, 500, 300, 800, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            100, 400, 200, 500, 300, 800, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         ];
         let frame = decode(&values, 0b111, 1000., 1).unwrap();
         assert_eq!(frame.raw_pass_ms[..3], [0.3, 0.3, 0.5]);
