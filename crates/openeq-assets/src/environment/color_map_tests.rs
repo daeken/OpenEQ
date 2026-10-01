@@ -319,3 +319,34 @@ fn all_installed_color_sets_match_1131_native_full_table_samples() {
         })
     );
 }
+
+#[test]
+fn provenance_preserves_exact_sample_fraction_before_tick_truncation() {
+    let fixture = Fixture::new();
+    fixture.texture("colormap-Old.dds", OLD);
+    fixture.texture("colormap-New.dds", NEW);
+    let ini = parse_ini(TWO_KEYS);
+    for fraction in [
+        0.,
+        0.5,
+        -0.5,
+        1.5,
+        -f32::from_bits(1),
+        f32::NAN,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::from_bits(0x3e7c_71c6),
+        f32::from_bits(0x3e7c_71c7),
+        f32::from_bits(0x3f43_8e39),
+        f32::from_bits(0x3f43_8e3a),
+    ] {
+        let (_, source) = color_map::sample(&fixture.directory(), &ini, "clear", fraction).unwrap();
+        let expected = if fraction.is_finite() {
+            fraction.rem_euclid(1.)
+        } else {
+            0.5
+        };
+        assert_eq!(source.day_fraction_bits, expected.to_bits());
+        assert_eq!(source.day_tick, (expected * 65536.) as u32);
+    }
+}

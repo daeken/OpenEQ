@@ -8,6 +8,8 @@ use openeq_assets::{
 
 /// Retained OpenEQ fallback while native non-sky/vision lighting is separate.
 pub const DEFAULT_AMBIENT: [f32; 3] = [0.22, 0.24, 0.30];
+/// Retained OpenEQ directional color for unsupported/missing authored inputs.
+pub const DEFAULT_DIRECTIONAL: [f32; 3] = [1.0, 0.96, 0.86];
 
 #[derive(Debug, Clone, Copy)]
 pub struct EnvironmentSettings {
@@ -119,6 +121,40 @@ impl EnvironmentSettings {
             return DEFAULT_AMBIENT;
         };
         [16, 8, 0].map(|shift| ((colors.ambient >> shift) as u8).max(20) as f32 / 255.)
+    }
+
+    /// Select authored directional RGB using the same float as sky sampling.
+    /// Native sun selection includes both thresholds; day_tick cannot recover
+    /// this comparison near a boundary. No ambient floor or alpha scaling here.
+    /// Direction, bounce, color-space and unsupported-input fallback remain
+    /// OpenEQ policy, separate from this recovered selection and packed color.
+    pub fn directional_color(&self, sky: Option<&SkyAssets>) -> [f32; 3] {
+        if !matches!(self.zone_type, Some(1 | 2 | 5)) {
+            return DEFAULT_DIRECTIONAL;
+        }
+        let Some(sky) = sky else {
+            return DEFAULT_DIRECTIONAL;
+        };
+        let Some(provenance) = &sky.color_map_provenance else {
+            return DEFAULT_DIRECTIONAL;
+        };
+        let fraction = f32::from_bits(provenance.day_fraction_bits);
+        if !(0.0..=1.0).contains(&fraction) {
+            return DEFAULT_DIRECTIONAL;
+        }
+        let Some(colors) = sky.raw_light_colors() else {
+            return DEFAULT_DIRECTIONAL;
+        };
+        let sun_start = f32::from_bits(0x3e7c_71c7);
+        let sun_end = f32::from_bits(0x3f43_8e39);
+        let packed = if (sun_start..=sun_end).contains(&fraction) {
+            colors.sun_directional
+        } else {
+            colors.moon_directional
+        };
+        // Retain current Rust byte normalization into the linear renderer, as
+        // for ambient. Native reciprocal multiplication may differ by one ULP.
+        [16, 8, 0].map(|shift| ((packed >> shift) as u8) as f32 / 255.)
     }
 
     pub fn apply_sky(&mut self, assets: &SkyAssets) {

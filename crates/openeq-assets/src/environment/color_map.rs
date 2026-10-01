@@ -30,6 +30,9 @@ pub struct SkyColorMapProvenance {
     pub color_set: String,
     /// Truncated normalized day fraction multiplied by 65536.
     pub day_tick: u32,
+    /// Exact normalized sample fraction before day-tick truncation. Celestial
+    /// selection compares this float, so reconstructing from day_tick is lossy.
+    pub day_fraction_bits: u32,
     pub inputs: SkyColorMapInputs,
 }
 
@@ -102,16 +105,15 @@ fn keys(ini: &Ini, color_set: &str) -> Result<Vec<Key>> {
     Ok(keys)
 }
 
-fn normalized_tick(day_fraction: f32) -> u32 {
+fn normalized_fraction(day_fraction: f32) -> f32 {
     // Keep load_sky's pre-existing public input normalization. Native callers
     // supply a day fraction; this does not emulate a live client clock.
-    let fraction = if day_fraction.is_finite() {
+    // Preserve f32 rem_euclid rounding, including tiny negatives rounding to 1.
+    if day_fraction.is_finite() {
         day_fraction.rem_euclid(1.)
     } else {
         0.5
-    };
-    // Preserve f32 rem_euclid rounding, including tiny negatives rounding to 1.
-    (fraction * 65536.) as u32
+    }
 }
 
 fn read_key(directory: &Path, key: &Key) -> Result<(Texture, SkyColorMapSource)> {
@@ -136,7 +138,8 @@ pub(super) fn sample(
     day_fraction: f32,
 ) -> Result<(Texture, SkyColorMapProvenance)> {
     let keys = keys(ini, color_set)?;
-    let day_tick = normalized_tick(day_fraction);
+    let fraction = normalized_fraction(day_fraction);
+    let day_tick = (fraction * 65536.) as u32;
     let index = keys
         .iter()
         // Native equality still selects the preceding key, even when the new
@@ -191,6 +194,7 @@ pub(super) fn sample(
         SkyColorMapProvenance {
             color_set: color_set.to_owned(),
             day_tick,
+            day_fraction_bits: fraction.to_bits(),
             inputs,
         },
     ))

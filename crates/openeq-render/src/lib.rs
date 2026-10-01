@@ -172,6 +172,7 @@ pub struct Renderer {
     ui: Option<ui::UiRenderer>,
     environment: EnvironmentSettings,
     ambient: [f32; 3],
+    directional_color: [f32; 3],
     view_liquid: Option<openeq_assets::liquid_regions::LiquidKind>,
     sky: SkyResources,
 }
@@ -696,6 +697,7 @@ impl Renderer {
             ui: None,
             environment: EnvironmentSettings::default(),
             ambient: environment::DEFAULT_AMBIENT,
+            directional_color: environment::DEFAULT_DIRECTIONAL,
             view_liquid: None,
             sky,
             start: std::time::Instant::now(),
@@ -710,6 +712,7 @@ impl Renderer {
         sky: Option<&openeq_assets::environment::SkyAssets>,
     ) {
         self.ambient = settings.normal_vision_ambient(sky);
+        self.directional_color = settings.directional_color(sky);
         self.environment = settings;
         if let Some(assets) = sky {
             self.environment.apply_sky(assets);
@@ -1078,7 +1081,12 @@ impl Renderer {
             camera_position: Camera::to_world(camera.position).extend(1.0).into(),
             ambient: [self.ambient[0], self.ambient[1], self.ambient[2], 1.0],
             sun_direction: Vec4::new(sun.x, sun.y, sun.z, 1.0).into(),
-            sun_color: Vec4::new(1.0, 0.96, 0.86, 1.0).into(),
+            sun_color: [
+                self.directional_color[0],
+                self.directional_color[1],
+                self.directional_color[2],
+                1.0,
+            ],
             environment,
             params: [
                 elapsed,

@@ -52,7 +52,9 @@ that a zone looks, moves or sounds right.
    blend pass; the proven additive glass family has its native blend/depth/cutoff.
    Original sky table sampling and local EQ time advance are integrated.
    Authored ambient now feeds ordinary lighting for native types 1/2/5 under
-   the normal-vision renderer policy; see `SKY_AMBIENT_RENDERING.md`. The
+   the normal-vision renderer policy; see `SKY_AMBIENT_RENDERING.md`. Authored
+   sun/moon RGB now uses the exact same sampled fraction as the sky table;
+   direction and bounce remain separate. See `SKY_DIRECTIONAL_RENDERING.md`. The
    exact native dome has CPU/GPU diagnostics but remains outside live rendering.
    Exact CB1_2UV now renders its authored second color with independent UVs:
    673 batches / 2,050,190 triangles across 15 original terrain payloads.
