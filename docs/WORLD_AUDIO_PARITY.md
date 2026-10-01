@@ -26,7 +26,10 @@ that a zone looks, moves or sounds right.
    ancestry stays static, including the verified five-frame extension. Static
    ordinary meshes of particle-linked actors are now restored with explicit unsupported emitter metadata. Moving collision,
    longer clips, four animated particle-linked definitions and actual particle
-   playback remain unfinished. See `WLD_OBJECT_ANIMATION.md` and
+   playback remain unfinished. Complete native host-frame particle admission
+   and cached clock publication now have controlled execution coverage; actual
+   populated-scene visibility, creation order and session RNG remain open.
+   See `WLD_PARTICLE_FRAME_ADMISSION.md`, `WLD_OBJECT_ANIMATION.md` and
    `WLD_PARTICLE_ACTORS.md`.
 3. Follow authored nonfinite mesh attributes through native vertex upload and
    material/channel selection. Preserve the 21 original outliers; do not invent
@@ -37,7 +40,8 @@ that a zone looks, moves or sounds right.
    through deduplication. CB1_2UV now uses both packed coordinate streams for
    its bounded second-color operation; complete native shading remains separate.
    Native packed normals/tangents/colors and other shader families remain under investigation.
-   See `EQG_NONFINITE_TER_UPLOAD.md` and `EQG_TER_UV_PACKING.md`.
+   See `EQG_NONFINITE_TER_UPLOAD.md`, `EQG_TER_UV_PACKING.md`,
+   `EQG_TER_DUAL_FRAME_CHANNELS.md` and `EQG_TER_FPU_CALLBACK_BOUNDARIES.md`.
 4. Verify shader channels, fog/sky/light metadata and rendering across formats
    with fixed-camera GPU checks and controlled traversal. Material table
    identity and startup scene bounds now have dedicated regression coverage.
@@ -66,7 +70,10 @@ that a zone looks, moves or sounds right.
    Streaming retains a 30-minute policy cap. Original timbres, unsupported
    branches/host controls and event bindings remain separate.
    See `XMI_NATIVE_LOOPS.md` and `XMI_NATIVE_SYSEX.md`.
-   Automated original-audio checks remain offline or digital silence.
+   Classic kind-0 base gain now matches native default/sign/cutoff behavior;
+   zero levels use 20%, avoiding the former full-volume ambience. See
+   `CLASSIC_AMBIENT_LEVELS.md`. Automated original-audio checks remain offline
+   or digital silence.
 
 The October 1 checkpoint below records the completed native-volume and placed
 object work. Gameplay milestones remain behind these world/audio priorities.
