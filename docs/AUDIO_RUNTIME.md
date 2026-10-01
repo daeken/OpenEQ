@@ -93,8 +93,11 @@ Each music stream uses up to 320 KiB of prepared stereo samples across its queue
 and producer/consumer blocks, plus the codec's internal buffers.
 MP3 streaming requires loose files. XMI files use the bounded asset catalog.
 XMI workers asynchronously initialize, own and dispose their AudioUnit on one
-thread. Two worker slots bound concurrent initialization, rendering and disposal;
-a transient occupied slot retries without suppressing the track. Eight PCM blocks
+thread. Two worker slots bound prepared streams; a transient occupied slot retries
+without suppressing the track. All native macOS synth calls share a process-wide
+gate because instances share bank and lazy waveform state. Worker decoding,
+scheduling and PCM queue delivery remain separate; no lock or synthesis runs
+on the device callback. See `COREAUDIO_SYNTH_LIFECYCLE.md`. Eight PCM blocks
 feed the existing nonblocking consumer. Initialization/render failures suppress
 only that file+ordinal until the next zone load. No synthesis or disk IO occurs
 on the game thread or audio callback. The adapter has32KiB scratch; internal

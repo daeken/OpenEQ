@@ -1,10 +1,16 @@
-# macOS DLSSynth lifecycle serialization
+# macOS DLSSynth native-call serialization
 
-OpenEQ serializes creation, configuration, initialization, uninitialization,
-and disposal of its macOS DLSSynth units with one process-wide mutex. The
-native component shares its DLS sound-bank cache between units, but the
-observed cache acquire and final release are not protected by a common lock.
-Rendering and MIDI delivery remain on each unit's owning worker.
+OpenEQ serializes every native call to its macOS DLSSynth units with one
+process-wide mutex: creation, configuration, initialization, MIDI, SysEx,
+rendering, uninitialization, and disposal. Each unit still belongs to one
+synthesis worker. The native component shares bank references and mutable
+waveform-loading state between units; a per-unit owner or a lifecycle-only
+lock does not protect those shared objects. Buffer preparation and PCM copying
+run outside the native render call's lock, and no audio device is opened.
+
+The first failure below established the lifecycle race. A later full-suite
+failure and a small independent reproducer demonstrated that the original
+lifecycle-only correction was insufficient; the current boundary covers both.
 
 ## Matching crash and binary
 
@@ -102,10 +108,64 @@ methods. OpenEQ currently sets only stream format (8), maximum frames (14),
 and offline render (37) before initialization; this investigation did not
 exhaustively trace the framework's generic handlers for properties 8 and 14.
 
-Keeping the whole setup and disposal sequence under the lifecycle lock is a
-simple conservative boundary. Future sound-bank changes or changes to
-offline mode after initialization must use that same lock. These observations
-do not imply that arbitrary native property changes are safe during render.
+Keeping the whole setup and disposal sequence under the common native gate
+protects this boundary. Future sound-bank changes or changes to offline mode
+after initialization must use that same gate. These observations do not imply
+that arbitrary native property changes are safe during render.
+
+## Lazy waveform loading during MIDI delivery
+
+The later crash `openeq-6debd45368f48bd2-2026-10-01-111833.ips` uses the same
+component UUID. Thread 27 (`openeq-xmi-synth`) aborts during
+`MusicDeviceMIDIEvent`, while thread 26 renders The Deep through
+`AudioUnitRender`. The triggered stack contains component return PCs:
+
+```text
+0x85bec -> 0xfe7ac -> 0x800ac -> 0x10b350 -> 0xdc7a8 -> 0xe0370 -> 0xd5ce8
+```
+
+The actual assertion call at `0x85be8` names `DlsFile.cpp`, line **456**,
+**`GetHeader().IsListType()`**. This is a waveform-header assertion, distinct
+from the shared reference-count assertion above. The neighboring assertion at
+`0x85c00` checks line **457**,
+**`GetHeader().GetSubType() == ChunkType(kChunkType_WaveFileChunk)`**.
+
+The native path at `0xfe77c` checks cached waveform pointer `+0x1d0`. If it is
+null, `0xfe798..0xfe7a8` follows the region's owning collection and calls the
+waveform loader `0x84b9c`; `0xfe7ac` stores the result. That loader checks the
+collection's waveform entry before parsing a missing waveform. The DLS path
+at `0x84dac..0x84eac` obtains the bank reader, positions it using `0x18630`,
+reads its chunk header using `0x1832c`, then validates the list/wave tags.
+This establishes lazy bank reads during MIDI delivery, not merely during
+unit initialization. It does not by itself identify every possible native
+race or establish that SysEx resets reload the entire bank.
+
+A standalone copy of the lifecycle-only implementation reproduces SIGTRAP
+immediately with four workers, eight instances per worker, and all 128 General
+MIDI programs per instance. Each unit receives a complete GM System On packet
+(`F0 7E 7F 09 01 F7`), then bank/program changes, notes, memory renders,
+note-offs and all-sound-off messages. Workers use different program/pitch
+orders and alternate 44.1/48 kHz and explicit/drop cleanup. The sole barrier
+is at worker startup. No original assets or playback devices are involved.
+
+Both the eight-worker initial probe and the four-worker regression pattern
+failed on their first runs, at the neighboring wave-subtype assertion
+(`0x85c04` return PC), with the same remaining MIDI stack as the suite crash:
+
+- `openeq-synth-cache-stress-before-2026-10-01-112033.ips`, incident
+  `5ECE3E45-26D1-4561-9685-3BBBBA945AAC`.
+- `openeq-synth-cache-stress-bounded-before-2026-10-01-112118.ips`, incident
+  `42237C37-314F-499C-99E9-ED6B88A0C024`.
+
+The same four-worker program passes with the common native gate. OpenEQ gates
+rendering and SysEx as well as MIDI and lifecycle operations because those
+calls can consume or change native bank/voice state. Narrowing the gate to
+particular MIDI statuses or only the observed loading routine would leave
+unverified cross-unit overlaps. Calls are synchronous and remain on workers;
+the lock is never held across queue waits, sleeps, or output consumption.
+Multiple native synth workers may consequently wait for one another. This
+correctness boundary is not a guarantee about unrelated system components or
+native code outside OpenEQ's calls.
 
 ## Rust cleanup and regression coverage
 
@@ -125,15 +185,24 @@ barrier. The initial pre-fix reproducer (with additional per-iteration barriers)
 reproduced SIGSEGV, recorded in
 `/tmp/openeq-coreaudio-concurrent-before.log`; that is a separate reproduction
 from the fully explained SIGTRAP above. No audio device is opened by this test.
-After serialization, the parallel 61-test audio run and 20 repeated stress
-batches (2,560 total synth lifecycles) passed. This is regression evidence
-for the OpenEQ lifecycle boundary, not a guarantee about all native APIs.
+The initial lifecycle-only correction passed the parallel 61-test audio run
+and 20 repeated stress batches (2,560 total synth lifecycles), but did not
+exercise the instrument churn needed to reveal the later waveform failure.
+
+The new opt-in `concurrent_offline_instrument_loading` regression preserves
+the four-worker reproducer's 4,096 program changes and checks that PCM is
+finite and not entirely silent. Together with the existing lifecycle,
+synthetic-note, original-SysEx, validation and ABI tests, all seven focused
+synth tests passed concurrently with the full native gate. This keeps real
+cross-unit work in the regression rather than serializing tests externally.
+The focused run is `/tmp/openeq-synth-cache-fixed-tests.log`.
 
 For reproducibility, the matching native disassembly was generated with:
 
 ```sh
 xcrun dwarfdump --uuid /System/Library/Components/CoreAudio.component/Contents/MacOS/CoreAudio
 xcrun llvm-objdump --macho --arch=arm64e --disassemble /System/Library/Components/CoreAudio.component/Contents/MacOS/CoreAudio
+xcrun llvm-objdump --macho --arch=arm64e --disassemble --section=__realtime /System/Library/Components/CoreAudio.component/Contents/MacOS/CoreAudio
 ```
 
 The local full-suite log is `/tmp/openeq-lighting-five-frame-workspace.log`;
@@ -141,8 +210,25 @@ annotated disassembly is `/tmp/openeq-coreaudio-arm64e-disasm.txt`. The crash
 and temporary logs are local investigation artifacts, not repository files.
 Offsets and internal layouts are specific to the UUID above.
 
+The lazy-loading investigation additionally uses
+`/tmp/openeq-coreaudio-arm64e-audio-race-disasm.txt` and
+`/tmp/openeq-coreaudio-arm64e-realtime-disasm.txt`: the default disassembly
+omits the `__realtime` section containing several relevant stack frames.
+Standalone before/after sources are
+`/tmp/openeq-synth-cache-stress-bounded.rs` and
+`/tmp/openeq-synth-cache-stress-fixed.rs`; the baseline implementation is
+`/tmp/openeq-synth-lifecycle-only.rs`. Compile with `rustc --edition=2024 -O`.
+The fixed program renders only to memory, and its successful output is in
+`/tmp/openeq-synth-cache-stress-fixed.log`.
+
 Root independently reran the final startup-only stress pattern against a temporary
 copy of the same synth implementation with only the lifecycle guards removed.
 The first batch reproduced SIGTRAP (return code -5); no shared checkout change
 was needed. Witness `/tmp/openeq-synth-unlocked.rs` and result
 `/tmp/openeq-synth-unlocked-result.log` remain local.
+
+Root independently compiled both frozen before/after standalone harnesses. The
+lifecycle-only version terminated with SIGTRAP (return code -5) in 0.10 seconds;
+the production-gated version completed the same 4 × 8 × 128 program sweep in
+0.15 seconds. Result: `/tmp/openeq-synth-cache-stress-root.json`. This independently
+confirms the recorded reproduction and regression, not a throughput benchmark.

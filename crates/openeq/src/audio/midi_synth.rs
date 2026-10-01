@@ -167,11 +167,11 @@ mod macos {
     use super::{CHANNELS, MAX_RENDER_FRAMES, SynthError};
     use std::{ffi::c_void, mem::size_of, ptr::NonNull, sync::Mutex};
 
-    // DLSSynth instances share a native sound-bank cache whose final release
-    // races with acquisition by another instance. Serialize creation/configuration
-    // and teardown, while keeping rendering and MIDI on independent workers.
+    // DLSSynth instances share native bank references and lazy waveform state.
+    // MIDI and rendering can access that state too, so every native entry point
+    // uses the same process-wide gate, even though each unit has one owner.
     // See docs/COREAUDIO_SYNTH_LIFECYCLE.md for the native crash evidence.
-    static SYNTH_LIFECYCLE: Mutex<()> = Mutex::new(());
+    static SYNTH_NATIVE: Mutex<()> = Mutex::new(());
 
     // ABI verified against AudioComponent.h, AUComponent.h, MusicDevice.h,
     // AudioUnitProperties.h and CoreAudioBaseTypes.h in the local macOS SDK.
@@ -315,7 +315,7 @@ mod macos {
     impl Synth {
         pub(super) fn create(sample_rate: u32) -> Result<Self, SynthError> {
             // Declare the owner before the guard: any early return or unwind
-            // must release the lifecycle lock before Drop reacquires it.
+            // must release the native gate before Drop reacquires it.
             let mut synth = Self {
                 unit: None,
                 initialized: false,
@@ -323,7 +323,7 @@ mod macos {
                 frame: 0,
                 scratch: Box::new(AlignedSamples([[0.0; MAX_RENDER_FRAMES]; CHANNELS])),
             };
-            let _lifecycle = SYNTH_LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
+            let _native = SYNTH_NATIVE.lock().unwrap_or_else(|e| e.into_inner());
             let description = ComponentDescription {
                 kind: u32::from_be_bytes(*b"aumu"),
                 subtype: u32::from_be_bytes(*b"dls "),
@@ -392,7 +392,8 @@ mod macos {
             Ok(synth)
         }
 
-        // Private callers use only SDK-layout plain data for the named property.
+        // Called only during creation, with SYNTH_NATIVE held. Private callers
+        // use only SDK-layout plain data for the named property.
         fn set_property<T>(
             &self,
             property: u32,
@@ -423,6 +424,7 @@ mod macos {
             if self.failed {
                 return Err(SynthError::Failed);
             }
+            let _native = SYNTH_NATIVE.lock().unwrap_or_else(|e| e.into_inner());
             // SAFETY: Validated channel bytes, exclusively owned initialized
             // unit, and zero offset at this worker's next render boundary.
             let result = check("MusicDeviceMIDIEvent", unsafe {
@@ -442,6 +444,7 @@ mod macos {
             if self.failed {
                 return Err(SynthError::Failed);
             }
+            let _native = SYNTH_NATIVE.lock().unwrap_or_else(|e| e.into_inner());
             // SAFETY: Validated complete framing and length <=1536; exclusively
             // owned initialized unit and SDK-verified ABI. The immutable slice
             // stays alive throughout the call; no callback is registered.
@@ -487,19 +490,22 @@ mod macos {
                 }),
             };
             let mut flags = 0;
-            // SAFETY: Two 16-byte-aligned float planes match the verified ASBD;
-            // both have space for frames <= MAX_RENDER_FRAMES. Pointers and
-            // timestamp live throughout this synchronous call, with no aliasing.
-            let result = check("AudioUnitRender", unsafe {
-                AudioUnitRender(
-                    self.unit.expect("live synth").as_ptr(),
-                    &mut flags,
-                    &timestamp,
-                    0,
-                    frames as u32,
-                    &mut buffers,
-                )
-            });
+            let result = {
+                let _native = SYNTH_NATIVE.lock().unwrap_or_else(|e| e.into_inner());
+                // SAFETY: Two 16-byte-aligned float planes match the verified ASBD;
+                // both have space for frames <= MAX_RENDER_FRAMES. Pointers and
+                // timestamp live throughout this synchronous call, with no aliasing.
+                check("AudioUnitRender", unsafe {
+                    AudioUnitRender(
+                        self.unit.expect("live synth").as_ptr(),
+                        &mut flags,
+                        &timestamp,
+                        0,
+                        frames as u32,
+                        &mut buffers,
+                    )
+                })
+            };
             if let Err(error) = result {
                 self.failed = true;
                 return Err(error);
@@ -526,7 +532,7 @@ mod macos {
         }
 
         pub(super) fn close(&mut self) -> Result<(), SynthError> {
-            let _lifecycle = SYNTH_LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
+            let _native = SYNTH_NATIVE.lock().unwrap_or_else(|e| e.into_inner());
             let Some(unit) = self.unit.take() else {
                 return Ok(());
             };
@@ -708,6 +714,54 @@ mod tests {
                         let mut samples = vec![0.; 256 * CHANNELS];
                         synth.render(&mut samples).unwrap();
                         assert!(samples.iter().all(|sample| sample.is_finite()));
+                        if iteration % 2 == 0 {
+                            synth.close().unwrap();
+                        } else {
+                            drop(synth);
+                        }
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "opt-in: concurrent OS synth instrument loading, renders only to memory"]
+    fn concurrent_offline_instrument_loading() {
+        use std::sync::{Arc, Barrier};
+        let start = Arc::new(Barrier::new(4));
+        let workers: Vec<_> = (0..4)
+            .map(|worker| {
+                let start = Arc::clone(&start);
+                std::thread::spawn(move || {
+                    // Synchronize only startup; failures cannot strand peers.
+                    start.wait();
+                    for iteration in 0..8 {
+                        let rate = [44_100, 48_000][(worker + iteration) % 2];
+                        let mut synth = MidiSynth::create(rate).unwrap();
+                        synth.sysex(&[0xf0, 0x7e, 0x7f, 9, 1, 0xf7]).unwrap();
+                        let mut samples = [0.; 256 * CHANNELS];
+                        let mut nonzero = false;
+                        // Each unit visits every GM program in a different
+                        // order/range: a single piano note misses lazy bank reads.
+                        for step in 0..128 {
+                            let program = ((step * 17 + worker * 13 + iteration * 7) % 128) as u8;
+                            let note = (36 + (step * 7 + worker * 11) % 60) as u8;
+                            synth.midi_event(0xb0, 0, 0).unwrap();
+                            synth.midi_event(0xb0, 32, 0).unwrap();
+                            synth.midi_event(0xc0, program, 0).unwrap();
+                            synth.midi_event(0x90, note, 100).unwrap();
+                            synth.render(&mut samples).unwrap();
+                            assert!(samples.iter().all(|sample| sample.is_finite()));
+                            nonzero |= samples.iter().any(|sample| sample.abs() > 0.00001);
+                            synth.midi_event(0x80, note, 0).unwrap();
+                            synth.midi_event(0xb0, 120, 0).unwrap();
+                        }
+                        assert!(nonzero, "instrument sweep was entirely silent");
                         if iteration % 2 == 0 {
                             synth.close().unwrap();
                         } else {
