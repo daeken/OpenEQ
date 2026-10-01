@@ -11,7 +11,9 @@ that a zone looks, moves or sounds right.
    triggers, then verify thin/deflected liquid crossings. Registered
    binary boxes can extend below floors or differ from visible water surfaces;
    Crescent now has an original-floor movement fixture, while Anguish's authored
-   basin/box relationship still needs a playable-route check.
+   basin/box relationship now has a verified dry entrance-to-central-floor
+   route at 10/30/120 FPS. Actual entry into the registered water remains open;
+   the dry traversal does not justify shifting the authored volume.
    Straight-motion eligibility now checks every accepted collision substep;
    a stair excursion cannot regain eligibility merely by returning to the
    expected endpoint. Isolated ascending single-plane support now has a narrow
@@ -23,7 +25,9 @@ that a zone looks, moves or sounds right.
 2. Complete WLD placed-actor behavior: first-pose geometry now resolves supported
    skeletons, with a native-time sampler for verified short packed tracks.
    Source-bound runtime playback now covers supported actors whose collision
-   ancestry stays static, including the verified five-frame extension. Static
+   ancestry stays static, including the verified five-frame rotation and
+   pure-translation extensions. ELECTMONU lightning now moves while its 200
+   physical triangles remain fixed; see `WLD_OBJECT_TRANSLATION.md`. Static
    ordinary meshes of particle-linked actors are now restored with explicit unsupported emitter metadata. Moving collision,
    longer clips, four animated particle-linked definitions and actual particle
    playback remain unfinished. Complete native host-frame particle admission
@@ -1092,3 +1096,21 @@ no-default, formatting and diff checks. See `DAYTIME_2026-10-01.md` for logs,
 limits and the active continuation. Frozen native cooldown and proposed timed
 liquid-contact work are in `CLASSIC_AMBIENT_COOLDOWNS.md` and
 `THIN_LIQUID_CONTACT_TRACE_PLAN.md`; those notes alone enable no behavior.
+
+
+## October 1 daytime world checkpoint — 1,214 tests
+
+Authored ambient and sun/moon RGB are integrated, as are classic ambient
+constructor gains/delays and the macOS shared-synth-cache fix. Five-frame
+ELECTMONU lightning now translates while its200 physical triangles remain
+fixed; original/source/native and isolated GPU checks cover the change.
+An original Anguish entrance-to-central-floor route remains dry at10/30/120FPS,
+with its finite water metadata retained below. Actual entry remains unverified.
+
+The combined workspace passes1,214 tests with zero failures/ignored over118
+suites, plus strict lint, builds, no-default, formatting and diff checks.
+An unrelated macOS closed-UDP fixture race was corrected without changing
+production network behavior; the failed attempt and successful rerun are both
+recorded in `DAYTIME_2026-10-01.md`. The daytime heartbeat remains active through
+18:30UTC. The same world/audio priority order applies; this is a safe intermediate
+checkpoint, not a claim of completed original-client parity.
