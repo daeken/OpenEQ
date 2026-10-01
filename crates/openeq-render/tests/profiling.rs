@@ -27,6 +27,16 @@ fn complete(renderer: &mut Renderer) -> openeq_render::profiling::GpuProfileStat
 }
 
 fn plane(renderer: &Renderer, y: f32, transparent: bool, additive: bool) -> GpuScene {
+    surface(renderer, y, transparent, additive, false)
+}
+
+fn surface(
+    renderer: &Renderer,
+    y: f32,
+    transparent: bool,
+    additive: bool,
+    waterfall: bool,
+) -> GpuScene {
     let scene = Scene::from_geometry(
         "GPU profiling fixture".into(),
         vec![Material {
@@ -40,7 +50,7 @@ fn plane(renderer: &Renderer, y: f32, transparent: bool, additive: bool) -> GpuS
             additive,
             emissive: true,
             clamp_uv: false,
-            waterfall: None,
+            waterfall: waterfall.then_some([0.; 4]),
             uv_encoding: Default::default(),
         }],
         vec![Geometry {
@@ -64,6 +74,101 @@ fn plane(renderer: &Renderer, y: f32, transparent: bool, additive: bool) -> GpuS
         }],
     );
     GpuScene::build(renderer.device(), renderer.queue(), &scene).unwrap()
+}
+
+#[test]
+fn empty_forward_draws_skip_raster_and_resolve_timings_in_zone_and_actor_scenes() {
+    let mut renderer = Renderer::new_headless(64, 64).expect("GPU required");
+    renderer.set_environment(
+        openeq_render::environment::EnvironmentSettings {
+            sky_enabled: false,
+            fog_enabled: false,
+            fog_color: [0.2, 0.4, 0.6],
+            ..Default::default()
+        },
+        None,
+    );
+    let source = Scene::from_geometry("empty".into(), vec![], vec![], vec![]);
+    let empty = GpuScene::build(renderer.device(), renderer.queue(), &source).unwrap();
+    let camera = Camera {
+        pitch: 0.,
+        ..Default::default()
+    };
+    renderer.set_scene(&empty);
+    renderer.render_at(&empty, &camera, std::time::Duration::ZERO);
+    let reference = renderer.read_rgba().unwrap().2;
+    if !renderer.enable_profiling(true) {
+        return;
+    }
+    let mut failures = Vec::new();
+    for family in 0..3 {
+        for actor_scene in [false, true] {
+            for zero_indices in [true, false] {
+                let gpu = surface(&renderer, 2., family == 0, family == 1, family == 2);
+                let mut actor = renderer.prepare_actor(gpu);
+                let render = |r: &mut Renderer, actor: &openeq_render::GpuActor| {
+                    let world = if actor_scene { &empty } else { &actor.scene };
+                    r.set_scene(world);
+                    if actor_scene {
+                        r.render_with_actors(world, &camera, &[actor]);
+                    } else {
+                        r.render_at(world, &camera, std::time::Duration::ZERO);
+                    }
+                    r.read_rgba().unwrap().2
+                };
+                renderer.enable_profiling(false);
+                assert!(renderer.enable_profiling(true));
+                let visible = render(&mut renderer, &actor);
+                assert_ne!(visible, reference, "family {family} positive draw control");
+                let live_stats = complete(&mut renderer);
+                assert_eq!(live_stats.failed, 0);
+                let live = live_stats.latest.unwrap();
+                let slots: &[usize] = match family {
+                    0 => &[4, 5],
+                    1 => &[7],
+                    _ => &[6],
+                };
+                assert!(slots.iter().all(|&slot| live.raw_pass_ms[slot] > 0.));
+                if zero_indices {
+                    actor.scene.draws[0].index_count = 0;
+                } else {
+                    actor.scene.draws[0].instance_count = 0;
+                }
+                renderer.enable_profiling(false);
+                assert!(renderer.enable_profiling(true));
+                assert_eq!(
+                    render(&mut renderer, &actor),
+                    reference,
+                    "stale color in family {family}"
+                );
+                let stats = complete(&mut renderer);
+                let absent = stats.latest.is_some_and(|t| {
+                    t.raw_pass_ms[4..8].iter().all(|&v| v == 0.)
+                        && t.transparency_ms == 0.
+                        && t.additive_ms == 0.
+                        && t.waterfall_ms == 0.
+                });
+                eprintln!(
+                    "empty-forward family={family} actor={actor_scene} zero_indices={zero_indices} failed={} completed={} absent={absent}",
+                    stats.failed, stats.completed
+                );
+                if stats.failed != 0 || stats.completed != 1 || !absent {
+                    failures.push((
+                        family,
+                        actor_scene,
+                        zero_indices,
+                        stats.failed,
+                        stats.completed,
+                        absent,
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "invalid empty forward timings: {failures:?}"
+    );
 }
 
 #[test]

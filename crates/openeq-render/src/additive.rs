@@ -88,12 +88,7 @@ impl Additive {
             zone,
             actors,
         } = inputs;
-        let visible = |scene: &GpuScene| {
-            scene
-                .draws
-                .iter()
-                .any(|draw| draw.additive && draw.instance_count > 0)
-        };
+        let visible = |scene: &GpuScene| additive_draws(scene).next().is_some();
         if !visible(zone.0) && !actors.iter().any(|actor| visible(&actor.scene)) {
             return;
         }
@@ -129,11 +124,19 @@ impl Additive {
     }
 }
 
+// Pass admission and submitted draws share the same raster-work boundary.
+fn additive_draws(scene: &GpuScene) -> impl Iterator<Item = &scene::DrawCall> {
+    scene
+        .draws
+        .iter()
+        .filter(|draw| draw.additive && draw.index_count > 0 && draw.instance_count > 0)
+}
+
 fn draw_additive(pass: &mut wgpu::RenderPass<'_>, scene: &GpuScene) {
     pass.set_vertex_buffer(0, scene.vertices.slice(..));
     pass.set_vertex_buffer(1, scene.instances.slice(..));
     pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint32);
-    for draw in scene.draws.iter().filter(|draw| draw.additive) {
+    for draw in additive_draws(scene) {
         pass.draw_indexed(
             draw.index_start..draw.index_start + draw.index_count,
             draw.base_vertex,
