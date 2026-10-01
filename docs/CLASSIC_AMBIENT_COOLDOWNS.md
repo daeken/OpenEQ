@@ -183,6 +183,11 @@ continuous playback and initial timing outside range. They do not cover every
 Root independently replayed the native cooldown witness to separate output
 paths; the result JSON matches the frozen hash above.
 
+Further controlled execution of attempted-play clocks, signed tick wrap,
+enable/range changes and continuous-instance retention is recorded in
+[the clock lifecycle follow-up](CLASSIC_AMBIENT_CLOCK_LIFECYCLE.md). Those
+research results do not change the production scheduler below.
+
 ## Bounded constructor integration
 
 `classic_ambient_delays` now implements the kind-0 constructor decision and
