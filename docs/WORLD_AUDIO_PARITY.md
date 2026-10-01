@@ -703,13 +703,13 @@ Native lighting selection and packing now retain the established exact-family
 input without applying guessed shading. Independent source/color checks recover
 10,883 vertices whose distinct lighting previously merged; three original LIT
 count mismatches correctly use the native whole-stream default. Malformed
-auxiliary data remains an explicit issue while geometry survives. All329assets
+auxiliary data remains an explicit issue while geometry survives. All 329 assets
 tests and strict workspace lint pass. Restored-zone GPU before/after packing
 captures are pixel-identical. See `EQG_TER_LIGHTING_SELECTION.md`.
 
 The particle diagnostic now follows the executed native shared triangle order.
 Original Microsoft D3DX level-zero creation and assembly copies preserve
 CSMOKE/GENG00 BC1 rows and bytes under the tested full-quality supported-format
-context. All8diagnostic tests and independent native reproducers pass. Driver
+context. All 8 diagnostic tests and independent native reproducers pass. Driver
 mips, inherited whole-frame state and live integration remain separate; see
 `WLD_PARTICLE_TEXTURE_LOAD.md`.

@@ -414,7 +414,7 @@ cohesive commits and pushing to `master`.
 ## 05:10 source-lighting and native particle-copy checkpoint
 
 - Exact Opaque_MaxCB1 TER lighting now has source provenance and representative
-  original indices through packing. All329assets tests pass, including original
+  original indices through packing. All 329 assets tests pass, including original
   every-corner geometry/color checks. Native default/count/no-retry policies
   match the nine-case original-code witness; malformed metadata instead remains
   an explicit audit issue while valid geometry loads. An independent review
@@ -427,11 +427,11 @@ cohesive commits and pushing to `master`.
   index and level-zero texture-copy gaps. Executed Microsoft D3DX preserves all
   original CSMOKE/GENG00 BC1 bytes/row order on the tested full-quality path;
   source mip chains are distinct from still-unverified assembled driver mips.
-  Root reproduced all three output hashes and reran all8diagnostic tests.
+  Root reproduced all three output hashes and reran all 8 diagnostic tests.
   See WLD_PARTICLE_TEXTURE_LOAD.md; live scene effects remain separate.
 - npc_assets owns a bounded five-frame constant-scale/translation extension:
-  native6→5rotation-key reduction differs by branch, so dropping the first
-  repeated frame is wrong. Evidence covers18definition occurrences/108tracks
-  and6009metadata placements. cursor_review independently reviews native and
+  native 6→5 rotation-key reduction differs by branch, so dropping the first
+  repeated frame is wrong. Evidence covers 18 definition occurrences / 108 tracks
+  and 6,009 metadata placements. cursor_review independently reviews native and
   implementation; root owns original Dreadlands GPU loop/collision/bounds test.
-  This pending extension is outside the329assets/1072workspace checkpoints.
+  This pending extension is outside the 329-assets / 1,072-workspace checkpoints.
