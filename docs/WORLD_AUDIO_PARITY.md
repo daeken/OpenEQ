@@ -23,6 +23,10 @@ that a zone looks, moves or sounds right.
 3. Follow authored nonfinite mesh attributes through native vertex upload and
    material/channel selection. Preserve the 21 original outliers; do not invent
    normals/UVs or remove geometry without recovering native behavior.
+   Causeway's ordinary TER RegionCB1 path now has conditional native packing
+   evidence: NaN and huge finite UVs become SHORT2(0,0), with source words kept
+   intact. No runtime conversion has been introduced. See
+   `EQG_NONFINITE_TER_UPLOAD.md`.
 4. Verify shader channels, fog/sky/light metadata and rendering across formats
    with fixed-camera GPU checks and controlled traversal. Material table
    identity and startup scene bounds now have dedicated regression coverage.
@@ -39,6 +43,8 @@ that a zone looks, moves or sounds right.
    the supported full-grid topology.
 5. Finish native XMI loop/SysEx behavior, original-compatible timbres and audio
    event bindings, then compare timing/attenuation/fades against native output.
+   Native loop cursor/slot behavior is now recovered and independently replayed
+   in `XMI_NATIVE_LOOPS.md`; a bounded production interpreter is still pending.
    Automated original-audio checks remain offline or digital silence.
 
 The October 1 checkpoint below records the completed native-volume and placed
