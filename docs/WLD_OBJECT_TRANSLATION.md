@@ -198,8 +198,9 @@ separate output paths rather than overwrite frozen evidence.
 The ancestry audit of the historical 173 unsupported animated actors found
 26 candidates with stationary collision or no collision: the previously
 studied 18 five-frame rotation definitions, these five translating monuments,
-and three longer translation actors (`VSCRATE103`, `TEMPLELIFE`, `KRLAMP101`).
-The latter remain unsupported.
+and three longer clips (`VSCRATE103`, `TEMPLELIFE`, `KRLAMP101`). Only the crate
+changes translation; the other two change rotation. The later bounded lamp
+extension is documented in [WLD_LAMP_ANIMATION.md](WLD_LAMP_ANIMATION.md).
 
 The 14-frame `TREEPINE103`/`WARDPINE101` family initially looked promising, but
 each has 32 collidable animated branch triangles as well as ten static trunk
