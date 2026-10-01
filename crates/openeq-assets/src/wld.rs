@@ -459,7 +459,9 @@ fn read_fragment(
                     let shift_x = reader.i16()? as f32;
                     let shift_y = reader.i16()? as f32;
                     let shift_z = reader.i16()? as f32;
-                    let scale = reader.i16()? as f32 / 256.0;
+                    // Native packed scale is zero-extended; the preceding
+                    // rotation/translation words remain signed.
+                    let scale = reader.u16()? as f32 / 256.0;
                     // The last word is a scale, not a translation divisor.
                     // Rotation is normalized by the animation sampler.
                     Frame {

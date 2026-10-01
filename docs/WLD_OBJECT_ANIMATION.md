@@ -64,10 +64,12 @@ Each decoded frame is 32 bytes: quaternion XYZ at offsets 0, 4 and 8, W at
 | Quaternion W | `0x10135734` | **`-1 / 16384`** |
 | Translation and scale | `0x1013572c` | `1 / 256` |
 
-Scale is read as an unsigned 16-bit word at `0x1001b02a`. The current Rust
-parser reads that packed field as signed; changing it requires a separate
-corpus audit and is not part of this diagnostic milestone. All Citymist tree
-scales are positive within the signed range.
+Scale is read as an unsigned 16-bit word at `0x1001b02a`. The Rust parser now
+matches that unsigned read after an independent native check and full installed
+WLD corpus audit; see [packed scale evidence](WLD_PACKED_SCALE.md). The audit
+found 63 high-bit frames in three copies of one character track and none in
+object archives. All Citymist tree scales remain unchanged within the signed
+range. Quaternion and translation words remain signed.
 
 If loader byte `+0x30` equals 1 and the track has more than 15 frames, the
 interval is halved at `0x1001b04e..0x1001b05a`. The four-frame tree tracks do
