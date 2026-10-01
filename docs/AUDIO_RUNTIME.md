@@ -50,8 +50,10 @@ development headers (Debian/Ubuntu: `libasound2-dev`); `cargo build -p openeq
   radius. Music regions
   retain full volume within range, and a small boundary margin avoids chatter.
   These curves are client tuning, not measured native attenuation.
-- Classic nonzero effect levels use the documented hundredths-of-decibel
-  interpretation. Zero uses unity until EAL defaults are implemented. Authored
+- Classic kind-0 positive levels use hundredths-of-decibel attenuation through
+  10,000; larger values are silent. Ordinary nonpositive values use the native
+  20% ambient default, with the signed-minimum edge silent. See
+  [native base-level evidence](CLASSIC_AMBIENT_LEVELS.md). Authored
   EMT gains are capped at unity separately from user volume, and the summed
   output has a limiter. This avoids unbounded boosts in original EMT files.
 - One current music track is selected. Audible current music wins overlapping
@@ -122,13 +124,13 @@ cargo check -p openeq --no-default-features --all-targets
 
 Speaker listening and native-client acoustic comparison remain manual checks.
 The parser covers79 installed XMI files/389 sequences. Native-based scheduling
-supports384; four sequences use unsupported loop controls and one uses SysEx.
-Those are rejected before producing music. Tests cover native32-note duration
+admits all389 after native loop and complete-packet SysEx integration.
+See [loop evidence](XMI_NATIVE_LOOPS.md) and [SysEx evidence](XMI_NATIVE_SYSEX.md). Tests cover native32-note duration
 slots, same-tick ordering, overlapping notes, zero-duration notes, cancellation,
 and silent original GFay synthesis. The OS default bank enables music, but does
 not establish original Miles timbre or acoustic parity.
 
-Other follow-ups: native loop/SysEx semantics, cross-platform synthesis and
+Other follow-ups: remaining XMI branches/host controls, cross-platform synthesis and
 original-compatible banks, original animation/spell/combat sound events, stereo panning, reverb/occlusion,
 EAL default levels, native opaque emitter flags, exact fade/priority rules,
 device hotplug recovery, and graphical options controls.

@@ -56,6 +56,20 @@ fn supported_file(reference: &AudioReference) -> Option<Track> {
 fn millis(value: i32) -> u64 {
     u64::try_from(value).unwrap_or(0).min(86_400_000)
 }
+/// Native CreateOldEmitter kind-0 base level, before master gain. Positive
+/// values attenuate in hundredths of a decibel; nonpositive values select the
+/// 20% ambient default. The original wrapping NEG sends i32::MIN to silence.
+/// See docs/CLASSIC_AMBIENT_LEVELS.md; this does not select EAL overrides.
+fn classic_ambient_gain(level: i32) -> f32 {
+    if level == i32::MIN || level > 10_000 {
+        0.
+    } else if level <= 0 {
+        0.2
+    } else {
+        10f64.powf(-f64::from(level) / 2000.) as f32
+    }
+}
+
 impl Emitter {
     fn from_asset(id: usize, asset: &AudioEmitter, side: usize) -> Option<Self> {
         Some(match asset {
@@ -94,9 +108,7 @@ impl Emitter {
                     gains: [if channel == Channel::Music {
                         1.
                     } else {
-                        10f32.powf(
-                            -((source.raw_words[15 + side] as i32 as f64).abs() as f32) / 2000.,
-                        )
+                        classic_ambient_gain(source.raw_words[15 + side] as i32)
                     }; 2],
                     continuous: delays.map(|delay| channel == Channel::Music || delay == [0, 0]),
                     delays,
@@ -662,3 +674,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "schedule_gain_tests.rs"]
+mod gain_tests;

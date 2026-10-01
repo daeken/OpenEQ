@@ -147,7 +147,14 @@ installed `soundassets.txt` uses `id^filename^`, contains sparse IDs through
 
 ### Levels and scheduling
 
-LanternExtractor interprets nonzero legacy effect levels as negative absolute
+The following third-party level interpretation was superseded for supported
+kind-0 base gain by original-instruction execution on October 1; see
+[CLASSIC_AMBIENT_LEVELS.md](CLASSIC_AMBIENT_LEVELS.md). Ordinary nonpositive
+levels use 0.2, positive values attenuate through 10,000, and larger values
+plus the signed-minimum edge are silent. No native EAL lookup participates in
+this legacy emitter-construction path. Downstream EAL behavior remains separate.
+
+Historical source interpretation: LanternExtractor interprets nonzero legacy effect levels as negative absolute
 DirectSound/EAX hundredths of a decibel, with linear gain
 `10 ^ (-abs(raw) / 2000)`. A zero level asks for the sound's default level from
 `defaults.eal`, falling back to unity if unavailable. This is a credible legacy
@@ -157,7 +164,8 @@ The EQ Sage expression `3000 - raw` is not a normalized gain and should not be
 copied. `defaults.eal` is present (22,180 bytes, `RIFF ... eal `); Lantern's
 reader gets `SourceModels[].SourceAttributes.EaxAttributes.DirectPathLevel`
 from it. EAL parsing and exact legacy level parity can follow the first slice.
-Preserve raw values and make the unity fallback observable.
+Preserve raw values; the earlier proposed unity fallback is no longer used
+for supported classic ambience.
 
 For supported effect kinds, a sensible initial schedule is continuous when
 cooldown and random delay are both nonpositive; otherwise wait the nonnegative
