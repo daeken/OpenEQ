@@ -179,3 +179,32 @@ Both failures are permanent regressions, and the movement tests require exact
 saved-move fallback. A second independent inspection found no issue in the
 stronger gate. This does not change the public segment API or claim that its
 rounded fractions retain all point-sized gaps for other callers.
+
+## October 1 daytime wall-prefix follow-up
+
+Three new movement regressions preserve the current whole-tick fallback for
+unproven wall crossings, checking four static/dynamic geometry arrangements.
+They verify an actual wet prefix outside the endpoint chord, nonmonotone
+wall-tangent rounding, and unchanged complete dry/submerged solves. Production
+movement behavior is unchanged; these tests record remaining failure modes.
+
+Even one axis-aligned wall, flat floor and one height-invariant water box do
+not make the collision result monotone in requested time. Fractions with
+adjacent f32 words 1053270558 and 1053270559 yield decreasing Y, tangent to the
+X wall. One ordinary box then has wet → dry → wet membership at words
+1053270558, 1053270559 and 1053270565. Excluding the normal-direction skin jump
+alone does not remove this reversal.
+
+The frozen probe checks 20,137 adjacent fractions across four windows. First
+wet sample 1053270553 is skipped by a bitwise binary search whose known-wet
+upper bracket is 0.4, which returns 1053270565. Upper bracket 0.5 returns the
+earlier sample. Thus a successful final medium check cannot certify earliest
+entry. A sound extension needs conservative bounds on actual prefix arithmetic
+or a deliberately revised solver, not reuse of the monotone ramp inversion.
+
+Focused tests and independent root replay pass. Reproducer
+`/tmp/openeq-wall-prefix-review.py` verifies frozen source identities and exact
+probe stdout SHA-256 `059a3fc7accba718db6df3b985e9d1869d1875f69789a09e84f9f558620f3025`.
+Probe Rust SHA-256 is
+`673e93bee751c65c11e6659af2a8fb5c64ead2d4c2dc6c9f6910c7b902216b11`.
+Compiler diagnostics in a redirected combined log are outside that stdout hash.

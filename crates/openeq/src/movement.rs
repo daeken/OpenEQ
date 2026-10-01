@@ -1646,3 +1646,7 @@ mod tests {
 #[cfg(test)]
 #[path = "movement_planar_tests.rs"]
 mod planar_tests;
+
+#[cfg(test)]
+#[path = "movement_wall_tests.rs"]
+mod wall_tests;
