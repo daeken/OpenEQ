@@ -571,3 +571,11 @@ the independently reconciled candidate. Its SHA-256 is
 `5953f14903676433f9fbf85731a15582cd053060232a89e02dd0a006afd25d03`;
 reports are `/tmp/openeq-particle-zone-survey-final/`. No original assets were
 committed, live character/server state was untouched, and audio stayed silent.
+
+
+The subsequent WLD source-address repair separates file byte offsets from the
+existing UTF-8 display representation. Six focused regressions pass; independent
+review and strict assets lint pass. The raw-byte oracle matches all 6,337,095
+fragment and 154,518 skeleton names in 1,804 parsed original WLDs, with no
+original name change. See `WLD_STRING_OFFSETS.md`; this is a parser correctness
+fix, not a claimed visible original-asset repair.

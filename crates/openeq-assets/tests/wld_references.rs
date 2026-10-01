@@ -118,6 +118,76 @@ fn minimum_signed_fragment_and_skeleton_names_keep_empty_fallback_without_panic(
 }
 
 #[test]
+fn source_byte_offsets_survive_expansion_before_and_inside_names() {
+    let strings = b"\0\xe9\0TEX\0\xc5_\xff_TEX\0TEX\0";
+    let wld = fixture(
+        strings,
+        &[
+            (-3, 0x99, &[]),
+            (-7, 0x98, &[]),
+            (-15, 0x97, &[]),
+            (-7, 0x10, &[0, 1, 0, (-9i32) as u32, 0, 0, 0, 0]),
+        ],
+    );
+    assert_eq!(wld.chunks()[0].name, "TEX");
+    assert_eq!(wld.chunks()[1].name, "Å_ÿ_TEX");
+    assert_eq!(wld.chunks()[2].name, "TEX");
+    assert_eq!(wld.resolve_str(Ref(-1)), Some("é"));
+    assert_eq!(wld.resolve_str(Ref(-7)), Some("Å_ÿ_TEX"));
+    assert_eq!(wld.resolve_str(Ref(-8)), Some("_ÿ_TEX"));
+    assert_eq!(wld.resolve_str(Ref(-9)), Some("ÿ_TEX"));
+    let Fragment::Skeleton(skeleton) = &wld.chunks()[3].fragment else {
+        panic!("skeleton")
+    };
+    assert_eq!(skeleton.tracks[0].name, "ÿ_TEX");
+    // Full names and in-name substrings all retain duplicate-name semantics.
+    for offset in [3, 11, 15] {
+        let reference = Ref(-offset);
+        assert_eq!(wld.reference_name(reference), Some("TEX"));
+        assert!(std::ptr::eq(
+            wld.resolve(reference).unwrap(),
+            &wld.chunks()[2]
+        ));
+    }
+    for offset in [2, 6, 14, 18, 19, 20, 21, 22, 1000] {
+        assert_unresolved(&wld, Ref(-offset));
+    }
+}
+
+#[test]
+fn every_source_byte_uses_its_own_address_without_changing_display_conversion() {
+    // Exercise every possible decoded byte, including the UTF-8 continuation
+    // byte range. Expected text deliberately preserves the existing byte-to-
+    // Unicode policy; native locale/code-page interpretation is separate.
+    let mut strings: Vec<_> = (0..=255).collect();
+    strings.extend_from_slice(b"\0AFTER\0");
+    let fragments: Vec<_> = (1..strings.len())
+        .map(|offset| (-(offset as i32), 0x99, &[][..]))
+        .collect();
+    let wld = fixture(&strings, &fragments);
+    for offset in 1..strings.len() {
+        let expected: String = strings[offset..]
+            .iter()
+            .copied()
+            .take_while(|byte| *byte != 0)
+            .map(char::from)
+            .collect();
+        assert_eq!(wld.chunks()[offset - 1].name, expected);
+        let reference = Ref(-(offset as i32));
+        if expected.is_empty() {
+            assert_unresolved(&wld, reference);
+        } else {
+            assert_eq!(wld.resolve_str(reference), Some(expected.as_str()));
+            assert_eq!(wld.reference_name(reference), Some(expected.as_str()));
+            assert_eq!(wld.resolve(reference).unwrap().name, expected);
+        }
+    }
+    for offset in strings.len()..=strings.len() + 128 {
+        assert_unresolved(&wld, Ref(-(offset as i32)));
+    }
+}
+
+#[test]
 #[ignore = "requires original Plane of Knowledge and Citymist object archives"]
 fn original_named_references_still_resolve_exact_actor_and_particle_definitions() {
     let base = openeq_assets::loader::default_client_dir().expect("original client assets");
@@ -156,9 +226,9 @@ fn original_named_references_still_resolve_exact_actor_and_particle_definitions(
             assert_eq!(wld.reference_name(reference), Some(name));
         }
         assert_unresolved(&wld, Ref(i32::MIN));
-        // The existing decoder maps each source byte to a Unicode character;
-        // its UTF-8 String can use two bytes per source byte. This boundary is
-        // outside either representation without changing that decoding policy.
-        assert_unresolved(&wld, Ref(-(2 * strings.len() as i32)));
+        // Source offsets cannot address the expanded display string's tail.
+        for offset in strings.len()..=strings.len() * 2 {
+            assert_unresolved(&wld, Ref(-(offset as i32)));
+        }
     }
 }

@@ -1,8 +1,8 @@
 # WLD source bytes and UTF-8 offsets
 
 Separate follow-up identified during signed-reference validation, 2026-10-01.
-**No string-table decoding change is included in the resolver repair.** The
-current decoder XORs each source byte and casts it to a Rust `char`, collecting
+**The initial signed-reference repair left decoding unchanged.** The
+pre-repair decoder XORs each source byte and casts it to a Rust `char`, collecting
 the result into a UTF-8 `String`. A decoded byte at least `0x80` occupies two
 bytes in that String, while a WLD string reference still counts source bytes.
 Applying a later source offset directly to the expanded String can select the
@@ -89,14 +89,42 @@ library confirmed those outputs. Its source is
 `/tmp/openeq-wld-string-expansion-review.rs`; this is a synthetic witness, not an
 original asset or an assumption about which code page a native high byte uses.
 
-A later change should keep source-byte addressing separate from display-string
+The repair below keeps source-byte addressing separate from display-string
 encoding: for example, retain the XOR-decoded byte table, select the referenced
 byte range first, then convert that range to a string. Alternatively, retain an
 explicit source-byte-to-String-offset mapping. Do not merely relax UTF-8
 boundary checks or reinterpret source offsets as character indices.
 
-Test a high byte before an ASCII name, a high byte within a name, multiple
+Required coverage: a high byte before an ASCII name, a high byte within a name, multiple
 high bytes, valid nonempty substring references, empty/invalid offsets and
 same-name duplicates. Establish the desired high-byte text conversion policy
 separately while preserving ASCII originals. Re-run the original-name audit
 before attributing any visible change to this mapping fix.
+
+## Source-address mapping repair
+
+The parser now retains a sparse index of source offsets whose decoded bytes
+expand under the existing byte-to-U+0000..U+00FF conversion. It translates each
+source offset to its UTF-8 boundary before selecting a NUL-terminated slice.
+Fragment headers, skeleton names and public negative-reference resolution all
+share that translation. The source table length bounds lookup independently of
+the display String length, preventing expanded padding from becoming a valid
+out-of-file reference. ASCII tables need no offset entries; typical original
+tables need only their one or two trailing high-byte positions.
+
+This preserves the prior display conversion, duplicate-name policy, substring
+references and positive fragment identities. It does not choose a new native
+code page. Two portable regressions cover the counterexample, multiple high
+bytes, substrings/duplicates, skeleton names and every possible decoded byte;
+all six reference tests pass, including the original PoK/Citymist fixture.
+
+A post-repair raw-byte audit parsed **1,804 WLD members** from 1,314 S3D
+archives and compared **6,337,095 fragment names and 154,518 skeleton-track
+names** against independently sliced decoded source bytes. All matched; every
+compared name also matched the old decoder. There were 930 parsed tables with
+high bytes. The same three known PFS count mismatches (eye_chr,
+greatdivide_chr, velketor_chr) prevented those archives from being opened;
+this explains the difference from the permissive 1,806-member raw survey above.
+Out-of-source offsets remain unresolved even when below the expanded UTF-8
+length. Evidence: `/tmp/openeq-source-string-survey.rs` and `.log`, plus
+`/tmp/openeq-string-offset-tests.log`. No original visible repair is claimed.

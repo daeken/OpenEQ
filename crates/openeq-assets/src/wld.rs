@@ -273,7 +273,7 @@ pub struct Wld {
     pub new_format: bool,
     chunks: Vec<Chunk>,
     name_index: HashMap<String, usize>,
-    strings: String,
+    strings: StringTable,
 }
 
 impl Wld {
@@ -302,11 +302,7 @@ impl Wld {
         reader.skip(4)?;
 
         let encoded = reader.take(string_size)?;
-        let strings: String = encoded
-            .iter()
-            .enumerate()
-            .map(|(i, b)| (b ^ STRING_HASH_KEY[i % 8]) as char)
-            .collect();
+        let strings = StringTable::decode(encoded);
         reader.align4()?;
 
         let mut chunks = Vec::with_capacity(fragment_count);
@@ -376,11 +372,7 @@ impl Wld {
         let offset = reference.string_offset()?;
         // Invalid or empty name offsets must not alias an unnamed fragment.
         // Nonempty substrings remain valid names, as in the existing reader.
-        self.strings
-            .get(offset..)?
-            .split('\0')
-            .next()
-            .filter(|name| !name.is_empty())
+        self.strings.at(offset).filter(|name| !name.is_empty())
     }
 
     /// Returns the fragment name for a reference, regardless of its sign.
@@ -432,7 +424,7 @@ fn read_fragment(
     reader: &mut Reader<'_>,
     type_code: u32,
     new_format: bool,
-    strings: &str,
+    strings: &StringTable,
 ) -> Result<Fragment> {
     Ok(match type_code {
         0x03 => Fragment::TextureList(TextureList {
@@ -707,7 +699,7 @@ fn read_texture_list(reader: &mut Reader<'_>) -> Result<Vec<String>> {
     Ok(filenames)
 }
 
-fn read_skeleton(reader: &mut Reader<'_>, strings: &str) -> Result<Skeleton> {
+fn read_skeleton(reader: &mut Reader<'_>, strings: &StringTable) -> Result<Skeleton> {
     let flags = reader.u32()?;
     let track_count = reader.bounded_count()?;
     reader.reference()?; // Legacy polygon-animation reference; unused.
@@ -847,16 +839,53 @@ fn read_mesh(reader: &mut Reader<'_>, new_format: bool) -> Result<Mesh> {
     })
 }
 
-fn string_at(strings: &str, offset: usize) -> &str {
-    strings
-        .get(offset..)
-        .unwrap_or("")
-        .split('\0')
-        .next()
-        .unwrap_or("")
+/// File references count XOR-decoded source bytes. The existing display
+/// conversion maps each byte to U+0000..U+00FF, which can expand in UTF-8.
+/// Keep those two domains separate, including references inside a name.
+#[derive(Debug, Clone)]
+struct StringTable {
+    text: String,
+    source_len: usize,
+    // Each high byte becomes exactly two UTF-8 bytes under the retained
+    // conversion. Sparse offsets avoid duplicating large mostly-ASCII tables.
+    expanded_at: Vec<usize>,
 }
 
-fn strings_at(strings: &str, reference: i32) -> String {
+impl StringTable {
+    fn decode(encoded: &[u8]) -> Self {
+        let mut text = String::with_capacity(encoded.len());
+        let mut expanded_at = Vec::new();
+        for (offset, byte) in encoded.iter().enumerate() {
+            let decoded = byte ^ STRING_HASH_KEY[offset % 8];
+            if !decoded.is_ascii() {
+                expanded_at.push(offset);
+            }
+            text.push(char::from(decoded));
+        }
+        Self {
+            text,
+            source_len: encoded.len(),
+            expanded_at,
+        }
+    }
+
+    fn at(&self, source_offset: usize) -> Option<&str> {
+        if source_offset > self.source_len {
+            return None;
+        }
+        let offset = source_offset
+            + self
+                .expanded_at
+                .partition_point(|offset| *offset < source_offset);
+        self.text.get(offset..)?.split('\0').next()
+    }
+}
+
+fn string_at(strings: &StringTable, offset: usize) -> &str {
+    strings.at(offset).unwrap_or("")
+}
+
+fn strings_at(strings: &StringTable, reference: i32) -> String {
     if reference >= 0 {
         String::new()
     } else {

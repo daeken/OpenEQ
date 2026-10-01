@@ -249,3 +249,16 @@ cohesive commits and pushing to `master`.
   source-awareUVpacking and boundedXMIloop playback on the backlog. Native
   evidence docs are published in1827c11; do not substitute conventional loop
   behavior or a nonfinite-only UV patch for the recovered full conversion.
+
+## 03:40 source-address repair
+
+- WLD string references now translate source byte offsets through the retained
+  byte-to-Unicode display conversion. High bytes before/inside a name no longer
+  shift later references; source length rejects expanded trailing padding.
+- Six reference tests pass, including original PoK/Citymist. An independent
+  raw-byte oracle matched 6,337,095 fragment names and 154,518 skeleton names
+  across 1,804 parsed WLDs, with zero changed original names. This fixes a
+  portable parser counterexample, not an observed original missing texture.
+  See `WLD_STRING_OFFSETS.md`. Independent review and assets strict lint pass.
+- Native TER UV packing, bounded XMI loops and complete-packet SysEx transport
+  remain separate active work; preserve their edits until their own verification.
