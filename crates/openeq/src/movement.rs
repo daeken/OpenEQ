@@ -3,7 +3,7 @@
 //! separate server center offset. Neither offset belongs in the physics state.
 
 use crate::movement_rules::PlayerGravity;
-use openeq_assets::collision::CollisionWorld;
+use openeq_assets::collision::{CollisionWorld, PlayerMovePath};
 use openeq_assets::liquid_regions::{LiquidRegions, LiquidSpan};
 
 const STEP: f64 = 1.0 / 120.0;
@@ -94,7 +94,7 @@ impl MotionWorld<'_> {
         } else {
             0.
         };
-        let moved = self.collision.move_player_with_dynamic(
+        let resolved = self.collision.move_player_with_path(
             self.dynamic,
             feet,
             displacement,
@@ -102,18 +102,10 @@ impl MotionWorld<'_> {
             HEIGHT,
             step_height,
         );
+        let moved = resolved.position;
         let desired_z = feet[2] + displacement[2];
-        let straight = self
-            .liquids
-            .filter(|regions| !regions.is_empty())
-            .and_then(|_| unobstructed_position(feet, displacement))
-            .is_some_and(|expected| {
-                moved == expected
-                    || (grounded
-                        && velocity[2] <= 0.
-                        && moved[2] == feet[2]
-                        && moved[..2] == expected[..2])
-            });
+        let straight = resolved.path == PlayerMovePath::Unchanged
+            || (grounded && velocity[2] <= 0. && resolved.path == PlayerMovePath::FlatSupport);
         ResolvedMove {
             feet: moved,
             velocity_z: if (moved[2] - desired_z).abs() > 0.001 {
@@ -130,7 +122,7 @@ impl MotionWorld<'_> {
 struct ResolvedMove {
     feet: [f32; 3],
     velocity_z: f32,
-    // A slide or stair snap does not expose its actual path through this API.
+    // Verified against every accepted collision substep, not just the endpoint.
     // Only unchanged motion and the existing flat support clamp can be split.
     straight: bool,
 }
@@ -721,6 +713,53 @@ mod tests {
             );
             assert_eq!(actual, expected);
         }
+    }
+
+    #[test]
+    fn matching_endpoints_do_not_authorize_a_liquid_chord_over_a_step() {
+        let collision = world(&[
+            [
+                [-50., -50., 0.],
+                [50., -50., 0.],
+                [50., 50., 0.],
+                [-50., 50., 0.],
+            ],
+            [[3., -20., 1.], [4., -20., 1.], [4., 20., 1.], [3., 20., 1.]],
+            [[3., -20., 0.], [3., 20., 0.], [3., 20., 1.], [3., -20., 1.]],
+            [[4., -20., 0.], [4., 20., 0.], [4., 20., 1.], [4., -20., 1.]],
+        ]);
+        let liquid = water([3.5, 0., 3.], [0.1, 10., 0.1]);
+        let world = MotionWorld {
+            collision: &collision,
+            dynamic: None,
+            liquids: Some(&liquid),
+        };
+        // A deliberately fast request crosses an entire step in one fixed
+        // tick. Its endpoint looks like flat walking; its accepted substeps
+        // rise above the thin water and descend again.
+        let velocity = [960., 0., -GRAVITY * STEP as f32];
+        let moved = world.move_velocity([0.; 3], velocity, STEP as f32, true, MotionMode::Ground);
+        let old_chord = unobstructed_position([0.; 3], velocity.map(|v| v * STEP as f32)).unwrap();
+        assert_eq!(moved.feet[..2], old_chord[..2]);
+        assert_eq!(moved.feet[2], 0.);
+        assert!(
+            !liquid
+                .segment(center([0.; 3]), center(moved.feet))
+                .is_empty()
+        );
+        assert!(
+            !moved.straight,
+            "the collision route rose above this endpoint chord"
+        );
+        let prefix = world.move_velocity(
+            [0.; 3],
+            velocity,
+            3.5 / velocity[0],
+            true,
+            MotionMode::Ground,
+        );
+        assert_eq!(prefix.feet[2], 1.);
+        assert!(liquid.at(center(prefix.feet)).is_none());
     }
 
     #[test]

@@ -23,9 +23,10 @@ consistency regression, not a measurement of the original client's speed.
 `movement.rs` now splits the remaining tick time at wet/dry boundaries for
 straight movement and flat supported walking. It does not replace collision:
 
-- First compute the existing complete collision result. Its endpoint must
-  equal collision's unobstructed substep arithmetic exactly, allowing the
-  existing downward clamp onto the flat floor already supporting the player.
+- First compute the existing complete collision result. Every accepted
+  collision substep must follow its requested position exactly, allowing the
+  existing downward clamp onto the same flat floor already supporting the
+  player. Endpoint agreement alone cannot establish this condition.
 - Query the center segment for the first wet/dry boundary. Adjacent liquid
   kinds share the same movement response and do not create a dry interval.
 - Find a representable point in the next interval with at most 24 metadata
@@ -70,7 +71,7 @@ does not justify disabling its terrain projection.
 
 ## Verification
 
-All **25 movement tests pass**, including the opt-in original Plane of Knowledge
+All **26 movement tests pass**, including the opt-in original Plane of Knowledge
 pool and Greater Faydark/Kelethin lift fixtures. Seven added regressions cover:
 
 - A thin slab crossed between dry endpoints, exact time allocation, and
@@ -96,6 +97,9 @@ found. Temporary probe: `/tmp/openeq-liquid-independent.rs` and `.txt`.
 
 ## Local cost
 
+These measurements cover the initial boundary-splitting implementation and
+predate the substep-classification follow-up below.
+
 A standalone optimized CPU probe compared the previous source and current
 source against the same collision/assets. Each median contains seven batches
 of 10,000 fresh one-tick movements. These are fixture costs on this host, not a
@@ -113,3 +117,41 @@ concentrated at actual transitions. GFay has no supported liquid regions, so its
 empty-region path skips segment queries. Temporary reproduction and timing
 programs are `/tmp/openeq-liquid-review.rs` and
 `/tmp/openeq-movement-timing.rs`; no original asset bytes are checked in.
+
+## October 1: classify the complete accepted substep sequence
+
+A concrete limitation in the earlier eligibility check: a body can climb a
+short platform and descend during one movement request, ending exactly where
+flat motion would have ended. Checking only the final XY/Z incorrectly labels
+that request as straight. The existing prefix checks may still reject a
+particular attempted medium transition, but the complete-path prerequisite was
+not actually established.
+
+The collision solver now returns `PlayerMovePath` alongside its unchanged
+position result. Every accepted substep must either equal its requested
+position, or retain requested XY while staying at the starting Z throughout a
+downward move. Any other response, invalid request or distance cap is marked
+`Deflected`. Movement accepts flat support only with its existing grounded and
+downward context. Collision solving, support selection, slide operations and
+position arithmetic are unchanged. The classification allocates no path list.
+
+The regression places a one-unit-high platform at X `[3,4]` on a flat floor.
+The body starts at `[0,0,0]` and finishes at `[8,0,0]` both with and without the
+platform, but an intermediate request reaches Z=1. Static and dynamic versions
+must report the platform route as deflected. A movement-level fixture puts a
+thin liquid at center Z=3 over the platform: the endpoint chord intersects it,
+but the accepted raised body center is above it. This deliberately fast input
+exercises the guard independently of normal walking speed.
+
+This does **not** enable general ramp/slide/stair liquid splitting. The returned
+classification describes the solver's accepted discrete positions, not native
+physics or a continuous time-parameterized route through contact corrections.
+Deflected moves still retain the original whole-tick result.
+
+Verification: two new collision regressions, the new movement regression and
+all existing movement tests pass (26 total, including originals). The complete
+collision test filter passed 23 tests, with its one original PoK test separately
+run and passed. Eleven original/integration ledge, heightmap swimming and spawn
+recovery tests passed. Strict workspace Clippy and the normal client build
+passed. Evidence: `/tmp/openeq-overnight-path-*.log`. Independent read-only
+review found no actionable issue.

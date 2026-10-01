@@ -20,6 +20,24 @@ const MAX_CELLS_PER_TRIANGLE: i64 = 256;
 const WALKABLE_NORMAL_Z: f32 = std::f32::consts::FRAC_1_SQRT_2;
 const SKIN: f32 = 0.01;
 
+/// What the accepted collision substeps establish about a movement request.
+/// Deflected responses do not establish a time-parameterized straight path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlayerMovePath {
+    /// Each accepted substep equals its requested position, including no motion.
+    Unchanged,
+    /// XY follows the request; downward Z is clamped to the starting height.
+    FlatSupport,
+    /// A substep departs from both paths, or the request is capped/invalid.
+    Deflected,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PlayerMove {
+    pub position: [f32; 3],
+    pub path: PlayerMovePath,
+}
+
 #[derive(Clone, Debug)]
 struct Triangle {
     points: [Vec3; 3],
@@ -365,6 +383,25 @@ impl CollisionWorld {
         height: f32,
         max_step: f32,
     ) -> [f32; 3] {
+        self.move_player_with_path(dynamic, position, delta, radius, height, max_step)
+            .position
+    }
+
+    /// Resolve the same movement while classifying every accepted substep.
+    /// An up/down stair response can end on the requested chord without ever
+    /// following it. Only unchanged substeps or support at the initial height
+    /// establish the two simple paths; slides, stairs and capped moves do not.
+    /// This reports the solver's accepted positions, not a native physics trace
+    /// or the intermediate correction attempts made by the contact solver.
+    pub fn move_player_with_path(
+        &self,
+        dynamic: Option<&Self>,
+        position: [f32; 3],
+        delta: [f32; 3],
+        radius: f32,
+        height: f32,
+        max_step: f32,
+    ) -> PlayerMove {
         let mut position = Vec3::from(position);
         let mut delta = Vec3::from(delta);
         if !position.is_finite()
@@ -373,15 +410,22 @@ impl CollisionWorld {
             || radius <= 0.
             || height <= SKIN * 2.
         {
-            return position.to_array();
+            return PlayerMove {
+                position: position.to_array(),
+                path: PlayerMovePath::Deflected,
+            };
         }
         let radius = radius.max(SKIN * 2.);
         let max_step = max_step.max(0.).min(height * 0.5);
         let step_length = (radius * 0.5).min(1.);
         let distance = delta.length();
         if distance <= 1e-7 {
-            return position.to_array();
+            return PlayerMove {
+                position: position.to_array(),
+                path: PlayerMovePath::Unchanged,
+            };
         }
+        let uncapped = distance.is_finite() && distance <= step_length * 256.;
         if distance > step_length * 256. {
             delta *= step_length * 256. / distance;
         }
@@ -391,10 +435,26 @@ impl CollisionWorld {
             world: self,
             dynamic,
         };
+        let start_z = position.z;
+        let mut unchanged = uncapped;
+        let mut flat_support = uncapped && motion.z <= 0.;
         for _ in 0..steps {
-            position = query.move_step(position, motion, radius, height, max_step);
+            let desired = position + motion;
+            let next = query.move_step(position, motion, radius, height, max_step);
+            unchanged &= next == desired;
+            flat_support &= next.truncate() == desired.truncate() && next.z == start_z;
+            position = next;
         }
-        position.to_array()
+        PlayerMove {
+            position: position.to_array(),
+            path: if unchanged {
+                PlayerMovePath::Unchanged
+            } else if flat_support {
+                PlayerMovePath::FlatSupport
+            } else {
+                PlayerMovePath::Deflected
+            },
+        }
     }
 }
 
@@ -834,6 +894,62 @@ mod tests {
             (actual - expected).abs() < 0.025,
             "expected {expected}, got {actual}"
         );
+    }
+
+    #[test]
+    fn movement_path_retains_intermediate_steps_even_when_endpoints_agree() {
+        let mut ground = CollisionWorld::default();
+        floor(&mut ground, 0.);
+        let mut step = CollisionWorld::default();
+        quad(
+            &mut step,
+            [3., -20., 1.],
+            [4., -20., 1.],
+            [4., 20., 1.],
+            [3., 20., 1.],
+        );
+        wall(&mut step, 3., 0., 1.);
+        wall(&mut step, 4., 0., 1.);
+        let start = [0.; 3];
+        let delta = [8., 0., 0.];
+        let clear = ground.move_player_with_path(None, start, delta, 1., 6., 2.);
+        assert_eq!(clear.position, [8., 0., 0.]);
+        assert_eq!(clear.path, PlayerMovePath::Unchanged);
+        let stepped = ground.move_player_with_path(Some(&step), start, delta, 1., 6., 2.);
+        assert_eq!(stepped.position, clear.position);
+        assert_eq!(stepped.path, PlayerMovePath::Deflected);
+        let middle = ground.move_player_with_path(Some(&step), start, [3.5, 0., 0.], 1., 6., 2.);
+        assert_eq!(middle.position[2], 1.);
+        // The wrapper still returns exactly the same solved position.
+        assert_eq!(
+            ground.move_player_with_dynamic(Some(&step), start, delta, 1., 6., 2.),
+            stepped.position
+        );
+        // Static geometry uses the same classification as dynamic geometry.
+        floor(&mut step, 0.);
+        let combined = step.move_player_with_path(None, start, delta, 1., 6., 2.);
+        assert_eq!(combined.position, stepped.position);
+        assert_eq!(combined.path, PlayerMovePath::Deflected);
+    }
+
+    #[test]
+    fn movement_path_distinguishes_flat_support_slides_and_capped_requests() {
+        let mut world = CollisionWorld::default();
+        floor(&mut world, 0.);
+        let flat = world.move_player_with_path(None, [0.; 3], [8., 0., -0.1], 1., 6., 2.);
+        assert_eq!(flat.path, PlayerMovePath::FlatSupport);
+        assert_eq!(flat.position[2], 0.);
+        wall(&mut world, 2., 0., 20.);
+        let slide = world.move_player_with_path(None, [0.; 3], [4., 4., 0.], 1., 6., 2.);
+        assert!(slide.position[0] < 1.01 && slide.position[1] > 3.9);
+        assert_eq!(slide.path, PlayerMovePath::Deflected);
+        let empty = CollisionWorld::default();
+        let capped = empty.move_player_with_path(None, [0.; 3], [1000., 0., 0.], 1., 6., 2.);
+        assert_eq!(capped.position, [128., 0., 0.]);
+        assert_eq!(capped.path, PlayerMovePath::Deflected);
+        let invalid = empty.move_player_with_path(None, [0.; 3], [1., 0., 0.], 0., 6., 2.);
+        assert_eq!(invalid.position, [0.; 3]);
+        assert_eq!(invalid.path, PlayerMovePath::Deflected);
     }
 
     #[test]
