@@ -31,7 +31,8 @@ that a zone looks, moves or sounds right.
    MaxLava/MaxWaterFall/additive shaders, normal mapping, alpha-safe/clamped
    filtering, linear/periodic mip construction and Thundercrest's missing
    `clz-0` sky selection remain follow-ups. See `RESTORED_EQG_GPU_AUDIT.md`
-   and `SKY_PATTERN_FOLLOWUP.md`; failed native weather selection preserves
+   `EQG_ADDITIVE_SHADER.md` and `SKY_PATTERN_FOLLOWUP.md`; failed native
+   weather selection preserves
    manager state, but host transition/reset behavior is still unresolved. Track ongoing work in
    `OVERNIGHT_2026-10-01.md`.
    Native adaptive terrain tessellation/normal generation remains separate from

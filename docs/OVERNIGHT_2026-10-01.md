@@ -119,3 +119,11 @@ cohesive commits and pushing to `master`.
   preparing a strictly bounded native-time sampler covering Citymist. Check
   agent status and preserve its work; do not treat earlier full-suite results
   as verification of that later sampler. Renderer integration remains separate.
+- `xml_ui` froze `EQG_ADDITIVE_SHADER.md`: Thundercrest's 72 glass triangles
+  select native ONE/ONE RGB blending, alpha >=16/255, no fog and no depth
+  writes. Diffuse alpha is 102/255 everywhere but does not scale native RGB;
+  the normal map is flat. No renderer change yet. Implement a dedicated
+  additive path with GPU depth/cutoff/background checks, not weighted alpha.
+  Native light/color-space parity and other additive shader families remain
+  separate. The report also records exact opaque descriptor bindings useful
+  for the nonfinite UV investigation (MPLBasic uses TextureD1T, not TextureD1).
