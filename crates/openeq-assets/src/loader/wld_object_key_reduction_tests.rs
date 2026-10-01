@@ -3,7 +3,8 @@ use key_reduction::FiveFrameKeys;
 
 // Compact native-math witnesses, not copied archive payloads. Provenance:
 // docs/WLD_LONG_OBJECT_ANIMATION.md and its frozen 250-sample result.
-const BRANCHES: [([[i16; 4]; 5], usize, [[u32; 4]; 4]); 6] = [
+type BranchWitness = ([[i16; 4]; 5], usize, [[u32; 4]; 4]);
+const BRANCHES: [BranchWitness; 6] = [
     (
         // TR5MBR1_DAG
         [
