@@ -24,6 +24,9 @@ pub use animation::RenderAnimation;
 #[path = "wld_object_key_reduction.rs"]
 mod key_reduction;
 
+#[path = "wld_object_translation.rs"]
+mod translation;
+
 #[path = "wld_particle_poses.rs"]
 mod particle_poses;
 pub use particle_poses::ObjectParticleOwnerTransform;
@@ -92,13 +95,15 @@ impl ObjectSource {
     /// Shared loop period for the supported short packed-WLD animation family.
     ///
     /// All animated tracks must have the same explicit positive interval and
-    /// two to five frames, reference flags 5, and constant scale/translation.
+    /// two to five frames, reference flags 5, and constant scale.
     /// Five-frame tracks use the native six-to-five rotation-key reduction.
     /// They additionally require packed near-unit keys and a well-separated
     /// reduction choice (or structurally identical tied candidates).
     /// Static tracks require reference flags 4 and no interval. Unknown flags,
-    /// floating-point track layouts, long/mixed clips, changing scale or
-    /// translation, and degenerate/ambiguous rotations are rejected.
+    /// Translation changes additionally require five packed frames with constant
+    /// rotation, no repeated adjacent positions, and exact unambiguous native
+    /// reduction scores. Other translation, floating-point track layouts,
+    /// long/mixed clips and degenerate/ambiguous rotations are rejected.
     pub fn animation_period(&self) -> Result<Duration> {
         let skeleton = self
             .skeleton
@@ -129,6 +134,13 @@ impl ObjectSource {
         let transforms = pose_with(skeleton, |track| {
             let frames = &skeleton.tracks[track].definition.frames;
             let mut frame = frames[0];
+            if frames
+                .iter()
+                .any(|key| key.translation != frame.translation)
+            {
+                frame.translation =
+                    translation::FiveFrameTranslations::new(frames)?.sample(phase, interval);
+            }
             if frames.len() == 5 {
                 frame.rotation = key_reduction::FiveFrameKeys::new(frames)?.sample(phase, interval);
             } else if frames.len() > 1 {
@@ -320,11 +332,15 @@ fn animation_timing(source: &ObjectSkeleton) -> Result<(usize, u32)> {
         }
         for frame in frames {
             frame_transform(frame)?;
-            if frame.scale != frames[0].scale || frame.translation != frames[0].translation {
-                return Err(invalid(
-                    "changing object animation scale or translation is unsupported",
-                ));
+            if frame.scale != frames[0].scale {
+                return Err(invalid("changing object animation scale is unsupported"));
             }
+        }
+        if frames
+            .iter()
+            .any(|frame| frame.translation != frames[0].translation)
+        {
+            translation::FiveFrameTranslations::new(frames)?;
         }
         for (index, frame) in frames.iter().enumerate() {
             let next = &frames[(index + 1) % frames.len()];

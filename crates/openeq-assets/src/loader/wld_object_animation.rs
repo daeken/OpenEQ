@@ -51,8 +51,17 @@ impl ObjectSource {
             // sphere bound, independent of rotation extrema or sample times.
             // Roundoff slack is accumulated at each ancestry stage.
             scales[index] = parent_scale * f64::from(frame.scale) * 1.0001 + 0.00001;
+            // Linear translation stays in the convex hull of retained keys.
+            // Include all authored positions (also the closing first key), so
+            // the bound remains conservative after native key reduction.
+            let translation_extent = skeleton.tracks[index]
+                .definition
+                .frames
+                .iter()
+                .map(|frame| length(frame.translation))
+                .fold(0., f64::max);
             distances[index] =
-                (parent_distance + parent_scale * length(frame.translation)) * 1.0001 + 0.00001;
+                (parent_distance + parent_scale * translation_extent) * 1.0001 + 0.00001;
             if !scales[index].is_finite() || !distances[index].is_finite() {
                 return Err(invalid("object animation ancestry bounds overflow"));
             }

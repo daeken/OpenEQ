@@ -8,6 +8,9 @@ mod particles;
 #[path = "wld_object_key_reduction_tests.rs"]
 mod key_reduction_tests;
 
+#[path = "wld_object_translation_tests.rs"]
+mod translation_tests;
+
 fn words(values: &[u32]) -> Vec<u8> {
     values
         .iter()
