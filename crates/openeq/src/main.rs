@@ -60,7 +60,7 @@ struct Runtime {
     hud: Option<hud::Hud>,
     ui_frame: openeq_ui::UiFrame,
     chat_link_hits: Vec<openeq_ui::HitTarget>,
-    atmosphere_zone: Option<(String, u8)>,
+    sky_refresh: openeq::sky_refresh::SkyRefresh,
     moving: bool,
     collision: Option<openeq_assets::collision::CollisionWorld>,
     fly: bool,
@@ -140,7 +140,7 @@ impl Runtime {
         self.map_state = Default::default();
         self.map_open = false;
         self.third_person = false;
-        self.atmosphere_zone = None;
+        self.sky_refresh.invalidate();
         self.loaded_zone = None;
         self.loaded_destination = None;
         self.loading_destination = None;
@@ -195,7 +195,7 @@ impl Runtime {
             hud: None,
             ui_frame: openeq_ui::UiFrame::default(),
             chat_link_hits: Vec::new(),
-            atmosphere_zone: None,
+            sky_refresh: Default::default(),
             moving: false,
             collision: None,
             fly: true,
@@ -1657,21 +1657,26 @@ fn render_frame(
         if let Some(live) = runtime.live.as_ref() {
             live.camera_position(&player_camera, runtime.moving);
         }
-        if let Some(live) = &runtime.live
-            && let Some(env) = &live.environment
-        {
-            let desired = (env.short_name.clone(), live.hour);
-            if runtime.atmosphere_zone.as_ref() != Some(&desired) {
-                let settings = zone_environment(env);
-                let sky = openeq_assets::environment::load_sky(
-                    &options.dir,
-                    &env.short_name,
-                    (live.hour as f32 + live.minute as f32 / 60.) / 24.,
+        let atmosphere = runtime.live.as_ref().and_then(|live| {
+            live.environment.as_ref().map(|env| {
+                (
+                    openeq::sky_refresh::Stamp {
+                        zone: env.short_name.clone(),
+                        generation: live.zone_generation,
+                        hour: live.hour,
+                        minute: live.minute,
+                    },
+                    zone_environment(env),
                 )
-                .ok();
-                renderer.set_environment(settings, sky.as_ref());
-                runtime.atmosphere_zone = Some(desired);
-            }
+            })
+        });
+        if let Some((stamp, settings)) = atmosphere
+            && let Some(result) = runtime.sky_refresh.poll(stamp, &options.dir)
+        {
+            // Decoding occurs off the event loop. Unsupported authored skies
+            // keep the existing fallback; a stale visit/minute cannot apply.
+            let sky = result.ok();
+            renderer.set_environment(settings, sky.as_ref());
         }
         FrameSample::mark(&mut profile, "setup");
         let states = runtime.live.as_ref().map(|live| {
@@ -2209,10 +2214,9 @@ fn prepare_world(runtime: &mut Runtime, renderer: &mut Renderer, options: &Optio
             runtime.ground_motion = movement::GroundMotion::default();
             runtime.loaded_zone = Some(destination.zone.clone());
             runtime.loaded_destination = Some(destination);
-            runtime.atmosphere_zone = runtime
-                .live
-                .as_ref()
-                .map(|live| (runtime.loaded_zone.clone().unwrap(), live.hour));
+            // The background zone load may have sampled an earlier minute.
+            // Refresh from the current clock and discard the prior visit's job.
+            runtime.sky_refresh.invalidate();
             runtime.interaction.controls_blocked = false;
         }
     }
@@ -2676,7 +2680,6 @@ mod account_return_tests {
         });
         runtime.loading_destination = runtime.loaded_destination.clone();
         runtime.loading_error = Some("old failure".into());
-        runtime.atmosphere_zone = Some(("arena".into(), 12));
         runtime.map_open = true;
         runtime.third_person = true;
         runtime.moving = true;
@@ -2689,7 +2692,7 @@ mod account_return_tests {
                 && runtime.loaded_destination.is_none()
                 && runtime.loading_destination.is_none()
         );
-        assert!(runtime.loading_error.is_none() && runtime.atmosphere_zone.is_none());
+        assert!(runtime.loading_error.is_none());
         assert!(
             !runtime.map_open
                 && !runtime.third_person

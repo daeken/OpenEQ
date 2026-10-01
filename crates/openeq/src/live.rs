@@ -2,6 +2,7 @@
 #[cfg(test)]
 mod action_epoch_tests;
 pub mod camp;
+mod day_clock;
 pub mod training;
 
 use crate::coordinates;
@@ -21,6 +22,11 @@ use std::{
 
 pub enum Message {
     Event(Box<ZoneEvent>),
+    Time {
+        hour: u8,
+        minute: u8,
+        received: Instant,
+    },
     Error(String),
     CampStarted {
         request: camp::Request,
@@ -56,6 +62,18 @@ pub enum Message {
         token: crate::death::RecoveryToken,
         notice: String,
     },
+}
+impl Message {
+    fn from_event(event: Box<ZoneEvent>, received: Instant) -> Self {
+        match &*event {
+            ZoneEvent::Time { hour, minute } => Self::Time {
+                hour: *hour,
+                minute: *minute,
+                received,
+            },
+            _ => Self::Event(event),
+        }
+    }
 }
 pub(crate) enum NetworkCommand {
     Training(training::Request),
@@ -351,6 +369,7 @@ pub struct LiveWorld {
     pub moves: u64,
     pub hour: u8,
     pub minute: u8,
+    day_clock: day_clock::DayClock,
     pub target: Option<u32>,
     pub game: GameplayState,
     pub doors: BTreeMap<u8, Door>,
@@ -442,6 +461,9 @@ impl NetworkIo {
                                 Err(openeq_net::zone::ZoneError::Closed) if camping.is_some() && zone.peer_disconnected().await => return Ok(LiveExit::DisconnectedWhileCamping),
                                 Err(error) => return Err(error.into()),
                             };
+                            // Stamp before any outgoing work can delay delivery
+                            // to the foreground clock.
+                            let received = Instant::now();
                             let interruption = if let ZoneEvent::Gameplay(event) = &*event {
                                 camp_authority.observe(event, motion.own_id)
                             } else { None };
@@ -463,7 +485,7 @@ impl NetworkIo {
                             }
                             if let ZoneEvent::Spawn(spawn) = &*event { motion.spawn(spawn, character); }
                             training.zone_event(&event, motion.action_epoch, motion.own_id, character);
-                            if tx.send(Message::Event(event)).is_err() { logout_zone(&mut zone).await?; break; }
+                            if tx.send(Message::from_event(event, received)).is_err() { logout_zone(&mut zone).await?; break; }
                         }
 
                         camp::Input::Request(request) => {
@@ -802,6 +824,7 @@ impl LiveWorld {
             moves: 0,
             hour: 12,
             minute: 0,
+            day_clock: Default::default(),
             target: None,
             game,
             doors: BTreeMap::new(),
@@ -830,10 +853,20 @@ impl LiveWorld {
     }
 
     pub fn poll(&mut self) {
-        let now = Instant::now();
+        self.poll_at(Instant::now());
+    }
+
+    fn poll_at(&mut self, now: Instant) {
         let messages: Vec<_> = self.rx.lock().unwrap().try_iter().collect();
         for message in messages {
             match message {
+                Message::Time {
+                    hour,
+                    minute,
+                    received,
+                } => {
+                    self.day_clock.synchronize(hour, minute, received);
+                }
                 Message::CampStarted { request, deadline } => self.camp.started(request, deadline),
                 Message::CampFinishing(request) => self.camp.finishing(request),
                 Message::CampCancelled { request, notice } => {
@@ -1012,8 +1045,9 @@ impl LiveWorld {
                             self.game.notice("Connected. Enter opens chat; /help lists commands. I opens inventory.");
                         }
                         ZoneEvent::Time { hour, minute } => {
-                            self.hour = hour;
-                            self.minute = minute;
+                            // Locally injected events have no receipt stamp.
+                            // The network worker always uses Message::Time.
+                            self.day_clock.synchronize(hour, minute, now);
                         }
                         ZoneEvent::Hp { id, percent } => {
                             let effect = self.training.zone_event(
@@ -1032,6 +1066,10 @@ impl LiveWorld {
                     }
                 }
             }
+        }
+        if let Some((hour, minute)) = self.day_clock.at(now) {
+            self.hour = hour;
+            self.minute = minute;
         }
         let effect = self.training.tick(now);
         self.training_effect(effect);
@@ -2142,6 +2180,99 @@ pub(crate) mod tests {
     };
     use std::time::Duration;
 
+    #[test]
+    fn day_clock_network_messages_retain_receipt_time() {
+        let received = Instant::now();
+        assert!(matches!(
+            Message::from_event(Box::new(ZoneEvent::Time { hour: 24, minute: 59 }), received),
+            Message::Time { hour: 24, minute: 59, received: stamp } if stamp == received
+        ));
+        assert!(matches!(
+            Message::from_event(Box::new(ZoneEvent::Ready), received),
+            Message::Event(event) if matches!(*event, ZoneEvent::Ready)
+        ));
+    }
+
+    #[test]
+    fn day_clock_default_stays_frozen_until_a_valid_packet() {
+        let (mut live, io) = LiveWorld::channels("Player".into(), false);
+        let now = Instant::now();
+        live.poll_at(now);
+        assert_eq!((live.hour, live.minute), (12, 0));
+        io.tx
+            .send(Message::Time {
+                hour: 0,
+                minute: 59,
+                received: now,
+            })
+            .unwrap();
+        live.poll_at(now + Duration::from_secs(86_400));
+        assert_eq!((live.hour, live.minute), (12, 0));
+    }
+
+    #[test]
+    fn day_clock_advances_from_receipt_through_delayed_and_empty_polls() {
+        let (mut live, io) = LiveWorld::channels("Player".into(), false);
+        let received = Instant::now();
+        io.tx
+            .send(Message::from_event(
+                Box::new(ZoneEvent::Time {
+                    hour: 24,
+                    minute: 59,
+                }),
+                received,
+            ))
+            .unwrap();
+        live.poll_at(received + Duration::from_secs(6));
+        assert_eq!((live.hour, live.minute), (1, 1));
+        live.poll_at(received + Duration::from_millis(8_999));
+        assert_eq!((live.hour, live.minute), (1, 1));
+        live.poll_at(received + Duration::from_secs(9));
+        assert_eq!((live.hour, live.minute), (1, 2));
+    }
+
+    #[test]
+    fn day_clock_queued_corrections_are_authoritative_and_invalid_packets_are_ignored() {
+        let (mut live, io) = LiveWorld::channels("Player".into(), false);
+        let now = Instant::now();
+        for (hour, minute, milliseconds) in
+            [(20, 10, 0), (5, 20, 4_000), (0, 0, 5_000), (1, 60, 6_000)]
+        {
+            io.tx
+                .send(Message::from_event(
+                    Box::new(ZoneEvent::Time { hour, minute }),
+                    now + Duration::from_millis(milliseconds),
+                ))
+                .unwrap();
+        }
+        live.poll_at(now + Duration::from_millis(6_999));
+        assert_eq!((live.hour, live.minute), (5, 20));
+        live.poll_at(now + Duration::from_secs(7));
+        assert_eq!((live.hour, live.minute), (5, 21));
+    }
+
+    #[test]
+    fn day_clock_unstamped_local_events_use_poll_time_and_still_validate() {
+        let (mut live, io) = LiveWorld::channels("Player".into(), false);
+        let now = Instant::now();
+        io.tx
+            .send(Message::Event(Box::new(ZoneEvent::Time {
+                hour: 24,
+                minute: 59,
+            })))
+            .unwrap();
+        live.poll_at(now);
+        assert_eq!((live.hour, live.minute), (24, 59));
+        io.tx
+            .send(Message::Event(Box::new(ZoneEvent::Time {
+                hour: 0,
+                minute: 0,
+            })))
+            .unwrap();
+        live.poll_at(now + Duration::from_secs(3));
+        assert_eq!((live.hour, live.minute), (1, 0));
+    }
+
     pub(crate) fn command_world(
         class: u8,
         distance: f32,
@@ -2173,6 +2304,7 @@ pub(crate) mod tests {
             moves: 0,
             hour: 12,
             minute: 0,
+            day_clock: Default::default(),
             target: None,
             game: GameplayState::default(),
             doors: BTreeMap::new(),
@@ -4023,6 +4155,7 @@ pub(crate) mod tests {
             moves: 0,
             hour: 12,
             minute: 0,
+            day_clock: Default::default(),
             target: Some(2),
             game: GameplayState::default(),
             doors: BTreeMap::new(),
