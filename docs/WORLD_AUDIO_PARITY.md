@@ -424,3 +424,18 @@ Independent review found no actionable issues in the authored-frame or
 shader change. No original assets were committed and no live character state
 changed. Packed WLD unsigned scale, native controller output and unresolved
 sky/shader definitions remain under separate investigation.
+
+
+Further overnight corrections: packed WLD track scale now uses native unsigned
+u16 / 256 (`2769037`). The independent installed-corpus audit covers 27,118,476
+packed frames and finds 63 affected frames in three duplicate character tracks;
+none are in object archives. All 267 asset tests, workspace lint and client
+build pass. See `WLD_PACKED_SCALE.md`; this is numeric parser compatibility,
+not a claimed visible character repair.
+
+WLD shared-material merging now preserves source group order (`587f052`).
+Previously, hash-map iteration randomized triangle/packed-vertex order across
+identical bakes. The new regression fails on the old code; all 10 collision
+fixtures, 11 object fixtures, original Citymist GPU rendering and strict lint
+pass. See `WLD_PLACED_OBJECTS.md`. Stable source bindings and separate motion
+ownership are still required before fixed-topology runtime animation.

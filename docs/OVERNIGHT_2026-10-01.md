@@ -99,3 +99,23 @@ cohesive commits and pushing to `master`.
   writes, rather than substituting a pattern; reload clears the manager, but
   actual host zone-transition lifecycle remains untraced. No sky behavior was
   changed. See `SKY_PATTERN_FOLLOWUP.md` for source hashes and call addresses.
+- `2769037` corrects packed WLD scale to unsigned u16 / 256, independently
+  verified against native instructions and 27,118,476 original packed frames.
+  There are 63 high-bit frames in three duplicate character tracks; no affected
+  placed-object frames, and no claim of a visible runtime character repair.
+  All 267 asset tests passed (including originals), strict workspace lint and
+  client build passed. Logs: `/tmp/openeq-unsigned-scale-{assets,clippy,build}.log`.
+- `587f052` fixes nondeterministic WLD shared-material merge order, discovered
+  during animation integration planning. A 24-piece regression fails before
+  the change and passes afterward; all 10 invisible-collision tests, 11 object
+  tests and the original Citymist GPU test pass, plus strict workspace lint,
+  format and diff checks. Logs: `/tmp/openeq-wld-order-*.log`.
+  Fixed ordering alone is insufficient for fixed-topology animation: existing
+  attribute deduplication may merge vertices with different motion ownership.
+  Explicit source-part/vertex bindings are still needed for renderer integration.
+- Independent review confirmed the sky follow-up's native addresses and support
+  boundary. No sky change is justified without host lifecycle evidence.
+- `npc_assets` recovered matching D3DX controller output/clock evidence and is
+  preparing a strictly bounded native-time sampler covering Citymist. Check
+  agent status and preserve its work; do not treat earlier full-suite results
+  as verification of that later sampler. Renderer integration remains separate.
