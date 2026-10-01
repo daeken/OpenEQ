@@ -4,8 +4,8 @@ October 1, 2026. Native execution confirms two constructor differences in
 OpenEQ's supported classic kind-0 ambience: a nonpositive base cooldown ignores
 the random field and selects continuous playback; positive base and random
 values add 500 ms to both delay bounds. The native timer consumer also exposes
-broader scheduling differences. This is a frozen research follow-up, with **no
-production scheduler change**. It is separate from the implemented
+broader scheduling differences. The constructor and endpoint correction below is implemented; broader clock
+and voice scheduling remains OpenEQ policy. It is separate from the implemented
 [base-level correction](CLASSIC_AMBIENT_LEVELS.md).
 
 ## Original constructor and timer
@@ -91,12 +91,12 @@ Two exact controlled-clock examples distinguish the policies:
 | `base=1000, random=100`, draws `0,99,100` | 1000 ms; selected delay 1500 | 2501 ms; next delay 1599 | 4101 ms; next delay 1500 |
 | `base=0, random=100` | 1000 ms; plays with loop 0 | Same update | No further play at 1001 or 900000 while retained |
 
-## Current OpenEQ policy differences
+## OpenEQ policy differences before this integration
 
 These observations refer to `crates/openeq/src/audio/schedule.rs` after the
 base-gain fix in `3b89b11`, before any cooldown integration:
 
-| Behavior | Current scheduler | Native kind-0 evidence |
+| Behavior | Scheduler before this integration | Native kind-0 evidence |
 | --- | --- | --- |
 | Nonpositive base, positive random | Delay `[0, random]`; not continuous | Ignore random; continuous |
 | Positive base and random | Bounds start at base | Add 500 to both bounds |
@@ -115,9 +115,9 @@ Current eligibility, voice caps, failure suppression, state retention, day/night
 handoff and actual audio mixing remain OpenEQ policy; this witness establishes
 no universal native scheduling or acoustic parity.
 
-## Practical next integration boundary
+## Original bounded integration plan
 
-Make the next bounded audio change a **kind-0 constructor interpretation and
+The frozen plan was a **kind-0 constructor interpretation and
 delay-endpoint correction**. Preserve the currently documented clock and voice
 lifecycle policies for that change:
 
@@ -182,3 +182,42 @@ continuous playback and initial timing outside range. They do not cover every
 
 Root independently replayed the native cooldown witness to separate output
 paths; the result JSON matches the frozen hash above.
+
+## Bounded constructor integration
+
+`classic_ambient_delays` now implements the kind-0 constructor decision and
+converts the native exclusive upper endpoint to the shared scheduler's inclusive
+representation. For example, `(1000, 100)` produces `[1500, 1599]`, and
+`(1000, 1)` produces the fixed delay 1500. Nonpositive base ignores random and
+selects continuous playback. Both parsed periods and native all-day coalescing
+retain their existing independent admission. Classic music and EMT do not use
+this new conversion.
+
+OpenEQ deliberately clamps **each final endpoint to 86,400,000 ms**. Arithmetic
+uses u64 before clamping, so positive signed extremes cannot wrap to negative
+delays. This is a final 24-hour safety cap, replacing the old kind-0 per-source
+cap that could produce a 48-hour upper endpoint. Native signed overflow and
+CRT random distribution are not replicated. The current completion-relative
+repeat clock, immediate first playback, equality admission, one retained voice,
+failed-file suppression and xorshift random source remain unchanged.
+
+Six new device-free tests cover signed extremes and cap boundaries, parsed
+day/night inputs, all-day voice retention, 2,048 consecutive repetitions for
+each of the single-value and 100-value intervals, original PoNightmare record1
+(30,000 base/random becomes inclusive 30,500..60,499), and unchanged music/EMT
+delay semantics. Original Qeynos row15 verifies nonzero thunder selectors143/144,
+base0/random50 now loop continuously. Focused scheduler verification passes
+all20 tests, including original assets, in `/tmp/openeq-classic-cooldown-final.log`.
+The full openeq library run before the last Qeynos-only regression passed523 tests.
+
+Independent review compiled actual previous/current scheduler sources and matched
+music/EMT outputs over 2,560 mixed-period fixtures and36 EMT fixtures. All60
+frozen native constructor cases match the ordinary interval or documented cap
+policy. A separate134-file raw EFF survey found298 randomized positive-base
+kind-0 sides and77 nonpositive-base/positive-random sides after finite/radius/
+coalescing checks;75 of the latter had zero sound selectors. These raw counts
+do not claim playable source admission. No surveyed kind-0 bound reaches the cap.
+Root replay reproduced result SHA-256
+`edeba3767024fd2458f30b2044146e1f3207994e5070572c7390058f5b86e343`.
+Review probe `/tmp/openeq-classic-cooldown-review.py` has SHA-256
+`2205190f39f1c1e353c481c12ece430efdc9e2763ced4bb3d5056b1ab1bc39d8`.

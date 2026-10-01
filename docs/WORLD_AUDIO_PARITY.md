@@ -74,8 +74,9 @@ that a zone looks, moves or sounds right.
    See `XMI_NATIVE_LOOPS.md` and `XMI_NATIVE_SYSEX.md`.
    Classic kind-0 base gain now matches native default/sign/cutoff behavior;
    zero levels use 20%, avoiding the former full-volume ambience. Native
-   constructor/repeat timing is now documented in `CLASSIC_AMBIENT_COOLDOWNS.md`
-   but not yet integrated. Native macOS synth calls now share one gate across
+   constructor bounds and exclusive endpoints now match for ordinary values;
+   the final 24-hour cap and completion-relative scheduler remain OpenEQ policy.
+   See `CLASSIC_AMBIENT_COOLDOWNS.md` for native repeat-timing differences. Native macOS synth calls now share one gate across
    MIDI, SysEx, rendering and lifecycle after reproducing shared lazy-waveform
    corruption; see `COREAUDIO_SYNTH_LIFECYCLE.md` and the daytime record. See
    `CLASSIC_AMBIENT_LEVELS.md`. Automated original-audio checks remain offline

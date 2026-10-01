@@ -56,6 +56,24 @@ fn supported_file(reference: &AudioReference) -> Option<Track> {
 fn millis(value: i32) -> u64 {
     u64::try_from(value).unwrap_or(0).min(86_400_000)
 }
+/// Classic kind-0 construction, converted to the scheduler's inclusive bounds.
+/// Nonpositive base loops continuously regardless of random; positive random
+/// adds 500 ms and has an exclusive native upper bound. Clamp final durations
+/// to one day as OpenEQ policy instead of reproducing signed native overflow.
+/// Timer anchoring and RNG remain scheduler policy; see CLASSIC_AMBIENT_COOLDOWNS.
+fn classic_ambient_delays(base: i32, random: i32) -> [u64; 2] {
+    if base <= 0 {
+        return [0; 2];
+    }
+    let base = base as u64;
+    let bounds = if random > 0 {
+        [base + 500, base + random as u64 + 499]
+    } else {
+        [base; 2]
+    };
+    bounds.map(|delay| delay.min(86_400_000))
+}
+
 /// Native CreateOldEmitter kind-0 base level, before master gain. Positive
 /// values attenuate in hundredths of a decibel; nonpositive values select the
 /// 20% ambient default. The original wrapping NEG sends i32::MIN to silence.
@@ -87,8 +105,12 @@ impl Emitter {
                     return None;
                 }
                 let delays = source.cooldown_ms.map(|base| {
-                    let min = millis(base);
-                    [min, min.saturating_add(millis(source.random_delay_ms))]
+                    if channel == Channel::Ambience {
+                        classic_ambient_delays(base, source.random_delay_ms)
+                    } else {
+                        let min = millis(base);
+                        [min, min.saturating_add(millis(source.random_delay_ms))]
+                    }
                 });
                 Self {
                     id,
@@ -678,3 +700,7 @@ mod tests {
 #[cfg(test)]
 #[path = "schedule_gain_tests.rs"]
 mod gain_tests;
+
+#[cfg(test)]
+#[path = "schedule_cooldown_tests.rs"]
+mod cooldown_tests;

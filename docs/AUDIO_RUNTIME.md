@@ -63,6 +63,11 @@ development headers (Debian/Ubuntu: `libasound2-dev`); `cargo build -p openeq
 - Authored EMT fade-in/out applies to music and WAVs. Classic ambient exit uses
   a short client fade. Fading effects count toward the 32-voice bound; the oldest
   fade can end early to make room for a newly audible voice.
+- Classic kind-0 nonpositive cooldowns loop continuously regardless of random.
+  Positive base/random adds the native 500 ms offset and excludes the upper
+  endpoint; fixed positive cooldowns remain exact. Final delays are capped at
+  24 hours as OpenEQ policy. Music and EMT retain their separate semantics.
+  See [native cooldown evidence and remaining differences](CLASSIC_AMBIENT_COOLDOWNS.md).
 - Delayed repeats wait from completion, never accumulate a catch-up queue after
   stalls. Continuous WAV loops reuse decoded buffers. Music continuous playback
   reopens after completion, so gapless looping is not claimed. XMI has a bounded
