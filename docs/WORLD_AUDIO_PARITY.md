@@ -949,3 +949,35 @@ Dranikcatacombsa dependency. Reports use `/tmp/openeq-waterfall-zone-survey/`.
 A newly identified missing source texture affects two Somnium triangles:
 `somnium_energy_02_c.dds`, unresolved even through a full real-client load.
 No guessed substitute was added. See `EQG_WATERFALL_RENDERING.md`.
+
+
+## October 1 07:40 native sky GPU and inherited-state evidence
+
+The opt-in native sky dome now has an explicit UNORM GPU diagnostic using
+its original 962 vertices / 1,861 triangles and packed diffuse colors. Three
+GPU tests pass: exact RGBA in six directions, retention of the valid near-pole
+ring while excluding unused palette entries, and four original PoK day phases.
+Strict render all-target Clippy, formatting and independent review pass.
+This is additional to the 1,168-test workspace baseline, not a live sky switch.
+See `SKY_DOME_GPU_DIAGNOSTIC.md`; captures are under
+`/tmp/openeq-native-sky-gpu/`. Diagnostic matrices do not establish native
+celestial orientation, inherited whole-frame state or display appearance.
+
+Connected original device initialization/reset and dome draw witnesses retain
+documented zero sRGB defaults. Native renderer reset alone preserves prior
+values; all 148 installed compiled effects omit sRGB controls. The separate
+display gamma ramp remains an explicit boundary. Root independently replayed
+initialization and connected sky probes with exact frozen output hashes. See
+`NATIVE_COLOR_SPACE_STATE.md` and `SKY_INITIALIZED_COLOR_STATE.md`.
+
+Two other native boundaries are now recorded without enabling guessed behavior:
+
+- `EQG_TER_SINGULAR_LIGHT_SELECTION.md`: all 15 finite-source controls pass
+  independent replay. Coincident lights can produce infinity/NaN, and native
+  comparisons preserve unordered entries rather than imposing a total order.
+  Actual DPVS membership and traversal order remain unresolved.
+- `WLD_PARTICLE_LAMP_CADENCE.md`: 50 invocation sequences / 200 full list
+  updates show that zero-delta calls can admit births and consume randomness.
+  Conditional preview cameras can affect world-particle motion. Root replay
+  matches the frozen hash; actual live preview enablement and tick refresh
+  remain open. No automatic scene particle rendering is enabled.
