@@ -5,6 +5,7 @@
 //! ascending slot order before authored events. Zero-duration notes expire on
 //! the next tick. Same-key overlap retains independent slots and unconditional
 //! MIDI releases; no modern voice-stealing policy is substituted.
+use crate::audio::midi_synth::validate_sysex_payload;
 use openeq_assets::audio::xmi::{
     DEFAULT_TICKS_PER_SECOND, MAX_XMI_SEQUENCE_EVENTS, XmiEventKind, XmiSequence,
 };
@@ -196,7 +197,11 @@ pub fn preflight(sequence: &XmiSequence, clock: SampleClock) -> PreflightReport 
                     ScheduleIssue::UnsupportedController(*controller),
                 );
             }
-            XmiEventKind::SysEx { .. } => report.add(Some(index), ScheduleIssue::UnsupportedSysEx),
+            XmiEventKind::SysEx { status, payload }
+                if validate_sysex_payload(*status, payload).is_err() =>
+            {
+                report.add(Some(index), ScheduleIssue::UnsupportedSysEx);
+            }
             XmiEventKind::Meta {
                 kind: 0x2f,
                 payload,
@@ -274,6 +279,11 @@ pub struct NoteIdentity {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScheduledKind {
+    /// Complete F0 packet retained in the immutable source. Access through
+    /// XmiScheduler::sysex_payload; its trailing F7 is part of that payload.
+    SysEx {
+        event_index: usize,
+    },
     /// Metadata stays observable by source index but is not MIDI output. In
     /// particular, tempo does not rewrite the XMI tick clock.
     Source {
@@ -304,7 +314,7 @@ impl ScheduledEvent {
             ScheduledKind::Release { message, .. } | ScheduledKind::Cleanup { message, .. } => {
                 Some(message)
             }
-            ScheduledKind::End => None,
+            ScheduledKind::End | ScheduledKind::SysEx { .. } => None,
         }
     }
 }
@@ -385,6 +395,20 @@ impl XmiScheduler {
     }
     pub fn known_end_frame(&self) -> Option<u64> {
         self.known_end_frame
+    }
+    /// Payload for a SysEx event produced by this scheduler. It excludes F0
+    /// and includes F7; preflight has checked framing and the native size bound.
+    pub fn sysex_payload(&self, event: ScheduledEvent) -> Option<&[u8]> {
+        let ScheduledKind::SysEx { event_index } = event.kind else {
+            return None;
+        };
+        match &self.sequence.events.get(event_index)?.kind {
+            XmiEventKind::SysEx {
+                status: 0xf0,
+                payload,
+            } => Some(payload),
+            _ => None,
+        }
     }
     /// Useful for splitting a bounded synthesis block exactly at an event.
     pub fn next_frame(&self) -> Result<Option<u64>, ScheduleError> {
@@ -578,10 +602,14 @@ impl XmiScheduler {
             }
             (
                 tick,
-                ScheduledKind::Source {
-                    event_index: index,
-                    message,
-                    note: identity,
+                if matches!(event.kind, XmiEventKind::SysEx { .. }) {
+                    ScheduledKind::SysEx { event_index: index }
+                } else {
+                    ScheduledKind::Source {
+                        event_index: index,
+                        message,
+                        note: identity,
+                    }
                 },
             )
         };
@@ -632,3 +660,7 @@ mod tests;
 #[cfg(test)]
 #[path = "schedule_loop_tests.rs"]
 mod loop_tests;
+
+#[cfg(test)]
+#[path = "schedule_sysex_tests.rs"]
+mod sysex_tests;

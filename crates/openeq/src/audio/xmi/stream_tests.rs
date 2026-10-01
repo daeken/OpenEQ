@@ -34,6 +34,8 @@ fn prepared(events: &[u8]) -> (XmiScheduler, u64) {
 #[derive(Default)]
 struct Probe {
     messages: Mutex<Vec<(usize, u8, u8, u8)>>,
+    sysex: Mutex<Vec<(usize, Vec<u8>)>>,
+    ordered: Mutex<Vec<(usize, Vec<u8>)>>,
     renders: Mutex<Vec<(usize, usize)>>,
     owner: Mutex<Option<thread::ThreadId>>,
     dropped: AtomicBool,
@@ -47,6 +49,7 @@ struct FakeSynth {
     value: f32,
     fail_render_at: Option<usize>,
     fail_midi_at: Option<usize>,
+    fail_sysex: bool,
     _thread_local: Rc<()>,
 }
 impl FakeSynth {
@@ -58,6 +61,7 @@ impl FakeSynth {
             value: 0.0,
             fail_render_at: None,
             fail_midi_at: None,
+            fail_sysex: false,
             _thread_local: Rc::new(()),
         }
     }
@@ -67,12 +71,31 @@ impl RenderSynth for FakeSynth {
         let mut messages = self.probe.messages.lock().unwrap();
         let call = messages.len();
         messages.push((self.frame, status, data1, data2));
+        self.probe
+            .ordered
+            .lock()
+            .unwrap()
+            .push((self.frame, vec![status, data1, data2]));
         ensure!(self.fail_midi_at != Some(call), "injected MIDI failure");
         match status & 0xf0 {
             0x90 => self.value = f32::from(data1),
             0x80 => self.value = 0.0,
             _ => {}
         }
+        Ok(())
+    }
+    fn sysex(&mut self, packet: &[u8]) -> Result<()> {
+        self.probe
+            .sysex
+            .lock()
+            .unwrap()
+            .push((self.frame, packet.to_vec()));
+        self.probe
+            .ordered
+            .lock()
+            .unwrap()
+            .push((self.frame, packet.to_vec()));
+        ensure!(!self.fail_sysex, "injected SysEx failure");
         Ok(())
     }
     fn render(&mut self, samples: &mut [f32]) -> Result<()> {
@@ -562,4 +585,90 @@ fn original_gfay_sequences_synthesize_and_cancel_without_output() {
     }
     assert!(stream(bytes, XmiSequenceOrdinal(600)).is_err());
     wait_for_pool(workers);
+}
+
+#[test]
+fn sysex_is_forwarded_at_render_boundary_in_source_order() {
+    let (mut schedule, end) = prepared(&[
+        0x90, 60, 90, 1, 1, 0xf0, 3, 0x7d, 1, 0xf7, 0xc0, 2, 0xf0, 3, 0x7d, 2, 0xf7, 1, 0xff, 0x2f,
+        0,
+    ]);
+    let probe = Arc::new(Probe::default());
+    let mut synth = FakeSynth::new(Arc::clone(&probe));
+    render(&mut schedule, &mut synth, end, |_| true).unwrap();
+    assert_eq!(
+        *probe.ordered.lock().unwrap(),
+        [
+            (0, vec![0x90, 60, 90]),
+            (400, vec![0x80, 60, 0]),
+            (400, vec![0xf0, 0x7d, 1, 0xf7]),
+            (400, vec![0xc0, 2, 0]),
+            (400, vec![0xf0, 0x7d, 2, 0xf7]),
+        ]
+    );
+    assert_eq!(probe.sysex.lock().unwrap().len(), 2);
+}
+
+#[test]
+fn sysex_failure_discards_partial_audio_and_cleans_active_notes() {
+    let (mut schedule, end) = prepared(&[
+        0xb0, 64, 127, 0x90, 60, 90, 8, 1, 0xf0, 3, 0x7d, 1, 0xf7, 10, 0xff, 0x2f, 0,
+    ]);
+    let probe = Arc::new(Probe::default());
+    let mut synth = FakeSynth::new(Arc::clone(&probe));
+    synth.fail_sysex = true;
+    let mut published = 0;
+    assert!(
+        render(&mut schedule, &mut synth, end, |_| {
+            published += 1;
+            true
+        })
+        .is_err()
+    );
+    assert_eq!(published, 0);
+    assert!(schedule.is_finished());
+    assert_eq!(
+        *probe.messages.lock().unwrap(),
+        [
+            (0, 0xb0, 64, 127),
+            (0, 0x90, 60, 90),
+            (400, 0x80, 60, 0),
+            (400, 0xb0, 64, 0),
+        ]
+    );
+    assert_eq!(probe.sysex.lock().unwrap().len(), 1);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "requires original The Deep XMI and offline OS synth; discards all rendered PCM"]
+fn original_thedeep_renders_to_memory_through_complete_scheduler() {
+    let base = std::path::PathBuf::from(std::env::var_os("EQ_DIR").expect("set EQ_DIR"));
+    let file = XmiFile::parse(&std::fs::read(base.join("thedeep.xmi")).unwrap()).unwrap();
+    let sequence = Arc::new(file.sequences[0].clone());
+    assert_eq!(sequence.end_tick, 23925);
+    std::thread::spawn(move || {
+        let clock = SampleClock::miles_default(SAMPLE_RATE).unwrap();
+        let end = clock.frame_at_tick(sequence.end_tick).unwrap();
+        let mut schedule = XmiScheduler::new(sequence, clock).unwrap();
+        let mut synth = MidiSynth::create(SAMPLE_RATE).unwrap();
+        let mut frames = 0;
+        let mut nonzero = false;
+        render(&mut schedule, &mut synth, end, |block| {
+            assert!(block.iter().all(|sample| sample.is_finite()));
+            nonzero |= block.iter().any(|sample| sample.abs() > 0.00001);
+            frames += block.len() / 2;
+            true
+        })
+        .unwrap();
+        assert_eq!(
+            frames,
+            (end + RELEASE_SECONDS * u64::from(SAMPLE_RATE)) as usize
+        );
+        assert!(nonzero);
+        assert!(schedule.is_finished());
+        synth.close().unwrap();
+    })
+    .join()
+    .unwrap();
 }

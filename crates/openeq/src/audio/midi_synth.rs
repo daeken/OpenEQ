@@ -9,12 +9,15 @@ use std::{fmt, marker::PhantomData, rc::Rc};
 
 pub const CHANNELS: usize = 2;
 pub const MAX_RENDER_FRAMES: usize = 4096;
+/// Native Miles default output bound, including the F0/F7 framing bytes.
+pub const MAX_SYSEX_BYTES: usize = 1536;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SynthError {
     UnsupportedPlatform,
     InvalidSampleRate(u32),
     InvalidMidiMessage,
+    InvalidSysEx,
     InvalidRenderBuffer(usize),
     ComponentUnavailable,
     AudioUnit {
@@ -33,6 +36,7 @@ impl fmt::Display for SynthError {
             Self::UnsupportedPlatform => f.write_str("offline MIDI synthesis requires macOS"),
             Self::InvalidSampleRate(rate) => write!(f, "unsupported synthesis sample rate {rate}"),
             Self::InvalidMidiMessage => f.write_str("invalid MIDI channel message"),
+            Self::InvalidSysEx => f.write_str("SysEx requires a complete bounded F0..F7 message"),
             Self::InvalidRenderBuffer(samples) => write!(
                 f,
                 "synthesis buffer has {samples} samples; expected stereo frames, at most {MAX_RENDER_FRAMES} frames"
@@ -88,6 +92,17 @@ impl MidiSynth {
         Err(SynthError::UnsupportedPlatform)
     }
 
+    /// Forward a complete system-exclusive packet at the next render boundary.
+    /// This preserves bytes; the installed synth determines instrument behavior.
+    /// Split F7 continuation events and oversized packets are unsupported.
+    pub fn sysex(&mut self, packet: &[u8]) -> Result<(), SynthError> {
+        validate_sysex(packet)?;
+        #[cfg(target_os = "macos")]
+        return self.inner.sysex(packet);
+        #[cfg(not(target_os = "macos"))]
+        Err(SynthError::UnsupportedPlatform)
+    }
+
     /// Fill a bounded caller-owned interleaved stereo f32 buffer.
     /// Empty renders are no-ops. Errors leave the caller's buffer silent.
     /// This operation allocates no Rust buffers and never opens audio output.
@@ -120,6 +135,22 @@ fn validate_message(status: u8, data1: u8, data2: u8) -> Result<(), SynthError> 
         || (matches!(status & 0xf0, 0xc0 | 0xd0) && data2 != 0)
     {
         return Err(SynthError::InvalidMidiMessage);
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_sysex(packet: &[u8]) -> Result<(), SynthError> {
+    let (&status, payload) = packet.split_first().ok_or(SynthError::InvalidSysEx)?;
+    validate_sysex_payload(status, payload)
+}
+
+pub(crate) fn validate_sysex_payload(status: u8, payload: &[u8]) -> Result<(), SynthError> {
+    if status != 0xf0
+        || !(1..MAX_SYSEX_BYTES).contains(&payload.len())
+        || payload.last() != Some(&0xf7)
+        || payload[..payload.len() - 1].iter().any(|byte| *byte >= 128)
+    {
+        return Err(SynthError::InvalidSysEx);
     }
     Ok(())
 }
@@ -237,6 +268,7 @@ mod macos {
             data2: u32,
             sample_offset: u32,
         ) -> i32;
+        fn MusicDeviceSysEx(unit: *mut c_void, data: *const u8, length: u32) -> i32;
         fn AudioUnitRender(
             unit: *mut c_void,
             flags: *mut u32,
@@ -396,6 +428,24 @@ mod macos {
             result
         }
 
+        pub(super) fn sysex(&mut self, packet: &[u8]) -> Result<(), SynthError> {
+            if self.failed {
+                return Err(SynthError::Failed);
+            }
+            // SAFETY: Validated complete framing and length <=1536; exclusively
+            // owned initialized unit and SDK-verified ABI. The immutable slice
+            // stays alive throughout the call; no callback is registered.
+            let result = check("MusicDeviceSysEx", unsafe {
+                MusicDeviceSysEx(
+                    self.unit.expect("live synth").as_ptr(),
+                    packet.as_ptr(),
+                    packet.len() as u32,
+                )
+            });
+            self.failed = result.is_err();
+            result
+        }
+
         pub(super) fn render(&mut self, interleaved: &mut [f32]) -> Result<(), SynthError> {
             if self.failed {
                 return Err(SynthError::Failed);
@@ -510,6 +560,79 @@ mod macos {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sysex_requires_bounded_complete_packets_without_channel_status_bytes() {
+        assert!(validate_sysex(&[0xf0, 0xf7]).is_ok());
+        assert!(validate_sysex(&[0xf0, 0x7e, 0x7f, 9, 1, 0xf7]).is_ok());
+        for packet in [
+            &[][..],
+            &[0xf0],
+            &[0xf7, 1, 0xf7],
+            &[0xf0, 1, 0],
+            &[0xf0, 0x80, 0xf7],
+            &[0xf0, 0xf7, 0xf7],
+            &[0x90, 60, 0],
+        ] {
+            assert_eq!(validate_sysex(packet), Err(SynthError::InvalidSysEx));
+        }
+        let mut packet = vec![0x7f; MAX_SYSEX_BYTES];
+        packet[0] = 0xf0;
+        packet[MAX_SYSEX_BYTES - 1] = 0xf7;
+        assert!(validate_sysex(&packet).is_ok());
+        packet.insert(1, 0);
+        assert_eq!(validate_sysex(&packet), Err(SynthError::InvalidSysEx));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires original The Deep XMI and offline OS DLSSynth; memory only, no output device"]
+    fn offline_original_sysex_transport() {
+        use openeq_assets::audio::xmi::{XmiEventKind, XmiFile};
+        let base = std::path::PathBuf::from(std::env::var_os("EQ_DIR").expect("set EQ_DIR"));
+        let file = XmiFile::parse(&std::fs::read(base.join("thedeep.xmi")).unwrap()).unwrap();
+        let packets: Vec<_> = file.sequences[0]
+            .events
+            .iter()
+            .filter_map(|event| {
+                let XmiEventKind::SysEx { status, payload } = &event.kind else {
+                    return None;
+                };
+                let packet: Vec<_> = std::iter::once(*status)
+                    .chain(payload.iter().copied())
+                    .collect();
+                Some((event.tick, packet))
+            })
+            .collect();
+        assert_eq!(packets.len(), 22);
+        assert_eq!(packets.first().unwrap().0, 0);
+        assert_eq!(packets.last().unwrap().0, 10);
+        std::thread::spawn(move || {
+            let mut synth = MidiSynth::create(48_000).expect("installed DLSSynth");
+            let mut tick = 0;
+            for (next_tick, packet) in packets {
+                while tick < next_tick {
+                    let mut samples = [0.; 400 * CHANNELS];
+                    synth.render(&mut samples).unwrap();
+                    assert!(samples.iter().all(|sample| sample.is_finite()));
+                    tick += 1;
+                }
+                synth.sysex(&packet).unwrap();
+            }
+            // Caller validation must not poison an otherwise healthy synth.
+            assert_eq!(synth.sysex(&[0xf0]), Err(SynthError::InvalidSysEx));
+            synth.midi_event(0xc0, 0, 0).unwrap();
+            synth.midi_event(0x90, 60, 100).unwrap();
+            let mut samples = [0.; MAX_RENDER_FRAMES * CHANNELS];
+            synth.render(&mut samples).unwrap();
+            assert!(samples.iter().all(|sample| sample.is_finite()));
+            assert!(samples.iter().any(|sample| sample.abs() > 0.00001));
+            synth.midi_event(0x80, 60, 0).unwrap();
+            synth.close().unwrap();
+        })
+        .join()
+        .unwrap();
+    }
 
     #[test]
     fn channel_message_and_render_bounds() {

@@ -26,10 +26,10 @@ that a zone looks, moves or sounds right.
 3. Follow authored nonfinite mesh attributes through native vertex upload and
    material/channel selection. Preserve the 21 original outliers; do not invent
    normals/UVs or remove geometry without recovering native behavior.
-   Causeway's ordinary TER RegionCB1 path now has conditional native packing
-   evidence: NaN and huge finite UVs become SHORT2(0,0), with source words kept
-   intact. No runtime conversion has been introduced. See
-   `EQG_NONFINITE_TER_UPLOAD.md`.
+   Exact TER Opaque_MaxCB1 v1–3 UV upload now matches masked-SSE2 SHORT2
+   conversion, with source words and diagnostics kept intact. Native packed
+   normals/tangents/colors and other shader families remain under investigation.
+   See `EQG_NONFINITE_TER_UPLOAD.md` and `EQG_TER_UV_PACKING.md`.
 4. Verify shader channels, fog/sky/light metadata and rendering across formats
    with fixed-camera GPU checks and controlled traversal. Material table
    identity and startup scene bounds now have dedicated regression coverage.
@@ -46,8 +46,11 @@ that a zone looks, moves or sounds right.
    the supported full-grid topology.
 5. Finish native XMI loop/SysEx behavior, original-compatible timbres and audio
    event bindings, then compare timing/attenuation/fades against native output.
-   Native loop cursor/slot behavior is now recovered and independently replayed
-   in `XMI_NATIVE_LOOPS.md`; a bounded production interpreter is still pending.
+   Native four-slot loops and complete-packet SysEx transport are implemented
+   and independently replayed; all 389 installed sequences pass admission.
+   Streaming retains a 30-minute policy cap. Original timbres, unsupported
+   branches/host controls and event bindings remain separate.
+   See `XMI_NATIVE_LOOPS.md` and `XMI_NATIVE_SYSEX.md`.
    Automated original-audio checks remain offline or digital silence.
 
 The October 1 checkpoint below records the completed native-volume and placed
@@ -598,8 +601,34 @@ work; it does not certify original timbre, particle rendering, or other shaders.
 The XMI scheduler now executes the original four-slot loop behavior, including
 re-entering CC116 itself, while preserving a monotonic clock and active notes.
 All four original looping sequences match native trace digests. The scheduler
-can complete the full236-minute finite witness offline; streaming retains the
-explicit30-minute safety cutoff and bounded cancellation/release tail. Original
-sequence admission rises to388/389; The Deep remains gated for SysEx integration.
-Independent code review and the1,031-test integrated checkpoint pass. See
+can complete the full 236-minute finite witness offline; streaming retains the
+explicit 30-minute safety cutoff and bounded cancellation/release tail. Original
+sequence admission rises to 388/389; The Deep remains gated for SysEx integration.
+Independent code review and the 1,031-test integrated checkpoint pass. See
 `XMI_NATIVE_LOOPS.md` and `XMI_PLAN.md`; original timbre is still separate.
+
+
+## October 1 complete-packet XMI checkpoint
+
+The Deep's 22 complete SysEx packets now preserve native byte/tick/source order
+through the scheduler and offline synthesizer. Independent original native
+MIDI/packet/combined digests match at batch sizes 1/7/512. Synthetic tests cover
+notes expiring before packets, mixed source order, loop reentry, rejection,
+cancellation and cleanup on synth failure. The full original sequence and
+release tail render finite nonzero PCM to memory. See `XMI_NATIVE_SYSEX.md`.
+
+All **389 installed sequences** pass scheduler admission: 385 straight-through
+sequences yield 929,693 scheduled events, and four loops retain their independent
+native trace checks. This does not certify original instrument timbre, Roland
+GS semantic effects, unimplemented branch/host controls or cross-platform audio.
+Streaming retains the explicit 30-minute cap; F7 continuations and malformed
+or oversized SysEx records remain unsupported.
+
+**1,037 workspace tests passed, zero failed/ignored**, including original assets,
+GPU and offline/digitally silent audio. Strict lint, normal client build,
+all-target no-default, formatting and diff checks pass. A test-only nested-if
+lint correction has its three affected tests rerun successfully. Evidence:
+`/tmp/openeq-sysex-workspace.log`, `clippy-final.log`, `build.log`,
+`no-default.log`, and `final-tests.log`, all using the same sysex prefix.
+Independent code/native review found no blockers. Original assets remain
+outside git, and no live character/server state changed.

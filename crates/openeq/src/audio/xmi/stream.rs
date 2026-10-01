@@ -2,7 +2,7 @@
 use super::schedule::{MAX_SOURCE_EVENTS_PER_TICK, SampleClock, XmiScheduler};
 use crate::audio::{
     decode::MusicStream,
-    midi_synth::{MAX_RENDER_FRAMES, MidiSynth},
+    midi_synth::{MAX_RENDER_FRAMES, MAX_SYSEX_BYTES, MidiSynth},
 };
 use anyhow::{Result, ensure};
 use openeq_assets::audio::xmi::{XmiFile, XmiSequenceOrdinal};
@@ -61,11 +61,15 @@ pub fn stream(bytes: Vec<u8>, ordinal: XmiSequenceOrdinal) -> Result<MusicStream
 // this seam generic also permits deterministic tests without initializing an AU.
 trait RenderSynth {
     fn midi_event(&mut self, status: u8, data1: u8, data2: u8) -> Result<()>;
+    fn sysex(&mut self, packet: &[u8]) -> Result<()>;
     fn render(&mut self, samples: &mut [f32]) -> Result<()>;
 }
 impl RenderSynth for MidiSynth {
     fn midi_event(&mut self, status: u8, data1: u8, data2: u8) -> Result<()> {
         Ok(MidiSynth::midi_event(self, status, data1, data2)?)
+    }
+    fn sysex(&mut self, packet: &[u8]) -> Result<()> {
+        Ok(MidiSynth::sysex(self, packet)?)
     }
     fn render(&mut self, samples: &mut [f32]) -> Result<()> {
         Ok(MidiSynth::render(self, samples)?)
@@ -159,6 +163,8 @@ fn render_inner(
     limit: u64,
     publish: &mut impl FnMut(Vec<f32>) -> bool,
 ) -> Result<()> {
+    let mut sysex = [0u8; MAX_SYSEX_BYTES];
+    sysex[0] = 0xf0;
     let mut frame = 0;
     let tail = RELEASE_SECONDS * u64::from(SAMPLE_RATE);
     let mut final_frame = limit
@@ -179,6 +185,11 @@ fn render_inner(
             };
             if let Some(message) = event.midi_message() {
                 synth.midi_event(message.status, message.data1, message.data2)?;
+            } else if let Some(payload) = schedule.sysex_payload(event) {
+                // Preflight bounded this complete packet; reuse fixed storage
+                // rather than allocate on every loop iteration.
+                sysex[1..=payload.len()].copy_from_slice(payload);
+                synth.sysex(&sysex[..=payload.len()])?;
             }
         }
         if !ending && (schedule.is_finished() || frame >= limit) {

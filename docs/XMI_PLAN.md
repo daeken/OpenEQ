@@ -104,7 +104,8 @@ the observed Miles 120 Hz; an explicit nonzero clock rate can be supplied.
 Controller 120 follows common MIDI output, matching the new native dispatch
 evidence. Controller 108 also follows common output under EQ's observed lack of
 a prefix callback. The unimplemented native controls 106, 109, 110, 111, 115, 118, 119 and
-all SysEx are rejected before emitting any events. Passive RBRN metadata alone
+unsupported SysEx framing are rejected before emitting any events. Complete
+F0..F7 packets up to 1536 bytes are forwarded unchanged to the offline synth. Passive RBRN metadata alone
 does not imply a branch; executing controller 109 remains unsupported. Rejected
 controls are not relabelled as ordinary MIDI or silently skipped. Preflight
 reports the first source index and occurrence count for each bounded issue kind.
@@ -117,8 +118,10 @@ batch partition independence. The ignored `original_xmi_scheduler_coverage`
 audit passed against the installed 79 files/389 sequences without a synthesizer
 or device. It fully scheduled 384 straight-through sequences into 927,156
 ordered outputs; peak linear active-note occupancy was 31 of 32 slots. The
-loop extension below admits four more sequences, bringing coverage to 388/389.
-Only `thedeep.xmi` ordinal 0 remains rejected for SysEx. Loop sequences use
+loop extension below admits four more sequences, and the later complete-packet
+SysEx integration admits `thedeep.xmi` ordinal 0, reaching **389/389**. The
+current corpus audit schedules 385 straight-through sequences into 929,693
+ordered outputs, with the same peak 31/32 linear occupancy. Loop sequences use
 separate bounded/native comparisons instead of blindly draining an infinite
 sequence in the corpus sweep.
 
@@ -353,6 +356,23 @@ The 22 SysEx events are in `thedeep.xmi`, with Roland manufacturer `0x41`
 messages including GS-like initialization. Keep payloads and diagnose unsupported
 ones; neither generic GM playback nor the available macOS bank guarantees the
 same native instrument setup.
+
+## Complete-packet SysEx integration, October 1
+
+`XMI_NATIVE_SYSEX.md` establishes native packet bytes, tick ordering, source
+offsets and the 1536-byte output preference. The scheduler admits only complete
+F0 packets ending in F7 with seven-bit interior bytes, retains immutable source
+payloads, and emits an explicit SysEx event at the authored position. The stream
+reuses fixed bounded packet storage and calls the worker-owned synth before
+rendering the next samples. F7 continuations, malformed and oversized records
+remain rejected before construction; packets are not truncated or rewritten.
+
+Synthetic tests cover mixed source order, expiring notes, native loop reentry,
+small/large batches, cancellation and cleanup after a failed SysEx call. The Deep
+passes native ordinary, packet and combined trace digests at all three batch
+sizes, and its full 199.375-second sequence plus release tail renders finite
+nonzero PCM entirely to memory. API acceptance does not prove Roland GS semantic
+effects or original instrument timbres in the installed macOS bank.
 
 ## Already-installed synthesis option
 

@@ -567,7 +567,7 @@ fn original_xmi_scheduler_coverage() {
     );
     assert_eq!(
         (supported, linear, peak, output_count),
-        (388, 384, 31, 927_156)
+        (389, 385, 31, 929_693)
     );
-    assert_eq!(counts, BTreeMap::from([("UnsupportedSysEx".into(), 1)]));
+    assert!(counts.is_empty());
 }

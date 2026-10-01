@@ -267,10 +267,10 @@ cohesive commits and pushing to `master`.
 
 - Exact `Opaque_MaxCB1.fx` TER v1–3 materials now upload native signed SHORT2
   UV values, including quantization/wrapping and masked-SSE2 nonfinite behavior.
-  Raw source/baked words and structural diagnostics remain unchanged. All24
+  Raw source/baked words and structural diagnostics remain unchanged. All 24
   original shader-bearing TERs were surveyed; none uses UVs where the two native
   CPU conversion paths disagree. Original Causeway and v3/GPU regressions pass.
-- Independent native numeric review passes; all1,031workspace tests pass with
+- Independent native numeric review passes; all 1,031 workspace tests pass with
   zero failures/ignored, plus strict lint/client build/no-default/format checks.
   Evidence `/tmp/openeq-uv-loops-*`. Counts include the separately pending loop
   scheduler and silent SysEx synthesis API; those await their own checkpoints.
@@ -278,7 +278,29 @@ cohesive commits and pushing to `master`.
 
 - Native four-slot XMI loop playback is independently reviewed and verified.
   All four original looped sequences match native output digests; the finite
-  Thurgadin pair reaches tick1,703,932 and the Temple of Veeshan pair repeats
+  Thurgadin pair reaches tick 1,703,932 and the Temple of Veeshan pair repeats
   indefinitely. Execution keeps bounded work, notes and cleanup. Streams retain
-  the explicit30-minute safety cutoff. Original sequence admission is388/389;
+  the explicit 30-minute safety cutoff. Original sequence admission is 388/389;
   The Deep's SysEx remains gated pending the next transport integration.
+
+## 03:55 verified complete-packet music transport
+
+- The Deep's 22 system-exclusive packets now reach the worker-owned synth at
+  their authored event positions. Native MIDI, SysEx and combined digests all
+  match at batch sizes 1/7/512; the full sequence renders finite nonzero PCM
+  entirely to memory. No audio was played and no live character state changed.
+- All 389 installed sequences now pass admission. The 385 straight-through
+  sequences produce 929,693 scheduled events; four original loop sequences
+  retain dedicated native conformance and runtime work/time limits. Packet
+  continuations, malformed/oversized packets and unsupported controls still
+  fail before synthesis; original timbres remain unverified.
+- Full verification: **1,037 workspace tests passed, zero failed/ignored**;
+  strict lint, normal client build, all-target no-default, formatting and diff
+  checks pass. One test-only nested-if lint warning was corrected; its three
+  affected scheduler tests pass again. Logs `/tmp/openeq-sysex-*`, with final
+  lint in `clippy-final.log` and final focused checks in `final-tests.log`.
+- Next investigations: cursor_review owns real placed-particle transforms and
+  drawing gate; npc_assets owns original particle material/texture/blend path;
+  xml_ui owns native TER normals/tangents/colors. All are research only until
+  their evidence and reviews support a bounded implementation. Root is surveying
+  particle source families and maintaining integration checkpoints.
