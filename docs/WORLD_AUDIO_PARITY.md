@@ -16,7 +16,10 @@ that a zone looks, moves or sounds right.
    a stair excursion cannot regain eligibility merely by returning to the
    expected endpoint. Isolated ascending single-plane support now has a narrow
    verified crossing certificate; general wall slides, diagonal ramps, descents
-   and stairs remain open. See `THIN_LIQUID_DEFLECTED_MOVEMENT.md`.
+   and stairs remain open. Actual wall-prefix regressions now demonstrate
+   nonmonotone tangent rounding even with one axis-aligned wall and one box;
+   endpoint chords and ordinary binary inversion cannot certify first entry.
+   See `THIN_LIQUID_DEFLECTED_MOVEMENT.md` and `THIN_LIQUID_DEFLECTED_REVIEW.md`.
 2. Complete WLD placed-actor behavior: first-pose geometry now resolves supported
    skeletons, with a native-time sampler for verified short packed tracks.
    Source-bound runtime playback now covers supported actors whose collision
@@ -31,7 +34,8 @@ that a zone looks, moves or sounds right.
    Exact TER Opaque_MaxCB1 and admitted WaterFall v1–3 UV upload now match
    masked-SSE2 SHORT2 conversion, with source words and diagnostics kept intact.
    The two established dual-UV families now preserve secondary coordinates
-   through deduplication; their native shader integration remains separate.
+   through deduplication. CB1_2UV now uses both packed coordinate streams for
+   its bounded second-color operation; complete native shading remains separate.
    Native packed normals/tangents/colors and other shader families remain under investigation.
    See `EQG_NONFINITE_TER_UPLOAD.md` and `EQG_TER_UV_PACKING.md`.
 4. Verify shader channels, fog/sky/light metadata and rendering across formats
@@ -44,12 +48,15 @@ that a zone looks, moves or sounds right.
    blend pass; the proven additive glass family has its native blend/depth/cutoff.
    Original sky table sampling and local EQ time advance are integrated. The
    exact native dome has CPU/GPU diagnostics but remains outside live rendering.
-   MaxLava, layered dual-UV shaders, other additive families, normal mapping,
+   Exact CB1_2UV now renders its authored second color with independent UVs:
+   673 batches / 2,050,190 triangles across 15 original terrain payloads.
+   This retains current color/lighting policy; see `EQG_TER_LAYERED_COLOR.md`.
+   MaxLava, CBSG dual-UV shading, other additive families, normal mapping,
    alpha-safe/clamped filtering, mip construction and Thundercrest's missing
    `clz-0` sky selection remain follow-ups. See `RESTORED_EQG_GPU_AUDIT.md`,
    `EQG_ADDITIVE_SHADER.md` and `SKY_PATTERN_FOLLOWUP.md`. Failed native weather
    selection preserves manager state, but host transition/reset behavior is
-   still unresolved. Track ongoing work in `OVERNIGHT_2026-10-01.md`.
+   still unresolved. Track ongoing work in `DAYTIME_2026-10-01.md`.
    Native adaptive terrain tessellation/normal generation remains separate from
    the supported full-grid topology.
 5. Finish native XMI loop/SysEx behavior, original-compatible timbres and audio
