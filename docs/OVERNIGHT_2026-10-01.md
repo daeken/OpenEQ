@@ -435,3 +435,78 @@ cohesive commits and pushing to `master`.
   and 6,009 metadata placements. cursor_review independently reviews native and
   implementation; root owns original Dreadlands GPU loop/collision/bounds test.
   This pending extension is outside the 329-assets / 1,072-workspace checkpoints.
+
+
+## October 1 05:30 verified animation and audio recovery
+
+- `3ecdbe8` adds the bounded five-frame WLD extension. Native six-to-five key
+  reduction admits nine definition occurrences / 2,424 metadata placements;
+  close unrelated reduction scores remain unsupported. Original Dreadlands
+  GPU checks show moving branches, pixel-exact five-second closure and unchanged
+  18-triangle trunk collision across all sampled poses. Independent original
+  ranker replay reproduces the precision counterexample and the admission gate.
+  See `WLD_LONG_OBJECT_ANIMATION.md`; general long clips remain separate.
+- The first broad run aborted inside macOS DLSSynth, not a Rust assertion.
+  Native crash/disassembly evidence identifies a shared sound-bank acquisition
+  racing final release. `1dd288d` serializes setup and teardown, preserving
+  independent rendering/MIDI workers and error cleanup. A standalone copy with
+  only the guards removed reproduces SIGTRAP on its first startup-only stress
+  batch. The fixed implementation passes all 61 parallel audio tests and
+  20 stress batches / 2,560 synth lifecycles, entirely in memory or digital
+  silence. See `COREAUDIO_SYNTH_LIFECYCLE.md`.
+- The corrected complete original-asset/GPU/silent-audio workspace run passes
+  **1,089 tests, zero failed or ignored**, across 107 suites. Evidence:
+  `/tmp/openeq-lighting-five-frame-workspace-final.log`. A strict-lint-only
+  animation witness type issue was corrected and its five affected tests pass.
+  Later owner-pose and planar-support work is outside this workspace count.
+- The full 523-zone audit retains the same 501 structural passes, 21 known
+  nonfinite cases and Dranikcatacombsa dependency. All preexisting non-timing
+  fields match the previous frozen audit; 980 lighting material groups across
+  24 zones have zero lighting-selection issues. Reports and comparison are in
+  `/tmp/openeq-lighting-zone-survey/`. No live character/server changes occurred.
+- `b3232c4` records the executed native terrain frame and ordered-point binding.
+  Root independently reproduced both evidence hashes. It changes no shader;
+  actual light-list membership/order and environment provenance remain active
+  research, not permission to substitute nearest lights or duplicate baked light.
+- The collision-deflection witness is independently reproduced: ordinary-speed
+  ramp and wall-slide travel can cross thin water with dry endpoints. The wall's
+  endpoint chord misses it entirely; descending support has discontinuous prefix
+  responses. See `THIN_LIQUID_DEFLECTED_MOVEMENT.md`. Next work is a conservative
+  ascending single-plane certificate; general slide/stair timing stays open.
+
+## 05:55 verified ascending-support and source-light checkpoint
+
+- Uphill movement now resolves thin-liquid crossings on a conservatively proven
+  isolated support plane, restricted to one moving horizontal axis and regions
+  whose medium is height-invariant across the swept body center. Actual rounded
+  collision prefixes determine crossing time. Unsupported slides, diagonals,
+  descents, edges and competing geometry preserve the existing whole-tick solve.
+  Independent review exposed three coverage failures and a large-coordinate time
+  error before admission was narrowed; 691,200 admitted prefix comparisons match.
+  See `THIN_LIQUID_DEFLECTED_MOVEMENT.md` and its independent review.
+- Binary EQG lights retain original byte-addressed names, record order, actual
+  declaration/member provenance and native terrain eligibility. Numeric light
+  data and rendering are unchanged. Four focused metadata tests include original
+  assets and duplicate-case member selection; independent review passes.
+- Static WLD particle owner transforms are available through an opt-in diagnostic.
+  Original PoK gives 475 matrices: 462 sampler admissions and 13 intentionally
+  rejected distorted torch matrices. Live particles remain disabled.
+- Integrated verification: **1,121 workspace tests passed, zero failed/ignored**,
+  across 108 suites, including original assets, GPU and digitally silent audio.
+  A final lint-only test literal was replaced by the identical `next_up` value;
+  all six affected planar tests pass again. Strict workspace lint, normal client
+  build, all-target no-default, format and diff checks pass. Logs:
+  `/tmp/openeq-planar-owner-lights-*` (`workspace.log`, `focused-final.log`,
+  `clippy-final.log`, `build.log`, `no-default.log`, `fmt.log`).
+- Next native-light evidence: sky color-map column 31 contains environment-light
+  swatches, deliberately separate from dome colors. Host directional/bounce
+  transfer executes with controlled sky/time/math interfaces; actual sky getters,
+  interpolation and host ambient/vision smoothing remain active research. No
+  unverified environment shading or point-light membership has been enabled.
+
+Final review additionally excluded hidden dry BSP planes and rounded-away box
+gaps from ascending admission. A separate single-liquid-interval proof restricts
+the swept bounds to at most one relevant wet leaf/identity box. Ten helper and
+34 movement tests pass, including two new saved-move fallbacks; this follow-up
+is beyond the historical 1,121-test count above. Straight-span behavior is
+unchanged. See the final sections of the deflected movement/review notes.
