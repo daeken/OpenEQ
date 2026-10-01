@@ -227,6 +227,123 @@ fn rigid_child_pose_uses_parent_rotation_scale_and_center_once() {
 }
 
 #[test]
+fn track_reference_flags_and_optional_timing_are_retained_verbatim() {
+    for (flags, speed) in [
+        (0, None),
+        (4, None),
+        (5, Some(1000)),
+        (7, Some(0)),
+        (0x8000_0004, None),
+    ] {
+        let mut fixture = Fixture::default();
+        let mut bytes = words(&[17, flags]);
+        if let Some(speed) = speed {
+            bytes.extend(words(&[speed]));
+        }
+        fixture.add(0x13, "TRACK", bytes);
+        let wld = fixture.finish();
+        let Fragment::PieceTrackRef(reference) = &wld.chunks()[0].fragment else {
+            panic!("track reference");
+        };
+        assert_eq!(reference.track, Ref(17));
+        assert_eq!(reference.flags, flags);
+        assert_eq!(reference.speed, speed);
+    }
+}
+
+#[test]
+fn explicit_frames_preserve_sources_topology_and_actor_ownership() {
+    for weighted in [false, true] {
+        let wld = tree_fixture(weighted);
+        let mut scene = empty_scene();
+        append_objects(&mut scene, 0, &wld).unwrap();
+        let source = &scene.wld_object_sources["tree"];
+        let first = source.sample_authored_frames(&[0, 0]).unwrap();
+        let later = source.sample_authored_frames(&[0, 1]).unwrap();
+        near(first[0].vertices[0], [-12., 34., 60.]);
+        // Child: 2*(2,3,4)+(4,5,6)=(8,11,14).
+        // Root: 90°Z * 2*(8,11,14)+(10,20,30)=(-12,36,58).
+        near(later[0].vertices[0], [-12., 36., 58.]);
+        near(later[0].normals[0], [0., 1., 0.]);
+        assert_eq!(later[0].tex_coords, first[0].tex_coords);
+        assert_eq!(later[0].polygon_textures, first[0].polygon_textures);
+        assert_eq!(later[0].materials, first[0].materials);
+        assert_eq!(later[0].vertex_pieces, first[0].vertex_pieces);
+        let topology = |meshes: &[Mesh]| {
+            meshes
+                .iter()
+                .flat_map(|mesh| mesh.polygons.iter().map(|p| (p.a, p.b, p.c, p.collidable)))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(topology(&first), topology(&later));
+        near(source.parts[0].mesh.vertices[0], [2., 3., 4.]);
+        assert_eq!(posed_meshes(source).unwrap()[0].vertices, first[0].vertices);
+        assert_eq!(
+            posed_meshes(&scene.wld_object_sources["second"]).unwrap()[0].vertices,
+            first[0].vertices
+        );
+        // Diagnostic samples do not modify any actor's existing scene bake.
+        for key in ["tree", "second"] {
+            let object = scene
+                .objects
+                .iter()
+                .find(|object| object.name == key)
+                .unwrap();
+            near(
+                scene.meshes[object.meshes[0]].vertices[..3]
+                    .try_into()
+                    .unwrap(),
+                [-12., 34., 60.],
+            );
+            near(
+                scene.collision_meshes[object.collision_meshes[0]].positions[0],
+                [-12., 34., 72.],
+            );
+        }
+    }
+}
+
+#[test]
+fn explicit_frames_reject_bad_selections_and_later_poses_without_changing_first_pose() {
+    let wld = tree_fixture(false);
+    let mut source = source(&wld, "TREE_ACTORDEF");
+    let first = posed_meshes(&source).unwrap();
+    for indices in [
+        vec![],
+        vec![0],
+        vec![0, 0, 0],
+        vec![1, 0],
+        vec![0, 2],
+        vec![0, usize::MAX],
+    ] {
+        assert!(source.sample_authored_frames(&indices).is_err());
+    }
+    for bad in [
+        frame([f32::NAN, 0., 0.], 1.),
+        frame([0.; 3], 0.),
+        Frame {
+            rotation: [0.; 4],
+            ..frame([0.; 3], 1.)
+        },
+    ] {
+        source.skeleton.as_mut().unwrap().tracks[1]
+            .definition
+            .frames[1] = bad;
+        assert!(source.sample_authored_frames(&[0, 1]).is_err());
+        assert_eq!(
+            posed_meshes(&source).unwrap()[0].vertices,
+            first[0].vertices
+        );
+    }
+    let static_source = self::source(&wld, "STATIC_ACTORDEF");
+    assert_eq!(
+        static_source.sample_authored_frames(&[]).unwrap()[0].vertices,
+        static_source.parts[0].mesh.vertices
+    );
+    assert!(static_source.sample_authored_frames(&[0]).is_err());
+}
+
+#[test]
 fn actor_names_and_shared_source_meshes_have_independent_draw_collision_ownership() {
     let wld = tree_fixture(false);
     let mut scene = empty_scene();
@@ -435,6 +552,13 @@ fn original_citymist_trees_keep_authored_parts_frames_and_trunk_collision() {
             .count(),
         6
     );
+    for track in &skeleton.tracks {
+        assert_eq!(track.definition.flags, 8);
+        assert_eq!(
+            track.reference_flags,
+            if track.speed.is_some() { 5 } else { 4 }
+        );
+    }
     let posed = posed_meshes(source).unwrap();
     let trunk = source
         .parts
@@ -485,6 +609,43 @@ fn original_citymist_trees_keep_authored_parts_frames_and_trunk_collision() {
                 original[2] + 85.53125,
             ],
         );
+    }
+    // All four exact authored-frame snapshots are available for comparing with
+    // the native runtime. This deliberately makes no playback-time assertion.
+    for frame_index in 0..4 {
+        let selection = skeleton
+            .tracks
+            .iter()
+            .map(|track| {
+                if track.definition.frames.len() == 1 {
+                    0
+                } else {
+                    frame_index
+                }
+            })
+            .collect::<Vec<_>>();
+        let sampled = source.sample_authored_frames(&selection).unwrap();
+        assert_eq!(sampled[trunk].vertices, posed[trunk].vertices);
+        assert_eq!(sampled[trunk].normals, posed[trunk].normals);
+        assert_eq!(
+            sampled
+                .iter()
+                .map(|mesh| mesh.polygons.len())
+                .sum::<usize>(),
+            72
+        );
+        for (index, mesh) in sampled
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != trunk)
+        {
+            assert!(mesh.polygons.iter().all(|polygon| !polygon.collidable));
+            if frame_index == 0 {
+                assert_eq!(mesh.vertices, posed[index].vertices);
+            } else {
+                assert_ne!(mesh.vertices, posed[index].vertices);
+            }
+        }
     }
     // Independently rotate one original branch from its packed quaternion words.
     let branch = source

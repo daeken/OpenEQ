@@ -82,7 +82,7 @@ fn original_citymist_tree_assembles_visible_branches_and_all_fifty_instances() {
     };
     let gpu = GpuScene::build(renderer.device(), renderer.queue(), &tree).unwrap();
     renderer.set_scene(&gpu);
-    renderer.render(&gpu, &camera);
+    renderer.render_at(&gpu, &camera, std::time::Duration::ZERO);
     let (width, height, visible) = renderer.read_rgba().unwrap();
     tree.instances.clear();
     let empty = GpuScene::build(renderer.device(), renderer.queue(), &tree).unwrap();
@@ -93,7 +93,7 @@ fn original_citymist_tree_assembles_visible_branches_and_all_fifty_instances() {
     assert_eq!(empty.bounds_min, Vec3::ZERO);
     assert_eq!(empty.bounds_max, Vec3::ZERO);
     renderer.set_scene(&empty);
-    renderer.render(&empty, &camera);
+    renderer.render_at(&empty, &camera, std::time::Duration::ZERO);
     let (_, _, background) = renderer.read_rgba().unwrap();
     let changed = visible
         .chunks_exact(4)
@@ -114,4 +114,93 @@ fn original_citymist_tree_assembles_visible_branches_and_all_fifty_instances() {
         image::ColorType::Rgba8,
     )
     .unwrap();
+
+    // Exact authored poses are a diagnostic, not a native playback timeline.
+    // Rebuild only this isolated test scene; production still uses frame zero.
+    let source = tree.wld_object_sources["jntree103"].clone();
+    let skeleton = source.skeleton.as_ref().unwrap();
+    let archive = openeq_assets::pfs::Archive::open(base.join("citymist_obj.s3d")).unwrap();
+    let wld = openeq_assets::wld::Wld::open(&archive, &source.wld_filename).unwrap();
+    tree.instances.push(Instance {
+        object: "jntree103".into(),
+        position: [0.; 3],
+        scale: [1.; 3],
+        rotation: [0., 0., 0., 1.],
+    });
+    for frame in 0..4 {
+        let selection = skeleton
+            .tracks
+            .iter()
+            .map(|track| {
+                if track.definition.frames.len() == 1 {
+                    0
+                } else {
+                    frame
+                }
+            })
+            .collect::<Vec<_>>();
+        let parts = source.sample_authored_frames(&selection).unwrap();
+        let (materials, mut meshes) = openeq_assets::mesh::bake_wld_meshes(&wld, &parts);
+        // object_model preserves palette masking in decoded texture aliases.
+        // Match the fresh bake back to those already extracted materials.
+        let remap = materials
+            .into_iter()
+            .map(|mut material| {
+                if material.alpha_mask {
+                    for texture in &mut material.textures {
+                        texture.push_str("#masked");
+                    }
+                }
+                tree.materials
+                    .iter()
+                    .position(|existing| *existing == material)
+                    .expect("sampling must retain every source material")
+            })
+            .collect::<Vec<_>>();
+        for mesh in &mut meshes {
+            mesh.material = remap[mesh.material];
+        }
+        tree.meshes = meshes;
+        tree.objects[0].meshes = (0..tree.meshes.len()).collect();
+        assert_eq!(
+            openeq_assets::collision::CollisionWorld::build(&tree).triangle_count(),
+            42
+        );
+        let sampled_gpu = GpuScene::build(renderer.device(), renderer.queue(), &tree).unwrap();
+        assert_eq!(
+            sampled_gpu
+                .draws
+                .iter()
+                .map(|draw| draw.index_count / 3 * draw.instance_count)
+                .sum::<u32>(),
+            72
+        );
+        renderer.set_scene(&sampled_gpu);
+        renderer.render_at(&sampled_gpu, &camera, std::time::Duration::ZERO);
+        let (_, _, pixels) = renderer.read_rgba().unwrap();
+        image::save_buffer(
+            directory.join(format!("authored-frame-{frame}.png")),
+            &pixels,
+            width,
+            height,
+            image::ColorType::Rgba8,
+        )
+        .unwrap();
+        let changed = pixels
+            .chunks_exact(4)
+            .zip(visible.chunks_exact(4))
+            .filter(|(a, b)| a != b)
+            .count();
+        if frame == 0 {
+            assert!(
+                pixels == visible,
+                "diagnostic first pose must preserve the loaded actor: {changed} pixels changed"
+            );
+        } else {
+            assert!(
+                changed > 50,
+                "authored frame {frame} must visibly change branches: {changed}"
+            );
+        }
+    }
 }

@@ -100,6 +100,8 @@ pub struct PieceTrack {
 #[derive(Debug, Clone)]
 pub struct PieceTrackRef {
     pub track: Ref,
+    /// Original fragment 0x13 flags, including the optional timing-word bit.
+    pub flags: u32,
     pub speed: Option<u32>,
 }
 
@@ -495,7 +497,11 @@ fn read_fragment(
             } else {
                 None
             };
-            Fragment::PieceTrackRef(PieceTrackRef { track, speed })
+            Fragment::PieceTrackRef(PieceTrackRef {
+                track,
+                flags,
+                speed,
+            })
         }
         0x14 => {
             let flags = reader.u32()?;

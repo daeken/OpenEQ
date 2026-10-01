@@ -1,6 +1,7 @@
 //! Actor-owned WLD objects, sampled at the first authored skeletal frame.
 //!
-//! This retains the source tracks and meshes for future animation. It does not
+//! This retains the source tracks and meshes for future animation and permits
+//! explicit authored-frame inspection. It does not
 //! choose an animation rate, flatten LOD variants, or turn mesh names into actor
 //! aliases. See `docs/WLD_PLACED_OBJECTS.md` for evidence and supported bounds.
 
@@ -39,8 +40,27 @@ pub struct ObjectSkeleton {
 #[derive(Debug, Clone)]
 pub struct ObjectTrack {
     pub definition: PieceTrack,
-    /// Raw optional source speed; no guessed default or playback conversion.
+    /// Original fragment 0x13 flags; distinct from the frame-definition flags.
+    pub reference_flags: u32,
+    /// Raw optional fragment 0x13 timing word; no runtime timeline is implied.
     pub speed: Option<u32>,
+}
+
+impl ObjectSource {
+    /// Inspect exact authored frames using the same transform convention as the
+    /// initial-pose loader. Supply one frame index per track (empty for static
+    /// actors). This does not infer timing, looping, or native animation output.
+    ///
+    /// The returned mesh copies retain topology and polygon collision flags.
+    /// Source meshes and any already-baked scene/collision geometry are unchanged.
+    pub fn sample_authored_frames(&self, frame_indices: &[usize]) -> Result<Vec<Mesh>> {
+        let transforms = match &self.skeleton {
+            Some(skeleton) => Some(pose_at_frames(skeleton, Some(frame_indices))?),
+            None if frame_indices.is_empty() => None,
+            None => return Err(invalid("static object has no skeletal frames")),
+        };
+        transform_meshes(self, transforms.as_deref())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -151,6 +171,7 @@ fn skeleton_source(wld: &Wld, skeleton: &Skeleton) -> Result<ObjectSkeleton> {
         }
         tracks.push(ObjectTrack {
             definition: definition.clone(),
+            reference_flags: reference.flags,
             speed: reference.speed,
         });
     }
@@ -163,9 +184,24 @@ fn skeleton_source(wld: &Wld, skeleton: &Skeleton) -> Result<ObjectSkeleton> {
 }
 
 fn first_pose(source: &ObjectSkeleton) -> Result<Vec<Mat4>> {
+    pose_at_frames(source, None)
+}
+
+fn pose_at_frames(source: &ObjectSkeleton, frame_indices: Option<&[usize]>) -> Result<Vec<Mat4>> {
+    if source.tracks.len() != source.definition.tracks.len()
+        || frame_indices.is_some_and(|indices| indices.len() != source.tracks.len())
+    {
+        return Err(invalid("object frame selection does not match track count"));
+    }
+    let (parents, order) = hierarchy(&source.definition)?;
     let mut transforms = vec![Mat4::IDENTITY; source.tracks.len()];
-    for &index in &source.parent_first_order {
-        let frame = source.tracks[index].definition.frames[0];
+    for index in order {
+        let frame_index = frame_indices.map_or(0, |indices| indices[index]);
+        let frame = source.tracks[index]
+            .definition
+            .frames
+            .get(frame_index)
+            .ok_or_else(|| invalid("object frame selection is out of range"))?;
         let rotation = Quat::from_array(frame.rotation);
         if !rotation.is_finite()
             || !rotation.length_squared().is_finite()
@@ -174,17 +210,14 @@ fn first_pose(source: &ObjectSkeleton) -> Result<Vec<Mat4>> {
             || !frame.scale.is_finite()
             || frame.scale <= 0.
         {
-            return Err(invalid(
-                "unsupported nonfinite or degenerate object first pose",
-            ));
+            return Err(invalid("unsupported nonfinite or degenerate object pose"));
         }
         let local = Mat4::from_scale_rotation_translation(
             Vec3::splat(frame.scale),
             rotation.normalize(),
             Vec3::from_array(frame.translation),
         );
-        transforms[index] =
-            source.parents[index].map_or(local, |parent| transforms[parent] * local);
+        transforms[index] = parents[index].map_or(local, |parent| transforms[parent] * local);
         if !transforms[index].is_finite() {
             return Err(invalid("object skeleton transform overflow"));
         }
@@ -276,6 +309,10 @@ fn actor_source(wld: &Wld, chunk: &Chunk, actor: &ActorDef) -> Result<ObjectSour
 
 fn posed_meshes(source: &ObjectSource) -> Result<Vec<Mesh>> {
     let transforms = source.skeleton.as_ref().map(first_pose).transpose()?;
+    transform_meshes(source, transforms.as_deref())
+}
+
+fn transform_meshes(source: &ObjectSource, transforms: Option<&[Mat4]>) -> Result<Vec<Mesh>> {
     source
         .parts
         .iter()
@@ -299,7 +336,7 @@ fn posed_meshes(source: &ObjectSource) -> Result<Vec<Mesh>> {
                     "invalid object mesh vertex attributes or polygon indices",
                 ));
             }
-            let Some(transforms) = &transforms else {
+            let Some(transforms) = transforms else {
                 if !mesh.vertex_pieces.is_empty() {
                     return Err(invalid("object bone runs have no skeleton"));
                 }
@@ -308,6 +345,7 @@ fn posed_meshes(source: &ObjectSource) -> Result<Vec<Mesh>> {
             let bindings = if mesh.vertex_pieces.is_empty() {
                 let track = part
                     .rigid_track
+                    .filter(|track| *track < transforms.len())
                     .ok_or_else(|| invalid("unweighted object part has no track"))?;
                 vec![track; mesh.vertices.len()]
             } else {

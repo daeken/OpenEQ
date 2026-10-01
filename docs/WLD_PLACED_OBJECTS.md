@@ -16,8 +16,9 @@ the keys match, the actor's assembled pose supplies that object. Unplaced
 definitions never become terrain or standalone collision.
 
 `Scene::wld_object_sources` retains the actor references, original decoded
-meshes, original skeleton names/flags/references/children, all frame values and
-raw optional track speeds. Object extraction retains its source entry. This
+meshes, original skeleton names/flags/references/children, all frame values,
+track-reference flags and raw optional track speeds. Object extraction retains
+its source entry. This
 is an initial-pose geometry implementation, not foliage animation: it does not
 choose a default speed, infer a loop, or claim native playback timing.
 
@@ -102,7 +103,15 @@ assembled textured trunk and branches; clearing all placements removes every
 draw call. Capture: `/tmp/openeq-citymist-objects/assembled-tree.png`. This checks
 assembly/upload/visibility, not original-client visual equivalence.
 
-Next, compare controlled in-zone tree traversal, then integrate the preserved
-branch tracks with an evidence-backed clock and collision policy.
+An explicit authored-frame diagnostic now samples retained tracks without
+mutating source meshes or baked scenes. Its frame zero is pixel-identical to
+the loaded tree; the other three branch poses are visibly different while
+the trunk and its collision stay fixed. Production remains at the first pose.
+See [native animation research](WLD_OBJECT_ANIMATION.md) for the proven key
+timing and loop closure, the quaternion and clock boundaries that still need
+proof, exact binary addresses, and the expanded original-asset regressions.
+
+Next, resolve native animated quaternion output, host clock units and placed
+controller ownership before integrating runtime motion and collision policy.
 Particle-linked actors and other unsupported fragment families remain separate
 work; this implementation must not silently turn them into static mesh aliases.
