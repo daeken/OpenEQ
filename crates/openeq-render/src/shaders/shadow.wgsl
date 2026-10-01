@@ -22,7 +22,7 @@ struct Environment {
     fog_params: vec4<f32>, // start, end, authored density, reserved
     sky_horizon: vec4<f32>, // fallback linear RGB, w = authored textures
     sky_zenith: vec4<f32>, // fallback linear RGB, w = cloud opacity
-    sky_params: vec4<f32>, // cloud velocity, cloud scale, sky enabled, reserved
+    sky_params: vec4<f32>, // cloud velocity, cloud scale, sky enabled, effect seconds
 };
 
 struct Globals {

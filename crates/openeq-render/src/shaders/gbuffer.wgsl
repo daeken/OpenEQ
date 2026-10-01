@@ -16,7 +16,7 @@ struct Environment {
     fog_params: vec4<f32>, // start, end, authored density, reserved
     sky_horizon: vec4<f32>, // fallback linear RGB, w = authored textures
     sky_zenith: vec4<f32>, // fallback linear RGB, w = cloud opacity
-    sky_params: vec4<f32>, // cloud velocity, cloud scale, sky enabled, reserved
+    sky_params: vec4<f32>, // cloud velocity, cloud scale, sky enabled, effect seconds
 };
 
 struct Globals {
@@ -166,10 +166,9 @@ fn fs_main(in: Fragment) -> Targets {
         if (water.layers.z != 0u) {
             // Native indexed sheets store quantized tile UVs. The asset bake
             // unpacks SHORT2/256; use the authored scale and two native layers.
-            // OpenEQ elapsed seconds are our animation-time convention.
-            // Reduce in the uniform's millisecond units before conversion so
-            // exact 100-second periods return exactly to their starting UVs.
-            let phase = (globals.params.x % 100000.0) / 1000.0;
+            // Native effect time reduces unsigned integer milliseconds before
+            // f32 conversion. The CPU preserves low bits even after days up.
+            let phase = globals.environment.sky_params.w;
             let indexed_uv = in.uv * water.params.w;
             uv1 = indexed_uv - phase * vec2<f32>(0.02);
             uv2 = indexed_uv * 2.0 + phase * vec2<f32>(0.03);

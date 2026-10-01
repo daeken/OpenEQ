@@ -106,6 +106,16 @@ impl EnvironmentSettings {
         };
         self.cloud_velocity = assets.cloud_velocity;
     }
+    /// Original effect Time is an unsigned millisecond clock reduced before
+    /// conversion to seconds. Keep its precision for long-running sessions.
+    /// Our epoch remains renderer startup; the native host uses timer startup.
+    pub fn uniform_at(&self, elapsed: std::time::Duration) -> EnvironmentUniform {
+        let milliseconds = elapsed.as_millis() as u32;
+        let mut uniform = self.uniform();
+        uniform.sky_params[3] = (milliseconds % 100_000) as f32 * 0.001;
+        uniform
+    }
+
     pub fn uniform(&self) -> EnvironmentUniform {
         let fog_valid = self.fog_enabled
             && self.fog_start.is_finite()
@@ -153,8 +163,10 @@ pub struct SkyResources {
 
 /// The native 32px sky color table stores a 31-sector, 29-step dome plus
 /// auxiliary color swatches. Those swatches must never become sky pixels.
-/// Native pole vertices use column zero; duplicating that color around the
-/// pole prevents an azimuth-dependent pinwheel under bilinear sampling.
+/// This live lookup remains an approximation of the native mesh: duplicating
+/// pole colors around each row suppresses a pinwheel under bilinear sampling,
+/// but also suppresses valid native near-pole ring colors. The opt-in assets
+/// dome diagnostic preserves those colors and the exact source addressing.
 fn color_map_upload(texture: &Texture, layout: SkyColorMapLayout) -> std::borrow::Cow<'_, Texture> {
     if layout != SkyColorMapLayout::OriginalDome {
         return std::borrow::Cow::Borrowed(texture);
@@ -305,5 +317,49 @@ mod tests {
         assert_eq!(uniform.fog_color[3], 1.0);
         assert!((uniform.fog_color[1] - 0.214041).abs() < 0.00001);
         assert_eq!(std::mem::size_of::<EnvironmentUniform>(), 80);
+    }
+
+    #[test]
+    fn effect_time_matches_native_integer_clock_witnesses() {
+        // Original full host-clock -> engine -> SetFloat binder outputs.
+        // See docs/EQG_EFFECT_CLOCK.md. No wall clock or GPU is used here.
+        let native = [
+            (0_u64, 0x00000000_u32),
+            (1_u64, 0x3a83126f_u32),
+            (2_u64, 0x3b03126f_u32),
+            (999_u64, 0x3f7fbe78_u32),
+            (1_000_u64, 0x3f800000_u32),
+            (12_345_u64, 0x4145851f_u32),
+            (99_998_u64, 0x42c7fefa_u32),
+            (99_999_u64, 0x42c7ff7e_u32),
+            (100_000_u64, 0x00000000_u32),
+            (100_001_u64, 0x3a83126f_u32),
+            (100_999_u64, 0x3f7fbe78_u32),
+            (123_456_789_u64, 0x426327f0_u32),
+            (2_147_483_647_u64, 0x42a74b44_u32),
+            (2_147_483_648_u64, 0x42a74bc7_u32),
+            (4_294_967_295_u64, 0x4286970b_u32),
+            (4_294_967_296_u64, 0x00000000_u32),
+            (4_294_968_296_u64, 0x3f800000_u32),
+        ];
+        for (milliseconds, bits) in native {
+            let uniform = EnvironmentSettings::default()
+                .uniform_at(std::time::Duration::from_millis(milliseconds));
+            assert_eq!(uniform.sky_params[3].to_bits(), bits, "{milliseconds} ms");
+        }
+        let submillisecond = std::time::Duration::from_nanos(999_999);
+        assert_eq!(
+            EnvironmentSettings::default()
+                .uniform_at(submillisecond)
+                .sky_params[3],
+            0.
+        );
+        let settings = EnvironmentSettings::default();
+        let mut timed = settings.uniform_at(std::time::Duration::from_secs(17));
+        timed.sky_params[3] = 0.;
+        assert_eq!(
+            bytemuck::bytes_of(&timed),
+            bytemuck::bytes_of(&settings.uniform())
+        );
     }
 }

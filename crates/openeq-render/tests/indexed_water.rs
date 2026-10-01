@@ -205,6 +205,37 @@ fn indexed_uv_repeat_scale_and_two_native_layers_are_distinct_from_legacy_water(
     );
 }
 
+#[test]
+#[ignore = "requires GPU"]
+fn indexed_water_keeps_integer_millisecond_phase_after_long_uptime_and_clock_wrap() {
+    let mut renderer = renderer(160, 160);
+    let scene = water_scene(Some(1.), 0., 1., [0.; 2]);
+    let gpu = upload(&renderer, &scene);
+    let camera = Camera {
+        position: [0., -32., 35.],
+        yaw: 0.,
+        pitch: -0.85,
+        ..Default::default()
+    };
+    let mut draw = |milliseconds| {
+        renderer.render_at(&gpu, &camera, Duration::from_millis(milliseconds));
+        renderer.read_rgba().unwrap().2
+    };
+    let phase_ms = 37_777;
+    let expected = draw(phase_ms);
+    assert!(changed_pixels(&expected, &draw(phase_ms + 2_000)) > 1000);
+    // Native binder reduces unsigned integer milliseconds before f32 conversion.
+    // The old full-uptime float uniform loses low bits before the modulo.
+    for time in [
+        phase_ms + 100_000 * 1_000,
+        phase_ms + 100_000 * 40_000,
+        phase_ms + (1_u64 << 32),
+        phase_ms + 2 * (1_u64 << 32),
+    ] {
+        assert!(expected == draw(time), "effect phase drift at {time} ms");
+    }
+}
+
 fn look_at(position: [f32; 3], target: [f32; 3]) -> Camera {
     let d = glam::Vec3::from(target) - glam::Vec3::from(position);
     Camera {

@@ -52,8 +52,10 @@ fn original_dawn_blend_matches_independent_byte_table_through_gpu() {
         assert_eq!(frames[2], frames[3], "native blend upload mismatch");
         assert_ne!(frames[2], frames[0], "dawn remained on the night map");
         assert_ne!(frames[2], frames[1], "dawn jumped to the next map");
-        // Lighting swatches still must not leak into the visible dome after
-        // interpolation. Poison the complete excluded domain independently.
+        // Preserve the current lookup's exclusion of lighting swatches and
+        // collapse of pole rows. Some collapsed entries belong to native
+        // near-pole rings; this checks our current approximation, not native
+        // mesh geometry. Poison its complete excluded domain independently.
         let mut poisoned = actual.clone();
         for y in 0..32 {
             for x in 0..32 {

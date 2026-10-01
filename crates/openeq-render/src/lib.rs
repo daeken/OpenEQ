@@ -1052,6 +1052,10 @@ impl Renderer {
         let focus = Camera::to_world(camera.position) + camera.forward() * 150.0;
         let light_view_projection = shadow::view_projection(focus, sun, SHADOW_SIZE);
 
+        let environment = self
+            .environment
+            .with_view_liquid(self.view_liquid)
+            .uniform_at(elapsed);
         let elapsed = elapsed.as_secs_f32() * 1000.0;
         // Shadow-map texel size, used for the receiver offset and the PCF taps.
         let shadow_texel_world = (2.0 * shadow::RADIUS) / SHADOW_SIZE as f32;
@@ -1064,10 +1068,7 @@ impl Renderer {
             ambient: Vec4::new(0.22, 0.24, 0.30, 1.0).into(),
             sun_direction: Vec4::new(sun.x, sun.y, sun.z, 1.0).into(),
             sun_color: Vec4::new(1.0, 0.96, 0.86, 1.0).into(),
-            environment: self
-                .environment
-                .with_view_liquid(self.view_liquid)
-                .uniform(),
+            environment,
             params: [
                 elapsed,
                 scene.light_count as f32,
