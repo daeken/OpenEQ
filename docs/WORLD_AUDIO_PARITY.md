@@ -12,6 +12,9 @@ that a zone looks, moves or sounds right.
    binary boxes can extend below floors or differ from visible water surfaces;
    Crescent now has an original-floor movement fixture, while Anguish's authored
    basin/box relationship still needs a playable-route check.
+   Straight-motion eligibility now checks every accepted collision substep;
+   a stair excursion cannot regain eligibility merely by returning to the
+   expected endpoint. General deflected crossing integration is still pending.
 2. Complete WLD placed-actor behavior: first-pose geometry now resolves supported
    skeletons, but branch animation timing, collision policy and particle-linked
    fragment families still need evidence.
@@ -23,6 +26,10 @@ that a zone looks, moves or sounds right.
    identity and startup scene bounds now have dedicated regression coverage.
    The restored Bazaar, The Nest and Thundercrest terrain substantially raises
    submitted geometry; add fixed-camera appearance and GPU timing checks there.
+   The first overnight captures identify ordinary-texture mip-zero aliasing,
+   unimplemented MaxLava/MaxWaterFall/additive shader handling and Thundercrest's
+   missing `clz-0` sky selection as concrete follow-ups. Track ongoing work in
+   `OVERNIGHT_2026-10-01.md`.
    Native adaptive terrain tessellation/normal generation remains separate from
    the supported full-grid topology.
 5. Finish native XMI loop/SysEx behavior, original-compatible timbres and audio
