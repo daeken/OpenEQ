@@ -12,10 +12,18 @@ use openeq_render::{Camera, GpuScene, Renderer, environment::EnvironmentSettings
 const SIZE: u32 = 128;
 
 fn striped_plane(repeat: f32) -> Scene {
+    striped_plane_width(repeat, 4)
+}
+
+fn striped_plane_width(repeat: f32, stripe_width: u32) -> Scene {
     let mut rgba = Vec::new();
     for _ in 0..256 {
         for x in 0..256 {
-            let value = if x / 4 % 2 == 0 { 0 } else { 255 };
+            let value = if (x / stripe_width).is_multiple_of(2) {
+                0
+            } else {
+                255
+            };
             rgba.extend([value, value, value, 255]);
         }
     }
@@ -124,6 +132,65 @@ fn opaque_repeated_diffuse_filters_subpixels_and_preserves_magnified_detail() {
 
     let source = striped_plane(0.125);
     let gpu = GpuScene::build(renderer.device(), renderer.queue(), &source).unwrap();
+    let nearby = center_red(&capture(&mut renderer, &gpu, 0.));
+    assert!(nearby.iter().filter(|&&x| x < 8).count() > nearby.len() / 4);
+    assert!(nearby.iter().filter(|&&x| x > 247).count() > nearby.len() / 4);
+}
+
+#[test]
+#[ignore = "requires GPU"]
+fn opaque_clamped_tiles_filter_subpixels_without_strobing() {
+    let mut renderer = Renderer::new_headless(SIZE, SIZE).unwrap();
+    renderer.set_environment(
+        EnvironmentSettings {
+            sky_enabled: false,
+            ..Default::default()
+        },
+        None,
+    );
+    // The measured center remains inside [0,1]; >2 source texels per
+    // screen pixel puts both selected mip levels beyond the stripe frequency.
+    for coverage in [1.13, 1.21, 1.27] {
+        let mut source = striped_plane_width(coverage, 1);
+        source.materials[0].clamp_uv = true;
+        let gpu = GpuScene::build(renderer.device(), renderer.queue(), &source).unwrap();
+        let first = center_red(&capture(&mut renderer, &gpu, 0.));
+        let shifted = center_red(&capture(&mut renderer, &gpu, 0.017));
+        let range = first.iter().max().unwrap() - first.iter().min().unwrap();
+        let motion = first
+            .iter()
+            .zip(&shifted)
+            .map(|(a, b)| f32::from(a.abs_diff(*b)))
+            .sum::<f32>()
+            / first.len() as f32;
+        let mean = first.iter().map(|x| f32::from(*x)).sum::<f32>() / first.len() as f32;
+        eprintln!("clamped coverage={coverage} range={range} motion={motion:.3} mean={mean:.3}");
+        assert!(range <= 16, "clamped subpixel detail aliases: {range}");
+        assert!(motion <= 2., "clamped detail strobes: {motion}");
+        assert!((mean - 128.).abs() < 5., "unexpected mip color {mean}");
+        // This fully opaque fixture takes the retained level-zero path when
+        // marked alpha-tested. It is a control for the previous clamp behavior,
+        // and ensures this camera/texture pair actually exposes its aliasing.
+        source.materials[0].alpha_mask = true;
+        let base_level = GpuScene::build(renderer.device(), renderer.queue(), &source).unwrap();
+        let old = center_red(&capture(&mut renderer, &base_level, 0.));
+        let old_shifted = center_red(&capture(&mut renderer, &base_level, 0.017));
+        let old_range = old.iter().max().unwrap() - old.iter().min().unwrap();
+        let old_motion = old
+            .iter()
+            .zip(&old_shifted)
+            .map(|(a, b)| f32::from(a.abs_diff(*b)))
+            .sum::<f32>()
+            / old.len() as f32;
+        eprintln!("level-zero control: range={old_range} motion={old_motion:.3}");
+        assert!(
+            old_range > 100 && old_motion > 10.,
+            "control did not expose base-level aliasing"
+        );
+    }
+    let mut near = striped_plane(0.125);
+    near.materials[0].clamp_uv = true;
+    let gpu = GpuScene::build(renderer.device(), renderer.queue(), &near).unwrap();
     let nearby = center_red(&capture(&mut renderer, &gpu, 0.));
     assert!(nearby.iter().filter(|&&x| x < 8).count() > nearby.len() / 4);
     assert!(nearby.iter().filter(|&&x| x > 247).count() > nearby.len() / 4);

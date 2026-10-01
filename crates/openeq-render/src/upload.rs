@@ -42,6 +42,18 @@ impl UploadContext {
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
+        // Opaque baked tiles need true edge addressing at every mip level.
+        // A level-zero half-texel inset cannot prevent repeat bleed at coarse LOD.
+        let clamp_sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("clamped atlas sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
         self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("atlas bind group"),
             layout: &self.atlas_layout,
@@ -77,6 +89,10 @@ impl UploadContext {
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: scene.terrain.masks.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::Sampler(&clamp_sampler),
                 },
             ],
         })

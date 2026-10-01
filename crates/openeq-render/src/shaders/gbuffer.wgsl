@@ -47,6 +47,7 @@ struct PointLight {
 
 @group(2) @binding(0) var atlas: texture_2d_array<f32>;
 @group(2) @binding(1) var atlas_sampler: sampler;
+@group(2) @binding(8) var clamped_atlas_sampler: sampler;
 
 struct WaterParams {
     color1: vec4<f32>,
@@ -223,14 +224,17 @@ fn fs_main(in: Fragment) -> Targets {
     let uv = select(in.uv, clamp(in.uv, inset, vec2<f32>(1.0) - inset),
         (in.flags & FLAG_CLAMP_UV) != 0u);
     var texel: vec4<f32>;
-    if ((in.flags & (FLAG_ALPHA_MASK | FLAG_TRANSPARENT | FLAG_CLAMP_UV)) == 0u) {
-        // Repeating opaque surfaces must use their pixel footprint to select
-        // the uploaded mips, or distant detail sparkles with camera movement.
-        texel = textureSampleGrad(atlas, atlas_sampler, uv, i32(in.layer), asset_dx, asset_dy);
+    if ((in.flags & (FLAG_ALPHA_MASK | FLAG_TRANSPARENT)) == 0u) {
+        // Opaque surfaces use their pixel footprint to select uploaded mips.
+        // True clamp addressing preserves tile edges even at fractional LOD;
+        // the level-zero inset above is insufficient with a repeat sampler.
+        if ((in.flags & FLAG_CLAMP_UV) != 0u) {
+            texel = textureSampleGrad(atlas, clamped_atlas_sampler, in.uv, i32(in.layer), asset_dx, asset_dy);
+        } else {
+            texel = textureSampleGrad(atlas, atlas_sampler, uv, i32(in.layer), asset_dx, asset_dy);
+        }
     } else {
         // Keep alpha coverage consistent with the shadow/forward passes.
-        // Baked tiles also retain their base-level edge inset until mip-safe
-        // clamping is supported with the repeating atlas sampler.
         texel = textureSampleLevel(atlas, atlas_sampler, uv, i32(in.layer), 0.0);
     }
     if ((in.flags & FLAG_TER_COLOR_BLEND) != 0u) {

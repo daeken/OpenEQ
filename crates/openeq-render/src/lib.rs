@@ -413,6 +413,12 @@ impl Renderer {
                 terrain_storage_binding(5),
                 terrain_storage_binding(6),
                 terrain_storage_binding(7),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
 

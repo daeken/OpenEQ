@@ -51,7 +51,9 @@ that a zone looks, moves or sounds right.
    identity and startup scene bounds now have dedicated regression coverage.
    Fixed-camera GPU appearance and timing checks now cover restored Bazaar,
    The Nest and Thundercrest terrain. Opaque repeating diffuse textures now use
-   the uploaded mip levels, reducing distant shimmer. The exact authored TER
+   the uploaded mip levels, reducing distant shimmer. Opaque clamped baked
+   tiles now use trilinear clamp sampling without opposite-edge bleed; see
+   `CLAMPED_TEXTURE_MINIFICATION.md`. Alpha coverage remains separate. The exact authored TER
    waterfall family now has independent color/opacity scrolling and a dedicated
    blend pass; the proven additive glass family has its native blend/depth/cutoff.
    Original sky table sampling and local EQ time advance are integrated.
@@ -64,7 +66,7 @@ that a zone looks, moves or sounds right.
    673 batches / 2,050,190 triangles across 15 original terrain payloads.
    This retains current color/lighting policy; see `EQG_TER_LAYERED_COLOR.md`.
    MaxLava, CBSG dual-UV shading, other additive families, normal mapping,
-   alpha-safe/clamped filtering, mip construction and Thundercrest's missing
+   alpha-safe filtering, mip construction and Thundercrest's missing
    `clz-0` sky selection remain follow-ups. See `RESTORED_EQG_GPU_AUDIT.md`,
    `EQG_ADDITIVE_SHADER.md` and `SKY_PATTERN_FOLLOWUP.md`. Failed native weather
    selection preserves manager state, but host transition/reset behavior is

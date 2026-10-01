@@ -180,3 +180,49 @@ fn original_feerrott_tile_edges_change_without_moving_geometry_or_interior_uvs()
             .unwrap();
     }
 }
+
+#[test]
+#[ignore = "requires GPU"]
+fn minified_clamped_edges_do_not_wrap_at_coarse_or_fractional_mips() {
+    let mut renderer = Renderer::new_headless(64, 64).unwrap();
+    renderer.set_environment(
+        EnvironmentSettings {
+            sky_enabled: false,
+            ..Default::default()
+        },
+        None,
+    );
+    for axis in 0..2 {
+        for high in [false, true] {
+            for span in [2.3, 3.7] {
+                for edge in [if high { 1. } else { 0. }, if high { 1.25 } else { -0.25 }] {
+                    let prepare = |solid| {
+                        let mut scene = edge_scene(axis, high, 255, solid);
+                        for (index, vertex) in
+                            scene.meshes[0].vertices.chunks_exact_mut(8).enumerate()
+                        {
+                            vertex[6 + axis] = edge;
+                            vertex[6 + 1 - axis] =
+                                if [1, 2].contains(&index) { span } else { -span };
+                        }
+                        scene
+                    };
+                    let expected = capture(&mut renderer, &prepare(true));
+                    let source = prepare(false);
+                    assert_eq!(
+                        capture(&mut renderer, &source),
+                        expected,
+                        "mip edge leaked: axis{axis}, high{high}, span{span}, edge{edge}"
+                    );
+                    let mut repeating = source;
+                    repeating.materials[0].clamp_uv = false;
+                    assert_ne!(
+                        capture(&mut renderer, &repeating),
+                        expected,
+                        "fixture must distinguish repeat from clamp"
+                    );
+                }
+            }
+        }
+    }
+}
