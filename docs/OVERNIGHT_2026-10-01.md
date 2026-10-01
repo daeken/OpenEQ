@@ -94,3 +94,8 @@ cohesive commits and pushing to `master`.
   auditing packed unsigned WLD scale; `xml_ui` recovering AddAlpha shader
   states for Thundercrest glass; root tracing missing sky-pattern selection.
   Preserve each agent's edits and test narrow changes before integration.
+- Root's missing-sky follow-up found eight dangling setting references: five
+  `clz-0`, three `NULL`. The native weather setter returns failure before state
+  writes, rather than substituting a pattern; reload clears the manager, but
+  actual host zone-transition lifecycle remains untraced. No sky behavior was
+  changed. See `SKY_PATTERN_FOLLOWUP.md` for source hashes and call addresses.
