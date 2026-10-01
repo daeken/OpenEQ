@@ -15,6 +15,10 @@ use crate::{
 use glam::{Mat4, Quat, Vec2, Vec3};
 use std::collections::HashMap;
 
+#[path = "collision_ascending.rs"]
+mod ascending;
+pub use ascending::AscendingSupport;
+
 const CELL_SIZE: f32 = 64.;
 const MAX_CELLS_PER_TRIANGLE: i64 = 256;
 const WALKABLE_NORMAL_Z: f32 = std::f32::consts::FRAC_1_SQRT_2;

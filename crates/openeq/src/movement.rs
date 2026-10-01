@@ -84,16 +84,7 @@ impl MotionWorld<'_> {
         mode: MotionMode,
     ) -> ResolvedMove {
         let displacement = velocity.map(|value| value * dt);
-        // Stair following is a grounded behavior. Giving an airborne body
-        // a two-unit step range snaps the last two units of a fall/jump.
-        let step_height = if grounded
-            && velocity[2] <= 0.
-            && !matches!(mode, MotionMode::Flying | MotionMode::Floating)
-        {
-            2.
-        } else {
-            0.
-        };
+        let step_height = step_height(grounded, velocity[2], mode);
         let resolved = self.collision.move_player_with_path(
             self.dynamic,
             feet,
@@ -118,12 +109,22 @@ impl MotionWorld<'_> {
     }
 }
 
+// Stair following is grounded behavior. Giving an airborne body a two-unit
+// step range snaps the last two units of a fall/jump.
+fn step_height(grounded: bool, velocity_z: f32, mode: MotionMode) -> f32 {
+    if grounded && velocity_z <= 0. && !matches!(mode, MotionMode::Flying | MotionMode::Floating) {
+        2.
+    } else {
+        0.
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ResolvedMove {
     feet: [f32; 3],
     velocity_z: f32,
     // Verified against every accepted collision substep, not just the endpoint.
-    // Only unchanged motion and the existing flat support clamp can be split.
+    // Ascending support requires a separate lazy certificate during splitting.
     straight: bool,
 }
 
@@ -204,14 +205,15 @@ fn medium_boundary(spans: &[LiquidSpan], wet: bool) -> Option<MediumBoundary> {
 /// epsilon. WLD planes themselves are dry, while box boundaries are inclusive.
 fn boundary_fraction(
     regions: &LiquidRegions,
-    position: impl Fn(f32) -> [f32; 3],
+    position: impl Fn(f32) -> Option<[f32; 3]>,
     boundary: &MediumBoundary,
 ) -> Option<f32> {
-    let in_next_medium =
-        |fraction| regions.at(center(position(fraction))).is_some() == boundary.wet;
+    let in_next_medium = |fraction| {
+        position(fraction).map(|feet| regions.at(center(feet)).is_some() == boundary.wet)
+    };
     let mut low = boundary.fraction;
     let mut high = low + (boundary.next_end - low) * 0.5;
-    if high <= low || !in_next_medium(high) {
+    if high <= low || !in_next_medium(high)? {
         return None;
     }
     // f32 positions need at most 24 significand bits. Bisection only queries
@@ -221,13 +223,70 @@ fn boundary_fraction(
         if middle == low || middle == high {
             break;
         }
-        if in_next_medium(middle) {
+        if in_next_medium(middle)? {
             high = middle;
         } else {
             low = middle;
         }
     }
     Some(high)
+}
+
+/// First representable nonnegative f32 fraction satisfying a monotone predicate.
+/// Searching float bit order also covers transitions much closer to zero than
+/// 24 arithmetic halvings can resolve. The caller establishes the bracket.
+fn first_fraction(high: f32, predicate: impl Fn(f32) -> Option<bool>) -> Option<f32> {
+    if !(0. ..=1.).contains(&high) || !predicate(high)? {
+        return None;
+    }
+    if predicate(0.)? {
+        return Some(0.);
+    }
+    let mut low = 0_u32;
+    let mut high = high.to_bits();
+    while high - low > 1 {
+        let middle = low + (high - low) / 2;
+        if predicate(f32::from_bits(middle))? {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    Some(f32::from_bits(high))
+}
+
+/// The endpoint's rounded distance is not the requested distance. Invert the
+/// actual single-axis prefix positions to reach the interior of the next span,
+/// then find its first outgoing representable time from a verified old medium.
+/// Height invariance is established separately before this function is called.
+fn support_boundary_fraction(
+    regions: &LiquidRegions,
+    from: [f32; 3],
+    to: [f32; 3],
+    position: impl Fn(f32) -> Option<[f32; 3]>,
+    boundary: &MediumBoundary,
+) -> Option<f32> {
+    let axis = usize::from(from[0] == to[0]);
+    let start = f64::from(from[axis]);
+    let extent = f64::from(to[axis]) - start;
+    if extent == 0. || !extent.is_finite() {
+        return None;
+    }
+    let target = (f64::from(boundary.fraction) + f64::from(boundary.next_end)) * 0.5;
+    let progress =
+        |fraction| position(fraction).map(|point| (f64::from(point[axis]) - start) / extent);
+    let high = first_fraction(1., |fraction| Some(progress(fraction)? >= target))?;
+    let actual_progress = progress(high)?;
+    // A rounded position may skip the entire span or reach a later one of the
+    // same kind. Do not authorize that jump merely by checking wet/dry state.
+    if actual_progress < f64::from(boundary.fraction)
+        || actual_progress >= f64::from(boundary.next_end)
+    {
+        return None;
+    }
+    first_fraction(high, |fraction| {
+        Some(regions.at(center(position(fraction)?)).is_some() == boundary.wet)
+    })
 }
 
 /// Corrects a small floor penetration once when installing an authoritative
@@ -380,9 +439,9 @@ impl GroundMotion {
         feet
     }
 
-    /// Split only a verified straight trajectory, including a flat supported
-    /// walk. Collision does not expose the route taken by stair/slide responses;
-    /// any such response keeps the original whole tick, not a guessed chord.
+    /// Split straight motion or a certified single ascending support plane.
+    /// General stair/slide/descending responses retain the original whole tick;
+    /// their corrected endpoints do not establish timed travel.
     fn cross_liquids(
         &self,
         world: &MotionWorld<'_>,
@@ -397,36 +456,94 @@ impl GroundMotion {
         }
         let mut mode = self.mode;
         let mut remaining = STEP as f32;
-        for _ in 0..MAX_MEDIUM_TRANSITIONS {
-            if !moved.straight {
+        for transition in 0..MAX_MEDIUM_TRANSITIONS {
+            let spans = regions.segment(center(feet), center(moved.feet));
+            // With no first boundary candidate, the saved whole-tick solve is
+            // already the fallback. Avoid extra swept geometry work on ordinary
+            // dry ramps and fully submerged travel.
+            if transition == 0
+                && !moved.straight
+                && medium_boundary(&spans, mode == MotionMode::Swimming).is_none()
+            {
                 return None;
             }
+            let support = if !moved.straight {
+                let grounded = world.grounded(feet);
+                if !grounded || velocity[2] > 0. || (velocity[0] != 0. && velocity[1] != 0.) {
+                    return None;
+                }
+                let displacement = velocity.map(|value| value * remaining);
+                let support = world.collision.certify_ascending_support(
+                    world.dynamic,
+                    feet,
+                    displacement,
+                    RADIUS,
+                    HEIGHT,
+                    step_height(grounded, velocity[2], mode),
+                )?;
+                if support.position_for_delta(displacement)? != moved.feet {
+                    return None;
+                }
+                // Rounded source-plane height can form a staircase that leaves
+                // the endpoint chord. Only discover intervals from XY when all
+                // liquid membership in the swept center box is independent of Z.
+                // One horizontal axis also excludes rounded diagonal corner cuts.
+                let start = center(feet);
+                let end = center(moved.feet);
+                if !regions.height_invariant_in_bounds(
+                    std::array::from_fn(|axis| start[axis].min(end[axis])),
+                    std::array::from_fn(|axis| start[axis].max(end[axis])),
+                ) {
+                    return None;
+                }
+                Some(support)
+            } else {
+                None
+            };
             if moved.feet == feet {
                 return Some((moved, mode));
             }
-            let spans = regions.segment(center(feet), center(moved.feet));
             let Some(boundary) = medium_boundary(&spans, mode == MotionMode::Swimming) else {
                 return Some((moved, mode));
             };
             let flat = moved.feet[2] == feet[2] && velocity[2] <= 0.;
-            let fraction = boundary_fraction(
-                regions,
-                |fraction| {
-                    let dt = remaining * fraction;
-                    let mut desired = unobstructed_position(feet, velocity.map(|value| value * dt))
-                        .unwrap_or(feet);
-                    if flat {
-                        desired[2] = feet[2];
-                    }
-                    desired
-                },
-                &boundary,
-            )?;
+            let fraction = if let Some(support) = &support {
+                support_boundary_fraction(
+                    regions,
+                    feet,
+                    moved.feet,
+                    |fraction| {
+                        support.position_for_delta(
+                            velocity.map(|value| value * (remaining * fraction)),
+                        )
+                    },
+                    &boundary,
+                )?
+            } else {
+                boundary_fraction(
+                    regions,
+                    |fraction| {
+                        let dt = remaining * fraction;
+                        let mut desired =
+                            unobstructed_position(feet, velocity.map(|value| value * dt))?;
+                        if flat {
+                            desired[2] = feet[2];
+                        }
+                        Some(desired)
+                    },
+                    &boundary,
+                )?
+            };
             let dt = remaining * fraction;
             let prefix = world.move_velocity(feet, velocity, dt, world.grounded(feet), mode);
             // Re-query the real collision result. A boundary candidate alone
             // cannot authorize a mode switch on a blocked or snapped prefix.
-            if !prefix.straight || regions.at(center(prefix.feet)).is_some() != boundary.wet {
+            let verified_prefix = if let Some(support) = &support {
+                support.position_for_delta(velocity.map(|value| value * dt))? == prefix.feet
+            } else {
+                prefix.straight
+            };
+            if !verified_prefix || regions.at(center(prefix.feet)).is_some() != boundary.wet {
                 return None;
             }
             feet = prefix.feet;
@@ -1521,3 +1638,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "movement_planar_tests.rs"]
+mod planar_tests;

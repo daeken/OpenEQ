@@ -6,6 +6,8 @@ use std::{collections::BTreeMap, path::Path, sync::Arc};
 
 use glam::{DQuat, DVec3};
 
+mod height_invariant;
+
 use crate::{
     Error, Result,
     binary_regions::BinaryRegions,
