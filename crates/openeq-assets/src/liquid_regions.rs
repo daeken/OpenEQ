@@ -8,8 +8,9 @@ use glam::{DQuat, DVec3};
 
 use crate::{
     Error, Result,
+    binary_regions::BinaryRegions,
     bsp_regions::{BspRegions, Node},
-    loader::{read_eqg_declaration, read_heightmap},
+    loader::{read_eqg_declaration, read_heightmap, read_terrain_group, zone_archive},
     pfs::Archive,
     terrain::{Heightmap, regions::NativeTopLevelRegions},
 };
@@ -63,6 +64,7 @@ enum Volumes {
     /// Every native record is retained: a dry/unknown winner masks later water.
     /// Unknown means unsupported evidence, not a recovered dry classification.
     NativeTerrain(NativeTopLevelRegions),
+    NativeBinary(BinaryRegions),
 }
 
 /// Cheaply cloned, immutable metadata. An empty set means no supported liquid
@@ -77,15 +79,26 @@ impl LiquidRegions {
     /// Like zone rendering, EQG takes precedence when both zone formats exist.
     pub fn load(base: &Path, zone: &str) -> Result<Self> {
         let zone = zone.to_ascii_lowercase();
-        if base.join(format!("{zone}.eqg")).is_file() {
-            let archive = Archive::open(base.join(format!("{zone}.eqg")))?;
+        let path = zone_archive(base, &zone)?;
+        if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("eqg"))
+        {
+            let archive = Archive::open(path)?;
             let declaration = read_eqg_declaration(base, &zone, &archive)?;
             if !declaration.trim_ascii_start().starts_with(b"EQTZP") {
-                tracing::debug!(zone, "liquid regions unsupported for binary EQGZ zones");
-                return Ok(Self::default());
+                return match Self::from_eqgz(&declaration) {
+                    Ok(regions) => Ok(regions),
+                    Err(error) => {
+                        tracing::warn!(zone, %error, "binary liquid regions unsupported; no volumes enabled");
+                        Ok(Self::default())
+                    }
+                };
             }
             let map = read_heightmap(&archive, &declaration)?;
-            return match Self::from_heightmap(&map) {
+            return match Self::from_heightmap_with_groups(&map, |name| {
+                read_terrain_group(base, &archive, name)
+            }) {
                 Ok(regions) => Ok(regions),
                 Err(error) => {
                     tracing::warn!(zone, %error, "heightmap liquid regions unsupported; no volumes enabled");
@@ -93,7 +106,7 @@ impl LiquidRegions {
                 }
             };
         }
-        let archive = Archive::open(base.join(format!("{zone}.s3d")))?;
+        let archive = Archive::open(path)?;
         Self::from_wld(&archive.read(&format!("{zone}.wld"))?)
     }
 
@@ -128,25 +141,62 @@ impl LiquidRegions {
         Self::from_bsp(nodes, metadata.region_count, labels)
     }
 
+    /// Native binary ZON regions retain source order and signed half-extents.
+    /// Raw rotations use quantized 512-unit angles, not radians or degrees.
+    /// Unsupported records reject the complete set, including dry overrides.
+    pub fn from_eqgz(data: &[u8]) -> Result<Self> {
+        let regions = BinaryRegions::parse(data)?;
+        Ok(Self::from_binary_regions(regions))
+    }
+
+    pub(crate) fn from_binary_regions(regions: BinaryRegions) -> Self {
+        let has_liquid = regions
+            .boxes
+            .iter()
+            .any(|volume| terrain_kind(&volume.name).is_some());
+        Self {
+            volumes: Arc::new(if has_liquid {
+                Volumes::NativeBinary(regions)
+            } else {
+                Volumes::Empty
+            }),
+        }
+    }
+
     /// Builds the verified top-level DAT subset, preserving native registration
     /// order, startup height anchors, quantized yaw and dry/unknown winners.
-    /// Unsupported records or unresolved object groups reject the whole set.
+    /// Unsupported records or unresolved object groups reject the whole set;
+    /// use `from_heightmap_with_groups` to check referenced group definitions.
     /// Only explicit AWT/ALV/AVW names establish a known liquid; numeric unnamed
     /// types and classic-name semantics are not inferred. An unsupported winner
     /// suppresses liquid evidence without claiming a native dry classification.
     pub fn from_heightmap(map: &Heightmap) -> Result<Self> {
         let regions = NativeTopLevelRegions::from_heightmap(map)?;
+        Ok(Self::from_native_terrain(regions))
+    }
+
+    /// Also supports object-bearing terrain after proving that all referenced
+    /// group files are complete and have no embedded region declarations.
+    pub fn from_heightmap_with_groups(
+        map: &Heightmap,
+        resolve: impl FnMut(&str) -> Result<Vec<u8>>,
+    ) -> Result<Self> {
+        let regions = NativeTopLevelRegions::from_heightmap_with_groups(map, resolve)?;
+        Ok(Self::from_native_terrain(regions))
+    }
+
+    fn from_native_terrain(regions: NativeTopLevelRegions) -> Self {
         let has_liquid = regions
             .boxes
             .iter()
             .any(|volume| terrain_kind(&volume.name).is_some());
-        Ok(Self {
+        Self {
             volumes: Arc::new(if has_liquid {
                 Volumes::NativeTerrain(regions)
             } else {
                 Volumes::Empty
             }),
-        })
+        }
     }
 
     fn from_bsp(
@@ -259,6 +309,9 @@ impl LiquidRegions {
             Volumes::NativeTerrain(regions) => regions
                 .at(point.to_array(), None)
                 .and_then(|volume| terrain_kind(&volume.name)),
+            Volumes::NativeBinary(regions) => regions
+                .at(point.to_array(), None)
+                .and_then(|volume| terrain_kind(&volume.name)),
             Volumes::Boxes(boxes) => boxes
                 .iter()
                 .find(|volume| {
@@ -353,6 +406,18 @@ impl LiquidRegions {
                 spans.extend(ordered_spans(&candidates));
             }
             Volumes::NativeTerrain(regions) => {
+                let candidates: Vec<_> = regions
+                    .boxes
+                    .iter()
+                    .filter(|volume| !volume.name.starts_with("APV"))
+                    .filter_map(|volume| {
+                        let [enter, exit] = volume.segment(from.to_array(), to.to_array())?;
+                        Some((enter, exit, terrain_kind(&volume.name)))
+                    })
+                    .collect();
+                spans.extend(ordered_spans(&candidates));
+            }
+            Volumes::NativeBinary(regions) => {
                 let candidates: Vec<_> = regions
                     .boxes
                     .iter()

@@ -15,6 +15,7 @@
 
 pub mod audio;
 pub mod audit;
+pub mod binary_regions;
 mod bsp_regions;
 pub mod collision;
 pub mod environment;

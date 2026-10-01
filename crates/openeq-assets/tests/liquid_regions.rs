@@ -71,19 +71,13 @@ fn original_wld_water_lava_and_opaque_water_are_distinct() {
 
 #[test]
 #[ignore = "requires original EverQuest zone archives"]
-fn rendered_eqg_and_heightmap_water_never_invent_swimming_volumes() {
+fn unresolved_heightmap_groups_never_invent_swimming_volumes() {
     let base = loader::default_client_dir().expect("original client assets");
-    for zone in [
-        "anguish",
-        "crescent",
-        "guildhall",
-        "wallofslaughter",
-        "nektulos",
-    ] {
+    for zone in ["nektulos", "deadhills", "shardslanding"] {
         let regions = LiquidRegions::load(&base, zone).unwrap();
         assert!(
             regions.is_empty(),
-            "{zone} has unresolved binary transforms or embedded group regions"
+            "{zone} has unresolved embedded group regions"
         );
         assert_eq!(regions.at([0., 0., -10000.]), None);
         assert!(

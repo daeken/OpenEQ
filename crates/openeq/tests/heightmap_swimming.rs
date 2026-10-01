@@ -1,4 +1,4 @@
-//! Offline movement through native DAT liquid volumes; no server or GPU.
+//! Offline movement through native EQG liquid volumes; no server or GPU.
 use openeq::{
     movement::{GroundMotion, MotionInput, MotionMode, MotionWorld},
     movement_rules::PlayerGravity,
@@ -120,5 +120,114 @@ fn maidensgrave_finite_side_boundary_changes_motion_at_every_frame_rate() {
                 }
             );
         }
+    }
+}
+
+#[test]
+#[ignore = "requires original Anguish liquid metadata; no GPU or server connection"]
+fn anguish_binary_volume_holds_depth_and_surfaces_at_every_frame_rate() {
+    let base = loader::default_client_dir().expect("original client assets");
+    let liquid = LiquidRegions::load(&base, "anguish").unwrap();
+    // Isolate native AWT_water boundaries from zone geometry. The original
+    // center is below the currently loaded walkable geometry; this tests the
+    // movement/volume contract, not a physically accessible swimming route.
+    let collision = CollisionWorld::build(&Scene::from_geometry(
+        "binary liquid boundary fixture".into(),
+        vec![],
+        vec![],
+        vec![],
+    ));
+    let start = [700.9059, 2.677391, -259.8711];
+    for fps in [10, 30, 120] {
+        let mut motion = GroundMotion::default();
+        let mut feet = start;
+        let advance = |motion: &mut GroundMotion, feet, velocity| {
+            motion.step_in_world(
+                MotionWorld {
+                    collision: &collision,
+                    dynamic: None,
+                    liquids: Some(&liquid),
+                },
+                feet,
+                input(velocity),
+                1. / fps as f32,
+            )
+        };
+        for _ in 0..fps {
+            feet = advance(&mut motion, feet, [0.; 3]);
+        }
+        assert_eq!(motion.mode, MotionMode::Swimming);
+        assert_eq!(feet, start, "{fps} FPS: idle drift");
+        for _ in 0..fps {
+            feet = advance(&mut motion, feet, [40., 0., 0.]);
+        }
+        assert!(
+            (feet[0] - start[0] - 24.).abs() < 0.04,
+            "{fps} FPS: {feet:?}"
+        );
+        assert_eq!(feet[2], start[2]);
+        let mut surfaced = false;
+        for _ in 0..fps * 2 {
+            feet = advance(&mut motion, feet, [0., 0., 40.]);
+            surfaced |= liquid.at([feet[0], feet[1], feet[2] + 6.]).is_none();
+        }
+        assert!(surfaced, "{fps} FPS: never surfaced: {feet:?}");
+        assert!(
+            (-249. ..-240.).contains(&feet[2]),
+            "{fps} FPS: incorrect surface: {feet:?}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires original Crescent assets; no GPU or server connection"]
+fn crescent_shallow_river_holds_depth_and_surfaces_above_original_floor() {
+    let base = loader::default_client_dir().expect("original client assets");
+    let liquid = LiquidRegions::load(&base, "crescent").unwrap();
+    let scene = loader::load_zone(&base, "crescent").unwrap();
+    let collision = CollisionWorld::build(&scene);
+    // Independent original TER intersection: AWT_river30 center X, Y+60 has
+    // a Material40 floor near -180.670. Its authored box center lies below
+    // ground, so start within the shallow upper portion instead.
+    let start = [-1091.1719, -2288.6616, -177.67];
+    let floor = collision
+        .ground_height(start[0], start[1], start[2], 0., 10.)
+        .expect("original river floor");
+    assert!((floor + 180.670).abs() < 0.1, "original floor: {floor}");
+    assert!(liquid.at([start[0], start[1], start[2] + 6.]).is_some());
+    for fps in [10, 30, 120] {
+        let mut motion = GroundMotion::default();
+        let mut feet = start;
+        let advance = |motion: &mut GroundMotion, feet, velocity| {
+            motion.step_in_world(
+                MotionWorld {
+                    collision: &collision,
+                    dynamic: None,
+                    liquids: Some(&liquid),
+                },
+                feet,
+                input(velocity),
+                1. / fps as f32,
+            )
+        };
+        for _ in 0..fps {
+            feet = advance(&mut motion, feet, [0.; 3]);
+        }
+        assert_eq!(motion.mode, MotionMode::Swimming);
+        assert_eq!(feet, start, "{fps} FPS: idle drift");
+        let mut surfaced = false;
+        for _ in 0..fps * 2 {
+            feet = advance(&mut motion, feet, [0., 0., 40.]);
+            surfaced |= liquid.at([feet[0], feet[1], feet[2] + 6.]).is_none();
+        }
+        assert!(surfaced, "{fps} FPS: never surfaced: {feet:?}");
+        assert!(
+            feet[2] >= floor,
+            "{fps} FPS: passed through floor: {feet:?}"
+        );
+        assert!(
+            (-177. ..-164.).contains(&feet[2]),
+            "{fps} FPS: wrong surface: {feet:?}"
+        );
     }
 }

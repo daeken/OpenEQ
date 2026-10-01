@@ -113,7 +113,30 @@ fn invisible_wall_blocks_body_and_camera_without_changing_pixels_or_gpu_bounds()
 #[ignore = "requires original Timorous assets and GPU; writes /tmp/openeq-timorous-collision"]
 fn original_timorous_collision_changes_leave_rendering_unchanged() {
     let base = loader::default_client_dir().expect("original client assets");
-    let mut scene = loader::load_zone(base, "timorous").unwrap();
+    let mut scene = loader::load_zone(&base, "timorous").unwrap();
+    let additions = timorous_new_actor_meshes(&base, &scene);
+    let added_indices: Vec<_> = additions
+        .into_iter()
+        .map(|index| (index, std::mem::take(&mut scene.meshes[index].indices)))
+        .collect();
+    assert_eq!(
+        added_indices
+            .iter()
+            .map(|(_, indices)| indices.len() / 3)
+            .sum::<usize>(),
+        620
+    );
+    assert_eq!(scene.triangle_count(), 227_791);
+    let legacy_hidden = std::mem::take(&mut scene.collision_meshes);
+    assert_eq!(CollisionWorld::build(&scene).triangle_count(), 259_201);
+    scene.collision_meshes = legacy_hidden;
+    assert_eq!(CollisionWorld::build(&scene).triangle_count(), 271_639);
+    for (index, indices) in added_indices {
+        scene.meshes[index].indices = indices;
+    }
+    assert_eq!(scene.triangle_count(), 227_791 + 620);
+    // The replay above preserves the old goldens. Both GPU captures below use
+    // the complete actor geometry and all 1,996 newly resolved placements.
     assert_eq!(
         scene
             .collision_meshes
@@ -143,11 +166,13 @@ fn original_timorous_collision_changes_leave_rendering_unchanged() {
     };
     let (after_gpu, after) = capture(&mut renderer, &scene, &camera);
     let restored_count = CollisionWorld::build(&scene).triangle_count();
+    assert_eq!(restored_count, 271_639 + 67_192);
     scene.collision_meshes.clear();
     for object in &mut scene.objects {
         object.collision_meshes.clear();
     }
     let visible_count = CollisionWorld::build(&scene).triangle_count();
+    assert_eq!(visible_count, 259_201 + 67_192);
     assert_eq!(restored_count - visible_count, 12_438);
     let (before_gpu, before) = capture(&mut renderer, &scene, &camera);
     assert_same_upload(&before_gpu, &after_gpu);
@@ -163,4 +188,67 @@ fn original_timorous_collision_changes_leave_rendering_unchanged() {
             .save(directory.join(name))
             .unwrap();
     }
+}
+
+fn timorous_new_actor_meshes(base: &std::path::Path, scene: &Scene) -> Vec<usize> {
+    use openeq_assets::{
+        pfs::Archive,
+        wld::{Mesh, Wld},
+    };
+    use std::collections::BTreeSet;
+    let archive = Archive::open(base.join("timorous_obj.s3d")).unwrap();
+    let wld = Wld::open(&archive, "timorous_obj.wld").unwrap();
+    let original_keys: BTreeSet<_> = wld
+        .iter::<Mesh>()
+        .map(|(chunk, _)| {
+            chunk
+                .name
+                .to_ascii_lowercase()
+                .trim_end_matches("_dmspritedef")
+                .to_owned()
+        })
+        .collect();
+    let mut keys = BTreeSet::new();
+    let mut indices = BTreeSet::new();
+    let mut placements = 0;
+    for object in &scene.objects {
+        if original_keys.contains(&object.name) {
+            continue;
+        }
+        let source = scene
+            .wld_object_sources
+            .get(&object.name)
+            .expect("newly resolved object must have an authored ActorDef");
+        assert_eq!(source.wld_filename, "timorous_obj.wld");
+        assert!(source.skeleton.is_some());
+        assert!(
+            object.collision_meshes.is_empty(),
+            "new actors add no hidden collision"
+        );
+        assert!(keys.insert(object.name.clone()));
+        assert!(
+            object.meshes.iter().all(|index| indices.insert(*index)),
+            "actor geometry is independently owned"
+        );
+        placements += scene
+            .instances
+            .iter()
+            .filter(|instance| instance.object == object.name)
+            .count();
+    }
+    assert_eq!(
+        keys.into_iter().collect::<Vec<_>>(),
+        [
+            "cbbarrel103",
+            "cbcrate103",
+            "date101",
+            "date102",
+            "jngrass101",
+            "jntree103",
+            "jntree104",
+            "jntree105"
+        ]
+    );
+    assert_eq!(placements, 1_996);
+    indices.into_iter().collect()
 }

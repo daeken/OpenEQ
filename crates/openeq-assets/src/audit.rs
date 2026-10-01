@@ -104,7 +104,9 @@ pub fn metadata(base: &Path, zone: &str) -> Result<ZoneMetadata> {
             report.terrain_tiles = map.tiles.len();
             report.terrain_groups = map.groups.len();
             report.authored_regions = Some(map.regions.len());
-            match LiquidRegions::from_heightmap(&map) {
+            match LiquidRegions::from_heightmap_with_groups(&map, |name| {
+                loader::read_terrain_group(base, &archive, name)
+            }) {
                 Ok(regions) => {
                     report.liquid_status = if regions.is_empty() {
                         "no_supported_volumes"
@@ -122,7 +124,21 @@ pub fn metadata(base: &Path, zone: &str) -> Result<ZoneMetadata> {
             report.version = declaration
                 .get(4..8)
                 .map(|b| u32::from_le_bytes(b.try_into().unwrap()));
-            report.liquid_status = "unsupported_eqgz";
+            match crate::binary_regions::BinaryRegions::parse(&declaration) {
+                Ok(regions) => {
+                    report.authored_regions = Some(regions.boxes.len());
+                    report.liquid_status = if LiquidRegions::from_binary_regions(regions).is_empty()
+                    {
+                        "no_supported_volumes"
+                    } else {
+                        "supported_eqgz"
+                    };
+                }
+                Err(error) => {
+                    report.liquid_status = "unsupported_eqgz";
+                    report.liquid_detail = Some(error.to_string());
+                }
+            }
         }
     } else {
         let archive = Archive::open(path)?;

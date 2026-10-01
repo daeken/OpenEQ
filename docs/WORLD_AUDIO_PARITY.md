@@ -7,21 +7,27 @@ that a zone looks, moves or sounds right.
 
 ## Current work
 
-1. Survey installed zone declarations and independently report load/geometry,
-   collision structure, supported liquid subset and border support. Preserve
-   failures, absent formats and timeouts in the results. Add reproducible paths
-   and fixed-camera checks for each discovered problem.
-2. Verify native terrain diagonal selection; keep visible triangles, collision
-   and object-height sampling consistent for the supported full-grid path.
-3. Parse every installed XMI container with bounded synthetic regressions.
-   Recover actual native selector semantics and independent day/night emitter
-   types before connecting classic music to the runtime.
-4. Add offline synthesis and deterministic note scheduling, then integrate
-   bounded music streaming/cancellation. Test original audio silently; preserve
-   separate limits for synthesis/timbres, acoustic fidelity and listening.
-5. Continue remaining native region/group transforms, binary EQG volumes, border
-   triggers, collision-deflected liquid crossings, movement-rate/environmental
-   rules and event sounds. Each unknown requires source or measured evidence.
+1. Resolve the remaining native region/group transforms, AFG constructor and
+   border triggers, then verify thin/deflected liquid crossings. Registered
+   binary boxes can extend below floors or differ from visible water surfaces;
+   Crescent now has an original-floor movement fixture, while Anguish's authored
+   basin/box relationship still needs a playable-route check.
+2. Complete WLD placed-actor behavior: first-pose geometry now resolves supported
+   skeletons, but branch animation timing, collision policy and particle-linked
+   fragment families still need evidence.
+3. Follow authored nonfinite mesh attributes through native vertex upload and
+   material/channel selection. Preserve the 21 original outliers; do not invent
+   normals/UVs or remove geometry without recovering native behavior.
+4. Verify material table identity, shaders, fog/sky/light metadata, and scene
+   bounds across formats with fixed-camera GPU checks and controlled traversal.
+   Native adaptive terrain tessellation/normal generation remains separate from
+   the supported full-grid topology.
+5. Finish native XMI loop/SysEx behavior, original-compatible timbres and audio
+   event bindings, then compare timing/attenuation/fades against native output.
+   Automated original-audio checks remain offline or digital silence.
+
+The October 1 checkpoint below records the completed native-volume and placed
+object work. Gameplay milestones remain behind these world/audio priorities.
 
 ## Survey tooling
 
@@ -83,7 +89,7 @@ Local reports: `/tmp/openeq-world-audio-zone-survey-v2/`; initial interrupted
 run is preserved separately. The driver records the executable SHA256 in new
 manifests so subsequent runs can be distinguished from this baseline.
 
-Discoveries to drive the next work, in priority order:
+September 30 discovery order (status superseded by the October 1 checkpoint):
 
 1. Complete source-backed resolution of grouped heightmap regions and binary
    EQG liquid/border volumes. The survey found 56 heightmap declarations, not just
@@ -127,7 +133,7 @@ Remaining foundations include native adaptive terrain tessellation/normal
 construction, grouped placement/region transforms and movement environmental
 rules. Gameplay roadmap work stays behind these world/audio priorities.
 
-## Final structural survey and verification record
+## September 30 structural survey and verification record
 
 The final survey is `/tmp/openeq-world-audio-zone-survey-final/`, using a frozen
 executable with SHA256 `36f04c17773e00d23bfc9fb84ea60beb269f66ab552f6ba59078e2696bf9201d`. All 523 candidates completed, with no timeout.
@@ -195,3 +201,91 @@ case normalization, deduplication, missing-assets reporting and invalid/empty-li
 rejection. No character state or client assets were changed.
 Strict workspace Clippy, formatting and the normal client/audit builds passed.
 Logs: `/tmp/openeq-freeport-{assets-tests,gpu,clippy,client-build,build}.log`.
+
+## October 1: native regions and classic placed actors
+
+- Recovered binary EQGZ v1/v2 reader-to-active-factory and query paths. Native
+  centers and signed half-extents pass unchanged; raw Z/Y/X rotations use
+  truncated 512-unit turns. The original -1.5707964 value becomes -1 unit,
+  not -90 degrees. Runtime point/swept queries retain source-order dry/unknown
+  winners and APV exclusion. AFG and malformed/unsupported records reject the
+  complete set. See `EQGZ_NATIVE_REGIONS.md`.
+- Heightmap top-level regions are enabled when every referenced TOG has a
+  complete validated region-free definition. Missing files, embedded areas,
+  unknown grammar and unsupported transforms still reject the complete set.
+  Renderer and liquid loader share archive-first group resolution. This does
+  not recover parent transforms for embedded areas. See `EQG_LIQUID_TRANSFORMS.md`.
+- Classic ActorDef→MeshRef/SkeletonRef assembly now bakes actor-owned initial
+  poses for rendering and collision. City of Mist resolves all 50 trees with
+  seven parts, 72 visible triangles and 42 trunk collision triangles each.
+  Timorous resolves 1,996 previously missing placements. The full survey resolves
+  85,028 formerly unmatched placements across 65 zones. Source tracks, frames,
+  speed fields and hierarchy are preserved; playback remains future work.
+  Original global/GFay/PoK raw keys and lift models stay compatible. See
+  `WLD_PLACED_OBJECTS.md`.
+- A bit-level audit of 4,572 original TER/MOD payloads established that all 21
+  mesh-attribute outliers contain authored NaNs. There are 192 source faces
+  with bad positions and 404 finite-area faces with bad normal/UV values. No
+  production sanitization or face removal was introduced. See
+  `EQG_NONFINITE_ATTRIBUTES.md` for the native upload lead and evidence limits.
+
+Review caught the native AFG constructor's special horizontal expansion: it
+uses max(X,Y) for both horizontal half-extents. A dry AFG handled as an ordinary
+box can incorrectly reveal later water. Both binary and DAT now conservatively
+reject these whole sets. Arelis's sole installed DAT example is square, so no
+original Arelis mismatch was demonstrated; it remains outside this constructor
+subset.
+
+Additional discoveries: GPU scene bounds currently use raw local definition
+vertices, including unplaced definitions, rather than all instance transforms.
+This predates actor assembly and needs a separate rendered-bounds regression.
+Native TER registration and environment queries preserve XYZ; Crescent's
+terrain placement record is deliberately skipped by the original loader. The
+initial depth probes were not a reason to add a coordinate transform. Anguish
+has a lower floor 105 units beneath its box center (beyond the initial 100-unit
+search), other floors above it, and a visible water plane at a different height.
+Crescent's river box center is below ground, while a nearby upper portion lies
+above the river floor; a new offline movement fixture checks that shallow slice.
+This does not establish Anguish reachability or native/server surface agreement.
+
+Final CPU survey: `/tmp/openeq-native-regions-survey-final/`, executable SHA256
+`b9389850a3cd45132efcd9922e43c8007878751a9fa8042afb009756765ba51c`.
+All 523 candidates completed without timeout: 501 passed structure checks, the
+same 21 authored nonfinite-attribute zones retained their diagnostics, and
+Dranikcatacombsa retained its authored banner-reference failure. No new structural
+failure appeared. Unresolved placement references decreased from 98,662 to
+13,634 across 65 changed zones; this includes marker/unsupported references and
+is not an exact missing-visible-object count.
+
+Liquid coverage: 177 classic WLD, 92 binary EQGZ and 27 heightmap supported wet
+sets. Another 204 sets have no supported liquid; 21 heightmaps and one binary
+zone retain explicit unsupported diagnostics. The one metadata failure is the
+known Dranikcatacombsa dependency. The binary exclusion is Pohealth's AFG;
+heightmap exclusions include Arelis AFG, real embedded areas, missing groups,
+unsupported group grammar and anchor/version limits. This is metadata/CPU
+coverage, not certification of every zone's rendered or playable environment.
+
+Movement tests cover original Maiden's Grave collision and Crescent's shallow
+river slice at 10/30/120 FPS, plus Anguish's finite box in an explicitly isolated
+collision world. Original City of Mist GPU captures verify assembled tree parts
+and all 50 instance draws. Timorous's old triangle goldens are independently
+replayed with only new actor-owned buffers disabled, then all runtime barrier
+and GPU comparisons run with those actors restored. The additions contribute
+67,192 physical triangles; hidden collision remains 12,438. GFay, PoK, North
+Freeport and Qeynos retain their prior physical triangle counts.
+
+All **947 current workspace tests are verified passing**, including original
+assets, GPU checks and silent audio. The full run executed 946 tests; five early
+screenshot saves failed because the newly named capture directory did not yet
+exist. The complete affected 463-test client library passed on rerun after the
+directory existed. The movement suite then passed all four tests, including the
+one added Crescent floor fixture. No test was left ignored or failing. Evidence:
+`/tmp/openeq-native-regions-workspace.log`,
+`/tmp/openeq-native-regions-ui-rerun.log`, and
+`/tmp/openeq-native-regions-movement-final.log`.
+Strict workspace Clippy, normal client/audit builds, all-target no-default-feature
+checks and formatting passed. Logs use `/tmp/openeq-native-regions-*.log`;
+UI captures are `/tmp/openeq-native-regions-ui/`. Create the capture directory
+before setting `OPENEQ_UI_CAPTURE_DIR`; several existing screenshot tests expect
+it to exist. No original assets were committed, no live character/server state
+changed, and original audio verification remained offline/digital silence.

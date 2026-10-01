@@ -429,6 +429,43 @@ fn unsupported_records_fail_the_set_instead_of_exposing_water_behind_them() {
     assert!(NativeTopLevelRegions::from_heightmap(&missing).is_err());
 }
 
+#[test]
+fn afg_special_constructor_rejects_the_whole_set_before_exposing_later_water() {
+    let mut water = record("AWT_pool", 0);
+    water.full_size = [10.; 3];
+    let point = [5., 7., 0.];
+    let water_only = LiquidRegions::from_heightmap(&fixture(vec![water.clone()])).unwrap();
+    assert_eq!(water_only.at(point), Some(LiquidKind::Water));
+
+    // Native AFG [6,2,2] expands to [6,6,2]. Its dry area therefore includes
+    // this point, which would fall through to water with an ordinary box.
+    let mut native_shape = record("AXX_native_afg_shape", 0);
+    native_shape.full_size = [6., 6., 2.];
+    let native_precedence =
+        LiquidRegions::from_heightmap(&fixture(vec![native_shape, water.clone()])).unwrap();
+    assert_eq!(native_precedence.at(point), None);
+
+    // Square AFG records also remain outside the supported constructor subset.
+    for dimensions in [[6., 2., 2.], [6., 6., 2.]] {
+        let mut fog = record("AFG_fog", 0);
+        fog.full_size = dimensions;
+        let mut map = fixture(vec![fog, water.clone()]);
+        assert!(NativeRegionBox::from_record(&map, 0).is_err());
+        assert!(NativeTopLevelRegions::from_heightmap(&map).is_err());
+        assert!(LiquidRegions::from_heightmap(&map).is_err());
+        map.groups.push(TerrainPlacement {
+            model: "trees".into(),
+            transform: glam::Mat4::IDENTITY,
+        });
+        assert!(
+            LiquidRegions::from_heightmap_with_groups(&map, |_| {
+                Ok(REGION_FREE_GROUP.as_bytes().to_vec())
+            })
+            .is_err()
+        );
+    }
+}
+
 fn original_zone(zone: &str) -> Option<Heightmap> {
     let base = openeq_assets::loader::default_client_dir()?;
     let path = base.join(format!("{zone}.eqg"));
@@ -584,11 +621,138 @@ fn unsupported_eqg_zones_keep_gameplay_volumes_empty() {
     let Some(base) = openeq_assets::loader::default_client_dir() else {
         return;
     };
-    for zone in ["feerrott2", "deadhills", "anguish"] {
+    // Missing groups, embedded areas and Arelis's AFG constructor still
+    // cannot provide a complete supported region set.
+    for zone in ["deadhills", "oceangreenhills", "shardslanding", "arelis"] {
         if base.join(format!("{zone}.eqg")).is_file() {
             assert!(LiquidRegions::load(&base, zone).unwrap().is_empty());
         }
     }
+}
+
+const REGION_FREE_GROUP: &str = "*BEGIN_OBJECTGROUP\n\
+    *BEGIN_OBJECT\n\
+    *NAME tree\n\
+    *POSITION 1 2 3\n\
+    *ROTATION 0 0 -35\n\
+    *SCALE 1\n\
+    *FILE LIT tree.lit\n\
+    *END_OBJECT\n\
+    *END_OBJECTGROUP\n";
+
+#[test]
+fn verified_region_free_groups_preserve_dry_precedence_and_finite_water() {
+    let mut blocker = record("ATP_dry", 0);
+    blocker.full_size = [2., 4., 4.];
+    let mut water = record("AWT_pool", 0);
+    water.full_size = [8., 4., 4.];
+    let mut map = fixture(vec![water, blocker]);
+    let baseline = LiquidRegions::from_heightmap(&map).unwrap();
+    for _ in 0..2 {
+        map.groups.push(TerrainPlacement {
+            model: "trees".into(),
+            transform: glam::Mat4::IDENTITY,
+        });
+    }
+    assert!(LiquidRegions::from_heightmap(&map).is_err());
+    let mut calls = 0;
+    let regions = LiquidRegions::from_heightmap_with_groups(&map, |name| {
+        assert_eq!(name, "trees");
+        calls += 1;
+        Ok(REGION_FREE_GROUP.as_bytes().to_vec())
+    })
+    .unwrap();
+    assert_eq!(calls, 1, "repeated placements share one completeness check");
+    assert_eq!(regions.at([5., 5., 0.]), None);
+    assert_eq!(regions.at([2., 5., 0.]), Some(LiquidKind::Water));
+    assert_eq!(regions.at([2., 5., 3.]), None);
+    assert_eq!(
+        regions.segment([0., 5., 0.], [10., 5., 0.]),
+        baseline.segment([0., 5., 0.], [10., 5., 0.])
+    );
+}
+
+#[test]
+fn missing_unknown_truncated_and_area_bearing_groups_cannot_expose_top_level_water() {
+    let mut map = fixture(vec![record("AWT_pool", 0)]);
+    map.groups.push(TerrainPlacement {
+        model: "fixture".into(),
+        transform: glam::Mat4::IDENTITY,
+    });
+    assert!(
+        LiquidRegions::from_heightmap_with_groups(&map, |_| Err(openeq_assets::Error::NotFound(
+            "fixture.tog".into()
+        )))
+        .is_err()
+    );
+    let variants = [
+        String::new(),
+        REGION_FREE_GROUP.replace("*END_OBJECTGROUP", ""),
+        REGION_FREE_GROUP.replace("*END_OBJECT\n", ""),
+        REGION_FREE_GROUP.replace("*POSITION 1 2 3", "*POSITION 1 2"),
+        REGION_FREE_GROUP.replace("*POSITION 1 2 3", "*POSITION NaN 2 3"),
+        REGION_FREE_GROUP.replace("*NAME tree", "*NAME tree\n*NAME other"),
+        REGION_FREE_GROUP.replace("*FILE LIT", "*FILE TOG"),
+        REGION_FREE_GROUP.replace(
+            "*END_OBJECTGROUP",
+            "*BEGIN_AREA\n*NAME ATP_dry\n*END_AREA\n*END_OBJECTGROUP",
+        ),
+        REGION_FREE_GROUP.replace(
+            "*END_OBJECTGROUP",
+            "*BEGIN_AREA\n*NAME AWT_hidden\n*END_AREA\n*END_OBJECTGROUP",
+        ),
+        REGION_FREE_GROUP.replace("*END_OBJECTGROUP", "*BEGIN_UNKNOWN\n*END_OBJECTGROUP"),
+        format!("{REGION_FREE_GROUP}*BEGIN_AREA\n"),
+        format!("{REGION_FREE_GROUP}\0"),
+    ];
+    for (index, text) in variants.into_iter().enumerate() {
+        assert!(
+            LiquidRegions::from_heightmap_with_groups(&map, |_| Ok(text.as_bytes().to_vec()))
+                .is_err(),
+            "variant {index}"
+        );
+    }
+    assert!(LiquidRegions::from_heightmap_with_groups(&map, |_| Ok(vec![0xff])).is_err());
+}
+
+#[test]
+#[ignore = "requires original Feerrott2 and Loping Plains groups; CPU only"]
+fn original_grouped_terrain_enables_verified_pond_and_river_volumes() {
+    let base = openeq_assets::loader::default_client_dir().expect("original client assets");
+    let regions = LiquidRegions::load(&base, "feerrott2").unwrap();
+    assert!(!regions.is_empty());
+    // Independent native-reader fixtures recorded before group support.
+    let center = [-740.84296, -2896.215, -55.802547];
+    assert_eq!(regions.at(center), Some(LiquidKind::Water));
+    assert_eq!(
+        regions.at([-665.94296, center[1], center[2]]),
+        Some(LiquidKind::Water)
+    );
+    for point in [
+        [-665.743, center[1], center[2]],
+        [center[0], center[1], -50.702547],
+        [center[0], center[1], -60.902547],
+    ] {
+        assert_eq!(regions.at(point), None);
+    }
+    let spans = regions.segment(
+        [center[0], center[1], center[2] - 10.],
+        [center[0], center[1], center[2] + 10.],
+    );
+    assert_eq!(spans.len(), 1);
+    assert_eq!(spans[0].kind, LiquidKind::Water);
+    assert!((spans[0].enter - 0.25).abs() < 0.0001 && (spans[0].exit - 0.75).abs() < 0.0001);
+    let map = original_zone("lopingplains").expect("original Loping Plains");
+    assert!(!map.groups.is_empty());
+    let region_index = map
+        .regions
+        .iter()
+        .position(|region| region.name == "AWT_river7")
+        .unwrap();
+    let volume = NativeRegionBox::from_record(&map, region_index).unwrap();
+    let regions = LiquidRegions::load(&base, "lopingplains").unwrap();
+    assert!(!regions.is_empty());
+    assert_eq!(regions.at(volume.center), Some(LiquidKind::Water));
 }
 
 #[test]

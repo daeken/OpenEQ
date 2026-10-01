@@ -4,8 +4,8 @@
 point and segment queries in **asset/scene coordinates: X/Y horizontal, Z up**.
 Server X/Y must be exchanged at the protocol boundary, not in this API.
 
-Supported sources are classic WLD BSP region declarations and explicitly supplied
-finite `LiquidBox` volumes. A water material, water surface, or texture name is
+Supported sources are classic WLD BSP declarations, verified binary EQGZ boxes,
+the verified top-level heightmap DAT subset, and explicit finite `LiquidBox` volumes. A water material, water surface, or texture name is
 never evidence of a swimming volume. Empty metadata means **no supported volume
 source**, not a declaration that the original zone has no water.
 
@@ -85,49 +85,50 @@ but no supported liquid declaration. Synthetic tests cover rotated boxes,
 concavity, dry gaps, stacked rooms, overlap precedence, exact boundaries,
 malformed BSPs, and a swept crossing with both endpoints outside.
 
-## EQG investigation and conservative boundary
+## EQG native volumes and conservative boundary
 
-`LiquidRegions::load` deliberately returns an empty supported set when the active
-zone has an `.eqg`. It never falls back to a possibly stale `.s3d` for that zone.
-EQG liquid transforms are **not implemented**; there is no placeholder decoder
-that claims success. Binary ZON v1/v2 and heightmap EQTZP require separate verified
-transforms before they can contribute swimming volumes.
+The loader follows rendering's primary archive/declaration selection. EQG takes
+precedence over S3D; unsupported EQG records never fall back to stale classic
+metadata. Water textures and `water.dat` sheets never invent a lower volume bound.
 
-Binary `EQGZ` ZON v1/v2 contains a region count in header word 6 (currently called
-`unknown_count` by the geometry parser). Records are 40 bytes after object names
-and placements (including v2 per-placement lighting arrays): name offset, center
-XYZ, three 32-bit orientation/unknown words, extents XYZ. Names observed and used
-by EQEmu's zone-utilities are `AWT` water, `ALV` lava, `AVW` freezing water;
-`ASL` ice/slippery, `ATP` zone line, `APK` PvP and `APV` generic regions must not
-be treated as liquid. Unknown names must not default to water.
+Binary EQGZ v1/v2 records now contribute finite volumes. The native readers pass
+center XYZ, raw Z/Y/X orientation and signed XYZ half-extents directly to the
+registered box builder. Angles are **512-unit turns truncated toward zero**, not
+radians or degrees. Anguish's raw -1.5707964 therefore becomes -1 native angular
+unit, approximately -0.703125 degrees. See [EQGZ_NATIVE_REGIONS.md](EQGZ_NATIVE_REGIONS.md)
+for reader/factory addresses, signed matrix construction and independent original
+Anguish/Crescent boundary fixtures. No axis exchange or extra half-size is applied.
 
-There is unresolved orientation evidence:
+Binary registration preserves file order. Generic selection excludes APV but
+retains dry/unknown winners; only explicit AWT/ALV/AVW names establish a supported
+liquid. Swept queries use that same precedence. Unsupported or malformed records
+reject the whole set, including unsupported AFG special-constructor records,
+nonfinite/singular transforms and invalid references. They cannot be skipped to
+expose a later water box. The metadata audit reports these limits separately from
+a successfully decoded set with no supported liquid.
 
-- EQEmu zone-utilities `eqg_loader.cpp` and EQ Sage divide the first orientation
-  word by 512 and multiply by 360 degrees, treating the other words as flags.
-- Quail `raw/zon_read.go` reads all three words as float orientation components.
-- Original Anguish and Crescent water records use a first word of approximately
-  `-pi/2`; their next words are floating signed zero. Crescent has long adjoining
-  thin river boxes whose center spacing/extents suggest almost axis-aligned
-  boxes. Blindly applying a -90-degree box rotation would misplace those bounds.
-- Several raw extents contain negative Y. Their sign and the placement/exporter
-  basis need resolving together; an absolute extent plus an assumed rotation is
-  not enough evidence to enable the records.
+Heightmap DAT retains its separately recovered terrain anchoring, degree-to-native
+angle conversion and ATP-first registration order, documented in
+[EQG_LIQUID_TRANSFORMS.md](EQG_LIQUID_TRANSFORMS.md). The bounded subset requires
+matching grids, strictly interior anchors, positive dimensions, unit stored scale
+and yaw-only rotation. Placed groups are allowed only after every referenced TOG
+is proven complete and region-free. Missing group files, actual embedded areas,
+unknown grammar or unsupported transforms reject the whole set. Parent transforms
+for embedded group regions remain unresolved; no rendered surface substitutes.
 
-Anguish `AWT_water` has raw center `[700.9059,2.677391,-256.8711]`, orientation
-`[-1.5707964,-0,0]`, extents `[125.7306,-123.3301,11.7559]`. Its huge rendered water
-sheet is separate geometry; it cannot establish infinite water beneath the zone.
-Crescent has 57 water-labelled regions and one zone line. These findings are
-research evidence, not tested collision transforms.
+The October 1 installed metadata survey reports supported liquids in 92 binary
+zones and 27 heightmap zones, versus no binary zones and one heightmap zone before
+these changes. This is format/query coverage, not a certificate of traversability
+or agreement with EQEmu's independently generated WTR boundaries. Zone-line side
+effects, drowning/damage and native movement rules remain separate work.
 
-Heightmap EQTZP native parsing, terrain anchoring and registered containment are
-now traced in [EQG_LIQUID_TRANSFORMS.md](EQG_LIQUID_TRANSFORMS.md). The two grid
-words are meaningful, CPU height sampling honors an alternate-diagonal quad
-flag, and native registered angles are quantized to 512 steps. These differ
-from the generated EQEmu WTR map. Native overlap/type precedence, edge anchors,
-parent transforms and binary EQGZ's reader-to-constructor path still need work;
-no runtime EQG volumes are enabled by that research. `water.dat` sheets describe
-finite surfaces with no proven lower volume bound and remain excluded.
+Offline movement through Crescent's shallow river slice, above an independently
+identified original floor, holds depth and reaches the authored volume surface
+at 10/30/120 FPS. An Anguish fixture isolates its finite volume from scene
+collision; its box/visible-water/floor relationship is not yet a verified live
+route. Region centers can lie below terrain, so they are not automatically safe
+swimming start positions. See the coordinate/traversability evidence in the
+binary-region note.
 
 Sources consulted:
 

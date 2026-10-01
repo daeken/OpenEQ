@@ -8,8 +8,10 @@
 //! See `docs/EQG_LIQUID_TRANSFORMS.md` for native addresses and original fixtures.
 //! The bounded box implementation accepts only unit stored scale, yaw-only
 //! rotations, positive extents, matching grids and strict interior anchors.
-//! Whole-set queries additionally reject object groups, whose embedded regions
-//! and registration interleaving are not yet decoded. EQGZ is a separate format.
+//! AFG's special box constructor is unsupported and rejects the whole set.
+//! Whole-set queries require proof that placed object groups contain no areas;
+//! embedded transforms and registration interleaving are not yet decoded.
+//! EQGZ is a separate format.
 
 use std::collections::BTreeSet;
 
@@ -200,6 +202,11 @@ impl NativeRegionBox {
             .get(record_index)
             .ok_or_else(|| invalid("missing region record"))?;
         region.validate_finite()?;
+        // Native AFG construction equalizes horizontal extents before the
+        // shared box builder. An ordinary box could expose water behind it.
+        if region.name.starts_with("AFG") {
+            return Err(invalid("unsupported AFG special box constructor"));
+        }
         let tile = map
             .tiles
             .get(region.tile_index)
@@ -305,7 +312,7 @@ impl NativeRegionBox {
 /// Native query for zones whose complete top-level subset can be
 /// represented. Every region participates, including unknown and dry kinds.
 /// Any unsupported record fails construction; no possibly winning region is
-/// silently omitted. Object groups fail until their embedded metadata is known.
+/// silently omitted. Object groups require checked region-free definitions.
 #[derive(Debug)]
 pub struct NativeTopLevelRegions {
     pub boxes: Vec<NativeRegionBox>,
@@ -313,13 +320,33 @@ pub struct NativeTopLevelRegions {
 
 impl NativeTopLevelRegions {
     pub fn from_heightmap(map: &Heightmap) -> Result<Self> {
-        if !matches!(map.header[0], 20 | 21) {
-            return Err(invalid("unsupported DAT region fixture version"));
-        }
         if !map.groups.is_empty() {
             return Err(invalid(
                 "unresolved embedded regions in object-group placements",
             ));
+        }
+        Self::from_top_level_records(map)
+    }
+
+    /// Allows placed groups only after checking every referenced TOG against
+    /// the region-free grammar. Missing, malformed, unknown or area-bearing
+    /// groups reject the entire set, preserving potentially winning dry areas.
+    pub fn from_heightmap_with_groups(
+        map: &Heightmap,
+        mut resolve: impl FnMut(&str) -> Result<Vec<u8>>,
+    ) -> Result<Self> {
+        let names: BTreeSet<_> = map.groups.iter().map(|group| &group.model).collect();
+        for name in names {
+            let data = resolve(name)?;
+            validate_region_free_group(&data)
+                .map_err(|error| invalid(&format!("object group {name}: {error}")))?;
+        }
+        Self::from_top_level_records(map)
+    }
+
+    fn from_top_level_records(map: &Heightmap) -> Result<Self> {
+        if !matches!(map.header[0], 20 | 21) {
+            return Err(invalid("unsupported DAT region fixture version"));
         }
         if map.region_count != map.regions.len() {
             return Err(invalid("inconsistent region metadata count"));
@@ -363,6 +390,73 @@ impl NativeTopLevelRegions {
             .iter()
             .find(|region| !region.name.starts_with("APV") && region.contains(point))
     }
+}
+
+/// Proves absence of embedded areas in a deliberately narrow TOG subset.
+/// Native 0x100fa159..0x100fa1fd appends only BEGIN_AREA records to the area
+/// list; BEGIN_OBJECT populates a separate list. See EQG_LIQUID_TRANSFORMS.md.
+/// Requiring complete blocks and known fields prevents ignored/truncated text
+/// from becoming false evidence that a possibly overriding area is absent.
+fn validate_region_free_group(data: &[u8]) -> Result<()> {
+    let text = std::str::from_utf8(data).map_err(|_| invalid("TOG is not UTF-8 text"))?;
+    let mut started = false;
+    let mut ended = false;
+    let mut object_fields = None;
+    for line in text.lines() {
+        let words: Vec<_> = line.split_ascii_whitespace().collect();
+        let Some(&key) = words.first() else {
+            continue;
+        };
+        if key == "*BEGIN_AREA" || key == "*END_AREA" {
+            return Err(invalid(
+                "embedded group areas require verified parent transforms",
+            ));
+        }
+        match key {
+            "*BEGIN_OBJECTGROUP" if !started && words.len() == 1 => started = true,
+            "*END_OBJECTGROUP"
+                if started && !ended && object_fields.is_none() && words.len() == 1 =>
+            {
+                ended = true;
+            }
+            "*BEGIN_OBJECT" if started && !ended && object_fields.is_none() && words.len() == 1 => {
+                object_fields = Some(0u8);
+            }
+            "*END_OBJECT" if object_fields == Some(0b11111) && words.len() == 1 => {
+                object_fields = None;
+            }
+            _ => {
+                let Some(fields) = object_fields.as_mut() else {
+                    return Err(invalid(
+                        "unsupported or malformed region-free TOG structure",
+                    ));
+                };
+                let (bit, count, numeric) = match key {
+                    "*NAME" => (1, 2, false),
+                    "*POSITION" => (2, 4, true),
+                    "*ROTATION" => (4, 4, true),
+                    "*SCALE" => (8, 2, true),
+                    "*FILE" if words.get(1) == Some(&"LIT") => (16, 3, false),
+                    _ => return Err(invalid("unsupported region-free TOG field")),
+                };
+                if words.len() != count
+                    || *fields & bit != 0
+                    || words[1..].iter().any(|word| word.contains(['*', '\0']))
+                    || (numeric
+                        && words[1..].iter().any(|word| {
+                            word.parse::<f32>().map_or(true, |value| !value.is_finite())
+                        }))
+                {
+                    return Err(invalid("malformed region-free TOG field"));
+                }
+                *fields |= bit;
+            }
+        }
+    }
+    if !started || !ended || object_fields.is_some() {
+        return Err(invalid("incomplete region-free TOG"));
+    }
+    Ok(())
 }
 
 fn table_sin_cos(units: i32) -> (f64, f64) {

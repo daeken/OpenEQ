@@ -69,6 +69,8 @@ pub struct Scene {
     /// drawing. Includes hidden WLD faces and EQG's separate physical bake.
     pub collision_meshes: Vec<CollisionGeometry>,
     pub objects: Vec<SceneObject>,
+    /// Original WLD actor parts/tracks retained after sampling the initial pose.
+    pub wld_object_sources: BTreeMap<String, Arc<wld_objects::ObjectSource>>,
     pub instances: Vec<Instance>,
     pub lights: Vec<Light>,
     archives: Vec<Archive>,
@@ -98,6 +100,7 @@ impl Scene {
             meshes,
             collision_meshes: Vec::new(),
             objects: Vec::new(),
+            wld_object_sources: BTreeMap::new(),
             instances: Vec::new(),
             lights: Vec::new(),
             archives: Vec::new(),
@@ -209,9 +212,16 @@ impl Scene {
         if meshes.is_empty() && collision_meshes.is_empty() {
             return Err(Error::NotFound(format!("object geometry {name}")));
         }
-        let mut model =
-            Scene::from_geometry(key, materials, meshes, textures.into_values().collect());
+        let mut model = Scene::from_geometry(
+            key.clone(),
+            materials,
+            meshes,
+            textures.into_values().collect(),
+        );
         model.collision_meshes = collision_meshes;
+        if let Some(source) = self.wld_object_sources.get(&key) {
+            model.wld_object_sources.insert(key, Arc::clone(source));
+        }
         Ok(model)
     }
 
@@ -279,6 +289,7 @@ pub fn load_object_library(base: impl AsRef<Path>, zone: &str) -> Result<Scene> 
         meshes: Vec::new(),
         collision_meshes: Vec::new(),
         objects: Vec::new(),
+        wld_object_sources: BTreeMap::new(),
         instances: Vec::new(),
         lights: Vec::new(),
         archives: Vec::new(),
@@ -297,21 +308,7 @@ pub fn load_object_library(base: impl AsRef<Path>, zone: &str) -> Result<Scene> 
             let lower = filename.to_ascii_lowercase();
             if lower.ends_with(".wld") {
                 let wld = Wld::open(&scene.archives[index], &filename)?;
-                for (chunk, mesh) in wld.iter::<wld::Mesh>() {
-                    let (materials, meshes) = mesh::bake_wld_meshes(&wld, [mesh]);
-                    let collision_start = scene.collision_meshes.len();
-                    scene
-                        .collision_meshes
-                        .extend(mesh::bake_wld_collision_meshes(&wld, [mesh]));
-                    let start = scene.meshes.len();
-                    append_baked(&mut scene, index, materials, meshes);
-                    let end = scene.meshes.len();
-                    scene.objects.push(SceneObject {
-                        name: object_key(&chunk.name),
-                        meshes: (start..end).collect(),
-                        collision_meshes: (collision_start..scene.collision_meshes.len()).collect(),
-                    });
-                }
+                wld_objects::append_objects(&mut scene, index, &wld)?;
             } else if lower.ends_with(".mod") {
                 let object = TerMod::parse(&scene.archives[index].read(&filename)?, false)?;
                 append_eqg_object(&mut scene, &object, &object_key(&filename), index);
@@ -388,6 +385,7 @@ fn load_wld(base: &Path, name: &str, primary: &Path) -> Result<Scene> {
         meshes: Vec::new(),
         collision_meshes: Vec::new(),
         objects: Vec::new(),
+        wld_object_sources: BTreeMap::new(),
         instances: Vec::new(),
         lights: Vec::new(),
         archives: Vec::new(),
@@ -435,34 +433,12 @@ fn load_wld(base: &Path, name: &str, primary: &Path) -> Result<Scene> {
     let (materials, geometries) = mesh::bake_wld_meshes(wld, meshes);
     append_baked(&mut scene, *archive_index, materials, geometries);
 
-    // Objects: one object per mesh fragment in the non-terrain WLDs.
+    // Objects: assemble authored actor definitions in the non-terrain WLDs.
     for (archive_index, wld) in &wlds {
         if wld.filename.eq_ignore_ascii_case(&main_name) {
             continue;
         }
-        for (chunk, object_mesh) in wld.iter::<wld::Mesh>() {
-            let object_name = chunk
-                .name
-                .to_ascii_lowercase()
-                .trim_end_matches("_dmspritedef")
-                .to_string();
-            if object_name.is_empty() {
-                continue;
-            }
-            let (materials, geometries) = mesh::bake_wld_meshes(wld, std::iter::once(object_mesh));
-            let collision_start = scene.collision_meshes.len();
-            scene
-                .collision_meshes
-                .extend(mesh::bake_wld_collision_meshes(wld, [object_mesh]));
-            let start = scene.meshes.len();
-            append_baked(&mut scene, *archive_index, materials, geometries);
-            let end = scene.meshes.len();
-            scene.objects.push(SceneObject {
-                name: object_name,
-                meshes: (start..end).collect(),
-                collision_meshes: (collision_start..scene.collision_meshes.len()).collect(),
-            });
-        }
+        wld_objects::append_objects(&mut scene, *archive_index, wld)?;
     }
 
     // Instances: actor placements in the object WLDs.
@@ -541,6 +517,7 @@ fn load_eqg_archive(base: &Path, name: &str, archive: Archive) -> Result<Scene> 
         meshes: Vec::new(),
         collision_meshes: Vec::new(),
         objects: Vec::new(),
+        wld_object_sources: BTreeMap::new(),
         instances: Vec::new(),
         lights: Vec::new(),
         archives: vec![archive],
@@ -791,6 +768,7 @@ fn append_eqg_object(scene: &mut Scene, object: &TerMod, object_name: &str, arch
 
 mod eqg_collision;
 mod indexed_water;
+pub mod wld_objects;
 
 fn append_baked(
     scene: &mut Scene,
@@ -999,6 +977,20 @@ fn case_insensitive_file(base: &Path, name: &str) -> PathBuf {
         .unwrap_or(direct)
 }
 
+/// Shared group selection for visible objects and liquid-region completeness.
+pub(crate) fn read_terrain_group(base: &Path, archive: &Archive, name: &str) -> Result<Vec<u8>> {
+    let filename = if name.to_ascii_lowercase().ends_with(".tog") {
+        name.to_owned()
+    } else {
+        format!("{name}.tog")
+    };
+    if let Some(data) = archive.read_opt(&filename)? {
+        return Ok(data);
+    }
+    let path = case_insensitive_file(base, &filename);
+    std::fs::read(&path).map_err(|source| Error::Io { path, source })
+}
+
 /// Shared terrain metadata selection for rendering and environment queries.
 /// An alternate DAT is accepted only through its actual archived declaration.
 pub(crate) fn read_heightmap(archive: &Archive, zon: &[u8]) -> Result<terrain::Heightmap> {
@@ -1041,11 +1033,7 @@ fn load_heightmap(base: &Path, name: &str, archive: Archive, zon: &[u8]) -> Resu
     scene.loose_textures = loose;
     let mut placements = map.placements.clone();
     for group in &map.groups {
-        let group_file = format!("{}.tog", group.model);
-        let data = scene.archives[0].read(&group_file).or_else(|_| {
-            let path = case_insensitive_file(base, &group_file);
-            std::fs::read(&path).map_err(|source| Error::Io { path, source })
-        });
+        let data = read_terrain_group(base, &scene.archives[0], &group.model);
         let Ok(data) = data else {
             tracing::warn!(zone=name, group=%group.model, "terrain object group is missing from client assets");
             continue;

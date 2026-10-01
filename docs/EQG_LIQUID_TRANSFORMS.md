@@ -1,16 +1,19 @@
 # Newer liquid regions: native transform evidence
 
-Research and bounded runtime checkpoint, 2026-09-29. `LiquidRegions::load` now
-supports the verified top-level heightmap DAT subset, including original
-Maiden's Grave. Binary EQGZ and heightmaps with any unresolved groups or
-transforms remain unsupported. Water surfaces are not used to invent a volume
-or a lower bound.
+Research begun 2026-09-29; runtime support extended 2026-10-01.
+`LiquidRegions::load` supports the verified top-level heightmap DAT subset and
+binary EQGZ v1/v2. Heightmap groups are accepted only after proving their complete
+supported grammar contains no areas; unresolved groups/transforms and special
+AFG constructors reject the whole set. Water surfaces never invent a volume or
+lower bound. See [EQGZ_NATIVE_REGIONS.md](EQGZ_NATIVE_REGIONS.md) for the now
+recovered binary reader-to-constructor boundary and the October 1 section below
+for group validation.
 
-The heightmap DAT path is now traced from the original client's reader through
+The heightmap DAT path is traced from the original client's reader through
 terrain-height anchoring and registered box containment. It differs from the
 pinned EQEmu map generator in height interpolation, angle quantization and scale
-handling. Binary EQGZ file-to-box orientation still has an unresolved caller
-boundary; the shared box constructor alone does not resolve that format.
+handling. Historical checkpoint sections below retain the earlier evidence
+limits; the October 1 extensions supersede their blanket binary/group exclusion.
 
 ## Reproducible sources and evidence limits
 
@@ -232,9 +235,13 @@ float32. For original yaw-only fixtures, a stored yaw of -35 degrees becomes
 The separate debug matrix builder `0x100c9ed0` converts the same degree angles
 but calls trig slots `+0x00` and `+0x04`, which interpolate table samples.
 Its rendering cannot be used to establish exact registered containment edges.
-The constructor also has a special `AFG` name branch; it does not apply to
-`AWT`, `ALV`, or `AVW`. Avoid treating generic regions as interchangeable with
-liquid regions.
+The constructor also has a special `AFG` name branch. At
+`0x10021e3a..0x10021e65`, it replaces both horizontal half-extents with their
+maximum before calling the shared box builder. This does not apply to `AWT`,
+`ALV`, or `AVW`. The bounded DAT and binary implementations both reject the
+whole region set when any `AFG` record is present, including square records.
+Treating a nonsquare AFG as an ordinary box can incorrectly expose a later
+liquid region through what native construction makes a dry winning area.
 
 This trace establishes the top-level DAT region path. It does not establish how
 every possible region embedded in an instanced object/group inherits transforms.
@@ -434,7 +441,10 @@ Hills local +X face is a bad whole-zone dry fixture: the neighboring
 pools. These are expected results from the recovered contract, not live-client
 observations or currently passing OpenEQ EQG-volume tests.
 
-## Binary EQGZ boundary still unresolved
+## September 29: binary EQGZ boundary was unresolved
+
+The following records the initial investigation; the caller boundary is now
+resolved in [EQGZ_NATIVE_REGIONS.md](EQGZ_NATIVE_REGIONS.md).
 
 Binary ZON v1/v2 region records are 40 bytes: name-table offset, center XYZ,
 three orientation/unknown words, and signed extents XYZ. Pinned
@@ -455,7 +465,7 @@ proof that binary file floats are passed directly. Binary EQGZ remains disabled
 until that caller boundary, signed extent basis, and non-square boundary
 fixtures are recovered. DAT evidence must not be transplanted into EQGZ.
 
-## Smallest safe implementation boundary
+## September 29: initial safe implementation boundary
 
 1. Retain DAT region records as metadata with the exact grammar, preserving
    source order, names, type, repeated grid, raw Z, rotations, scale and full
@@ -487,7 +497,7 @@ fixtures are recovered. DAT evidence must not be transplanted into EQGZ.
    mismatched repeated grids and exact tile-edge anchors as separately evidenced
    extensions rather than extrapolating from the original 66 records.
 
-## Implemented CPU checkpoint
+## September 29: initial CPU checkpoint
 
 `Heightmap::regions` now retains each top-level DAT record, its original source
 offset, tile/index order, names, raw type, repeated biased grid and four authored
@@ -521,7 +531,7 @@ unsupported paths and all 66 original records. The Feerrott2/Dead Hills fixtures
 above now pass those isolated box tests, including the adjacent-pool overlap.
 The unsupported original zones retain their empty gameplay-volume behavior.
 
-## Bounded runtime integration
+## September 29: initial bounded runtime integration
 
 `LiquidRegions::from_heightmap` retains the complete native ordered set when
 there is explicit liquid evidence. Point queries use generic native selection
@@ -549,7 +559,8 @@ and a renamed/internal fallback requires an unambiguous actual archived
 declaration naming its own DAT. It never guesses a DAT filename or falls back
 to an obsolete S3D after finding EQG. Unsupported native transform/group sets
 return empty volumes with a warning; malformed archive/declaration/DAT data
-remain load errors. Binary EQGZ returns empty volumes with a diagnostic.
+remain load errors. At this checkpoint binary EQGZ returned empty volumes with a
+diagnostic; the October 1 implementation enables its verified boxes.
 
 Tests cover rotation, liquid kinds, dry/unsupported overlap winners, ATP/grid
 order, swept crossings, declaration precedence, ambiguity and absence of S3D
@@ -565,3 +576,51 @@ binary EQGZ transforms are not established by this slice.
 
 No server state, live sessions, renderer/GPU checks, or audio were changed for
 this investigation.
+
+## October 1: region-free object groups
+
+The native TOG reader at `0x100f9fa0` dispatches two distinct record types:
+`*BEGIN_OBJECT` at `0x100fa0c0..0x100fa151` parses through `0x100f9b70` and
+appends to the group's object list at `+0x10`; `*BEGIN_AREA` at
+`0x100fa159..0x100fa1fd` parses through `0x100f9530` and appends to its area
+list at `+0x18`. Object `*FILE` records are typed file attachments in a separate
+object list (`0x100f9e7f..0x100f9ee2`), not area constructors. The installed
+subset uses `*FILE LIT filename` for lighting. Registration at
+`0x100a6e75..0x100a6fd9` enumerates only the group's area list at `+0x18`, after
+that tile's top-level non-ATP regions. With no area records, the previously
+recovered top-level order is therefore complete regardless of group transforms.
+
+`from_heightmap_with_groups` checks every distinct referenced group before
+enabling top-level regions. It accepts complete `BEGIN/END_OBJECTGROUP` and
+`BEGIN/END_OBJECT` blocks with known, nonduplicated name/position/rotation/scale
+and LIT attachment fields. This is a conservative proof subset, not a claim to
+parse the entire TOG grammar. Embedded areas (including dry/unknown ones),
+unknown fields, malformed/truncated text and missing files reject the whole
+set. Merely searching for an absent `BEGIN_AREA` string would not be sufficient.
+Rendering and region validation share archived-first, case-insensitive loose
+group resolution. An archive read failure cannot be hidden by a loose fallback.
+
+After the conservative AFG guard, the 56-zone heightmap subset has 27 supported
+wet top-level sets (previously 1), 8 complete sets with no supported liquid and
+21 unresolved sets. This enables 26 additional zones, including original
+Feerrott2 and Loping Plains, without
+guessing any parent transform. Some unresolved group files are absent from the
+installation; Oceangreen Hills, Old Dranik and Shard's Landing have real embedded
+areas that still need their parent transform recovered. Other failures retain
+unsupported anchor/version/grammar diagnostics. Final full survey:
+`/tmp/openeq-native-regions-survey-final/`.
+
+The initial `/tmp/openeq-region-free-group-survey/` predates the AFG guard
+and counts Arelis as supported. The final survey above excludes it. A scan of all
+56 original heightmap zones found only `AFG_arelis`, with full size
+`[3510,3510,700]`; its equal horizontal extents make this particular native
+adjustment a no-op, so no original Arelis mismatch was demonstrated. It remains
+excluded to keep the supported constructor boundary consistent. A synthetic
+`AFG [6,2,2]` followed by water demonstrates why unsupported records cannot be
+accepted as ordinary boxes or discarded from precedence.
+
+New tests preserve dry-region precedence through point and swept queries,
+deduplicate repeated group references, reject malformed/missing/area-bearing
+definitions and verify the original Feerrott pond's side/top/bottom boundaries
+and finite vertical crossing. Original Loping Plains river containment also
+passes through the runtime loader. No live character or server state changed.
