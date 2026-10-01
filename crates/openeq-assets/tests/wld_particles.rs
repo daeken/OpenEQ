@@ -201,6 +201,11 @@ fn original_pok_particle_texture_chains_preserve_full_refs_and_raw_alias() {
         let Fragment::Animation(animation) = &wld.resolve(link.animation).unwrap().fragment else {
             panic!("animation")
         };
+        assert_eq!(link.flags, 0);
+        assert!(link.tail.is_empty());
+        assert_eq!(animation.flags, 0x18);
+        assert_eq!(animation.parameter, None);
+        assert!(animation.tail.is_empty());
         assert_eq!(animation.frame_time, 100);
         assert_eq!(animation.textures.len(), 1);
         let Fragment::TextureList(bitmap) = &wld.resolve(animation.textures[0]).unwrap().fragment
@@ -208,5 +213,76 @@ fn original_pok_particle_texture_chains_preserve_full_refs_and_raw_alias() {
             panic!("bitmap")
         };
         assert_eq!(bitmap.filenames, [filename]);
+    }
+}
+
+#[test]
+fn texture_animation_flags_optional_words_and_extensions_remain_lossless() {
+    for flags in [0u32, 4, 8, 12, 0x8000_001c] {
+        let mut body: Vec<_> = [flags, 2].into_iter().flat_map(u32::to_le_bytes).collect();
+        if flags & 4 != 0 {
+            body.extend(0x7fc0_1234u32.to_le_bytes());
+        }
+        if flags & 8 != 0 {
+            body.extend(123u32.to_le_bytes());
+        }
+        body.extend([i32::MIN, 470].into_iter().flat_map(i32::to_le_bytes));
+        for len in 0..body.len() {
+            let mut bytes = file(&body[..len]);
+            bytes[32..36].copy_from_slice(&4u32.to_le_bytes());
+            assert!(Wld::parse("short-animation.wld".into(), &bytes).is_err());
+        }
+        body.extend([7, 8, 9]);
+        let mut bytes = file(&body);
+        bytes[32..36].copy_from_slice(&4u32.to_le_bytes());
+        let wld = Wld::parse("animation.wld".into(), &bytes).unwrap();
+        let Fragment::Animation(animation) = &wld.chunks()[0].fragment else {
+            panic!("animation")
+        };
+        assert_eq!(animation.flags, flags);
+        assert_eq!(animation.parameter, (flags & 4 != 0).then_some(0x7fc0_1234));
+        assert_eq!(animation.frame_time, if flags & 8 != 0 { 123 } else { 0 });
+        assert_eq!(animation.textures, [Ref(i32::MIN), Ref(470)]);
+        assert_eq!(animation.tail, [7, 8, 9]);
+    }
+    let mut body: Vec<_> = [i32::MIN as u32, 0x8000_0011]
+        .into_iter()
+        .flat_map(u32::to_le_bytes)
+        .collect();
+    for len in 0..body.len() {
+        let mut bytes = file(&body[..len]);
+        bytes[32..36].copy_from_slice(&5u32.to_le_bytes());
+        assert!(Wld::parse("short-animation-ref.wld".into(), &bytes).is_err());
+    }
+    body.extend([4, 5, 6]);
+    let mut bytes = file(&body);
+    bytes[32..36].copy_from_slice(&5u32.to_le_bytes());
+    let wld = Wld::parse("animation-ref.wld".into(), &bytes).unwrap();
+    let Fragment::AnimationRef(link) = &wld.chunks()[0].fragment else {
+        panic!("link")
+    };
+    assert_eq!(link.animation, Ref(i32::MIN));
+    assert_eq!(link.flags, 0x8000_0011);
+    assert_eq!(link.tail, [4, 5, 6]);
+}
+
+#[test]
+fn bitmap_source_padding_is_retained_without_entering_the_filename() {
+    let key = [0x95u8, 0x3a, 0xc5, 0x2a, 0x95, 0x7a, 0x95, 0x6a];
+    for suffix in [&[][..], &[0, 0, 0][..], &[0xde, 0xad, 0xbe, 0xef][..]] {
+        let name = b"a.dds\0";
+        let mut body = 0u32.to_le_bytes().to_vec();
+        body.extend((name.len() as u16).to_le_bytes());
+        body.extend(name.iter().enumerate().map(|(i, b)| b ^ key[i % key.len()]));
+        body.extend(suffix);
+        let mut bytes = file(&body);
+        bytes[32..36].copy_from_slice(&3u32.to_le_bytes());
+        let wld = Wld::parse("bitmap.wld".into(), &bytes).unwrap();
+        let Fragment::TextureList(bitmap) = &wld.chunks()[0].fragment else {
+            panic!("bitmap")
+        };
+        assert_eq!(bitmap.filenames, ["a.dds"]);
+        assert_eq!(bitmap.tail, suffix);
+        assert_eq!(wld.chunks()[1].fragment.type_code(), 0x11);
     }
 }

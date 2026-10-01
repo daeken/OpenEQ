@@ -225,8 +225,8 @@ fn partial_particle_actor_rejects_unproven_motion_layouts_and_broken_bindings() 
 }
 
 #[test]
-fn partial_particle_actor_rejects_unknown_attachments_tails_and_bad_texture_targets() {
-    for case in 0..7 {
+fn partial_particle_actor_rejects_unknown_attachments_and_cloud_layouts() {
+    for case in 0..3 {
         let mut fixture = particle_fixture(true, false);
         let (kind, _, cloud) = &mut fixture.0[257];
         let expected = match case {
@@ -242,28 +242,14 @@ fn partial_particle_actor_rejects_unknown_attachments_tails_and_bad_texture_targ
                 cloud[..4].copy_from_slice(&0x84u32.to_le_bytes());
                 "particle definition layout"
             }
-            3 => {
-                cloud[80..84].copy_from_slice(&50000i32.to_le_bytes());
-                "particle texture reference"
-            }
-            4 => {
-                // Existing unrelated metadata is not a particle texture target.
-                cloud[80..84].copy_from_slice(&200i32.to_le_bytes());
-                "particle texture reference"
-            }
-            5 => {
-                cloud[80..84].copy_from_slice(&i32::MIN.to_le_bytes());
-                "particle texture reference"
-            }
-            6 => {
-                cloud[80..84].copy_from_slice(&(-12345i32).to_le_bytes());
-                "particle texture reference"
-            }
             _ => unreachable!(),
         };
         assert!(actor_error(fixture).contains(expected));
     }
 }
+
+#[path = "wld_object_particle_textures_tests.rs"]
+mod texture_chains;
 
 #[test]
 fn invalid_negative_attachment_cannot_alias_an_unnamed_particle_definition() {

@@ -20,6 +20,13 @@ use std::time::Duration;
 mod animation;
 pub use animation::RenderAnimation;
 
+#[path = "wld_particle_textures.rs"]
+mod particle_textures;
+use particle_textures::particle_texture_source;
+pub use particle_textures::{
+    ObjectParticleTexture, ObjectParticleTextureIssue, ObjectParticleTextureNode,
+};
+
 const MAX_TRACKS: usize = 4096;
 const MAX_PARTS: usize = 4096;
 const MAX_FRAMES: usize = 1_000_000;
@@ -49,6 +56,9 @@ pub struct ObjectParticleAttachment {
     pub definition_reference: Ref,
     pub name: String,
     pub definition: ParticleCloud,
+    /// Authored texture chain only; never a native named-cache substitution.
+    /// Unsupported texture metadata does not invalidate ordinary mesh siblings.
+    pub texture: ObjectParticleTexture,
 }
 
 #[derive(Debug, Clone)]
@@ -427,18 +437,6 @@ fn actor_source(wld: &Wld, chunk: &Chunk, actor: &ActorDef) -> Result<ObjectSour
                 if definition.flags() != 4 || !definition.tail.is_empty() {
                     return Err(invalid("unsupported object particle definition layout"));
                 }
-                // This validates the positive full source reference as metadata only.
-                // It does not reproduce native low-byte/cached texture lookup.
-                if !definition
-                    .texture_reference
-                    .and_then(Ref::fragment_index)
-                    .and_then(|index| wld.chunks().get(index))
-                    .is_some_and(|chunk| {
-                        matches!(chunk.fragment.type_code(), 0x03 | 0x04 | 0x05 | 0x26)
-                    })
-                {
-                    return Err(invalid("invalid object particle texture reference"));
-                }
                 let fragment_index = wld
                     .chunks()
                     .iter()
@@ -451,6 +449,7 @@ fn actor_source(wld: &Wld, chunk: &Chunk, actor: &ActorDef) -> Result<ObjectSour
                         .map_err(|_| invalid("object particle reference overflow"))?),
                     name: attachment.name.clone(),
                     definition: definition.clone(),
+                    texture: particle_texture_source(wld, definition.texture_reference),
                 });
                 continue;
             }

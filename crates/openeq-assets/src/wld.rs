@@ -58,17 +58,25 @@ pub struct TextureList {
     /// Texture layers for a single frame: diffuse first, then optional detail
     /// maps. Animation frames are the references in [`AnimationRef::textures`].
     pub filenames: Vec<String>,
+    /// Remaining declared bytes, including authored record padding.
+    pub tail: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
 pub struct AnimationRef {
+    pub flags: u32,
+    /// Raw optional word selected by flag bit 2; no meaning inferred here.
+    pub parameter: Option<u32>,
     pub frame_time: u32,
     pub textures: Vec<Ref>,
+    pub tail: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
 pub struct SkeletonRef {
     pub animation: Ref,
+    pub flags: u32,
+    pub tail: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -442,15 +450,19 @@ fn read_fragment(
     strings: &StringTable,
 ) -> Result<Fragment> {
     Ok(match type_code {
-        0x03 => Fragment::TextureList(TextureList {
-            filenames: read_texture_list(reader)?,
-        }),
+        0x03 => {
+            let filenames = read_texture_list(reader)?;
+            let tail = reader.take(reader.remaining())?.to_vec();
+            Fragment::TextureList(TextureList { filenames, tail })
+        }
         0x04 => {
             let flags = reader.u32()?;
             let reference_count = reader.bounded_count()?;
-            if flags & (1 << 2) != 0 {
-                reader.u32()?;
-            }
+            let parameter = if flags & (1 << 2) != 0 {
+                Some(reader.u32()?)
+            } else {
+                None
+            };
             let frame_time = if flags & (1 << 3) != 0 {
                 reader.u32()?
             } else {
@@ -460,15 +472,24 @@ fn read_fragment(
             for _ in 0..reference_count {
                 textures.push(reader.reference()?);
             }
+            let tail = reader.take(reader.remaining())?.to_vec();
             Fragment::Animation(AnimationRef {
+                flags,
+                parameter,
                 frame_time,
                 textures,
+                tail,
             })
         }
         0x05 => {
             let animation = reader.reference()?;
-            reader.u32()?;
-            Fragment::AnimationRef(SkeletonRef { animation })
+            let flags = reader.u32()?;
+            let tail = reader.take(reader.remaining())?.to_vec();
+            Fragment::AnimationRef(SkeletonRef {
+                animation,
+                flags,
+                tail,
+            })
         }
         0x10 => Fragment::Skeleton(read_skeleton(reader, strings)?),
         0x11 => Fragment::SkeletonRef(SkeletonRef2 {
