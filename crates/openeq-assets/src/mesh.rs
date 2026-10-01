@@ -19,6 +19,18 @@ use crate::wld::{Fragment, Mesh, Ref, Wld};
 /// Number of `f32` components per vertex in a baked buffer.
 pub const VERTEX_STRIDE: usize = 8;
 
+/// Proven conversion between raw asset UVs and shader inputs.
+/// Kept on the material so extraction and material remapping preserve it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum UvEncoding {
+    #[default]
+    Float32,
+    /// Ordinary TER Opaque_MaxCB1, native layout 1: signed SHORT2 / 256.
+    /// Reproduces the SSE2 conversion with masked exceptions, independent of
+    /// this process's CPU. Legacy x87 overflow behavior is a separate target.
+    NativeTerShort2Sse2,
+}
+
 /// Parameters of an EQG `Opaque_MaxWater.fx` surface.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WaterMaterial {
@@ -56,9 +68,11 @@ pub struct Material {
     pub emissive: bool,
     /// Clamp diffuse sampling to its edges (for nonperiodic baked terrain tiles).
     pub clamp_uv: bool,
+    /// Upload conversion only; baked/source vertex words remain untouched.
+    pub uv_encoding: UvEncoding,
 }
 
-type MaterialKey = (u32, u32, String, bool, bool, bool, bool, bool);
+type MaterialKey = (u32, u32, String, bool, bool, bool, bool, bool, UvEncoding);
 
 impl Material {
     fn key(&self) -> MaterialKey {
@@ -71,6 +85,7 @@ impl Material {
             self.additive,
             self.emissive,
             self.clamp_uv,
+            self.uv_encoding,
         )
     }
 }
@@ -446,6 +461,7 @@ fn bake_wld_meshes_inner<'a>(
             additive: false,
             emissive,
             clamp_uv: false,
+            uv_encoding: Default::default(),
         };
         let index = *material_index.entry(material.key()).or_insert_with(|| {
             materials.push(material.clone());

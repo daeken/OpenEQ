@@ -23,6 +23,7 @@ fn material(name: &str, additive: bool, emissive: bool) -> Material {
         additive,
         emissive,
         clamp_uv: false,
+        uv_encoding: Default::default(),
     }
 }
 fn plane(color: [u8; 4], y: f32, additive: bool, emissive: bool) -> Scene {

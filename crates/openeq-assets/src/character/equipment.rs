@@ -146,6 +146,7 @@ impl CharacterLibrary {
                 additive: false,
                 emissive: shader.starts_with("addalpha"),
                 clamp_uv: false,
+                uv_encoding: Default::default(),
             });
         }
         if meshes.is_empty() {

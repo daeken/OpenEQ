@@ -16,6 +16,7 @@ use openeq_assets::Scene;
 
 mod bounds;
 mod placed_animation;
+mod uv;
 
 /// Side length of every layer in the texture array.
 pub const ATLAS_SIZE: u32 = 256;
@@ -328,7 +329,7 @@ impl GpuScene {
                 vertices.push(Vertex {
                     position: [vertex[0], vertex[1], vertex[2]],
                     normal: [vertex[3], vertex[4], vertex[5]],
-                    uv: [vertex[6], vertex[7]],
+                    uv: uv::shader_uv(material.uv_encoding, [vertex[6], vertex[7]]),
                     layer,
                     material: geometry.material as u32,
                     frame_count,

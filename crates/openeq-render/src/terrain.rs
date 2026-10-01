@@ -519,6 +519,7 @@ mod tests {
                 additive: false,
                 emissive: false,
                 clamp_uv: true,
+                uv_encoding: Default::default(),
             }],
             vec![],
             vec![Texture {

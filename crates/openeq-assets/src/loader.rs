@@ -745,6 +745,7 @@ fn append_eqg_object(scene: &mut Scene, object: &TerMod, object_name: &str, arch
                 && material.shader.eq_ignore_ascii_case("AddAlpha_MaxCB1.fx"),
             emissive: false,
             clamp_uv: false,
+            uv_encoding: ter_uv::encoding(object, material),
         });
         scene.meshes.push(Geometry {
             vertices,
@@ -772,6 +773,7 @@ fn append_eqg_object(scene: &mut Scene, object: &TerMod, object_name: &str, arch
 
 mod eqg_collision;
 mod indexed_water;
+mod ter_uv;
 pub mod wld_objects;
 
 fn append_baked(
@@ -1143,6 +1145,7 @@ fn load_heightmap(base: &Path, name: &str, archive: Archive, zon: &[u8]) -> Resu
                 additive: false,
                 emissive: false,
                 clamp_uv: false,
+                uv_encoding: Default::default(),
             });
             scene.meshes.push(Geometry {
                 vertices,

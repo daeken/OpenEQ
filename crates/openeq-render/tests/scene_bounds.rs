@@ -41,6 +41,7 @@ fn placed_bounds_ignore_unplaced_duplicates_unused_vertices_and_hidden_geometry(
             additive: false,
             emissive: true,
             clamp_uv: false,
+            uv_encoding: Default::default(),
         }],
         vec![quad(0.), quad(1e6), quad(-1e6)],
         vec![Texture {

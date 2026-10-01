@@ -105,7 +105,7 @@ fn model_bytes(model: &TerMod) -> Vec<u8> {
         } else {
             MOD_MAGIC
         },
-        2,
+        model.version,
         strings.len() as u32,
         model.materials.len() as u32,
         model.positions.len() as u32,
@@ -121,9 +121,16 @@ fn model_bytes(model: &TerMod) -> Vec<u8> {
             model.positions[i]
                 .into_iter()
                 .chain(model.normals[i])
-                .chain(model.tex_coords[i])
                 .flat_map(f32::to_le_bytes),
         );
+        if model.version == 3 {
+            bytes.extend(words(&[0xff80_8080]));
+        }
+        bytes.extend(model.tex_coords[i].into_iter().flat_map(f32::to_le_bytes));
+        if model.version == 3 {
+            // Deliberately different UV1 proves the parser keeps UV0.
+            bytes.extend([37.0_f32, -91.0].into_iter().flat_map(f32::to_le_bytes));
+        }
     }
     for &(a, b, c, material, flags) in &model.polygons {
         bytes.extend(words(&[a, b, c, material, flags]));

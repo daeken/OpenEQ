@@ -102,6 +102,7 @@ fn water_scene(
             additive: false,
             emissive: false,
             clamp_uv: false,
+            uv_encoding: Default::default(),
         }],
         vec![Geometry {
             vertices,

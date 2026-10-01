@@ -262,3 +262,16 @@ cohesive commits and pushing to `master`.
   See `WLD_STRING_OFFSETS.md`. Independent review and assets strict lint pass.
 - Native TER UV packing, bounded XMI loops and complete-packet SysEx transport
   remain separate active work; preserve their edits until their own verification.
+
+## 03:45 verified TER UV upload
+
+- Exact `Opaque_MaxCB1.fx` TER v1–3 materials now upload native signed SHORT2
+  UV values, including quantization/wrapping and masked-SSE2 nonfinite behavior.
+  Raw source/baked words and structural diagnostics remain unchanged. All24
+  original shader-bearing TERs were surveyed; none uses UVs where the two native
+  CPU conversion paths disagree. Original Causeway and v3/GPU regressions pass.
+- Independent native numeric review passes; all1,031workspace tests pass with
+  zero failures/ignored, plus strict lint/client build/no-default/format checks.
+  Evidence `/tmp/openeq-uv-loops-*`. Counts include the separately pending loop
+  scheduler and silent SysEx synthesis API; those await their own checkpoints.
+  Normal/tangent/color/light fidelity and other shader families remain separate.

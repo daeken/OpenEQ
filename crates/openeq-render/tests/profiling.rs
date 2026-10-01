@@ -40,6 +40,7 @@ fn plane(renderer: &Renderer, y: f32, transparent: bool, additive: bool) -> GpuS
             additive,
             emissive: true,
             clamp_uv: false,
+            uv_encoding: Default::default(),
         }],
         vec![Geometry {
             vertices: vec![

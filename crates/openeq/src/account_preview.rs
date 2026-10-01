@@ -499,6 +499,7 @@ fn build_stage(upload: &UploadContext, framing: Framing) -> anyhow::Result<GpuSc
             additive: false,
             emissive: false,
             clamp_uv: false,
+            uv_encoding: Default::default(),
         }],
         vec![Geometry {
             vertices,

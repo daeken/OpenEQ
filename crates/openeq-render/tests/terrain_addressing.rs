@@ -39,6 +39,7 @@ fn edge_scene(axis: usize, high: bool, alpha: u8, solid: bool) -> Scene {
             additive: false,
             emissive: true,
             clamp_uv: true,
+            uv_encoding: Default::default(),
         }],
         vec![Geometry {
             vertices,

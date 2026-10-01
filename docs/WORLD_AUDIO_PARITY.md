@@ -579,3 +579,17 @@ review and strict assets lint pass. The raw-byte oracle matches all 6,337,095
 fragment and 154,518 skeleton names in 1,804 parsed original WLDs, with no
 original name change. See `WLD_STRING_OFFSETS.md`; this is a parser correctness
 fix, not a claimed visible original-asset repair.
+
+
+Native TER UV upload now covers the exact `Opaque_MaxCB1.fx` v1–3 family, with
+material provenance retained through cloning/remapping. Quantization, signed
+wrapping and nonfinite conversion occur only during upload; raw source words
+and structural diagnostics remain intact. The24original affected TERs have no
+UVs in the SSE2/x87 disagreement set. Independent numeric/native review and
+original Causeway/v3/GPU tests pass. See `EQG_TER_UV_PACKING.md`.
+
+The integrated checkpoint passes **1,031 workspace tests, zero failed/ignored**,
+including original assets, GPU and silent audio. Strict lint, client build,
+all-target no-default and formatting pass. Logs `/tmp/openeq-uv-loops-*`.
+This test count includes the separate XMI loop and complete-packet synth API
+work; it does not certify original timbre, particle rendering, or other shaders.

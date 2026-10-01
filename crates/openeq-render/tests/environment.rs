@@ -20,6 +20,7 @@ fn wall(y: f32) -> Scene {
         additive: false,
         emissive: true,
         clamp_uv: false,
+        uv_encoding: Default::default(),
     };
     let mut vertices = Vec::new();
     for [x, z] in [[-100., -100.], [100., -100.], [100., 100.], [-100., 100.]] {
