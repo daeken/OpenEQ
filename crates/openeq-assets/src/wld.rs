@@ -154,6 +154,18 @@ pub struct MaterialList {
     pub materials: Vec<Ref>,
 }
 
+/// A `0x26` texture binding used by native particle texture resolution.
+/// The native resolver uses fixed child/material offsets, without interpreting
+/// flags. This preserves source identity, not named-cache or low-byte behavior.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParticleTexture {
+    pub flags: u32,
+    pub texture: Ref,
+    /// Raw material handle; negative aliases require native renderer context.
+    pub material: u32,
+    pub tail: Vec<u8>,
+}
+
 /// A `0x34` particle-cloud definition, retained without inventing playback.
 ///
 /// Offsets in `fixed_words` start after the common name reference; word zero
@@ -224,6 +236,7 @@ pub enum Fragment {
     MeshRef(MeshRef),
     Material(Material),
     MaterialList(MaterialList),
+    ParticleTexture(ParticleTexture),
     ParticleCloud(ParticleCloud),
     Mesh(Mesh),
     /// A fragment type this reader does not model. It is skipped but retained
@@ -250,6 +263,7 @@ impl Fragment {
             Fragment::MeshRef(_) => 0x2D,
             Fragment::Material(_) => 0x30,
             Fragment::MaterialList(_) => 0x31,
+            Fragment::ParticleTexture(_) => 0x26,
             Fragment::ParticleCloud(_) => 0x34,
             Fragment::Mesh(_) => 0x36,
             Fragment::Ignored(code) => *code,
@@ -417,6 +431,7 @@ fragment_kind!(Light, Light);
 fragment_kind!(MeshRef, MeshRef);
 fragment_kind!(Material, Material);
 fragment_kind!(MaterialList, MaterialList);
+fragment_kind!(ParticleTexture, ParticleTexture);
 fragment_kind!(ParticleCloud, ParticleCloud);
 fragment_kind!(Mesh, Mesh);
 
@@ -605,6 +620,18 @@ fn read_fragment(
                 flags,
                 position,
                 radius,
+            })
+        }
+        0x26 => {
+            let flags = reader.u32()?;
+            let texture = reader.reference()?;
+            let material = reader.u32()?;
+            let tail = reader.take(reader.remaining())?.to_vec();
+            Fragment::ParticleTexture(ParticleTexture {
+                flags,
+                texture,
+                material,
+                tail,
             })
         }
         0x2D => Fragment::MeshRef(MeshRef {

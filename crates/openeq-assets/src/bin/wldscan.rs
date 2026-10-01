@@ -87,6 +87,13 @@ fn describe(fragment: &Fragment) -> String {
             mesh.polygon_textures.len(),
             mesh.polygon_textures.len()
         ),
+        ParticleTexture(texture) => format!(
+            "particle texture flags={:#x} child={:?} material={:#x} tail={}",
+            texture.flags,
+            texture.texture,
+            texture.material,
+            texture.tail.len()
+        ),
         Ignored(code) => format!("ignored type 0x{code:02X}"),
     }
 }

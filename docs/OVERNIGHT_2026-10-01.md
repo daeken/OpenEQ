@@ -304,3 +304,25 @@ cohesive commits and pushing to `master`.
   xml_ui owns native TER normals/tangents/colors. All are research only until
   their evidence and reviews support a bounded implementation. Root is surveying
   particle source families and maintaining integration checkpoints.
+
+## 04:10 particle prerequisites and expanded evidence
+
+- Native particle material and real-placement witnesses now execute successfully:
+  PoK smoke/flames use source-alpha additive rendering under the native default
+  alias; actual torch/lamp origin/basis and preview-context drawing gates match
+  original instruction output. Root reproduced both frozen artifact hashes.
+  See WLD_PARTICLE_MATERIALS.md and WLD_PARTICLE_PLACEMENT.md. These are bounded
+  original-code witnesses, not whole-client visual comparisons.
+- The source inventory finds 623 cloud records in 119 object archives, only 22
+  distinct fixed bodies. All full texture chains use one frame and alias
+  0x80000017. Independent raw/typed and second-reader checks agree. See
+  WLD_PARTICLE_RUNTIME_CORPUS.md for coverage and explicit cache limitations.
+- Typed 0x26 texture-binding retention now preserves flags, full signed child
+  reference, raw material alias and opaque suffix. All 839 installed records
+  match the independent raw oracle. All 304 assets tests and strict workspace
+  lint pass, plus independent review; logs /tmp/openeq-particle-texture-*.
+- Next: retain animation-chain format metadata for honest effect support gates;
+  npc_assets is implementing bounded attachment texture metadata, cursor_review
+  a pure native-witness particle sampler, xml_ui tracing original TER lighting
+  colors and precision-sensitive normal/tangent upload. Production particles
+  remain disabled until the complete bounded integration is verified.

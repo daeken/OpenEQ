@@ -1,7 +1,7 @@
 //! Particle records retain file structure without inferring a playback model.
 use openeq_assets::{
     Error,
-    wld::{Fragment, ParticleCloud, Ref, WLD_MAGIC, Wld},
+    wld::{Fragment, ParticleCloud, ParticleTexture, Ref, WLD_MAGIC, Wld},
 };
 
 fn file(body: &[u8]) -> Vec<u8> {
@@ -130,5 +130,83 @@ fn original_pok_particle_definitions_keep_duplicate_identity_and_full_texture_re
         assert!(cloud.optional_vectors.is_none());
         assert!(cloud.optional_block.is_none());
         assert!(cloud.tail.is_empty());
+    }
+}
+
+#[test]
+fn particle_texture_words_are_fixed_offset_lossless_and_record_bounded() {
+    for flags in [0u32, 7, u32::MAX] {
+        for reference in [470i32, -17, i32::MIN] {
+            let mut body: Vec<_> = [flags, reference as u32, 0x8000_0017]
+                .into_iter()
+                .flat_map(u32::to_le_bytes)
+                .collect();
+            for length in 0..12 {
+                let mut bytes = file(&body[..length]);
+                bytes[32..36].copy_from_slice(&0x26u32.to_le_bytes());
+                assert!(matches!(
+                    Wld::parse("short-texture.wld".into(), &bytes),
+                    Err(Error::Truncated { .. })
+                ));
+            }
+            body.extend([0xaa, 0xbb, 0xcc]);
+            let mut bytes = file(&body);
+            bytes[32..36].copy_from_slice(&0x26u32.to_le_bytes());
+            let wld = Wld::parse("texture.wld".into(), &bytes).unwrap();
+            let (_, texture) = wld.iter::<ParticleTexture>().next().unwrap();
+            assert_eq!(texture.flags, flags);
+            assert_eq!(texture.texture, Ref(reference));
+            assert_eq!(texture.material, 0x8000_0017);
+            assert_eq!(texture.tail, [0xaa, 0xbb, 0xcc]);
+            assert_eq!(wld.chunks()[0].fragment.type_code(), 0x26);
+            assert!(
+                matches!(&wld.chunks()[1].fragment, Fragment::SkeletonRef(s) if s.skeleton == Ref(1))
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires original Plane of Knowledge particle texture chains"]
+fn original_pok_particle_texture_chains_preserve_full_refs_and_raw_alias() {
+    let base = openeq_assets::loader::default_client_dir().expect("original client assets");
+    let archive = openeq_assets::pfs::Archive::open(base.join("poknowledge_obj.s3d")).unwrap();
+    let wld = Wld::open(&archive, "poknowledge_obj.wld").unwrap();
+    assert_eq!(wld.iter::<ParticleTexture>().count(), 8);
+    for (cloud, texture_ref, child_ref, filename) in [
+        (5, 4, 3, "CSMOKE.DDS"),
+        (10, 9, 8, "GENG00.DDS"),
+        (15, 14, 13, "GENG00.DDS"),
+        (20, 19, 18, "GENG00.DDS"),
+        (406, 405, 404, "CSMOKE.DDS"),
+        (411, 410, 409, "GENG00.DDS"),
+        (438, 437, 436, "GENG00.DDS"),
+        (471, 470, 469, "GENG00.DDS"),
+    ] {
+        let Fragment::ParticleCloud(cloud) = &wld.resolve(Ref(cloud)).unwrap().fragment else {
+            panic!("cloud")
+        };
+        assert_eq!(cloud.texture_reference, Some(Ref(texture_ref)));
+        let Fragment::ParticleTexture(texture) = &wld.resolve(Ref(texture_ref)).unwrap().fragment
+        else {
+            panic!("texture")
+        };
+        assert_eq!(texture.flags, 0);
+        assert_eq!(texture.texture, Ref(child_ref));
+        assert_eq!(texture.material, 0x8000_0017);
+        assert!(texture.tail.is_empty());
+        let Fragment::AnimationRef(link) = &wld.resolve(texture.texture).unwrap().fragment else {
+            panic!("link")
+        };
+        let Fragment::Animation(animation) = &wld.resolve(link.animation).unwrap().fragment else {
+            panic!("animation")
+        };
+        assert_eq!(animation.frame_time, 100);
+        assert_eq!(animation.textures.len(), 1);
+        let Fragment::TextureList(bitmap) = &wld.resolve(animation.textures[0]).unwrap().fragment
+        else {
+            panic!("bitmap")
+        };
+        assert_eq!(bitmap.filenames, [filename]);
     }
 }

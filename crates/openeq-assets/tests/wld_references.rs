@@ -44,12 +44,12 @@ fn assert_unresolved(wld: &Wld, reference: Ref) {
 #[test]
 fn signed_extremes_never_alias_unnamed_fragments() {
     // A complete 40-byte WLD with no strings and one unnamed opaque fragment.
-    let wld = fixture(&[], &[(0, 0x26, &[])]);
+    let wld = fixture(&[], &[(0, 0x96, &[])]);
     for reference in [i32::MIN, -12345, -1, 0, 2, i32::MAX] {
         assert_unresolved(&wld, Ref(reference));
     }
     // Positive identity and direct unnamed lookup remain available.
-    assert_eq!(wld.resolve(Ref(1)).unwrap().fragment.type_code(), 0x26);
+    assert_eq!(wld.resolve(Ref(1)).unwrap().fragment.type_code(), 0x96);
     assert_eq!(wld.resolve_str(Ref(1)), Some(""));
     assert_eq!(wld.reference_name(Ref(1)), Some(""));
     assert!(std::ptr::eq(wld.by_name("").unwrap(), &wld.chunks()[0]));
@@ -65,7 +65,7 @@ fn named_substrings_and_duplicate_positive_identities_keep_existing_behavior() {
     let wld = fixture(
         strings,
         &[
-            (0, 0x26, &[]),
+            (0, 0x96, &[]),
             (-1, 0x99, &[]),
             (-12, 0x98, &[]),
             (-12, 0x97, &[]),
