@@ -258,7 +258,7 @@ fn first_fraction(high: f32, predicate: impl Fn(f32) -> Option<bool>) -> Option<
 /// The endpoint's rounded distance is not the requested distance. Invert the
 /// actual single-axis prefix positions to reach the interior of the next span,
 /// then find its first outgoing representable time from a verified old medium.
-/// Height invariance is established separately before this function is called.
+/// Height invariance and a single wet interval are established separately.
 fn support_boundary_fraction(
     regions: &LiquidRegions,
     from: [f32; 3],
@@ -490,10 +490,14 @@ impl GroundMotion {
                 // One horizontal axis also excludes rounded diagonal corner cuts.
                 let start = center(feet);
                 let end = center(moved.feet);
-                if !regions.height_invariant_in_bounds(
-                    std::array::from_fn(|axis| start[axis].min(end[axis])),
-                    std::array::from_fn(|axis| start[axis].max(end[axis])),
-                ) {
+                let min = std::array::from_fn(|axis| start[axis].min(end[axis]));
+                let max = std::array::from_fn(|axis| start[axis].max(end[axis]));
+                // Interval merging can hide dry BSP planes or sub-fraction
+                // gaps between boxes. Inverting point membership requires one
+                // contiguous wet interval, separately from height invariance.
+                if !regions.height_invariant_in_bounds(min, max)
+                    || !regions.has_single_liquid_interval_in_bounds(min, max)
+                {
                     return None;
                 }
                 Some(support)

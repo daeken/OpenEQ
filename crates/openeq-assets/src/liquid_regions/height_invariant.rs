@@ -4,6 +4,89 @@ use super::{LiquidRegions, Volumes};
 use glam::DVec3;
 
 impl LiquidRegions {
+    /// Prove at most one liquid domain can intersect a finite AABB.
+    ///
+    /// WLD `segment()` merges touching wet spans, but `at()` makes their shared
+    /// split plane dry. Rounded motion can remain on that plane for a range of
+    /// times. Restrict BSP admission to at most one potentially reachable wet
+    /// leaf, whose membership is one conjunction of half-space tests. Likewise,
+    /// permit at most one potentially intersecting identity-rotation box. Even
+    /// a positive gap between two boxes can disappear when segment fractions
+    /// round to f32, while a representable position still lies in that gap.
+    ///
+    /// This does not prove height invariance or a time mapping. A caller that
+    /// inverts a scalar path must establish those separately. After proving Z
+    /// invariance and motion on one horizontal axis, the admitted domain has
+    /// one scalar membership interval. Multiple domains, rotated boxes and
+    /// native formats currently reject proof even when they would be harmless.
+    pub fn has_single_liquid_interval_in_bounds(&self, min: [f32; 3], max: [f32; 3]) -> bool {
+        if min
+            .into_iter()
+            .zip(max)
+            .any(|(a, b)| !a.is_finite() || !b.is_finite() || a > b)
+        {
+            return false;
+        }
+        match &*self.volumes {
+            Volumes::Empty => true,
+            Volumes::Boxes(boxes) => {
+                let min = DVec3::from_array(min.map(f64::from));
+                let max = DVec3::from_array(max.map(f64::from));
+                let mut found_box = false;
+                for volume in boxes {
+                    let [x, y, z, w] = volume.inverse_rotation.to_array();
+                    if x != 0. || y != 0. || z != 0. || w.abs() != 1. {
+                        return false;
+                    }
+                    let low = min - volume.center;
+                    let high = max - volume.center;
+                    let half = volume.half_extents;
+                    if (0..3).any(|axis| high[axis] < -half[axis] || low[axis] > half[axis]) {
+                        continue;
+                    }
+                    if found_box {
+                        return false;
+                    }
+                    found_box = true;
+                }
+                true
+            }
+            Volumes::NativeTerrain(_) | Volumes::NativeBinary(_) => false,
+            Volumes::Bsp { nodes, wet, .. } => {
+                let axes = std::array::from_fn(|axis| Bounds {
+                    low: f64::from(min[axis]),
+                    high: f64::from(max[axis]),
+                });
+                let mut found_wet_leaf = false;
+                let mut pending = vec![0];
+                while let Some(index) = pending.pop() {
+                    if !wet[index] {
+                        continue;
+                    }
+                    let node = &nodes[index];
+                    if node.children == [0, 0] {
+                        if found_wet_leaf {
+                            return false;
+                        }
+                        found_wet_leaf = true;
+                        continue;
+                    }
+                    let distance = distance_bounds(node.plane, axes);
+                    for (side, child) in node.children.into_iter().enumerate() {
+                        if child != 0
+                            && !distance.is_some_and(|range| {
+                                (side == 0 && range.high < 0.) || (side == 1 && range.low > 0.)
+                            })
+                        {
+                            pending.push(child as usize - 1);
+                        }
+                    }
+                }
+                true
+            }
+        }
+    }
+
     /// Prove that `at([x, y, z])` is independent of Z throughout a finite AABB.
     /// This preserves the complete liquid kind, including dry results and
     /// source precedence. Bounds are inclusive. False means no proof, not that

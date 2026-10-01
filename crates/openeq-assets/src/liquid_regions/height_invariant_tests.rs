@@ -193,3 +193,99 @@ fn invalid_bounds_and_native_volumes_do_not_claim_proof() {
         assert!(!regions.height_invariant_in_bounds([-1.; 3], [1.; 3]));
     }
 }
+
+#[test]
+fn internal_dry_bsp_plane_is_separate_from_height_invariance() {
+    let plane_x = f32::from_bits(0x3655_5556);
+    let regions = bsp(vec![
+        Node {
+            plane: [1., 0., 0., 0.],
+            region: 0,
+            children: [2, 0],
+        },
+        Node {
+            plane: [1., 0., 0., -f64::from(plane_x)],
+            region: 0,
+            children: [3, 4],
+        },
+        leaf(1),
+        leaf(1),
+    ]);
+    let min = [0., 0., 3.];
+    let max = [0.33333334, 0., 3.166667];
+    assert!(regions.height_invariant_in_bounds(min, max));
+    assert!(!regions.has_single_liquid_interval_in_bounds(min, max));
+    assert_eq!(regions.at([plane_x, 0., 3.]), None);
+    assert_eq!(
+        regions.at([plane_x.next_down(), 0., 3.]),
+        Some(LiquidKind::Water)
+    );
+    assert_eq!(
+        regions.at([plane_x.next_up(), 0., 3.]),
+        Some(LiquidKind::Water)
+    );
+    let spans = regions.segment(min, max);
+    assert_eq!(spans.len(), 1);
+    assert_eq!((spans[0].enter, spans[0].exit), (0., 1.));
+    // Beyond the seam only one wet leaf is reachable, even though the global
+    // tree contains multiple wet leaves of the same kind.
+    assert!(regions.has_single_liquid_interval_in_bounds([0.1, 0., 3.], max));
+}
+
+#[test]
+fn one_wet_bsp_leaf_preserves_entry_exit_and_other_formats_keep_scope() {
+    let regions = bsp(vec![
+        Node {
+            plane: [1., 0., 0., 0.],
+            region: 0,
+            children: [2, 0],
+        },
+        Node {
+            plane: [-1., 0., 0., 1.],
+            region: 0,
+            children: [3, 0],
+        },
+        leaf(1),
+    ]);
+    assert!(regions.has_single_liquid_interval_in_bounds([-1.; 3], [2.; 3]));
+    assert_eq!(regions.at([0., 0., 0.]), None);
+    assert_eq!(regions.at([0.5, 0., 0.]), Some(LiquidKind::Water));
+    assert_eq!(regions.at([1., 0., 0.]), None);
+    assert!(!regions.has_single_liquid_interval_in_bounds([f32::NAN; 3], [2.; 3]));
+    let boxes = LiquidRegions::from_boxes([liquid_box([0.; 3], [1.; 3])]).unwrap();
+    assert!(boxes.has_single_liquid_interval_in_bounds([-2.; 3], [2.; 3]));
+    assert!(!boxes.height_invariant_in_bounds([-2.; 3], [2.; 3]));
+    let native = LiquidRegions {
+        volumes: Arc::new(Volumes::NativeTerrain(NativeTopLevelRegions {
+            boxes: vec![],
+        })),
+    };
+    assert!(!native.has_single_liquid_interval_in_bounds([-2.; 3], [2.; 3]));
+}
+
+#[test]
+fn collapsed_box_gap_rejects_multiple_intersecting_domains() {
+    let regions = LiquidRegions::from_boxes([
+        liquid_box([0.09375, 0., 3.], [0.00625, 1., 1.]),
+        liquid_box([0.10625, 0., 3.], [f32::from_bits(0x3bcc_cccf), 1., 1.]),
+    ])
+    .unwrap();
+    let min = [0., 0., 3.];
+    let max = [0.33333334, 0., 3.166667];
+    assert!(regions.height_invariant_in_bounds(min, max));
+    let spans = regions.segment(min, max);
+    assert_eq!(spans.len(), 2);
+    assert_eq!(spans[0].exit, spans[1].enter);
+    assert_eq!(regions.at([0.1, 0., 3.]), None);
+    assert_eq!(
+        regions.at([0.1_f32.next_down(), 0., 3.]),
+        Some(LiquidKind::Water)
+    );
+    assert_eq!(
+        regions.at([0.1_f32.next_up(), 0., 3.]),
+        Some(LiquidKind::Water)
+    );
+    assert!(!regions.has_single_liquid_interval_in_bounds(min, max));
+    assert!(regions.has_single_liquid_interval_in_bounds([0.101, 0., 3.], max));
+    assert!(regions.has_single_liquid_interval_in_bounds([1.; 3], [2.; 3]));
+}

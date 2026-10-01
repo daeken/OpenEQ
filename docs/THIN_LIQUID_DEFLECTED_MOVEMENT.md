@@ -328,3 +328,21 @@ avoids the extra swept proof. The 16-transition bound remains in force. All
 32 movement tests pass, including original PoK swimming and Kelethin lift landings;
 logs: `/tmp/openeq-planar-medium-movement-final.log`. The integrated full workspace
 checkpoint is recorded separately when complete.
+
+### Final single-interval admission
+
+A later review found that height independence alone does not make the point
+predicate monotone. WLD span merging hides dry internal BSP planes between wet
+leaves. Separately, two disjoint inclusive boxes can have a dry representable
+position between them even when their segment-fraction endpoints round equal.
+Both counterexamples are now permanent helper and movement regressions.
+
+The caller also requires `has_single_liquid_interval_in_bounds`: at most one
+potentially reachable wet BSP leaf or one intersecting identity box over the
+complete center AABB. Thus wet membership along the single moving axis is one
+conjunction of monotone half-space/box tests. The outgoing verified interior
+brackets one transition. Multiple wet leaves/boxes conservatively preserve the
+saved whole-tick solve, even when their union would be safe. This restriction
+applies to the new ascending subset; existing straight-span semantics remain
+unchanged. Ten helper tests and 34 movement tests pass, including original PoK
+and Kelethin; `/tmp/openeq-planar-seams-movement-final.log`.

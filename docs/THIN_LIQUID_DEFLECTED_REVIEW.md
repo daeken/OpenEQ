@@ -155,3 +155,27 @@ The following names are relative to `/tmp`:
 | `openeq-ascending-certificate-review.log` | `2a73b25aab320932290495e1c26aeb0b270bc8b28cc0fbb9528ee3c4ca43181c` |
 
 The artifacts above are frozen; later verification should use separate paths.
+
+## Final point-membership monotonicity review
+
+A subsequent independent review found two gaps in the binary-search precondition:
+
+- A WLD split at X=0 enters water, then a split at
+  `f32::from_bits(0x36555556)` has wet leaves on both sides. The segment API
+  merges them, while the exact internal plane is dry. Rounded prefixes dwell
+  there; search found fraction 9.536744073557202e-6 although the first wet
+  prefix was 2.9989340077918314e-7. Height invariance alone correctly admits
+  this structure, so it cannot serve as a single-interval proof.
+- Box centers X=.09375/.10625 with half-extents .00625 and
+  `f32::from_bits(0x3bcccccf)` leave X=.1 dry while adjacent representable Xs
+  are wet. Over travel X=0..=.33333334, their reported fraction boundaries
+  both round to .29999998211860657, hiding the gap from span merging.
+
+The separate `has_single_liquid_interval_in_bounds` helper excludes more than
+one potentially reachable wet BSP leaf or intersecting identity box, using
+conservative bounds. Combined with height invariance and one moving horizontal
+axis, this establishes the scalar membership contract needed by first_fraction.
+Both failures are permanent regressions, and the movement tests require exact
+saved-move fallback. A second independent inspection found no issue in the
+stronger gate. This does not change the public segment API or claim that its
+rounded fractions retain all point-sized gaps for other callers.

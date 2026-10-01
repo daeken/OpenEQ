@@ -258,3 +258,87 @@ fn planar_boundary_time_inverts_actual_rounded_travel_distance() {
         position(fraction).unwrap()
     );
 }
+
+#[test]
+fn merged_bsp_wet_spans_with_a_dry_internal_plane_keep_saved_move() {
+    let plane_x = f32::from_bits(0x3655_5556);
+    // Minimal public WLD input: one BSP tree, one region and one annotation.
+    let words = |values: &[u32]| {
+        values
+            .iter()
+            .flat_map(|word| word.to_le_bytes())
+            .collect::<Vec<_>>()
+    };
+    let mut data = words(&[openeq_assets::wld::WLD_MAGIC, 0, 3, 0, 0, 0, 0]);
+    let mut tree = words(&[0, 4]);
+    for (plane, region, children) in [
+        ([1_f32, 0., 0., 0.], 0, [2, 0]),
+        ([1., 0., 0., -plane_x], 0, [3, 4]),
+        ([0.; 4], 1, [0, 0]),
+        ([0.; 4], 1, [0, 0]),
+    ] {
+        tree.extend(words(&plane.map(f32::to_bits)));
+        tree.extend(words(&[region, children[0], children[1]]));
+    }
+    let mut declaration = words(&[0, 0, 1, 0, 3]);
+    declaration.extend([b'W' ^ 0x95, b'T' ^ 0x3a, b'_' ^ 0xc5]);
+    for (kind, body) in [(0x21, tree), (0x22, words(&[0])), (0x29, declaration)] {
+        data.extend(words(&[body.len() as u32, kind]));
+        data.extend(body);
+    }
+    let water = LiquidRegions::from_wld(&data).unwrap();
+    let slope = ramp(&[]);
+    let world = MotionWorld {
+        collision: &slope,
+        dynamic: None,
+        liquids: None,
+    };
+    let empty = LiquidRegions::default();
+    let (expected, _) = advance(&world, &empty, keys());
+    assert!(water.height_invariant_in_bounds(center([0.; 3]), center(expected)));
+    assert!(
+        water
+            .at(center([plane_x.next_down(), 0., plane_x * 0.5]))
+            .is_some()
+    );
+    assert!(water.at(center([plane_x, 0., plane_x * 0.5])).is_none());
+    assert!(
+        water
+            .at(center([plane_x.next_up(), 0., plane_x * 0.5]))
+            .is_some()
+    );
+    // The interval API merges both wet leaves, but the actual point predicate
+    // is not monotone from initial dry to wet through the rounded dry seam.
+    assert_eq!(water.segment(center([0.; 3]), center(expected)).len(), 1);
+    assert_eq!(advance(&world, &water, keys()).0, expected);
+}
+
+#[test]
+fn box_gap_hidden_by_rounded_segment_fractions_keeps_saved_move() {
+    let box_at = |x, half_x| LiquidBox {
+        kind: LiquidKind::Water,
+        center: [x, 0., 3.],
+        half_extents: [half_x, 1., 1.],
+        rotation: [0., 0., 0., 1.],
+    };
+    let water = LiquidRegions::from_boxes([
+        box_at(0.09375, 0.00625),
+        box_at(0.10625, f32::from_bits(0x3bcc_cccf)),
+    ])
+    .unwrap();
+    let slope = ramp(&[]);
+    let world = MotionWorld {
+        collision: &slope,
+        dynamic: None,
+        liquids: None,
+    };
+    let (expected, _) = advance(&world, &LiquidRegions::default(), keys());
+    let spans = water.segment(center([0.; 3]), center(expected));
+    assert_eq!(spans.len(), 2);
+    assert_eq!(spans[0].exit, spans[1].enter);
+    assert!(water.at(center([0.1, 0., 0.05])).is_none());
+    for x in [0.1_f32.next_down(), 0.1_f32.next_up()] {
+        assert!(water.at(center([x, 0., x * 0.5])).is_some());
+    }
+    assert_eq!(advance(&world, &water, keys()).0, expected);
+}
