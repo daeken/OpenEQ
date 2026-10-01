@@ -100,3 +100,48 @@ It also checked original setter/update disassembly; no findings. The review
 script `/tmp/openeq-classic-sample-fade-independent-review.py` has SHA256
 `8db31ae03cc998d68e6857005e3d1666055c2df47e8b3f488d97f7862e6fb434`;
 its JSON is `d2e24ddfe5b48575123a11fdd762360751dffe78d3fac3f8071845f66dd19b1b`.
+
+## Concrete 3D sample follow-up
+
+A separate ten-case witness executes constructor `0x005fd510`, original vtable
+`0x00ad2960`, gain setter `0x005fd6a0` and instance update `0x005fd5f0`.
+The same original emitter release dispatches to that concrete setter, decrements
+the controlled retained reference and clears its pointer. Calling release again
+on the empty emitter makes no additional request.
+
+The manager's controlled 3D driver resides at +0x18. Original imports identify
+`AIL_allocate_3D_sample_handle` (`0x00ab158c`),
+`AIL_set_3D_sample_volume` (`0x00ab1574`),
+`AIL_3D_sample_status` (`0x00ab157c`) and
+`AIL_end_3D_sample` (`0x00ab1578`). The gain fields are target +0x1c,
+current +0x20, start +0x24, anchor +0x28 and duration +0x2c.
+
+All forty release-update scalar states match the independently reviewed 2D
+histories exactly. Same-target, retarget, inactive-status and missing-handle
+controls also agree. **The endpoint sequence differs:** the 3D update requests
+only `AIL_end_3D_sample`; it does not issue the 2D class's subsequent init call.
+The update reaching zero still submits volume first; a later still-playing
+update requests end. Controlled status4 remains deliberately unchanged after
+those requests, so repeated end requests are not a live-device conclusion.
+
+This does not exercise original 3D asset selection, positions, attenuation,
+listener orientation, provider output, device ownership or manager scheduling.
+It verifies the concrete scalar gain stage, not spatial/acoustic fidelity.
+
+```sh
+PYTHONPATH=/tmp/openeq-re-tools python3 /tmp/openeq-classic-3d-sample-fade.py /tmp/your-3d-fade-result.json
+```
+
+Frozen script SHA256:
+`8b05cafe63435a6fae9c4a45891b89b13f982dc6472b952ff0c35664daf8c504`.
+Frozen result SHA256:
+`e20020ac32438319aee931f39eb42288048134a87484341935170b5b11ee652e`.
+Both are local read-only artifacts; the 3D comparison asserts the frozen 2D
+result hash before comparing normalized gain histories.
+
+Root's separate replay matches the 3D result hash exactly. Independent review
+also replayed it, checked original disassembly and validated all40 release
+updates with a separate state/event model, plus complete retarget/inactive/
+missing-handle controls. No findings. The separate 3D review script has SHA256
+`47cc6dfd3fb5b5ac2a5762c1cc5ee7ef1eeaae6cf7e76382c180db991b71c734`;
+its result is `053dde6ed55ac398e312d42a6fc1bf09db520f1b4268babc1f25dca8120d4d02`.
