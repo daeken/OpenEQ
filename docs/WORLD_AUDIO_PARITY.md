@@ -14,31 +14,38 @@ that a zone looks, moves or sounds right.
    basin/box relationship still needs a playable-route check.
    Straight-motion eligibility now checks every accepted collision substep;
    a stair excursion cannot regain eligibility merely by returning to the
-   expected endpoint. General deflected crossing integration is still pending.
+   expected endpoint. Isolated ascending single-plane support now has a narrow
+   verified crossing certificate; general wall slides, diagonal ramps, descents
+   and stairs remain open. See `THIN_LIQUID_DEFLECTED_MOVEMENT.md`.
 2. Complete WLD placed-actor behavior: first-pose geometry now resolves supported
    skeletons, with a native-time sampler for verified short packed tracks.
    Source-bound runtime playback now covers supported actors whose collision
-   ancestry stays static. Static ordinary meshes of particle-linked actors are
-   now restored with explicit unsupported emitter metadata. Moving collision,
+   ancestry stays static, including the verified five-frame extension. Static
+   ordinary meshes of particle-linked actors are now restored with explicit unsupported emitter metadata. Moving collision,
    longer clips, four animated particle-linked definitions and actual particle
    playback remain unfinished. See `WLD_OBJECT_ANIMATION.md` and
    `WLD_PARTICLE_ACTORS.md`.
 3. Follow authored nonfinite mesh attributes through native vertex upload and
    material/channel selection. Preserve the 21 original outliers; do not invent
    normals/UVs or remove geometry without recovering native behavior.
-   Exact TER Opaque_MaxCB1 v1–3 UV upload now matches masked-SSE2 SHORT2
-   conversion, with source words and diagnostics kept intact. Native packed
-   normals/tangents/colors and other shader families remain under investigation.
+   Exact TER Opaque_MaxCB1 and admitted WaterFall v1–3 UV upload now match
+   masked-SSE2 SHORT2 conversion, with source words and diagnostics kept intact.
+   The two established dual-UV families now preserve secondary coordinates
+   through deduplication; their native shader integration remains separate.
+   Native packed normals/tangents/colors and other shader families remain under investigation.
    See `EQG_NONFINITE_TER_UPLOAD.md` and `EQG_TER_UV_PACKING.md`.
 4. Verify shader channels, fog/sky/light metadata and rendering across formats
    with fixed-camera GPU checks and controlled traversal. Material table
    identity and startup scene bounds now have dedicated regression coverage.
    Fixed-camera GPU appearance and timing checks now cover restored Bazaar,
    The Nest and Thundercrest terrain. Opaque repeating diffuse textures now use
-   the uploaded mip levels, reducing distant shimmer. The exact authored TER waterfall family now has independent color/opacity
-   scrolling and a dedicated blend pass. MaxLava, other additive shader families,
-   normal mapping, alpha-safe/clamped
-   filtering, linear/periodic mip construction and Thundercrest's missing
+   the uploaded mip levels, reducing distant shimmer. The exact authored TER
+   waterfall family now has independent color/opacity scrolling and a dedicated
+   blend pass; the proven additive glass family has its native blend/depth/cutoff.
+   Original sky table sampling and local EQ time advance are integrated. The
+   exact native dome has CPU/GPU diagnostics but remains outside live rendering.
+   MaxLava, layered dual-UV shaders, other additive families, normal mapping,
+   alpha-safe/clamped filtering, mip construction and Thundercrest's missing
    `clz-0` sky selection remain follow-ups. See `RESTORED_EQG_GPU_AUDIT.md`,
    `EQG_ADDITIVE_SHADER.md` and `SKY_PATTERN_FOLLOWUP.md`. Failed native weather
    selection preserves manager state, but host transition/reset behavior is
@@ -1006,3 +1013,24 @@ The complete 523-zone CPU survey matches every preexisting non-timing field:
 dependency. Comparison and reports are in `/tmp/openeq-secondary-zone-survey/`.
 The added source identities do increase vertex memory; unchanged pixels and
 structure do not claim performance equivalence or original framebuffer parity.
+
+
+## October 1 final native caller and light-source follow-ups
+
+`WLD_PARTICLE_PREVIEW_ADMISSION.md` establishes the explicit preview enable
+API, connected host widget controller, resource-dependent render admission
+and cached host-to-renderer clock transfer. A separate terrain-system setter
+also publishes engine time; its live call order remains unknown. Root replay
+matches both frozen probe and output hashes. Complete UI/frame admission,
+owner/culling inputs and the live random stream still block automatic particles.
+
+`EQG_BINARY_LIGHT_SOURCE_INVENTORY.md` independently scans all 1,933 installed
+EQG archives and 190 loose ZON files: 223 physical binary declarations contain
+27,432 lights, or 27,187 after payload deduplication. There are no zero/negative/
+nonfinite radii or negative/nonfinite RGB; one black source is excluded by the
+ordinary-terrain name gate. Root reran the separate EOF/IEEE-word checker with
+the identical frozen result. This does not prove absence of receiver-center
+coincidence or native arithmetic singularities in a live scene.
+
+These are read-only research additions after the 1,177-test implementation
+checkpoint. No additional renderer or gameplay behavior is enabled.

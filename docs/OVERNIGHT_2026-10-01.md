@@ -733,3 +733,24 @@ The complete 523-zone CPU survey matches every preexisting non-timing field:
 dependency. Comparison and reports are in `/tmp/openeq-secondary-zone-survey/`.
 The added source identities do increase vertex memory; unchanged pixels and
 structure do not claim performance equivalence or original framebuffer parity.
+
+
+## October 1 final native caller and light-source follow-ups
+
+`WLD_PARTICLE_PREVIEW_ADMISSION.md` establishes the explicit preview enable
+API, connected host widget controller, resource-dependent render admission
+and cached host-to-renderer clock transfer. A separate terrain-system setter
+also publishes engine time; its live call order remains unknown. Root replay
+matches both frozen probe and output hashes. Complete UI/frame admission,
+owner/culling inputs and the live random stream still block automatic particles.
+
+`EQG_BINARY_LIGHT_SOURCE_INVENTORY.md` independently scans all 1,933 installed
+EQG archives and 190 loose ZON files: 223 physical binary declarations contain
+27,432 lights, or 27,187 after payload deduplication. There are no zero/negative/
+nonfinite radii or negative/nonfinite RGB; one black source is excluded by the
+ordinary-terrain name gate. Root reran the separate EOF/IEEE-word checker with
+the identical frozen result. This does not prove absence of receiver-center
+coincidence or native arithmetic singularities in a live scene.
+
+These are read-only research additions after the 1,177-test implementation
+checkpoint. No additional renderer or gameplay behavior is enabled.
