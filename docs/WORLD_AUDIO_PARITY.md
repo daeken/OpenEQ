@@ -1116,3 +1116,26 @@ production network behavior; the failed attempt and successful rerun are both
 recorded in `DAYTIME_2026-10-01.md`. The daytime heartbeat remains active through
 18:30UTC. The same world/audio priority order applies; this is a safe intermediate
 checkpoint, not a claim of completed original-client parity.
+
+
+## October 1 daytime lava/lamp checkpoint — 1,233 tests
+
+Verified MaxLava materials now use independently scrolling lit-top/luminous-
+bottom layers, opaque depth and shadows; unsupported or unresolved recipes
+keep the old fallback. Full-Nest captures and native upload/preshader replay
+support the change. Sixteen-frame Swamp of No Hope lamps now animate at their
+authored 1600-ms period under the bounded scalar-reference reduction policy.
+See `EQG_LAVA_RENDERING.md` and `WLD_LAMP_ANIMATION.md` for precise admission
+and lighting/CPU limits.
+
+All **1,233 workspace tests pass**, zero failed/ignored across 120 suites,
+with strict lint, builds, no-default, formatting and diff checks. The 523-zone
+CPU survey retains 501 structural passes and the same 22 known cases; only
+20 new lava texture references across 16 zones change. No original assets were
+committed; original-asset tests were read-only, audio checks were offline or
+digitally silent, and no live character was used.
+
+Conservative wall-prefix enclosure and ambient clock/retained-loop witnesses
+are research-only additions; general liquid continuation and native audio
+resource/scheduling policy remain open. Follow `DAYTIME_2026-10-01.md` for
+the active 18:30 UTC continuation and final checkpoint.

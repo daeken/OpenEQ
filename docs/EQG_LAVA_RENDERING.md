@@ -221,6 +221,45 @@ against a pinned final audit executable with identical non-timing results.
 Reports are `/tmp/openeq-lava-zone-survey/`; this is CPU metadata/structure
 coverage, not a claim of 523-zone visual or gameplay parity.
 
+## Bounded performance observations
+
+Two full-Nest basin views were compared at 960x540 and 2560x1600, with recipes
+enabled versus cleared, a fixed 2300-ms clock, 30 warmup and 60 measured frames
+per run. All 720 serialized frames completed without failed/dropped timestamps.
+No other OpenEQ GPU tests ran concurrently. This is a bounded desktop sample;
+the whole-frame p95 spread was substantial and does not support a speedup claim.
+
+| Resolution / camera | Median attributed lava ms | Median raw lava ms | Median GPU total, fallback → lava ms |
+| --- | ---: | ---: | ---: |
+| 960x540 / low basin | 0.0504 | 0.5263 | 2.7972 → 2.8647 |
+| 960x540 / high basin | 0.0764 | 0.5416 | 3.9815 → 3.0050 |
+| 2560x1600 / low basin | 0.2779 | 3.4846 | 5.1345 → 5.5294 |
+| 2560x1600 / high basin | 0.4214 | 3.4228 | 6.0943 → 6.0794 |
+
+Attribution accounts for overlapping tile-based GPU stages; the raw interval
+is not an isolated pass cost, and the lava attribution is not a causal total-
+frame overhead measurement. CPU/wall timings, p95 and all samples remain in
+the local report. Upload times are single observations, not statistical results.
+
+Scene buffers remain exactly 22,626,696 bytes. One extra 256-square RGBA8 atlas
+layer with nine mip levels adds 349,524 bytes, taking logical GPU scene bytes
+from 47,792,428 to 48,141,952. Texture views share storage; driver padding,
+renderer-global targets/pipelines and CPU memory are excluded. Root independently
+recomputed every timing median/p95 and all four logical allocation tallies.
+
+Frozen report `/tmp/openeq-lava-performance.txt` SHA-256:
+`2ac67542be349a80cecbeae322ed0df581ba58304827f1c830114be80f635e6c`.
+Measurements `/tmp/openeq-lava-perf-results/measurements.json`:
+`1b7dc657fa20f535050824eca56b99c5347b3475d8d3b3bedfd4d8c23f370e63`.
+The manifest `/tmp/openeq-lava-perf-manifest.json` preserves source/dependency
+hashes: `417b0553805d97eaf66dac46bd3bd453844d33f5b19c00665fc08bb298f0ff5c`.
+
+The existing empty-pass regression was strengthened after the broad run:
+each case first dirties color and depth with visible geometry, then compares
+every pixel with a fresh nonblack empty reference. The strengthened test and
+strict renderer lint pass; test count is unchanged. Production code did not
+change after the 1,233-test checkpoint.
+
 ## Frozen local reproduction
 
 Original assets and generated buffers remain outside git. Probe scripts, JSON
