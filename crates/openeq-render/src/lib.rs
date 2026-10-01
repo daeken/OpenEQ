@@ -27,6 +27,7 @@ mod tests;
 mod transparency;
 pub mod ui;
 pub mod upload;
+pub mod wld_particle_gpu;
 pub mod wld_particles;
 
 use bytemuck::{Pod, Zeroable};
