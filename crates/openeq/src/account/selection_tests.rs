@@ -50,6 +50,35 @@ impl Peer {
             "unexpected retry or other application mutation"
         );
     }
+    async fn quiet_after_close(&mut self) {
+        // The selection task has dropped its connected UDP socket. A final
+        // traffic/ACK datagram can produce an asynchronous ICMP refusal on
+        // macOS. Drain those errors without sending new ACKs to the closed
+        // peer, while still rejecting any new application packet in the queue.
+        let mut data = [0; 2048];
+        assert!(
+            timeout(Duration::from_millis(100), async {
+                loop {
+                    let len = match self.socket.recv(&mut data).await {
+                        Ok(len) => len,
+                        Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
+                            continue;
+                        }
+                        Err(error) => panic!("unexpected closed-peer receive error: {error}"),
+                    };
+                    if len >= 4
+                        && data[..2] == [0, 9]
+                        && self.received.insert(u16::from_be_bytes([data[2], data[3]]))
+                    {
+                        return AppPacket::decode(&data[4..len]).unwrap();
+                    }
+                }
+            })
+            .await
+            .is_err(),
+            "unexpected retry or other application mutation after close"
+        );
+    }
     async fn close(&self) {
         self.socket
             .send(&[&[0, 5], self.code.as_slice()].concat())
@@ -614,5 +643,5 @@ async fn absolute_creation_timeout_survives_unrelated_world_packets() {
         &Phase::Uncertain(account_creation::Uncertainty::TimedOut)
     );
     assert!(!fixture.committing.load(Ordering::Relaxed));
-    fixture.peer.quiet().await;
+    fixture.peer.quiet_after_close().await;
 }
