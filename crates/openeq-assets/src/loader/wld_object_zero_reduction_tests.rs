@@ -311,7 +311,7 @@ fn sixteen_frame_animation_keeps_collision_ancestry_gate_and_bounds() {
 
 #[test]
 #[ignore = "requires original long-actor object archives in EQ_DIR"]
-fn original_lamp_is_admitted_but_other_long_candidates_remain_static() {
+fn original_lamp_is_admitted_but_mixed_motion_crate_remains_static() {
     let base = std::env::var_os("EQ_DIR").expect("set EQ_DIR");
     let scene = super::super::super::load_object_library(&base, "swampofnohope").unwrap();
     let source = &scene.wld_object_sources["krlamp101"];
@@ -346,11 +346,9 @@ fn original_lamp_is_admitted_but_other_long_candidates_remain_static() {
             .unwrap()[1]
             .vertices
     );
-    for (zone, actor) in [("overthere", "vscrate103"), ("qeynos2", "templelife")] {
-        let scene = super::super::super::load_object_library(&base, zone).unwrap();
-        let source = &scene.wld_object_sources[actor];
-        assert!(source.render_animation().is_none());
-        assert!(source.animation_period().is_err());
-        assert!(!posed_meshes(source).unwrap().is_empty());
-    }
+    let scene = super::super::super::load_object_library(&base, "overthere").unwrap();
+    let source = &scene.wld_object_sources["vscrate103"];
+    assert!(source.render_animation().is_none());
+    assert!(source.animation_period().is_err());
+    assert!(!posed_meshes(source).unwrap().is_empty());
 }

@@ -87,7 +87,8 @@ channel has already lost one repeated key in EQ's optimizer. Its retained
 count then sits at a precision-sensitive integer boundary: the wider product
 of 20 and the stored `f32(1 - 0.1)` is below 18, whereas PC24 rounds it to 18
 before truncation. The crate remains excluded. Temple requires five removals,
-with tied and closely separated candidate errors, and also remains excluded.
+with tied and closely separated candidate errors. Its later certified-score
+extension is documented in [WLD_TEMPLE_ANIMATION_RESEARCH.md](WLD_TEMPLE_ANIMATION_RESEARCH.md).
 
 For the lamp, native initial zero-error indices are `1, 6, 7, 8, 9, 14`.
 The first removal is index 1. After the heap swaps its last node into the root
@@ -188,7 +189,8 @@ New ordinary cases cover native sampled lamp quaternions, exact loop period,
 equivalent quaternion signs, consecutive omissions at either end, meaningful
 negative gates, first-pose fallback, complete 1600-ms bounds sampling, and
 unchanged moving-collision rejection. Original-asset checks admit the lamp
-while keeping the crate and temple static.
+while keeping the crate and, at that checkpoint, temple static. The later
+forty-frame extension is validated separately in the Temple document.
 
 The GPU regression first validates all 36 original placed instances, then
 renders one isolated lamp with fixed camera, disabled sky, and one texture

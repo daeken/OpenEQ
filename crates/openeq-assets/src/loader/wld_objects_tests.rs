@@ -14,6 +14,9 @@ mod translation_tests;
 #[path = "wld_object_zero_reduction_tests.rs"]
 mod zero_reduction_tests;
 
+#[path = "wld_object_positive_reduction_tests.rs"]
+mod positive_reduction_tests;
+
 fn words(values: &[u32]) -> Vec<u8> {
     values
         .iter()

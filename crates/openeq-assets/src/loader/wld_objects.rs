@@ -30,6 +30,9 @@ mod translation;
 #[path = "wld_object_zero_reduction.rs"]
 mod zero_reduction;
 
+#[path = "wld_object_positive_reduction.rs"]
+mod positive_reduction;
+
 #[path = "wld_particle_poses.rs"]
 mod particle_poses;
 pub use particle_poses::ObjectParticleOwnerTransform;
@@ -98,7 +101,7 @@ impl ObjectSource {
     /// Shared loop period for the supported short packed-WLD animation family.
     ///
     /// All animated tracks must have the same explicit positive interval and
-    /// two to five or sixteen frames, reference flags 5, and constant scale.
+    /// two to five, sixteen or forty frames, reference flags 5, and constant scale.
     /// Five-frame tracks use the native six-to-five rotation-key reduction.
     /// They additionally require packed near-unit keys and a well-separated
     /// reduction choice (or structurally identical tied candidates).
@@ -109,6 +112,8 @@ impl ObjectSource {
     /// long/mixed clips and degenerate/ambiguous rotations are rejected.
     /// Sixteen-frame clips additionally require constant translation and the
     /// bounded single-axis scalar zero-error reduction policy.
+    /// Forty-frame clips require constant translation, certified scalar-PC64
+    /// scores and stable saved-neighbor heap slots during five key removals.
     pub fn animation_period(&self) -> Result<Duration> {
         let skeleton = self
             .skeleton
@@ -151,6 +156,9 @@ impl ObjectSource {
             } else if frames.len() == 16 {
                 frame.rotation =
                     zero_reduction::SixteenFrameKeys::new(frames)?.sample(phase, interval);
+            } else if frames.len() == 40 {
+                frame.rotation = positive_reduction::FortyFrameKeys::new(frames, interval)?
+                    .sample(phase, interval);
             } else if frames.len() > 1 {
                 let a = Quat::from_array(frames[index].rotation);
                 let mut b = Quat::from_array(frames[(index + 1) % count].rotation);
@@ -317,7 +325,7 @@ fn animation_timing(source: &ObjectSkeleton) -> Result<(usize, u32)> {
         let frames = &track.definition.frames;
         if track.definition.flags != 8
             || frames.is_empty()
-            || (frames.len() > 5 && frames.len() != 16)
+            || (frames.len() > 5 && frames.len() != 16 && frames.len() != 40)
         {
             return Err(invalid(
                 "unsupported object animation track layout or length",
@@ -366,6 +374,8 @@ fn animation_timing(source: &ObjectSkeleton) -> Result<(usize, u32)> {
             key_reduction::FiveFrameKeys::new(frames)?;
         } else if frames.len() == 16 {
             zero_reduction::SixteenFrameKeys::new(frames)?;
+        } else if frames.len() == 40 {
+            positive_reduction::FortyFrameKeys::new(frames, track.speed.unwrap())?;
         }
     }
     timing.ok_or_else(|| invalid("object has no animated tracks"))
