@@ -16,19 +16,21 @@ that a zone looks, moves or sounds right.
    a stair excursion cannot regain eligibility merely by returning to the
    expected endpoint. General deflected crossing integration is still pending.
 2. Complete WLD placed-actor behavior: first-pose geometry now resolves supported
-   skeletons, but branch animation timing, collision policy and particle-linked
-   fragment families still need evidence.
+   skeletons, with explicit authored-frame diagnostics and retained timing flags. Native
+   playback transforms/phase, collision policy and particle-linked fragment
+   families still need evidence. See `WLD_OBJECT_ANIMATION.md`.
 3. Follow authored nonfinite mesh attributes through native vertex upload and
    material/channel selection. Preserve the 21 original outliers; do not invent
    normals/UVs or remove geometry without recovering native behavior.
 4. Verify shader channels, fog/sky/light metadata and rendering across formats
    with fixed-camera GPU checks and controlled traversal. Material table
    identity and startup scene bounds now have dedicated regression coverage.
-   The restored Bazaar, The Nest and Thundercrest terrain substantially raises
-   submitted geometry; add fixed-camera appearance and GPU timing checks there.
-   The first overnight captures identify ordinary-texture mip-zero aliasing,
-   unimplemented MaxLava/MaxWaterFall/additive shader handling and Thundercrest's
-   missing `clz-0` sky selection as concrete follow-ups. Track ongoing work in
+   Fixed-camera GPU appearance and timing checks now cover restored Bazaar,
+   The Nest and Thundercrest terrain. Opaque repeating diffuse textures now use
+   the uploaded mip levels, reducing distant shimmer. Unimplemented
+   MaxLava/MaxWaterFall/additive shaders, normal mapping, alpha-safe/clamped
+   filtering, linear/periodic mip construction and Thundercrest's missing
+   `clz-0` sky selection remain follow-ups. See `RESTORED_EQG_GPU_AUDIT.md`. Track ongoing work in
    `OVERNIGHT_2026-10-01.md`.
    Native adaptive terrain tessellation/normal generation remains separate from
    the supported full-grid topology.
@@ -389,3 +391,34 @@ checks also passed. Logs use `/tmp/openeq-material-bounds-*.log`; UI captures
 are `/tmp/openeq-material-bounds-ui/`. The original assets remain outside the
 repository, no live character/server state changed, and original audio checks
 remained offline/digital silence.
+
+
+## October 1 overnight: opaque filtering and placed-actor diagnostics
+
+Published changes `c0aa4cb` and `ce5044f` retain WLD track reference flags,
+add checked immutable authored-frame inspection, and enable derivative-based
+sampling for ordinary opaque repeating textures. Masked/blended/clamped paths
+retain their prior coverage; water and direct terrain remain specialized.
+Citymist's four diagnostic tree poses preserve the static trunk. These are
+source-frame diagnostics, not native animated output or enabled playback.
+See `WLD_OBJECT_ANIMATION.md` for the recovered native timing, quaternion
+conventions and remaining controller/output questions.
+
+The original GPU audit independently reconciles restored terrain batches in
+Bazaar, The Nest and Thundercrest and freezes baseline/filtered captures.
+The Nest's distant speckling visibly improves. A synthetic subpixel-camera
+regression reduces mean brightness change from 115.422 to 0.531–0.562 steps;
+nearby details remain resolved. No performance claim follows from the noisy
+serialized GPU timings. Full evidence and unsupported shader findings are in
+`RESTORED_EQG_GPU_AUDIT.md`.
+
+**969 workspace tests passed, zero failed or ignored** in the complete
+original-asset/GPU/silent-audio run, including the earlier collision-substep
+regressions. Evidence: `/tmp/openeq-overnight-mips-workspace.log`; UI captures:
+`/tmp/openeq-overnight-mips-ui/`. Strict workspace Clippy, client build,
+all-target no-default-feature check, formatting and diff checks passed;
+logs use `/tmp/openeq-overnight-mips-{clippy,build,no-default}.log`.
+Independent review found no actionable issues in the authored-frame or
+shader change. No original assets were committed and no live character state
+changed. Packed WLD unsigned scale, native controller output and unresolved
+sky/shader definitions remain under separate investigation.

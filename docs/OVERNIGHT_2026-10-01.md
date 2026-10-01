@@ -83,3 +83,14 @@ cohesive commits and pushing to `master`.
   Z=-198..-204, the lower floor is -361.92725, and the liquid lies between them.
   This is not proof of inaccessibility, and does not justify changing geometry
   or region transforms. Evidence: `/tmp/openeq-overnight-anguish-floor.log`.
+
+- 02:10 checkpoint: `c0aa4cb` authored-frame diagnostics and `ce5044f` opaque
+  mip filtering completed. All 969 workspace tests pass, none failed/ignored;
+  full original assets, GPU, silent audio, strict lint, build and no-default
+  checks passed. Evidence is `/tmp/openeq-overnight-mips-*.log`. The Nest's
+  speckling visibly improves; GPU timings are too noisy for a speed claim.
+- Active follow-ups: `npc_assets` tracing native host clock/controller output
+  (`docs/WLD_OBJECT_ANIMATION_FOLLOWUP.md` if recovered); `cursor_review`
+  auditing packed unsigned WLD scale; `xml_ui` recovering AddAlpha shader
+  states for Thundercrest glass; root tracing missing sky-pattern selection.
+  Preserve each agent's edits and test narrow changes before integration.
