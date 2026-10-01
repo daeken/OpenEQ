@@ -7,7 +7,9 @@
 //! `docs/WLD_OBJECT_ANIMATION.md` for timing evidence and supported bounds.
 
 use super::{Scene, SceneObject, append_baked, object_key};
-use crate::wld::{ActorDef, Chunk, Fragment, Frame, Mesh, PieceTrack, Ref, Skeleton, Wld};
+use crate::wld::{
+    ActorDef, Chunk, Fragment, Frame, Mesh, ParticleCloud, PieceTrack, Ref, Skeleton, Wld,
+};
 use crate::{Error, Result, mesh};
 use glam::{Mat4, Quat, Vec3};
 use std::collections::BTreeSet;
@@ -31,7 +33,22 @@ pub struct ObjectSource {
     pub actor: ActorDef,
     pub skeleton: Option<ObjectSkeleton>,
     pub parts: Vec<ObjectPart>,
+    /// Unsupported effects retained on an otherwise validated static mesh actor.
+    /// A nonempty list means only the ordinary mesh portion is supported.
+    pub particle_attachments: Vec<ObjectParticleAttachment>,
     render_animation: Option<RenderAnimation>,
+}
+
+/// Source ownership for a particle effect whose playback is not implemented.
+#[derive(Debug, Clone)]
+pub struct ObjectParticleAttachment {
+    pub owner_track: usize,
+    /// Original signed attachment reference from the owning skeleton track.
+    pub source_reference: Ref,
+    /// Exact resolved one-based fragment identity, including same-name copies.
+    pub definition_reference: Ref,
+    pub name: String,
+    pub definition: ParticleCloud,
 }
 
 #[derive(Debug, Clone)]
@@ -388,6 +405,7 @@ fn actor_source(wld: &Wld, chunk: &Chunk, actor: &ActorDef) -> Result<ObjectSour
     }
     let mut vertices = 0;
     let mut parts = Vec::new();
+    let mut particle_attachments = Vec::new();
     let skeleton = if let Fragment::Skeleton(skeleton) = &target.fragment {
         let source = skeleton_source(wld, skeleton)?;
         let mut referenced = BTreeSet::new();
@@ -395,6 +413,45 @@ fn actor_source(wld: &Wld, chunk: &Chunk, actor: &ActorDef) -> Result<ObjectSour
         // distinct part, so mesh identity alone must not suppress a placement.
         for (index, track) in skeleton.tracks.iter().enumerate() {
             if track.mesh.0 == 0 {
+                continue;
+            }
+            if let Some(attachment) = track
+                .mesh
+                .fragment_index()
+                .and_then(|index| wld.chunks().get(index))
+                && let Fragment::ParticleCloud(definition) = &attachment.fragment
+            {
+                // Partial restoration is deliberately limited to the record
+                // family proven in PoK. Retain other layouts in Wld, but do not
+                // silently treat an unknown attachment layout as supported.
+                if definition.flags() != 4 || !definition.tail.is_empty() {
+                    return Err(invalid("unsupported object particle definition layout"));
+                }
+                // This validates the positive full source reference as metadata only.
+                // It does not reproduce native low-byte/cached texture lookup.
+                if !definition
+                    .texture_reference
+                    .and_then(Ref::fragment_index)
+                    .and_then(|index| wld.chunks().get(index))
+                    .is_some_and(|chunk| {
+                        matches!(chunk.fragment.type_code(), 0x03 | 0x04 | 0x05 | 0x26)
+                    })
+                {
+                    return Err(invalid("invalid object particle texture reference"));
+                }
+                let fragment_index = wld
+                    .chunks()
+                    .iter()
+                    .position(|candidate| std::ptr::eq(candidate, attachment))
+                    .expect("resolved particle chunk belongs to its source");
+                particle_attachments.push(ObjectParticleAttachment {
+                    owner_track: index,
+                    source_reference: track.mesh,
+                    definition_reference: Ref(i32::try_from(fragment_index + 1)
+                        .map_err(|_| invalid("object particle reference overflow"))?),
+                    name: attachment.name.clone(),
+                    definition: definition.clone(),
+                });
                 continue;
             }
             let (mesh_index, _, mesh) = resolve_mesh(wld, track.mesh)?;
@@ -423,14 +480,59 @@ fn actor_source(wld: &Wld, chunk: &Chunk, actor: &ActorDef) -> Result<ObjectSour
     if parts.is_empty() || parts.len() > MAX_PARTS {
         return Err(invalid("object actor part count outside supported bounds"));
     }
-    Ok(ObjectSource {
+    let source = ObjectSource {
         wld_filename: wld.filename.clone(),
         actor_name: chunk.name.clone(),
         actor: actor.clone(),
         skeleton,
         parts,
+        particle_attachments,
         render_animation: None,
-    })
+    };
+    if !source.particle_attachments.is_empty() {
+        validate_partial_particle_actor(&source)?;
+    }
+    Ok(source)
+}
+
+fn validate_partial_particle_actor(source: &ObjectSource) -> Result<()> {
+    let skeleton = source
+        .skeleton
+        .as_ref()
+        .ok_or_else(|| invalid("object particle attachments have no skeleton"))?;
+    if skeleton.tracks.iter().any(|track| {
+        track.definition.flags != 8
+            || track.definition.frames.len() != 1
+            || track.reference_flags != 0
+            || track.speed.is_some()
+    }) {
+        return Err(invalid(
+            "unsupported animated or nonpacked particle-linked actor",
+        ));
+    }
+    // Includes every track's finite first pose, complete vertex runs, normals
+    // and polygon indices; hidden collision geometry receives the same checks.
+    posed_meshes(source)?;
+    let mut particle_ancestry = vec![false; skeleton.tracks.len()];
+    for attachment in &source.particle_attachments {
+        particle_ancestry[attachment.owner_track] = true;
+    }
+    for &index in &skeleton.parent_first_order {
+        if let Some(parent) = skeleton.parents[index] {
+            particle_ancestry[index] |= particle_ancestry[parent];
+        }
+    }
+    for part in &source.parts {
+        if part_bindings(part, skeleton.tracks.len())?
+            .iter()
+            .any(|&track| particle_ancestry[track])
+        {
+            return Err(invalid(
+                "object mesh depends on a particle attachment ancestry",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn posed_meshes(source: &ObjectSource) -> Result<Vec<Mesh>> {
@@ -570,6 +672,14 @@ pub(super) fn append_objects(scene: &mut Scene, archive: usize, wld: &Wld) -> Re
                 continue;
             }
         };
+        if !source.particle_attachments.is_empty() {
+            tracing::warn!(
+                wld=%wld.filename,
+                actor=%chunk.name,
+                particle_attachments=source.particle_attachments.len(),
+                "restored static WLD actor meshes; attached particle playback is unsupported"
+            );
+        }
         let radius = source.stationary_collision_animation_radius().ok();
         let bindings =
             append_group_bound(scene, archive, wld, name.clone(), &meshes, radius.is_some());

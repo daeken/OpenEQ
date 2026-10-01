@@ -75,6 +75,7 @@ fn main() -> Result<()> {
                     "invalid_collision_meshes":g.invalid_collision_meshes,
                     "invalid_object_references":g.invalid_object_references,
                     "unresolved_objects":g.unresolved_objects,
+                    "unsupported_particle_placements":g.unsupported_particle_placements,
                     "invalid_lights":g.invalid_lights});
             }
             Err(error) => {

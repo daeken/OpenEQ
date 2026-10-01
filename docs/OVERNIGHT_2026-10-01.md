@@ -222,3 +222,30 @@ cohesive commits and pushing to `master`.
   it is not covered by the published 989-test checkpoint. Only proven static
   sibling meshes may be restored; typed unsupported emitter ownership stays
   explicit. Native particle playback/light/bounds remain future work.
+
+## 03:20 verified partial-particle checkpoint
+
+- All static particle-linked body work and signed-reference repair are verified:
+  **1,008 workspace tests pass**, none failed/ignored; original/GPU/silent audio,
+  strict lint/build/no-default/format checks pass. A parallel fixture temp-folder
+  collision was repaired with an atomic serial; the corrected complete run is
+  `/tmp/openeq-particle-bodies-workspace-final.log`.
+- All523zones were audited again. Same501structuralpasses/21nonfinite/known
+  Dranikcatacombsa dependency. Exact independent source/instance reconciliation
+  accounts for+128,093definition triangles,+3,241,450collision triangles and
+  +13,099resolvedplacements. Eight newly resolved placements are invisible
+  scaffolding;13,091 have restoredvisiblebodies. Another98oldrawaliases now use
+  authored offsets. Allnonpartialgeometry,terrain,placementdigests unchanged.
+- Final audit `/tmp/openeq-particle-zone-survey-final/` adds explicit
+  unsupported_particle_placements:13,197 placements in111zones, including366
+  inPoK. Final geometry/metadata exactly matches the independently reconciled
+  candidate. Eight originalPoK GPUbodyfixtures pass; effects remainunsupported.
+- WLD_REFERENCE_RESOLUTION.md records the signed/empty-name fixes. Separate
+  WLD_STRING_OFFSETS.md records a synthetic UTF-8/source-offset flaw; no shifted
+  original name found across1,806rawWLDs (highbytesonlytrailingpadding). No
+  decoding change or original-asset visual repair is claimed for that follow-up.
+- Particle staticbodyimplementation and reviews are frozen. Keep nativeparticle
+  playback, four animatedparticle-linked cases, movingcollision, longerclips,
+  source-awareUVpacking and boundedXMIloop playback on the backlog. Native
+  evidence docs are published in1827c11; do not substitute conventional loop
+  behavior or a nonfinite-only UV patch for the recovered full conversion.

@@ -294,3 +294,16 @@ Temporary reproduction evidence is in
 come from the independently retained survey results described in
 `WLD_ANIMATION_SURVEY.md`. No production tests were needed for this read-only
 checkpoint; no rendering or native particle playback comparison was performed.
+
+
+## Implemented partial restoration
+
+The bounded static mesh path described above is now implemented. Particle
+records retain all fixed words, optional blocks, full file texture references
+and trailing bytes; owning tracks and exact duplicate definition identity are
+preserved. Positive source references, the proven flags-4/no-tail layout,
+packed one-frame flags-0 tracks and independent mesh ancestry are required.
+Native particle behavior stays unsupported and is recorded in loader warnings,
+source metadata and zone-audit placement diagnostics. See
+`WLD_PARTICLE_SURVEY.md` for full corpus reconciliation and
+`WORLD_AUDIO_PARITY.md` for original GPU and workspace verification.

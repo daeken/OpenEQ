@@ -41,7 +41,7 @@ impl Ref {
 
     /// A negative reference names a string at offset `-value`.
     pub fn string_offset(self) -> Option<usize> {
-        (self.0 < 0).then(|| (-self.0) as usize)
+        (self.0 < 0).then(|| self.0.unsigned_abs() as usize)
     }
 }
 
@@ -154,6 +154,31 @@ pub struct MaterialList {
     pub materials: Vec<Ref>,
 }
 
+/// A `0x34` particle-cloud definition, retained without inventing playback.
+///
+/// Offsets in `fixed_words` start after the common name reference; word zero
+/// contains the optional-field flags. Raw words preserve integer fields,
+/// float bits and packed color bytes exactly. See `WLD_PARTICLE_ACTORS.md`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParticleCloud {
+    pub fixed_words: [u32; 20],
+    /// Flag 1: six float bit patterns, in source order (two triples).
+    pub optional_vectors: Option<[u32; 6]>,
+    /// Flag 2: the native reader skips these 24 bytes without interpreting them.
+    pub optional_block: Option<[u8; 24]>,
+    /// Flag 4: the full file reference, not the native reader's low-byte read.
+    /// Native named-resource reuse and texture selection are not emulated.
+    pub texture_reference: Option<Ref>,
+    /// Uninterpreted bytes remaining inside this fragment's declared extent.
+    pub tail: Vec<u8>,
+}
+
+impl ParticleCloud {
+    pub fn flags(&self) -> u32 {
+        self.fixed_words[0]
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Polygon {
     pub collidable: bool,
@@ -199,6 +224,7 @@ pub enum Fragment {
     MeshRef(MeshRef),
     Material(Material),
     MaterialList(MaterialList),
+    ParticleCloud(ParticleCloud),
     Mesh(Mesh),
     /// A fragment type this reader does not model. It is skipped but retained
     /// so that reference indices still line up.
@@ -224,6 +250,7 @@ impl Fragment {
             Fragment::MeshRef(_) => 0x2D,
             Fragment::Material(_) => 0x30,
             Fragment::MaterialList(_) => 0x31,
+            Fragment::ParticleCloud(_) => 0x34,
             Fragment::Mesh(_) => 0x36,
             Fragment::Ignored(code) => *code,
         }
@@ -293,7 +320,7 @@ impl Wld {
             let mut payload = reader.window(size)?;
             let name_ref = payload.i32()?;
             let name = if name_ref <= 0 && type_code != 0x35 {
-                string_at(&strings, (-name_ref) as usize).to_owned()
+                string_at(&strings, name_ref.unsigned_abs() as usize).to_owned()
             } else {
                 String::new()
             };
@@ -338,8 +365,7 @@ impl Wld {
         if let Some(index) = reference.fragment_index() {
             return self.chunks.get(index);
         }
-        let offset = reference.string_offset()?;
-        self.by_name(string_at(&self.strings, offset))
+        self.by_name(self.resolve_str(reference)?)
     }
 
     /// Resolves a string reference, returning fragment-backed or inline strings.
@@ -348,7 +374,13 @@ impl Wld {
             return self.chunks.get(index).map(|chunk| chunk.name.as_str());
         }
         let offset = reference.string_offset()?;
-        Some(string_at(&self.strings, offset))
+        // Invalid or empty name offsets must not alias an unnamed fragment.
+        // Nonempty substrings remain valid names, as in the existing reader.
+        self.strings
+            .get(offset..)?
+            .split('\0')
+            .next()
+            .filter(|name| !name.is_empty())
     }
 
     /// Returns the fragment name for a reference, regardless of its sign.
@@ -393,6 +425,7 @@ fragment_kind!(Light, Light);
 fragment_kind!(MeshRef, MeshRef);
 fragment_kind!(Material, Material);
 fragment_kind!(MaterialList, MaterialList);
+fragment_kind!(ParticleCloud, ParticleCloud);
 fragment_kind!(Mesh, Mesh);
 
 fn read_fragment(
@@ -610,6 +643,42 @@ fn read_fragment(
             }
             Fragment::MaterialList(MaterialList { materials })
         }
+        0x34 => {
+            let mut fixed_words = [0; 20];
+            for word in &mut fixed_words {
+                *word = reader.u32()?;
+            }
+            let flags = fixed_words[0];
+            let optional_vectors = if flags & 1 != 0 {
+                let mut words = [0; 6];
+                for word in &mut words {
+                    *word = reader.u32()?;
+                }
+                Some(words)
+            } else {
+                None
+            };
+            let optional_block = if flags & 2 != 0 {
+                let mut block = [0; 24];
+                block.copy_from_slice(reader.take(24)?);
+                Some(block)
+            } else {
+                None
+            };
+            let texture_reference = if flags & 4 != 0 {
+                Some(reader.reference()?)
+            } else {
+                None
+            };
+            let tail = reader.take(reader.remaining())?.to_vec();
+            Fragment::ParticleCloud(ParticleCloud {
+                fixed_words,
+                optional_vectors,
+                optional_block,
+                texture_reference,
+                tail,
+            })
+        }
         0x36 => Fragment::Mesh(read_mesh(reader, new_format)?),
         other => Fragment::Ignored(other),
     })
@@ -791,7 +860,7 @@ fn strings_at(strings: &str, reference: i32) -> String {
     if reference >= 0 {
         String::new()
     } else {
-        string_at(strings, (-reference) as usize).to_owned()
+        string_at(strings, reference.unsigned_abs() as usize).to_owned()
     }
 }
 

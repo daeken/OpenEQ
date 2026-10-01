@@ -176,6 +176,8 @@ pub struct GeometryAudit {
     /// Unresolved placements can include authored markers. They are diagnostics,
     /// not proof of invalid transforms or missing visible geometry.
     pub unresolved_objects: BTreeMap<String, usize>,
+    /// Restored mesh placements whose attached native effects remain unsupported.
+    pub unsupported_particle_placements: BTreeMap<String, usize>,
     pub invalid_lights: usize,
 }
 
@@ -236,6 +238,16 @@ pub fn geometry(base: &Path, zone: &str) -> Result<GeometryAudit> {
         report.invalid_meshes += usize::from(bad);
     }
     for instance in &scene.instances {
+        if scene
+            .wld_object_sources
+            .get(&instance.object)
+            .is_some_and(|source| !source.particle_attachments.is_empty())
+        {
+            *report
+                .unsupported_particle_placements
+                .entry(instance.object.clone())
+                .or_default() += 1;
+        }
         if !objects.contains(instance.object.as_str()) {
             *report
                 .unresolved_objects

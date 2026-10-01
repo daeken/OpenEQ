@@ -2,6 +2,9 @@ use super::*;
 use crate::collision::CollisionWorld;
 use crate::wld::{Frame, Track, WLD_MAGIC};
 
+#[path = "wld_object_particles_tests.rs"]
+mod particles;
+
 fn words(values: &[u32]) -> Vec<u8> {
     values
         .iter()
@@ -937,7 +940,7 @@ fn unsupported_actor_does_not_remove_independent_static_meshes() {
     let mut fixture = Fixture::default();
     let mesh = fixture.mesh(false);
     let track = fixture.track(&[frame([0.; 3], 1.)], None);
-    let unsupported = fixture.add(0x34, "", vec![]);
+    let unsupported = fixture.add(0x99, "", vec![]);
     let skeleton = fixture.skeleton(&[(track, unsupported, &[])], &[mesh]);
     fixture.actor("UNKNOWN_ACTORDEF", skeleton);
     let wld = fixture.finish();
@@ -949,7 +952,7 @@ fn unsupported_actor_does_not_remove_independent_static_meshes() {
         actor_source(&wld, chunk, actor)
             .unwrap_err()
             .to_string()
-            .contains("0x34")
+            .contains("0x99")
     );
     let mut scene = empty_scene();
     append_objects(&mut scene, 0, &wld).unwrap();
@@ -1333,9 +1336,37 @@ fn original_static_objects_keep_raw_lookups_geometry_and_unique_ownership() {
         assert_eq!(collision.len(), scene.collision_meshes.len());
         assert_eq!(CollisionWorld::build(&scene).triangle_count(), 0);
         assert!(checked > 0);
+        let partial_names: BTreeSet<_> = scene
+            .wld_object_sources
+            .iter()
+            .filter(|(_, source)| !source.particle_attachments.is_empty())
+            .map(|(name, _)| name.as_str())
+            .collect();
+        let expected_partial: BTreeSet<_> = if name == "poknowledge_obj" {
+            [
+                "ftorch301",
+                "ftorch302",
+                "ftorch304",
+                "poklamp500",
+                "poklamp501",
+                "poklamp502",
+                "poksconce500",
+                "poktorch500",
+            ]
+            .into_iter()
+            .collect()
+        } else {
+            BTreeSet::new()
+        };
+        assert_eq!(partial_names, expected_partial);
+        assert!(partial_names.iter().all(|name| !raw_names.contains(*name)));
         assert_eq!(
             (raw_names.len(), checked, scene.objects.len()),
-            (expected_raw, expected_raw, expected_raw)
+            (
+                expected_raw,
+                expected_raw,
+                expected_raw + partial_names.len()
+            )
         );
         if name == "poknowledge_obj" {
             // The previous loader retained these later duplicate definitions,

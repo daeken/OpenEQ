@@ -18,8 +18,11 @@ that a zone looks, moves or sounds right.
 2. Complete WLD placed-actor behavior: first-pose geometry now resolves supported
    skeletons, with a native-time sampler for verified short packed tracks.
    Source-bound runtime playback now covers supported actors whose collision
-   ancestry stays static. Moving collision, longer clips and particle-linked
-   fragment families remain unfinished. See `WLD_OBJECT_ANIMATION.md`.
+   ancestry stays static. Static ordinary meshes of particle-linked actors are
+   now restored with explicit unsupported emitter metadata. Moving collision,
+   longer clips, four animated particle-linked definitions and actual particle
+   playback remain unfinished. See `WLD_OBJECT_ANIMATION.md` and
+   `WLD_PARTICLE_ACTORS.md`.
 3. Follow authored nonfinite mesh attributes through native vertex upload and
    material/channel selection. Preserve the 21 original outliers; do not invent
    normals/UVs or remove geometry without recovering native behavior.
@@ -514,3 +517,57 @@ all-target no-default-feature checks, formatting and diff checks pass. Logs:
 `/tmp/openeq-placed-additive-{bounds-final,clippy-final,build,no-default}.log`.
 Independent review cleared the animation identity/collision/bounds/clock logic
 and the additive render contract, including the final no-triangle guard.
+
+
+## October 1 03:20 checkpoint: particle-linked static meshes
+
+The loader now retains typed `0x34` particle-cloud records and each attachment's
+exact source identity/owning track, while restoring the independently supported
+static mesh siblings. The support gate requires the proven record/static-track
+family and no physical or visible vertex depending on particle-node ancestry.
+Unknown/dynamic cases still fail explicitly; no flame, smoke, particle light or
+emitter motion is fabricated.
+
+The 523-zone structural survey remains **501 passes**, the same 21 authored
+nonfinite cases and Dranikcatacombsa's banner dependency, with no new invalid
+geometry diagnostics. Independent replay reconciles every change in the 246
+active WLD zones: +128,093 definition triangles, +3,241,450 collision triangles
+and +13,099 resolved placements. Of those placements, eight are an invisible
+scaffold, leaving 13,091 newly visible mesh placements. Another 98 previously
+resolved raw torch aliases gain their authored vertical offset. All 33,536
+nonpartial object digests, terrain and placement transforms are unchanged.
+
+There are 363 partial definitions in 113 active zones; their 13,197 placements
+occur in 111 zones. The audit now reports `unsupported_particle_placements`
+separately so restored bodies do not conceal the remaining effect gap. The
+separate 293-archive inventory recovers 372 actors; nine are superseded by active
+EQG zone selection. See `WLD_PARTICLE_SURVEY.md` for exact equations and caveats.
+
+PoK's eight restored actors account for 366 placements, 3,130 definition faces
+and 96,934 usable collision triangles. All eight pass original GPU checks,
+including instance counts and visible isolated bodies. Captures are under
+`/tmp/openeq-pok-particle-bodies/`. Source collision flags and independent
+nondegenerate-face counts explain the physical totals; no old collision was
+removed. These checks do not certify every restored fixture's traversal.
+
+Malformed signed WLD references now reject missing/empty names instead of
+aliasing an unnamed fragment, and minimum signed offsets cannot overflow.
+`WLD_REFERENCE_RESOLUTION.md` records the regression. A separate UTF-8/source
+byte-offset issue is documented in `WLD_STRING_OFFSETS.md`; all observed original
+high bytes occur in trailing padding, with no shifted referenced names found.
+String decoding remains unchanged in this checkpoint.
+
+**1,008 workspace tests passed, zero failed or ignored**, with originals, GPU
+and offline/silent audio. An earlier full run exposed a test-only temporary
+folder name collision between parallel fixtures; adding an atomic serial fixed
+it, and the complete corrected run passed. Evidence:
+`/tmp/openeq-particle-bodies-workspace-final.log`. Strict workspace Clippy,
+normal client build, all-target no-default checks, formatting and diff checks
+pass; logs use `/tmp/openeq-particle-bodies-{clippy,build,no-default}.log`.
+
+The final frozen zone audit includes the signed-reference fix and explicit
+partial-effect diagnostics. All previous geometry/metadata/count fields match
+the independently reconciled candidate. Its SHA-256 is
+`5953f14903676433f9fbf85731a15582cd053060232a89e02dd0a006afd25d03`;
+reports are `/tmp/openeq-particle-zone-survey-final/`. No original assets were
+committed, live character/server state was untouched, and audio stayed silent.

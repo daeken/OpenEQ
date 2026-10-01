@@ -325,13 +325,15 @@ fn hidden_only_objects_keep_local_coordinates_and_all_instance_transforms() {
 struct TempDir(std::path::PathBuf);
 impl TempDir {
     fn new() -> Self {
+        static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let dir = Self(std::env::temp_dir().join(format!(
-            "openeq-invisible-collision-{}-{}",
+            "openeq-invisible-collision-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         )));
         std::fs::create_dir(&dir.0).unwrap();
         dir

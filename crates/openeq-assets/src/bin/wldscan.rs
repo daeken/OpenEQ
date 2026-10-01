@@ -74,6 +74,12 @@ fn describe(fragment: &Fragment) -> String {
         MeshRef(reference) => format!("-> {:?}", reference.mesh),
         Material(material) => format!("flags=0x{:X} anim={:?}", material.flags, material.animation),
         MaterialList(list) => format!("{} materials", list.materials.len()),
+        ParticleCloud(cloud) => format!(
+            "flags=0x{:X} texture={:?} tail={} bytes; playback unsupported",
+            cloud.flags(),
+            cloud.texture_reference,
+            cloud.tail.len()
+        ),
         Mesh(mesh) => format!(
             "{} verts, {} polys, {} matrefs, {} polytex",
             mesh.vertices.len(),
