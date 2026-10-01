@@ -351,3 +351,26 @@ cohesive commits and pushing to `master`.
   independent review. Logs `/tmp/openeq-lighting-source-assets-final.log` and
   `/tmp/openeq-source-metadata-clippy.log`. Native load/cache context and the
   new pure sampler remain separate active investigations.
+
+## 04:30 verified particle CPU checkpoint
+
+- Four exact PoK particle bodies now have a bounded diagnostic CPU sampler.
+  Native instruction snapshots verify motion, spawn/life ordering, fading,
+  distance, scale, suppression and preview context. Real torch/smoke/lamp
+  matrices verify the distinction between emitter and final particle axes.
+  Owner-scale reciprocal overflow is rejected; no live effects are enabled.
+- Full original-asset/GPU/silent-audio run: **1,061 tests passed**, zero failed
+  or ignored. Final test-only native float literals were changed to identical
+  `from_bits` values, then all seven sampler tests and strict workspace lint
+  passed again. Normal client build, all-target no-default, format and diff
+  checks pass. Root reran native sampler controls; all eight evidence hashes
+  match. Logs `/tmp/openeq-source-sampler-*` plus final focused/lint logs
+  `/tmp/openeq-particle-sampler-final-{tests,clippy}.log`.
+- The original PoK restored-body GPU regression also passes after the texture
+  metadata change: `/tmp/openeq-chain-static-gpu.log`.
+- Next active work: xml_ui owns a standalone projected-quad GPU diagnostic
+  following WLD_PARTICLE_GPU_CONTRACT.md (no main scene wiring); npc_assets owns
+  native resource-cache/load context; cursor_review assists with the upstream
+  active loader caller. Cache research found signed scope ordering rather than
+  the earlier harness's exact-context dictionary. Preserve this evidence
+  boundary until the active loading trace and document corrections are frozen.

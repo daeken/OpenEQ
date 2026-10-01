@@ -144,6 +144,12 @@ Torch flame and smoke: (0,-1,0), ( 1,0,0), (0,0,-1)
 Lamp flame:            (0, 1,0), (-1,0,0), (0,0,-1)
 ```
 
+These are the intermediate emitter axes. Mode 3's -128 quarter-turn makes the
+final particle birth axes normalized world rows `[1, 0, 2]`:
+`(0,0,1), (1,0,0), (0,-1,0)` for the torch, and
+`(0,0,1), (-1,0,0), (0,1,0)` for the lamp. The
+CPU sampler tests these final axes directly against the placement witness.
+
 All three first particles exactly inherit their computed node translation.
 Each produces two triangles under the controlled camera and matching context.
 This closes the owner-composition gap for these two static PoK placements;

@@ -655,3 +655,17 @@ Clippy and independent code/native review. Logs:
 `/tmp/openeq-lighting-source-assets-final.log` and
 `/tmp/openeq-source-metadata-clippy.log`. This narrower checkpoint follows the
 1,037-test workspace run; it does not imply a new complete workspace count.
+
+The subsequent diagnostic CPU particle sampler reproduces the four frozen PoK
+families across original instruction snapshots and explicit owner/visibility/
+context inputs. Real torch and lamp matrices check final birth axes; no scene
+emitters are automatically activated. Original global RNG state and full
+camera/clipping/load context remain separate. See `WLD_PARTICLE_SAMPLER.md`.
+
+**1,061 workspace tests pass, zero failed/ignored**, with original assets, GPU
+and silent audio. Strict workspace lint, client build, all-target no-default,
+formatting and diff checks pass. Final exact-native test literals were converted
+to the same f32 bit patterns; seven sampler tests and strict lint passed again.
+Evidence: `/tmp/openeq-source-sampler-*` and
+`/tmp/openeq-particle-sampler-final-{tests,clippy}.log`. Root independently reran
+the native control probe and verified all eight sampler evidence hashes.
