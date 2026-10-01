@@ -1034,3 +1034,11 @@ coincidence or native arithmetic singularities in a live scene.
 
 These are read-only research additions after the 1,177-test implementation
 checkpoint. No additional renderer or gameplay behavior is enabled.
+
+
+The final missing-sky ambient follow-up covers all 4,320 valid hour/minute/vision
+combinations plus 51 focused controls. Actual original table-read addresses
+prove the midnight wrap; stored float bits, packed RGB and engine values all
+match the independent oracle. Root replay reproduces the frozen hash. See
+`NATIVE_HOST_AMBIENT_HOURLY.md`. This is research only and establishes neither
+invalid-clock behavior nor live lighting/GPU parity.
