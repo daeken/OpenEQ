@@ -762,3 +762,55 @@ prove the midnight wrap; stored float bits, packed RGB and engine values all
 match the independent oracle. Root replay reproduces the frozen hash. See
 `NATIVE_HOST_AMBIENT_HOURLY.md`. This is research only and establishes neither
 invalid-clock behavior nor live lighting/GPU parity.
+
+
+## 08:00 morning safe checkpoint
+
+The authorized overnight window ended at 13:00 UTC on October 1. The existing
+`openeq-overnight-development` automation was paused through the app at
+13:00:16 UTC. All agents have finished their bounded tasks; no implementation
+edits remain in progress. Verified implementation is committed through
+`f0f8abf`; final native research through `86aeb19`. Both are pushed to master.
+
+Visible/runtime improvements from this overnight continuation include:
+
+- Opaque texture minification, native additive glass, restored DXT1 cutouts,
+  authored waterfall color/opacity scrolling across 51 active terrain archives,
+  and corrected long-uptime indexed-water timing.
+- Supported short/five-frame placed-tree animation and static bodies restored
+  for particle-linked actors; live attached particles remain unsupported.
+- Server-anchored advancing EQ time, original sky-table interpolation and
+  background minute refresh. Exact native sky geometry remains diagnostic.
+- Conservative ascending-support liquid transitions, source-preserving WLD
+  parser repairs, and retained terrain lighting/secondary-coordinate identity.
+- Native four-slot XMI loops, complete SysEx packet transport, and a verified
+  fix for the macOS shared sound-bank lifecycle race.
+
+Final implementation verification: **1,177 passed, zero failed/ignored,
+113 suites**, including original assets, GPU and offline/digitally silent
+audio. Strict lint, client/audit builds, no-default, formatting and diff checks
+pass. The 523-zone survey has 501 structural passes, the same 21 nonfinite
+cases and the known Dranikcatacombsa dependency; every preexisting non-timing
+field matches. Later additions are independently replayed research notes.
+No Explorer login or character/server changes occurred, and no original
+assets or credentials were committed.
+
+Next work retains the requested world/audio priority order:
+
+1. Establish active embedded-group/border callers and general collision traces
+   for liquid crossings; complete real playable-route evidence for Anguish.
+2. Extend placed-actor animation to moving collision and remaining clips.
+   For particles, connect actual frame/UI admission, cached clock publishers,
+   owner/culling inputs and ordered random consumption before live playback.
+3. Integrate the recovered dual-coordinate/lava shader routes with complete
+   texture, normal/tangent, color and native light-membership provenance.
+   Continue nonfinite upload behavior beyond the proven material families.
+4. Connect native sky orientation, weather lifecycle, ambient/directional/fog
+   and display/color transfer; compare complete controlled GPU scenes.
+5. Match original musical timbres and host audio events beyond the now-verified
+   XMI loop/SysEx transport. Keep all automated audio checks silent.
+
+The missing Somnium waterfall texture and Thundercrest's unresolved `clz-0`
+weather reference remain explicit source/runtime dependencies, without guessed
+substitutes. Structural passes and same-renderer captures do not certify full
+original-client appearance, traversal or performance parity.

@@ -1042,3 +1042,13 @@ prove the midnight wrap; stored float bits, packed RGB and engine values all
 match the independent oracle. Root replay reproduces the frozen hash. See
 `NATIVE_HOST_AMBIENT_HOURLY.md`. This is research only and establishes neither
 invalid-clock behavior nor live lighting/GPU parity.
+
+
+## October 1 morning checkpoint
+
+The overnight automation is paused at the requested 08:00 cutoff. All verified
+implementation and frozen research are pushed to master; the working tree is
+checkpointed. The final 1,177-test and 523-zone results above remain current.
+See `OVERNIGHT_2026-10-01.md` for the completed runtime changes, exact support
+boundaries and ordered continuation plan. World/audio parity remains the active
+priority; the broader gameplay backlog has not been substituted for it.
