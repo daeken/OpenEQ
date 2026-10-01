@@ -583,7 +583,8 @@ fn load_eqg_archive(base: &Path, name: &str, archive: Archive) -> Result<Scene> 
             .materials
             .iter()
             .any(|material| {
-                ter_uv::encoding(object, material) == mesh::UvEncoding::NativeTerShort2Sse2
+                material.shader == "Opaque_MaxCB1.fx"
+                    && ter_uv::encoding(object, material) == mesh::UvEncoding::NativeTerShort2Sse2
             })
             .then(|| {
                 let (member, from_archive) = &object_sources[id];
@@ -840,7 +841,8 @@ fn append_eqg_object(
 
         let indices = &groups[material_id];
         let native_lighting = lighting.filter(|_| {
-            ter_uv::encoding(object, material) == mesh::UvEncoding::NativeTerShort2Sse2
+            material.shader == "Opaque_MaxCB1.fx"
+                && ter_uv::encoding(object, material) == mesh::UvEncoding::NativeTerShort2Sse2
         });
         let (vertices, indices) = if let Some(selection) = native_lighting {
             let (vertices, indices, source_indices) =
@@ -886,6 +888,7 @@ fn append_eqg_object(
                 && material.shader.eq_ignore_ascii_case("AddAlpha_MaxCB1.fx"),
             emissive: false,
             clamp_uv: false,
+            waterfall: waterfall_material(object, material),
             uv_encoding: ter_uv::encoding(object, material),
         });
         scene.meshes.push(Geometry {
@@ -912,11 +915,43 @@ fn append_eqg_object(
     }
 }
 
+// Only complete authored state is admitted: native omitted parameters retain
+// the shared effect's previous values, which requires draw-order provenance.
+fn waterfall_material(object: &TerMod, material: &crate::zone::TerMaterial) -> Option<[f32; 4]> {
+    if !object.is_terrain
+        || !matches!(object.version, 1..=3)
+        || material.shader != "Opaque_MaxWaterFall.fx"
+    {
+        return None;
+    }
+    let diffuse = material.properties.get("e_TextureDiffuse0")?.as_text()?;
+    if diffuse.is_empty() || diffuse.eq_ignore_ascii_case("none") {
+        return None;
+    }
+    let mut rates = [0.0; 4];
+    for (rate, key) in
+        rates
+            .iter_mut()
+            .zip(["e_fSlide1X", "e_fSlide1Y", "e_fSlide2X", "e_fSlide2Y"])
+    {
+        let crate::zone::Property::Float(value) = material.properties.get(key)? else {
+            return None;
+        };
+        if !value.is_finite() {
+            return None;
+        }
+        *rate = *value;
+    }
+    Some(rates)
+}
+
 mod eqg_collision;
 mod indexed_water;
 pub mod ter_lighting;
 mod ter_lighting_pack;
 mod ter_uv;
+#[cfg(test)]
+mod waterfall_tests;
 pub mod wld_objects;
 
 fn append_baked(
@@ -1289,6 +1324,7 @@ fn load_heightmap(base: &Path, name: &str, archive: Archive, zon: &[u8]) -> Resu
                 additive: false,
                 emissive: false,
                 clamp_uv: false,
+                waterfall: None,
                 uv_encoding: Default::default(),
             });
             scene.meshes.push(Geometry {

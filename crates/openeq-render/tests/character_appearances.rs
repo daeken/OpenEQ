@@ -35,6 +35,7 @@ fn stage(renderer: &Renderer) -> GpuScene {
             additive: false,
             emissive: false,
             clamp_uv: false,
+            waterfall: None,
             uv_encoding: Default::default(),
         }],
         vec![Geometry {

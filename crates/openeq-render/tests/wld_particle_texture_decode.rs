@@ -255,6 +255,7 @@ fn original_bc1_mask_reveals_background_through_authored_holes() {
         additive: false,
         emissive: true,
         clamp_uv: false,
+        waterfall: None,
         uv_encoding: Default::default(),
     };
     let mut renderer = Renderer::new_headless(256, 256).unwrap();

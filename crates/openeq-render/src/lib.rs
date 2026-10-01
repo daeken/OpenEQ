@@ -27,6 +27,7 @@ mod tests;
 mod transparency;
 pub mod ui;
 pub mod upload;
+mod waterfall;
 pub mod wld_particle_gpu;
 pub mod wld_particles;
 
@@ -162,6 +163,7 @@ pub struct Renderer {
     pipelines: Pipelines,
     transparency: transparency::Transparency,
     additive: additive::Additive,
+    waterfall: waterfall::Waterfall,
     particles: particles::ParticleRenderer,
     profiler: Option<profiling::GpuProfiler>,
     start: std::time::Instant,
@@ -659,6 +661,7 @@ impl Renderer {
             width,
             height,
         );
+        let waterfall = waterfall::Waterfall::new(&device, &pipeline_geometry, config.format);
         let additive = additive::Additive::new(&device, &pipeline_geometry, config.format);
         let particles = particles::ParticleRenderer::new(&device, &globals_layout, config.format);
         Self {
@@ -686,6 +689,7 @@ impl Renderer {
             },
             transparency,
             additive,
+            waterfall,
             particles,
             profiler: None,
             ui: None,
@@ -1029,6 +1033,10 @@ impl Renderer {
         };
 
         scene.update_placed_objects(&self.queue, object_elapsed);
+        scene.update_waterfalls(&self.queue, elapsed);
+        for actor in actors {
+            actor.scene.update_waterfalls(&self.queue, elapsed);
+        }
 
         let swapchain_view = frame
             .as_ref()
@@ -1220,6 +1228,20 @@ impl Renderer {
             self.profiler.as_ref(),
         );
 
+        // Independently scrolling waterfall color/opacity uses source alpha.
+        self.waterfall.render(
+            &mut encoder,
+            transparency::BlendInputs {
+                depth: &self.targets.depth_view,
+                output: final_view,
+                globals: &self.globals_bind_group,
+                lighting: scene_bind_group,
+                zone: (scene, atlas_bind_group),
+                actors,
+            },
+            self.profiler.as_ref(),
+        );
+
         // 5. Proven region glass adds lit RGB without fog or depth writes.
         self.additive.render(
             &mut encoder,
@@ -1355,7 +1377,11 @@ fn draw_scene(pass: &mut wgpu::RenderPass<'_>, scene: &GpuScene) {
     pass.set_vertex_buffer(1, scene.instances.slice(..));
     pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint32);
     // Additive surfaces must never write opaque geometry or shadow depth.
-    for draw in scene.draws.iter().filter(|draw| !draw.additive) {
+    for draw in scene
+        .draws
+        .iter()
+        .filter(|draw| !draw.additive && !draw.waterfall)
+    {
         pass.draw_indexed(
             draw.index_start..draw.index_start + draw.index_count,
             draw.base_vertex,

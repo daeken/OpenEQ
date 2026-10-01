@@ -22,6 +22,7 @@ fn floor(z: f32, transparent: bool) -> Scene {
             additive: false,
             emissive: false,
             clamp_uv: false,
+            waterfall: None,
             uv_encoding: Default::default(),
         }],
         vec![Geometry {

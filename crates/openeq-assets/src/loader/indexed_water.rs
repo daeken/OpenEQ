@@ -96,6 +96,7 @@ fn append_material(
         additive: false,
         emissive: false,
         clamp_uv: false,
+        waterfall: None,
         uv_encoding: Default::default(),
     });
     Some(material)
@@ -127,6 +128,7 @@ mod tests {
                 additive: false,
                 emissive: false,
                 clamp_uv: false,
+                waterfall: None,
                 uv_encoding: Default::default(),
             }],
             vec![Geometry {

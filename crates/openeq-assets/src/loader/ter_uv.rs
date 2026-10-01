@@ -5,10 +5,13 @@ use crate::{
 };
 
 pub(super) fn encoding(object: &TerMod, material: &TerMaterial) -> UvEncoding {
-    // This exact family has one primary-UV bump layout for every established
-    // TER record version. Neither MOD nor similarly named/two-UV families
-    // inherit this evidence. See docs/EQG_TER_UV_PACKING.md.
-    if object.is_terrain && matches!(object.version, 1..=3) && material.shader == "Opaque_MaxCB1.fx"
+    // Proven primary SHORT2 upload: ordinary bump terrain and the non-bump
+    // waterfall family. MOD and two-UV families require their own evidence.
+    // See EQG_TER_UV_PACKING.md and EQG_WATERFALL_UPLOAD.md.
+    if object.is_terrain
+        && matches!(object.version, 1..=3)
+        && (material.shader == "Opaque_MaxCB1.fx"
+            || super::waterfall_material(object, material).is_some())
     {
         UvEncoding::NativeTerShort2Sse2
     } else {

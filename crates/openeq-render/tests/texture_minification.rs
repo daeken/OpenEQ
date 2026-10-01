@@ -41,6 +41,7 @@ fn striped_plane(repeat: f32) -> Scene {
             additive: false,
             emissive: true,
             clamp_uv: false,
+            waterfall: None,
             uv_encoding: Default::default(),
         }],
         vec![Geometry {

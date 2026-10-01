@@ -50,6 +50,7 @@ fn scene(uv: [f32; 2], expected: [u8; 3], paints: Vec<MaterialLayer>) -> Scene {
             additive: false,
             emissive: false,
             clamp_uv: true,
+            waterfall: None,
             uv_encoding: Default::default(),
         }],
         vec![Geometry {

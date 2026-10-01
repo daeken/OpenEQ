@@ -54,6 +54,7 @@ struct WaterParams {
     reflection_color: vec4<f32>,
     params: vec4<f32>,
     layers: vec4<u32>,
+    scroll_offsets: vec4<f32>,
 };
 @group(2) @binding(2) var<storage, read> water_materials: array<WaterParams>;
 @group(2) @binding(3) var linear_atlas: texture_2d_array<f32>;

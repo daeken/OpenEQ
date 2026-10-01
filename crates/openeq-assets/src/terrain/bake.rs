@@ -284,6 +284,7 @@ where
             additive: false,
             emissive: false,
             clamp_uv: true,
+            waterfall: None,
             uv_encoding: Default::default(),
         });
         result.meshes.push(Geometry {

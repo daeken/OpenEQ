@@ -21,6 +21,7 @@ fn plane(color: [u8; 4], y: f32, transparent: bool, emissive: bool) -> Scene {
             additive: false,
             emissive,
             clamp_uv: false,
+            waterfall: None,
             uv_encoding: Default::default(),
         }],
         vec![Geometry {

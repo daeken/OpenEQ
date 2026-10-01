@@ -25,7 +25,7 @@ pub const VERTEX_STRIDE: usize = 8;
 pub enum UvEncoding {
     #[default]
     Float32,
-    /// Ordinary TER Opaque_MaxCB1, native layout 1: signed SHORT2 / 256.
+    /// Proven TER ordinary bump/waterfall families: signed SHORT2 / 256.
     /// Reproduces the SSE2 conversion with masked exceptions, independent of
     /// this process's CPU. Legacy x87 overflow behavior is a separate target.
     NativeTerShort2Sse2,
@@ -68,11 +68,24 @@ pub struct Material {
     pub emissive: bool,
     /// Clamp diffuse sampling to its edges (for nonperiodic baked terrain tiles).
     pub clamp_uv: bool,
+    /// Proven TER waterfall slide rates: color XY, independent opacity XY.
+    pub waterfall: Option<[f32; 4]>,
     /// Upload conversion only; baked/source vertex words remain untouched.
     pub uv_encoding: UvEncoding,
 }
 
-type MaterialKey = (u32, u32, String, bool, bool, bool, bool, bool, UvEncoding);
+type MaterialKey = (
+    u32,
+    u32,
+    String,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    UvEncoding,
+    Option<[u32; 4]>,
+);
 
 impl Material {
     fn key(&self) -> MaterialKey {
@@ -86,6 +99,7 @@ impl Material {
             self.emissive,
             self.clamp_uv,
             self.uv_encoding,
+            self.waterfall.map(|rates| rates.map(f32::to_bits)),
         )
     }
 }
@@ -461,6 +475,7 @@ fn bake_wld_meshes_inner<'a>(
             additive: false,
             emissive,
             clamp_uv: false,
+            waterfall: None,
             uv_encoding: Default::default(),
         };
         let index = *material_index.entry(material.key()).or_insert_with(|| {

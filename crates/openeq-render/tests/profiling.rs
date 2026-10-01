@@ -40,6 +40,7 @@ fn plane(renderer: &Renderer, y: f32, transparent: bool, additive: bool) -> GpuS
             additive,
             emissive: true,
             clamp_uv: false,
+            waterfall: None,
             uv_encoding: Default::default(),
         }],
         vec![Geometry {
@@ -139,7 +140,12 @@ fn gpu_profiling_is_opt_in_async_bounded_and_preserves_pixels() {
     assert_eq!(stats.in_flight, 0);
     assert_eq!(stats.failed, 0);
     let timing = stats.latest.unwrap();
-    for value in timing.raw_pass_ms {
+    assert_eq!(timing.waterfall_ms, 0.);
+    for (index, value) in timing.raw_pass_ms.into_iter().enumerate() {
+        if index == 5 {
+            assert_eq!(value, 0.);
+            continue;
+        }
         assert!(
             value.is_finite() && value > 0.,
             "missing GPU pass duration: {timing:?}"
@@ -149,6 +155,7 @@ fn gpu_profiling_is_opt_in_async_bounded_and_preserves_pixels() {
         + timing.gbuffer_ms
         + timing.lighting_ms
         + timing.transparency_ms
+        + timing.waterfall_ms
         + timing.additive_ms
         + timing.particles_ms
         + timing.ui_ms;

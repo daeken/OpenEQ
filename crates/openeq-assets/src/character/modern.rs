@@ -148,6 +148,7 @@ fn materials(
             additive: false,
             emissive: shader.contains("add"),
             clamp_uv: false,
+            waterfall: None,
             uv_encoding: Default::default(),
         });
     }

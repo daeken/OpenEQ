@@ -3,9 +3,9 @@
 //! Textures all live in one array texture. EverQuest textures are mostly 256x256
 //! but not uniformly, so each is resized to fit for this first pass.
 //!
-//! Material parameters are stored per vertex rather than in a material buffer.
-//! The asset pipeline already splits geometry per material, so this costs no
-//! extra vertices and removes a binding and a dynamic-offset dance.
+//! Basic material selection lives on vertices; water parameters and waterfall
+//! offsets use a shared storage buffer indexed by that material ID. The asset
+//! pipeline already splits geometry per material.
 
 use std::collections::HashMap;
 
@@ -28,7 +28,7 @@ pub const FLAG_WATER: u32 = 8;
 pub const FLAG_CLAMP_UV: u32 = 16;
 pub const FLAG_TERRAIN: u32 = 32;
 
-/// Additional parameters for EQG water, indexed by the vertex's material ID.
+/// Water parameters and waterfall offsets, indexed by the vertex's material ID.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct WaterParams {
@@ -39,6 +39,7 @@ struct WaterParams {
     params: [f32; 4],
     /// Normal map layer, environment map layer, indexed UV mode, reserved.
     layers: [u32; 4],
+    scroll_offsets: [f32; 4],
 }
 
 /// A vertex as the renderer wants it: geometry plus material parameters.
@@ -98,6 +99,8 @@ pub struct DrawCall {
     pub transparent: bool,
     /// Draw only in the dedicated lit additive region pass.
     pub additive: bool,
+    /// Draw in the dedicated source-alpha waterfall pass, with read-only depth.
+    pub waterfall: bool,
 }
 
 /// GPU-resident scene: geometry, instances, draws, textures and lights.
@@ -125,9 +128,23 @@ pub struct GpuScene {
     vertex_data: Vec<Vertex>,
     placed_animations: Vec<placed_animation::PlacedAnimation>,
     animation_started: std::time::Instant,
+    waterfall_rates: Vec<(usize, [f32; 4])>,
 }
 
 impl GpuScene {
+    pub(crate) fn update_waterfalls(&self, queue: &wgpu::Queue, elapsed: std::time::Duration) {
+        for &(material, rates) in &self.waterfall_rates {
+            let offsets = crate::waterfall::scroll_offsets(elapsed, rates);
+            let offset = material * std::mem::size_of::<WaterParams>()
+                + std::mem::offset_of!(WaterParams, scroll_offsets);
+            queue.write_buffer(
+                &self.water_materials,
+                offset as u64,
+                bytemuck::cast_slice(&offsets),
+            );
+        }
+    }
+
     pub fn placed_animation_count(&self) -> usize {
         self.placed_animations.len()
     }
@@ -224,7 +241,10 @@ impl GpuScene {
             .iter()
             .map(|material| {
                 let Some(water) = &material.water else {
-                    return WaterParams::zeroed();
+                    return WaterParams {
+                        scroll_offsets: [0.0; 4],
+                        ..WaterParams::zeroed()
+                    };
                 };
                 let layer = |name: Option<&String>| {
                     name.and_then(|name| atlas.layers.get(&name.to_ascii_lowercase()).copied())
@@ -240,6 +260,7 @@ impl GpuScene {
                         water.reflection_amount,
                         water.indexed_uv_scale.unwrap_or(0.0),
                     ],
+                    scroll_offsets: [0.0; 4],
                     layers: [
                         layer(material.normal_map.as_ref()),
                         water
@@ -375,8 +396,12 @@ impl GpuScene {
                 base_vertex,
                 instance_start,
                 instance_count,
-                transparent: material.transparent && material.water.is_none() && !material.additive,
+                transparent: material.transparent
+                    && material.water.is_none()
+                    && !material.additive
+                    && material.waterfall.is_none(),
                 additive: material.additive,
+                waterfall: material.waterfall.is_some(),
             });
         }
 
@@ -477,6 +502,12 @@ impl GpuScene {
             vertex_data: vertices,
             placed_animations,
             animation_started: std::time::Instant::now(),
+            waterfall_rates: scene
+                .materials
+                .iter()
+                .enumerate()
+                .filter_map(|(i, m)| m.waterfall.map(|rates| (i, rates)))
+                .collect(),
             indices: index_buffer,
             instances: instance_buffer,
             draws,

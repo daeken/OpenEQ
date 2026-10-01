@@ -631,3 +631,37 @@ and digests. Strict workspace Clippy, all-target no-default, formatting and
 diff checks pass. Logs: `/tmp/openeq-ter-trailing-{assets,clippy,no-default,fmt}.log`.
 This focused parser checkpoint follows the full 1,157-test workspace baseline;
 it does not claim new render or full-workspace verification.
+
+
+## October 1 07:20 authored waterfall rendering
+
+Exact TER `Opaque_MaxWaterFall.fx` surfaces now scroll color and opacity
+independently using authored rates and native double-precision preshader
+calculation. A dedicated source-alpha pass preserves opaque depth without
+writing it, applies the native cutoff, and uses existing lighting/fog. Source
+UVs/collision remain unchanged; upload uses the proven primary SHORT2 route.
+Admission requires complete authored state, including diffuse identity. See
+`EQG_WATERFALL_RENDERING.md` for bounds and unresolved lighting/color/sort parity.
+
+The integrated full original-asset/GPU/silent-audio run passes **1,168 tests,
+zero failed or ignored, across 111 suites**. Two subsequent original-geometry
+capture and profiler-accounting tests also pass; the final waterfall suite
+passes all five tests. All native property/upload/state/preshader probes were
+independently replayed. Independent Rust-function review matches the complete
+400,000-word native Nest preshader digest and 390 corpus batches, including
+clock wraps. Strict workspace lint, client build, no-default, format and diff
+checks pass. Logs: `/tmp/openeq-waterfall-{workspace,gpu-final,clippy-final,build,
+no-default,fmt}.log`. The final two tests are additional to the full-run count.
+
+The raw corpus finds 138 canonical definitions in 74 TER archives; 134 have
+diffuse identities and four unreferenced definitions omit them. All contain
+complete finite rates; none of their referenced primary UVs is nonfinite or
+in the integer-overflow disagreement range. Production-bake reconciliation is
+being checked independently and must not be assumed from these source counts.
+
+Native dual-coordinate material research is frozen separately in
+`EQG_TER_SECONDARY_UV_SHADERS.md`: both color textures multiply, both UV pairs
+use SHORT2 upload, and CBSG has distinct normal-map glow/specular channels.
+This research does not yet enable those layered shaders. Next material work
+must preserve second coordinates through deduplication and upload, and keep
+native normal/light membership limitations explicit. Lava remains unsupported.

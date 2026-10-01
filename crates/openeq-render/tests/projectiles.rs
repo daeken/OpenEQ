@@ -23,6 +23,7 @@ fn wall(renderer: &Renderer, y: f32) -> GpuScene {
             additive: false,
             emissive: true,
             clamp_uv: false,
+            waterfall: None,
             uv_encoding: Default::default(),
         }],
         vec![Geometry {

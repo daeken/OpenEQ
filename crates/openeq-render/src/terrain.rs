@@ -177,6 +177,7 @@ impl Plan {
                 material.water.is_none()
                     && !material.transparent
                     && !material.additive
+                    && material.waterfall.is_none()
                     && !material.alpha_mask
                     && !material.emissive,
                 "terrain recipe requires an opaque surface"
@@ -519,6 +520,7 @@ mod tests {
                 additive: false,
                 emissive: false,
                 clamp_uv: true,
+                waterfall: None,
                 uv_encoding: Default::default(),
             }],
             vec![],
