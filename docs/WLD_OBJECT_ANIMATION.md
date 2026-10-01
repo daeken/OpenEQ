@@ -1,10 +1,11 @@
 # WLD placed-object animation: native evidence and diagnostic poses
 
 Production placed actors still use their first authored pose. This milestone
-retains fragment `0x13` flags and exposes exact-frame diagnostic sampling; it
-does not enable autonomous animation. The native key timing and loop closure
-are established below, but the animated quaternion-to-node contract, clock
-units, and City of Mist controller ownership still need proof.
+retains fragment `0x13` flags and exposes exact-frame and bounded-time sampling; it
+does not enable autonomous animation. The native clock, quaternion-to-node
+conversion, interpolation and City of Mist shared-controller selection are now
+established below. A bounded time sampler can use this evidence without
+claiming compatibility with every WLD animation.
 
 ## Reproducible source
 
@@ -18,10 +19,27 @@ Image base 0x10000000
 .data:  RVA 0x15f000, file offset 0x15d000, raw size 0x1ca00
 ```
 
-Addresses in this document are virtual addresses for that exact binary. The
+Unqualified `0x100...` addresses are virtual addresses for that exact binary. The
 local disassembly used for investigation is `/tmp/eqgraphics-disassembly.txt`;
 the binary and that temporary file are not repository fixtures. Import names
 were checked against the PE import table rather than inferred from tool labels.
+
+The host-clock evidence uses the installed 32-bit `eqgame.exe`, image base
+`0x00400000`, SHA256
+`bab4ee0bd724b80c85de7df7020e7049a2bedaa1eca65b1abc59294c472cd593`.
+Its temporary disassembly is `/tmp/openeq-eqgame-disassembly.txt`.
+
+The graphics DLL imports `d3dx9_30.dll`. The matching Microsoft x86 library was
+extracted, without installation, from `Apr2006_d3dx9_30_x86.cab` in the official
+[June 2010 DirectX redistributable](https://download.microsoft.com/download/8/4/A/84A35BF1-DAFE-4AE8-82AF-AD2AE20B6B14/directx_Jun2010_redist.exe).
+The installer SHA256 is
+`053f76dcbb28802e23341b6a787e3b0791c0fa5c8d4d011b1044172dbf89c73b`;
+the DLL SHA256 is
+`5edeed79f2359527a55b8189cfa8b9b121cd608d44eead905a0f3436938ad532`.
+Its image base is also `0x00400000`, so addresses below explicitly distinguish
+D3DX from the host. Local research files are
+`/tmp/openeq-d3dx9-native/d3dx9_30.dll` and
+`/tmp/openeq-d3dx9-30-disassembly.txt`; neither is a repository fixture.
 
 The original regression fixture is
 `citymist_obj.s3d/citymist_obj.wld`, actor `JNTREE103_ACTORDEF`. City of Mist has
@@ -94,13 +112,39 @@ The animation-key builder at `0x1003c150` negates W for key zero again at
 between keys (`0x1003c3c2..0x1003c498`) and across the closing seam.
 
 Negating only W is generally not the equivalent quaternion sign change
-`q -> -q`. Reusing the first-pose `glam` transform for native animated keys
-would therefore be unjustified. The remaining requirement is to trace how
-controller/compressed-set output becomes node matrices, or obtain controlled
-native output. No native animated matrix or frame capture has yet verified
-that step. The diagnostic sampler deliberately uses the existing first-pose
-convention for every explicitly selected source frame and does not claim that
-those pictures are native playback frames.
+`q -> -q`. The missing inverse is in D3DX: both the keyframed-set vtable
+`0x00401e18` and compressed-set vtable `0x00401dd8` use the same `GetSRT`
+implementation at `0x0043bb8d`, slot `+0x24`. It invokes quaternion sampler
+`0x0043ae1d` at `0x0043bc20`. This sampler **conjugates both selected keys**,
+negating XYZ and retaining W (`0x0043af2a..0x0043af69`). Thus an EQ key
+`[rawX, rawY, rawZ, -rawW]` becomes `-rawQuaternion`, which has the same
+rotation as the raw quaternion used by the initial pose.
+
+D3DX linearly blends those conjugated quaternion components and normalizes
+the result at `0x0043afaf..0x0043afed`: this is normalized linear interpolation,
+not spherical interpolation. A static/clamped endpoint is returned without
+that sampler normalization at `0x0043aff4..0x0043b00a`. The controller's output
+helper `0x00437d82`, called by `AdvanceTime` at `0x00438e6a`, accumulates track
+outputs with quaternion-sign handling and normalizes again at
+`0x00438309..0x0043830e`. Its inline SRT matrix write at
+`0x00438349..0x0043843e` uses the standard D3DX row-vector rotation convention;
+there is no additional inverse. EQGraphics registers each node's `+0x10`
+matrix pointer directly with the controller at `0x1003f0a3..0x1003f0bb`.
+
+An isolated Unicorn 2.1.4 x86 execution of the original D3DX `GetSRT`, scalar
+normalizer and `D3DXMatrixRotationQuaternion` checked BR1 at 0, 500, 1000,
+1500, 2000, 2500, 3000, 3500, 3999 and 4000 milliseconds. Normalized
+quaternions agreed with conjugated component interpolation to less than
+`3e-8` per component; the closing matrix matched the first. This executes
+native math, not the running EQ client or its complete actor update. It
+selects D3DX's scalar fallback table, equivalent to
+`D3DXCpuOptimizations(FALSE)`, and needs no Win32 services. The temporary
+reproducer and results are `/tmp/openeq-native-animation-witness.py` and
+`/tmp/openeq-native-animation-witness.json`.
+
+The exact-frame diagnostic still uses the existing first-pose convention for
+each explicitly selected source frame. Its captures validate geometry
+sampling and do not claim to be captures of native playback.
 
 ## Key timing, closure, and controller ownership
 
@@ -120,17 +164,29 @@ more than one frame, the builder appends the first scale/rotation/translation
 again at `frame_count * interval * multiplier`
 (`0x1003c4a8..0x1003c650`). Single-frame tracks keep one key. For the tree's
 four-frame branches, the key times are therefore 0, 1000, 2000, 3000 and a
-closing key at 4000 in native clock units. Calling these seconds or
-milliseconds still requires proof of the host clock described below.
+closing key at 4000 milliseconds: a four-second loop. The host-clock proof is
+below.
 
 Tracks belong to one animation set and share its period. Independently looping
 every track would not reproduce mixed-count or mixed-interval sets. Allocation
 uses the first animated track's count plus one; longer later tracks can be
 clamped. General mixed-length compatibility needs additional coverage.
 
+Loop wrapping occurs before `GetSRT`. D3DX `AdvanceTime` calls the set's
+`GetPeriodicPosition`, vtable `+0x14`, at `0x00438a0b`, storing the result at
+controller-track `+0x28`. Both set vtables point to `0x0043a787`; for playback
+type zero it computes the remainder of time divided by set period through
+`_CIfmod` at `0x0043a79f` (IAT `0x004012a4`), with negative-remainder handling.
+The output helper reads that stored periodic position at `0x00437e82` and
+passes it to `GetSRT`. The isolated witness's direct `GetSRT(4000)` sample
+checks the closing endpoint; this separate controller trace proves wrapping.
+
 The builder optimizes keys via `0x1003b650`, registers SRT keys through the
 D3DX set's vtable `+0x80` at `0x1003c696..0x1003c6a2`, and then calls the set's
-compression path (`+0x84`). It may create a compressed animation set. The PE
+compression path (`+0x84`) with flags zero, lossiness **0.1** (constant
+`0x101357bc`), and null hierarchy at `0x1003c70d..0x1003c734`. A returned
+buffer becomes a compressed set at `0x1003c768`; otherwise the uncompressed
+set is retained at `0x1003c825..0x1003c829`. The PE
 imports identify these thunks:
 
 | Thunk | IAT | Import |
@@ -139,10 +195,22 @@ imports identify these thunks:
 | `0x100b9b4c` | `0x10133284` | `D3DXCreateKeyframedAnimationSet` |
 | `0x100b9b52` | `0x10133288` | `D3DXMatrixRotationQuaternion` |
 
-Interpolation and compression parity should not be inferred merely from
-authored key values. The investigated Wine `d3dx9_36/animation.c` implementation
-has stubs for the relevant `GetSRT`, `RegisterAnimationSRTKeys`, and
-`AdvanceTime` methods, so it does not settle this question.
+The native D3DX compressor is `0x0043c4ff`. Its retained rotation-key count is
+clamped to at least five, or the original count when shorter
+(`0x0043c7fe..0x0043c829`). It copies each retained time/XYZW tuple as five
+unchanged float words (`0x0043c935..0x0043c94a`), then may flip all four
+components together for hemisphere continuity (`0x0043c95d..0x0043ca1f`).
+The compressed constructor points its rotation array directly at those
+20-byte keys (`0x0043a149..0x0043a163`, `0x0043a208..0x0043a214`). There is no
+quaternion quantization or second orientation conversion on this path.
+
+Consequently Citymist's four authored rotation keys plus closing key are all
+retained. The earlier EQ optimizer `0x1003b650` processes uniform-scale and
+translation runs, leaving rotation keys alone. Citymist has constant scale
+and translation within each track; collapsing those to one key does not
+change its motion. Longer rotations and changing scale/translation require
+their own reduction/optimization coverage. The Wine `d3dx9_36/animation.c`
+stubs do not supply that evidence.
 
 Actor setup at `0x10044935` detects the definition's animation. It has two
 ownership paths:
@@ -156,9 +224,24 @@ ownership paths:
   matching node names to the first actor's matrices at `0x10052a40`, using
   `0x1003d610`.
 
-Which branch Citymist's placed trees actually select remains unproven. Neither
-per-instance random phase nor globally synchronized trees should be chosen
-without resolving that condition.
+The selection call at `0x10044941..0x1004495a` is actor-data virtual `+0x48`.
+The hierarchical actor constructor `0x10044660` installs actor-data vtable
+`0x10139024` (`CHierarchicalActorDataClient`) at actor `+0xe0`; its `+0x48`
+entry `0x100460a0` follows data `+0xa4` to the model, model virtual `+8`
+(`0x10024360`) to the definition, then reads **definition byte `+0x18`**.
+Clear selects shared grouping; set selects a private random-phase controller.
+
+The classic WLD skeleton loader constructs that definition through
+`0x1004adf0` at `0x1001e581`; the constructor clears byte `+0x18` at
+`0x1004adfc`. The subsequent WLD initialization chain
+`0x1004ae60 -> 0x100bffc0 -> 0x1004c8f0/0x1004afa0` leaves it clear, as do
+the bounds pass and `0x1001a5d0` metadata setup. A separate EQG initializer
+sets it for `ROOT_BONE` at `0x1004d5a9`; Citymist does not take that path.
+This establishes the classic WLD tree's **shared controller, speed one,
+initial phase zero**. In the shared path, `0x1003d610` aliases later actors'
+node `+0x10` matrix pointers to the first actor's matching nodes. This proves
+synchronized model-space motion for that animation definition, without
+claiming untraced lifecycle resets or dynamic phase changes.
 
 ## Engine clock boundary
 
@@ -179,10 +262,24 @@ offset `+0x10`. The neighboring setter `0x10068fb0 -> 0x100bb500` writes its
 argument unchanged to that field. Construction initializes it to zero at
 `0x1006a8b1..0x1006a8c5`.
 
-The next clock investigation is the host `eqgame.exe` virtual setter call and
-the source of its time argument. The graphics-side trace alone does not prove
-wall-clock milliseconds. A local host disassembly was prepared at
-`/tmp/openeq-eqgame-disassembly.txt` but that call chain is not established.
+`CreateGraphicsEngine` returns the global engine in output-structure `+8`
+at `0x10012483..0x1001248b`. In **eqgame.exe**, the host call is
+`0x0093369e`, and `0x009336ca..0x009336cd` stores that output pointer at
+`0x01822678`. The per-frame path `0x004bfd57..0x004bfd6e` calls host clock
+`0x00897d90` and passes its returned value unchanged to graphics virtual
+`+0x58`, the setter above. `0x004bef96..0x004befad` does the same; another
+path passes the saved object `+0x154` clock at `0x004bf545..0x004bf557`.
+
+Host `0x00897d90` dispatches through `0x00e04c84`. The on-disk default,
+`0x00897d80`, returns `GetTickCount() - origin`, in milliseconds. Clock init
+`0x00897df0` normally replaces this with `0x00897d20`: it reads
+`QueryPerformanceFrequency`, divides it by **1000** at
+`0x00897e14..0x00897e24`, and captures the QPC origin. The replacement
+subtracts that origin and divides elapsed ticks by the stored
+`frequency / 1000`. Both established sources therefore deliver milliseconds;
+the QPC divisor has integer truncation. A separately calibrated RDTSC fallback
+exists, but its precision was not established. The normal host clock plus the
+unscaled graphics delta proves Citymist's four-second loop.
 
 ## Implemented diagnostic and verification
 
@@ -198,11 +295,39 @@ baked rendering/collision. It validates the current hierarchy and selection,
 rejects nonfinite/degenerate poses, and preserves material references, UVs,
 topology, collision flags, and rigid/weighted binding ownership.
 
-The 11 focused CPU checks include synthetic rigid and weighted parts,
+`ObjectSource::animation_period()` validates a deliberately narrow native
+animation family, and `sample_animation(Duration)` returns fresh posed meshes
+at an explicit shared time. The supported bounds are:
+
+- Packed definition flags exactly 8; reference flags 4 without timing for
+  one-frame tracks, or flags 5 with an explicit positive interval for animation.
+- Two to four authored frames on every animated track, all with the same
+  count and interval. The closing key fits D3DX's minimum-five-key retention.
+- Constant scale and translation within each track; all poses finite with
+  positive scale and nondegenerate quaternions. Adjacent/closing quaternion
+  hemispheres must be unambiguous (`abs(normalized dot) >= 1e-6`).
+- The closing timestamp is at most `2^24` milliseconds, so the native float
+  key times are exact integers. Unknown timing/flags, long or mixed clips,
+  float frame layouts, and moving scale/translation are rejected.
+
+Time truncates to whole milliseconds, matching the host clock, then wraps by
+the one animation-set period. Rotation blends the source components before
+normalizing; normalizing each packed key before interpolation would subtly
+change the native result. Pairwise quaternion signs include the closing seam.
+This API does not select per-instance phases, advance a runtime controller,
+upload vertices, alter bounds or rebuild collision. Production actors continue
+to use their first pose.
+
+The 16 focused CPU checks include synthetic rigid and weighted parts,
 parent/local transforms, immutable independent actor bakes, bad selections,
 bad later poses that leave frame zero usable, and two original-asset tests.
 For the original tree, all four selected poses change branches while leaving
 every trunk vertex and its 42 collision triangles unchanged.
+The time tests cover key boundaries and closure, intermediate nlerp, equivalent
+quaternion signs, shared periods, millisecond truncation, unsupported inputs,
+source/binding immutability, and a matrix produced by the isolated native BR1
+witness. The original Citymist test verifies a four-second period, matching
+whole-second authored poses and intermediate motion with a static trunk.
 
 The original Citymist GPU regression verifies all 50 placements, then captures
 an isolated textured tree at each of the four explicit source poses. The
@@ -218,8 +343,8 @@ CARGO_INCREMENTAL=0 EQ_DIR=/path/to/EverQuest cargo test -p openeq-assets --lib 
 CARGO_INCREMENTAL=0 EQ_DIR=/path/to/EverQuest cargo test -p openeq-render --test wld_objects -- --include-ignored
 ```
 
-Autonomous playback remains gated on the quaternion/output-matrix contract,
-host clock units, and placed-tree controller ownership. Future integration
-also needs explicit animated bounds and a collision policy for actors whose
+Autonomous playback remains disabled. Future renderer integration needs
+explicit source-vertex bindings through material baking, animated bounds and
+a collision policy for actors whose
 collidable parts move; the static Citymist trunk does not establish a general
 collision policy.

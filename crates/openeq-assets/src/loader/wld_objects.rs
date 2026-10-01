@@ -1,16 +1,18 @@
 //! Actor-owned WLD objects, sampled at the first authored skeletal frame.
 //!
 //! This retains the source tracks and meshes for future animation and permits
-//! explicit authored-frame inspection. It does not
-//! choose an animation rate, flatten LOD variants, or turn mesh names into actor
-//! aliases. See `docs/WLD_PLACED_OBJECTS.md` for evidence and supported bounds.
+//! explicit authored-frame inspection and bounded native-compatible time
+//! sampling. Production actors remain at their first pose. This does not flatten
+//! LOD variants or turn mesh names into actor aliases. See
+//! `docs/WLD_OBJECT_ANIMATION.md` for timing evidence and supported bounds.
 
 use super::{Scene, SceneObject, append_baked, object_key};
-use crate::wld::{ActorDef, Chunk, Fragment, Mesh, PieceTrack, Ref, Skeleton, Wld};
+use crate::wld::{ActorDef, Chunk, Fragment, Frame, Mesh, PieceTrack, Ref, Skeleton, Wld};
 use crate::{Error, Result, mesh};
 use glam::{Mat4, Quat, Vec3};
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::time::Duration;
 
 const MAX_TRACKS: usize = 4096;
 const MAX_PARTS: usize = 4096;
@@ -47,6 +49,59 @@ pub struct ObjectTrack {
 }
 
 impl ObjectSource {
+    /// Shared loop period for the supported short packed-WLD animation family.
+    ///
+    /// All animated tracks must have the same explicit positive interval and
+    /// two to four frames, reference flags 5, and constant scale/translation.
+    /// Static tracks require reference flags 4 and no interval. Unknown flags,
+    /// floating-point track layouts, long/mixed clips, changing scale or
+    /// translation, and degenerate/ambiguous rotations are rejected.
+    pub fn animation_period(&self) -> Result<Duration> {
+        let skeleton = self
+            .skeleton
+            .as_ref()
+            .ok_or_else(|| invalid("static object has no skeletal animation"))?;
+        let (count, interval) = animation_timing(skeleton)?;
+        Ok(Duration::from_millis(count as u64 * u64::from(interval)))
+    }
+
+    /// Sample supported packed-WLD motion at an explicitly supplied shared time.
+    ///
+    /// Native time is whole milliseconds. The supplied time is truncated to
+    /// milliseconds and wrapped once by the shared animation-set period. This
+    /// includes the last-to-first closing interval and normalized linear
+    /// quaternion interpolation established in the native D3DX implementation.
+    /// No instance phase, runtime clock, bounds or collision state is changed.
+    /// Returned meshes preserve source topology and binding ownership, as in
+    /// [`Self::sample_authored_frames`]. See [`Self::animation_period`] for bounds.
+    pub fn sample_animation(&self, elapsed: Duration) -> Result<Vec<Mesh>> {
+        let skeleton = self
+            .skeleton
+            .as_ref()
+            .ok_or_else(|| invalid("static object has no skeletal animation"))?;
+        let (count, interval) = animation_timing(skeleton)?;
+        let phase = elapsed.as_millis() % (count as u128 * u128::from(interval));
+        let index = (phase / u128::from(interval)) as usize;
+        let fraction = (phase % u128::from(interval)) as f32 / interval as f32;
+        let transforms = pose_with(skeleton, |track| {
+            let frames = &skeleton.tracks[track].definition.frames;
+            let mut frame = frames[0];
+            if frames.len() > 1 {
+                let a = Quat::from_array(frames[index].rotation);
+                let mut b = Quat::from_array(frames[(index + 1) % count].rotation);
+                if a.dot(b) < 0. {
+                    b = -b;
+                }
+                // Keep the packed keys' original magnitudes until the blend.
+                // Native GetSRT conjugates EQ's negative-W keys, yielding -rawQ;
+                // that global sign has no effect on the final rotation matrix.
+                frame.rotation = (a + (b - a) * fraction).to_array();
+            }
+            frame_transform(&frame)
+        })?;
+        transform_meshes(self, Some(&transforms))
+    }
+
     /// Inspect exact authored frames using the same transform convention as the
     /// initial-pose loader. Supply one frame index per track (empty for static
     /// actors). This does not infer timing, looping, or native animation output.
@@ -187,36 +242,101 @@ fn first_pose(source: &ObjectSkeleton) -> Result<Vec<Mat4>> {
     pose_at_frames(source, None)
 }
 
+fn animation_timing(source: &ObjectSkeleton) -> Result<(usize, u32)> {
+    if source.tracks.len() != source.definition.tracks.len() {
+        return Err(invalid("object animation does not match track count"));
+    }
+    hierarchy(&source.definition)?;
+    let mut timing = None;
+    for track in &source.tracks {
+        let frames = &track.definition.frames;
+        if track.definition.flags != 8 || frames.is_empty() || frames.len() > 4 {
+            return Err(invalid(
+                "unsupported object animation track layout or length",
+            ));
+        }
+        if frames.len() == 1 {
+            if track.reference_flags != 4 || track.speed.is_some() {
+                return Err(invalid("unsupported static object animation reference"));
+            }
+        } else {
+            let interval = track.speed.filter(|interval| {
+                // Every key timestamp must be an exactly representable float.
+                *interval > 0 && *interval <= (1 << 24) / frames.len() as u32
+            });
+            if track.reference_flags != 5 || interval.is_none() {
+                return Err(invalid("unsupported object animation timing or reference"));
+            }
+            let candidate = (frames.len(), interval.unwrap());
+            if timing.is_some_and(|timing| timing != candidate) {
+                return Err(invalid("mixed object animation timelines are unsupported"));
+            }
+            timing = Some(candidate);
+        }
+        for frame in frames {
+            frame_transform(frame)?;
+            if frame.scale != frames[0].scale || frame.translation != frames[0].translation {
+                return Err(invalid(
+                    "changing object animation scale or translation is unsupported",
+                ));
+            }
+        }
+        for (index, frame) in frames.iter().enumerate() {
+            let next = &frames[(index + 1) % frames.len()];
+            let dot = Quat::from_array(frame.rotation)
+                .normalize()
+                .dot(Quat::from_array(next.rotation).normalize());
+            if !dot.is_finite() || dot.abs() < 1e-6 {
+                return Err(invalid("ambiguous object animation quaternion hemisphere"));
+            }
+        }
+    }
+    timing.ok_or_else(|| invalid("object has no animated tracks"))
+}
+
+fn frame_transform(frame: &Frame) -> Result<Mat4> {
+    let rotation = Quat::from_array(frame.rotation);
+    if !rotation.is_finite()
+        || !rotation.length_squared().is_finite()
+        || rotation.length_squared() <= 1e-12
+        || !frame.translation.iter().all(|value| value.is_finite())
+        || !frame.scale.is_finite()
+        || frame.scale <= 0.
+    {
+        return Err(invalid("unsupported nonfinite or degenerate object pose"));
+    }
+    Ok(Mat4::from_scale_rotation_translation(
+        Vec3::splat(frame.scale),
+        rotation.normalize(),
+        Vec3::from_array(frame.translation),
+    ))
+}
+
 fn pose_at_frames(source: &ObjectSkeleton, frame_indices: Option<&[usize]>) -> Result<Vec<Mat4>> {
     if source.tracks.len() != source.definition.tracks.len()
         || frame_indices.is_some_and(|indices| indices.len() != source.tracks.len())
     {
         return Err(invalid("object frame selection does not match track count"));
     }
-    let (parents, order) = hierarchy(&source.definition)?;
-    let mut transforms = vec![Mat4::IDENTITY; source.tracks.len()];
-    for index in order {
+    pose_with(source, |index| {
         let frame_index = frame_indices.map_or(0, |indices| indices[index]);
         let frame = source.tracks[index]
             .definition
             .frames
             .get(frame_index)
             .ok_or_else(|| invalid("object frame selection is out of range"))?;
-        let rotation = Quat::from_array(frame.rotation);
-        if !rotation.is_finite()
-            || !rotation.length_squared().is_finite()
-            || rotation.length_squared() <= 1e-12
-            || !frame.translation.iter().all(|value| value.is_finite())
-            || !frame.scale.is_finite()
-            || frame.scale <= 0.
-        {
-            return Err(invalid("unsupported nonfinite or degenerate object pose"));
-        }
-        let local = Mat4::from_scale_rotation_translation(
-            Vec3::splat(frame.scale),
-            rotation.normalize(),
-            Vec3::from_array(frame.translation),
-        );
+        frame_transform(frame)
+    })
+}
+
+fn pose_with(
+    source: &ObjectSkeleton,
+    mut local_pose: impl FnMut(usize) -> Result<Mat4>,
+) -> Result<Vec<Mat4>> {
+    let (parents, order) = hierarchy(&source.definition)?;
+    let mut transforms = vec![Mat4::IDENTITY; source.tracks.len()];
+    for index in order {
+        let local = local_pose(index)?;
         transforms[index] = parents[index].map_or(local, |parent| transforms[parent] * local);
         if !transforms[index].is_finite() {
             return Err(invalid("object skeleton transform overflow"));

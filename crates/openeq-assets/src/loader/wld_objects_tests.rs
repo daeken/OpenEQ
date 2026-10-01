@@ -179,6 +179,248 @@ fn empty_scene() -> Scene {
     Scene::from_geometry("fixture".into(), vec![], vec![], vec![])
 }
 
+fn short_animation_source(weighted: bool) -> ObjectSource {
+    let mut source = source(&tree_fixture(weighted), "TREE_ACTORDEF");
+    let skeleton = source.skeleton.as_mut().unwrap();
+    for track in &mut skeleton.tracks {
+        track.definition.flags = 8;
+        track.reference_flags = if track.speed.is_some() { 5 } else { 4 };
+    }
+    let child = &mut skeleton.tracks[1].definition.frames;
+    child[1] = Frame {
+        // Packed approximation to a 120-degree Z rotation. Keep the source
+        // magnitudes so this fixture distinguishes nlerp from slerp.
+        rotation: [0., 0., 14189. / 16384., 0.5],
+        ..child[0]
+    };
+    source
+}
+
+#[test]
+fn timed_frames_close_the_loop_and_preserve_sources_and_bindings() {
+    for weighted in [false, true] {
+        let source = short_animation_source(weighted);
+        let first = source.sample_authored_frames(&[0, 0]).unwrap();
+        assert_eq!(source.animation_period().unwrap(), Duration::from_secs(2));
+        let start = source.sample_animation(Duration::ZERO).unwrap();
+        assert_eq!(start[0].vertices, first[0].vertices);
+        let end = source.sample_animation(Duration::from_secs(2)).unwrap();
+        assert_eq!(start[0].vertices, end[0].vertices);
+        let middle = source
+            .sample_animation(Duration::from_millis(1000))
+            .unwrap();
+        let authored = source.sample_authored_frames(&[0, 1]).unwrap();
+        for (actual, expected) in middle[0].vertices.iter().zip(&authored[0].vertices) {
+            near(*actual, *expected);
+        }
+        let opening = source.sample_animation(Duration::from_millis(500)).unwrap();
+        let closing = source
+            .sample_animation(Duration::from_millis(1500))
+            .unwrap();
+        for (actual, expected) in opening[0].vertices.iter().zip(&closing[0].vertices) {
+            near(*actual, *expected);
+        }
+        assert_ne!(opening[0].vertices, start[0].vertices);
+        for elapsed in [Duration::from_millis(8500), Duration::from_micros(500999)] {
+            assert_eq!(
+                source.sample_animation(elapsed).unwrap()[0].vertices,
+                opening[0].vertices
+            );
+        }
+        assert_eq!(opening[0].tex_coords, source.parts[0].mesh.tex_coords);
+        assert_eq!(opening[0].materials, source.parts[0].mesh.materials);
+        assert_eq!(opening[0].vertex_pieces, source.parts[0].mesh.vertex_pieces);
+        assert!(
+            opening[0]
+                .polygons
+                .iter()
+                .zip(&first[0].polygons)
+                .all(|(a, b)| { (a.a, a.b, a.c, a.collidable) == (b.a, b.b, b.c, b.collidable) })
+        );
+        near(source.parts[0].mesh.vertices[0], [2., 3., 4.]);
+        assert_eq!(
+            posed_meshes(&source).unwrap()[0].vertices,
+            first[0].vertices
+        );
+    }
+}
+
+#[test]
+fn timed_frames_use_native_nlerp_and_quaternion_sign_continuity() {
+    let source = short_animation_source(false);
+    let mut opposite_sign = source.clone();
+    opposite_sign.skeleton.as_mut().unwrap().tracks[1]
+        .definition
+        .frames[1]
+        .rotation = source.skeleton.as_ref().unwrap().tracks[1]
+        .definition
+        .frames[1]
+        .rotation
+        .map(|value| -value);
+    for milliseconds in [0, 250, 500, 999, 1000, 1250, 1750, 1999, 2000] {
+        let time = Duration::from_millis(milliseconds);
+        assert_eq!(
+            source.sample_animation(time).unwrap()[0].vertices,
+            opposite_sign.sample_animation(time).unwrap()[0].vertices
+        );
+    }
+    // At 25% of the first interval, nlerp's angle is about 27.8 degrees,
+    // whereas slerp would rotate by 30 degrees. Parent is 90 degrees Z.
+    let actual = source.sample_animation(Duration::from_millis(250)).unwrap();
+    let child_angle = 2. * ((14189.0f64 / 16384. * 0.25) / 0.875).atan();
+    let (s, c) = child_angle.sin_cos();
+    let child_x = 6. * c - 9. * s + 1.;
+    let child_y = 6. * s + 9. * c + 2.;
+    near(
+        actual[0].vertices[0],
+        [
+            (10. - 2. * child_y) as f32,
+            (20. + 2. * child_x) as f32,
+            60.,
+        ],
+    );
+}
+
+#[test]
+fn timed_frames_share_one_phase_and_reject_unproven_timelines() {
+    let mut source = short_animation_source(false);
+    let skeleton = source.skeleton.as_mut().unwrap();
+    let root_frame = skeleton.tracks[0].definition.frames[0];
+    skeleton.tracks[0].definition.frames.push(root_frame);
+    skeleton.tracks[0].reference_flags = 5;
+    skeleton.tracks[0].speed = Some(1000);
+    assert_eq!(source.animation_period().unwrap(), Duration::from_secs(2));
+    // A constant animated parent still participates in the shared set period.
+    let duplicate = source.clone();
+    assert_eq!(
+        source.sample_animation(Duration::from_millis(700)).unwrap()[0].vertices,
+        duplicate
+            .sample_animation(Duration::from_millis(2700))
+            .unwrap()[0]
+            .vertices
+    );
+    source.skeleton.as_mut().unwrap().tracks[0].speed = Some(500);
+    assert!(source.animation_period().is_err());
+    assert!(source.sample_animation(Duration::ZERO).is_err());
+    source.skeleton.as_mut().unwrap().tracks[0].speed = Some(1000);
+    source.skeleton.as_mut().unwrap().tracks[0]
+        .definition
+        .frames
+        .push(root_frame);
+    assert!(source.animation_period().is_err());
+}
+
+#[test]
+fn timed_frames_reject_unsupported_or_invalid_tracks_without_affecting_first_pose() {
+    let source = short_animation_source(false);
+    let first = posed_meshes(&source).unwrap();
+    let mut mutations: Vec<ObjectSource> = vec![];
+    for (flags, speed) in [
+        (1, Some(1000)),
+        (7, Some(1000)),
+        (5, None),
+        (5, Some(0)),
+        (5, Some(u32::MAX)),
+    ] {
+        let mut bad = source.clone();
+        let track = &mut bad.skeleton.as_mut().unwrap().tracks[1];
+        track.reference_flags = flags;
+        track.speed = speed;
+        mutations.push(bad);
+    }
+    for flags in [0, 9] {
+        let mut bad = source.clone();
+        bad.skeleton.as_mut().unwrap().tracks[1].definition.flags = flags;
+        mutations.push(bad);
+    }
+    for frame in [
+        frame([f32::NAN, 0., 0.], 3.),
+        frame([1., 2., 3.], 4.),
+        frame([1., 2., 4.], 3.),
+        Frame {
+            rotation: [0.; 4],
+            ..frame([1., 2., 3.], 3.)
+        },
+        Frame {
+            rotation: [0., 0., 1., 0.],
+            ..frame([1., 2., 3.], 3.)
+        },
+    ] {
+        let mut bad = source.clone();
+        bad.skeleton.as_mut().unwrap().tracks[1].definition.frames[1] = frame;
+        mutations.push(bad);
+    }
+    let mut long = source.clone();
+    let frames = &mut long.skeleton.as_mut().unwrap().tracks[1].definition.frames;
+    frames.resize(5, frames[0]);
+    mutations.push(long);
+    let mut static_flags = source.clone();
+    static_flags.skeleton.as_mut().unwrap().tracks[0].reference_flags = 5;
+    mutations.push(static_flags);
+    for bad in mutations {
+        assert!(bad.animation_period().is_err());
+        assert!(bad.sample_animation(Duration::ZERO).is_err());
+        assert_eq!(posed_meshes(&bad).unwrap()[0].vertices, first[0].vertices);
+    }
+    let static_source = self::source(&tree_fixture(false), "STATIC_ACTORDEF");
+    assert!(static_source.animation_period().is_err());
+    assert!(static_source.sample_animation(Duration::ZERO).is_err());
+}
+
+#[test]
+fn timed_br1_matches_original_d3dx_scalar_output_witness() {
+    let mut source = short_animation_source(false);
+    let skeleton = source.skeleton.as_mut().unwrap();
+    skeleton.tracks[0].definition.frames[0] = frame([0.; 3], 1.);
+    skeleton.tracks[1].definition.frames = [
+        [-11399., 1619., 1639., -11540.],
+        [-11418., 1479., 1498., -11559.],
+        [-11399., 1622., 1216., -11592.],
+        [-11388., 1692., 1287., -11584.],
+    ]
+    .into_iter()
+    .map(|[w, x, y, z]| Frame {
+        rotation: [x / 16384., y / 16384., z / 16384., w / 16384.],
+        ..frame([1592. / 256., -461. / 256., 21245. / 256.], 1.)
+    })
+    .collect();
+    // Native GetSRT at 500 ms, then controller-equivalent normalization and
+    // D3DXMatrixRotationQuaternion. Exact binary provenance is in the research
+    // document. D3DX rows flatten to glam columns for the same point transform.
+    let native = Mat4::from_cols_array(&[
+        -0.012286968,
+        0.9999245,
+        0.000030211837,
+        0.,
+        -0.9637163,
+        -0.011833985,
+        -0.26666594,
+        0.,
+        -0.26664546,
+        -0.0033056452,
+        0.963789,
+        0.,
+        6.21875,
+        -461. / 256.,
+        82.98828,
+        1.,
+    ]);
+    let sampled = source.sample_animation(Duration::from_millis(500)).unwrap();
+    for (original, actual) in source.parts[0]
+        .mesh
+        .vertices
+        .iter()
+        .zip(&sampled[0].vertices)
+    {
+        near(
+            *actual,
+            native
+                .transform_point3(Vec3::from_array(*original))
+                .to_array(),
+        );
+    }
+}
+
 fn triangles(geometry: &mesh::Geometry) -> Vec<Vec<u32>> {
     let mut triangles: Vec<_> = geometry
         .indices
@@ -560,6 +802,11 @@ fn original_citymist_trees_keep_authored_parts_frames_and_trunk_collision() {
         );
     }
     let posed = posed_meshes(source).unwrap();
+    assert_eq!(source.animation_period().unwrap(), Duration::from_secs(4));
+    let closed = source.sample_animation(Duration::from_secs(4)).unwrap();
+    for (actual, expected) in closed.iter().zip(&posed) {
+        assert_eq!(actual.vertices, expected.vertices);
+    }
     let trunk = source
         .parts
         .iter()
@@ -610,8 +857,7 @@ fn original_citymist_trees_keep_authored_parts_frames_and_trunk_collision() {
             ],
         );
     }
-    // All four exact authored-frame snapshots are available for comparing with
-    // the native runtime. This deliberately makes no playback-time assertion.
+    // Native whole-second keys match the corresponding authored poses.
     for frame_index in 0..4 {
         let selection = skeleton
             .tracks
@@ -625,6 +871,14 @@ fn original_citymist_trees_keep_authored_parts_frames_and_trunk_collision() {
             })
             .collect::<Vec<_>>();
         let sampled = source.sample_authored_frames(&selection).unwrap();
+        let timed = source
+            .sample_animation(Duration::from_secs(frame_index as u64))
+            .unwrap();
+        for (actual, expected) in timed.iter().zip(&sampled) {
+            for (actual, expected) in actual.vertices.iter().zip(&expected.vertices) {
+                near(*actual, *expected);
+            }
+        }
         assert_eq!(sampled[trunk].vertices, posed[trunk].vertices);
         assert_eq!(sampled[trunk].normals, posed[trunk].normals);
         assert_eq!(
@@ -647,6 +901,15 @@ fn original_citymist_trees_keep_authored_parts_frames_and_trunk_collision() {
             }
         }
     }
+    let between = source.sample_animation(Duration::from_millis(500)).unwrap();
+    assert_eq!(between[trunk].vertices, posed[trunk].vertices);
+    assert_eq!(between[trunk].normals, posed[trunk].normals);
+    assert!(
+        between
+            .iter()
+            .enumerate()
+            .any(|(index, mesh)| { index != trunk && mesh.vertices != posed[index].vertices })
+    );
     // Independently rotate one original branch from its packed quaternion words.
     let branch = source
         .parts

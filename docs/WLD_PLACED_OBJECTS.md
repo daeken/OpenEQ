@@ -107,12 +107,14 @@ An explicit authored-frame diagnostic now samples retained tracks without
 mutating source meshes or baked scenes. Its frame zero is pixel-identical to
 the loaded tree; the other three branch poses are visibly different while
 the trunk and its collision stay fixed. Production remains at the first pose.
-See [native animation research](WLD_OBJECT_ANIMATION.md) for the proven key
-timing and loop closure, the quaternion and clock boundaries that still need
-proof, exact binary addresses, and the expanded original-asset regressions.
+See [native animation research](WLD_OBJECT_ANIMATION.md) for the proven native
+clock, loop, quaternion interpolation and shared-controller selection. The
+bounded `animation_period()` and `sample_animation(Duration)` APIs now sample
+short packed tracks with constant translation/scale and a shared timeline.
+Unsupported clips return an error; production rendering remains at frame zero.
 
-Next, resolve native animated quaternion output, host clock units and placed
-controller ownership before integrating runtime motion and collision policy.
+Next, connect supported motion to explicit source-vertex bindings and establish
+animated bounds and collision policy before integrating runtime motion.
 Particle-linked actors and other unsupported fragment families remain separate
 work; this implementation must not silently turn them into static mesh aliases.
 
