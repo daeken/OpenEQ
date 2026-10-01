@@ -669,3 +669,32 @@ to the same f32 bit patterns; seven sampler tests and strict lint passed again.
 Evidence: `/tmp/openeq-source-sampler-*` and
 `/tmp/openeq-particle-sampler-final-{tests,clippy}.log`. Root independently reran
 the native control probe and verified all eight sampler evidence hashes.
+
+## October 1 DXT1 alpha and particle GPU diagnostics
+
+Legacy DXT1 textures now retain their encoded one-bit transparency. The image
+library previously decoded them to RGB, after which RGBA conversion made every
+pixel opaque. A raw survey finds 51 affected texture entries in 23 EQG archives;
+all omit the DDS alpha flag, so the fix follows the BC1 selector rule directly.
+Native upload controls preserve the original DXT1 bytes and format request.
+See `DDS_BC1_ALPHA.md` for corpus, native and GPU evidence and limitations.
+
+Original hardware BC1 checks match alpha exactly. The controlled chainlink
+render now shows authored holes, with opaque chain pixels unchanged. Existing
+RGB decode quantization remains unchanged and can differ from this GPU by two
+byte steps. PoK/GFay's surveyed base BC1 textures do not use transparent codes;
+this correction does not explain separate masking issues there.
+
+A separate particle diagnostic now tests captured projected quads against the
+explicit native-default UNORM blend/depth/texture contract. It uses original
+texture dimensions and no automatic scene effects. Native mip generation,
+complete inherited state and original framebuffer comparison remain open.
+See `WLD_PARTICLE_GPU_DIAGNOSTIC.md`. The executed native shared-index builder
+follow-up is being integrated separately from the initial seven-test version.
+
+The integrated baseline passes **1,072 tests, zero failed/ignored**, with
+original assets, GPU and digitally silent audio. Strict lint, client build
+and no-default checks pass; logs use `/tmp/openeq-bc1-diagnostic-*`. Subsequent
+index-topology and TER-lighting edits are explicitly outside this checkpoint.
+The original loading-loop FPU mode is better established, but preservation
+across intervening callbacks is still open; see `EQG_TER_FPU_LIFECYCLE.md`.

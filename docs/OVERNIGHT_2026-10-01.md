@@ -374,3 +374,39 @@ cohesive commits and pushing to `master`.
   active loader caller. Cache research found signed scope ordering rather than
   the earlier harness's exact-context dictionary. Preserve this evidence
   boundary until the active loading trace and document corrections are frozen.
+
+## 04:55 texture alpha and particle GPU checkpoint
+
+- `f96b9c8` restores DXT1 one-bit alpha discarded by the image library's RGB
+  decode. Independent raw survey: 51 affected members / 39 unique files across
+  23 EQG archives; every affected header omits the separate alpha flag. Native
+  DDS upload keeps the compressed bytes and requests DXT1. Root reproduced the
+  twelve native controls and the 39-file independent alpha count crosscheck.
+- Hardware BC1 comparisons pass for synthetic asymmetric blocks, original PoK
+  smoke/flame negatives, Cosul chainlink and Broodlands canopy. Alpha and texel
+  addressing agree exactly; existing RGB quantization differs by at most two
+  byte steps. An actual masked-chain render exposes 13,312 background pixels
+  while preserving 3,072 opaque pixels in the checked footprint. Captures:
+  `/tmp/openeq-bc1-alpha-preview/`. This is not a claim about each material's
+  mask policy or a fix to PoK/GFay textures, whose surveyed BC1 bases lack alpha.
+- The initial standalone projected-particle GPU implementation passed all seven
+  tests, original textures and independent review. It is a separate UNORM,
+  level-zero diagnostic, not live scene effects. A subsequent executed native
+  index-builder discovery is being integrated by xml_ui: preserve its edits.
+- Full baseline verification: **1,072 workspace tests pass, zero failed/ignored**,
+  with original assets, GPU and digitally silent audio. Strict workspace lint,
+  normal client build and no-default checks pass. Logs:
+  `/tmp/openeq-bc1-diagnostic-{workspace,clippy,build,no-default}.log`.
+  This precedes the subsequent index-topology regression and lighting work.
+- `4eadc07` records native WLD scope/cache/load lifecycle, independently rerun;
+  `be60f3a` records loading-thread FPU resets and synchronous TER calls. Root
+  reran the 24-case FPU witness and reproduced its hashes. Intervening callback
+  preservation remains unproven; no normal/tangent numeric policy was changed.
+- Active next work: root and cursor_review own exact-family TER lighting source
+  selection plus geometry/color-aware packing. Source provenance matters:
+  only loose ZON-v2 installs the first placement stream, and archived TER LIT
+  lookup never falls back to loose files. Existing dedup drops distinct lighting
+  at 9,794 keys in Delveb/Guild Lobby/Thundercrest. No shader change planned in
+  this source-binding step. npc_assets researches native longer-track compression;
+  xml_ui verifies native particle index and D3DX copy behavior. Preserve their
+  scopes; pending work is not covered by the 1,072-test checkpoint.
