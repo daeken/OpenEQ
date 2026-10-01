@@ -127,3 +127,27 @@ cohesive commits and pushing to `master`.
   Native light/color-space parity and other additive shader families remain
   separate. The report also records exact opaque descriptor bindings useful
   for the nonfinite UV investigation (MPLBasic uses TextureD1T, not TextureD1).
+
+## 02:30 safe checkpoint and next active work
+
+- `f35062c`: bounded native WLD time sampler verified and committed. All 978
+  workspace tests pass, zero failed/ignored, including originals/GPU/silent
+  audio; full lint/build/no-default/format checks pass. Evidence:
+  `/tmp/openeq-native-animation-*.log`. Independent reviewer cleared the native
+  evidence, support bounds and implementation. Production motion stays disabled.
+- `xml_ui` is now implementing dedicated additive rendering from the frozen
+  Thundercrest evidence. Owns material metadata/classification and renderer
+  pipeline/shader/tests. Only the proven TER `AddAlpha_MaxCB1.fx` region family
+  should be enabled. Preserve ordinary material sharing, cutoff, depth/no-write,
+  no-fog and full-strength RGB addition; no invented generic shader support.
+- `npc_assets` is surveying installed WLD object actors against the sampler,
+  with key/midpoint collision-vertex checks and explicit archive/zone counting.
+  Owns temporary probe and `WLD_ANIMATION_SURVEY.md` if evidence warrants.
+  Preserve exact source/commit provenance if additive edits affect compilation.
+- `cursor_review` is available for the next bounded independent review.
+- Root should inspect current agent status and working tree before continuing.
+  Do not claim the 978-test checkpoint verifies subsequent additive edits.
+  Integrate cohesive frozen work, verify original GPU behavior, then push.
+  Runtime tree wiring still needs explicit bake-time vertex identity, motion
+  ownership and bounds/collision handling; do not re-bake and zip arbitrary
+  packed vertices merely because group order is now deterministic.

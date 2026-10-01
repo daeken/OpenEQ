@@ -16,9 +16,9 @@ that a zone looks, moves or sounds right.
    a stair excursion cannot regain eligibility merely by returning to the
    expected endpoint. General deflected crossing integration is still pending.
 2. Complete WLD placed-actor behavior: first-pose geometry now resolves supported
-   skeletons, with explicit authored-frame diagnostics and retained timing flags. Native
-   playback transforms/phase, collision policy and particle-linked fragment
-   families still need evidence. See `WLD_OBJECT_ANIMATION.md`.
+   skeletons, with a native-time sampler for verified short packed tracks.
+   Runtime source-vertex bindings/uploads, animated bounds, collision policy
+   and particle-linked fragment families remain unfinished. See `WLD_OBJECT_ANIMATION.md`.
 3. Follow authored nonfinite mesh attributes through native vertex upload and
    material/channel selection. Preserve the 21 original outliers; do not invent
    normals/UVs or remove geometry without recovering native behavior.
@@ -30,11 +30,10 @@ that a zone looks, moves or sounds right.
    the uploaded mip levels, reducing distant shimmer. Unimplemented
    MaxLava/MaxWaterFall/additive shaders, normal mapping, alpha-safe/clamped
    filtering, linear/periodic mip construction and Thundercrest's missing
-   `clz-0` sky selection remain follow-ups. See `RESTORED_EQG_GPU_AUDIT.md`
-   `EQG_ADDITIVE_SHADER.md` and `SKY_PATTERN_FOLLOWUP.md`; failed native
-   weather selection preserves
-   manager state, but host transition/reset behavior is still unresolved. Track ongoing work in
-   `OVERNIGHT_2026-10-01.md`.
+   `clz-0` sky selection remain follow-ups. See `RESTORED_EQG_GPU_AUDIT.md`,
+   `EQG_ADDITIVE_SHADER.md` and `SKY_PATTERN_FOLLOWUP.md`. Failed native weather
+   selection preserves manager state, but host transition/reset behavior is
+   still unresolved. Track ongoing work in `OVERNIGHT_2026-10-01.md`.
    Native adaptive terrain tessellation/normal generation remains separate from
    the supported full-grid topology.
 5. Finish native XMI loop/SysEx behavior, original-compatible timbres and audio
@@ -440,3 +439,30 @@ identical bakes. The new regression fails on the old code; all 10 collision
 fixtures, 11 object fixtures, original Citymist GPU rendering and strict lint
 pass. See `WLD_PLACED_OBJECTS.md`. Stable source bindings and separate motion
 ownership are still required before fixed-topology runtime animation.
+
+
+## October 1 02:30 checkpoint: native short-track sampler
+
+`f35062c` adds `ObjectSource::animation_period()` and
+`sample_animation(Duration)` for verified short packed tracks. Read-only native
+host/graphics traces establish milliseconds, Citymist shared controllers and
+loop timing. The matching Microsoft D3DX library establishes quaternion
+conversion, normalized component interpolation and short-clip compression
+bounds. Isolated native math execution checks ten BR1 sample times; this is
+not a full running-client comparison. Independent review found no actionable
+issue. See `WLD_OBJECT_ANIMATION.md` for provenance and exact support bounds.
+
+All **978 workspace tests passed, zero failed or ignored**, including originals,
+GPU and offline/silent audio, at this checkpoint. Strict workspace Clippy,
+normal client build, all-target no-default-feature check, formatting and diff
+checks pass. Evidence: `/tmp/openeq-native-animation-{workspace,clippy,build,no-default}.log`;
+UI captures: `/tmp/openeq-native-animation-ui/`.
+
+Production placed actors still use the initial pose. The sampler accepts an
+explicit shared time and preserves source geometry/collision; renderer motion
+is not enabled. Next integration needs stable source-vertex bindings through
+material baking, ownership-aware deduplication, animated bounds and an explicit
+collision policy. A corpus survey is in progress to identify additional
+supported actors. Dedicated additive-glass rendering is also in progress from
+`EQG_ADDITIVE_SHADER.md`; these new uncommitted changes are not covered by the
+978-test checkpoint.
