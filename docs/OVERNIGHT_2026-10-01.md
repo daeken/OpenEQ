@@ -510,3 +510,35 @@ the swept bounds to at most one relevant wet leaf/identity box. Ten helper and
 34 movement tests pass, including two new saved-move fallbacks; this follow-up
 is beyond the historical 1,121-test count above. Straight-span behavior is
 unchanged. See the final sections of the deflected movement/review notes.
+
+## October 1 06:20 native sky sampling checkpoint
+
+Sky and first-cloud color tables now use the original fixed-tick day keys and
+byte interpolation, preserving exact source filenames, key identity and blend
+weights. Zero-duration equality follows the original strict selector. All 78
+resolvable installed color sets match 1,131 original-instruction full-table
+samples; independent review additionally checked 8,472 synthetic samples.
+The known missing PoDisease/lava declarations stay explicit. Raw reserved
+lighting swatches are available without changing environment shading. See
+`SKY_LIGHT_COLOR_INPUTS.md`.
+
+An original PoK dawn GPU test matches an independently byte-blended Night/Dawn
+table in three views, differs from both endpoints and preserves the renderer's
+auxiliary-entry/pole exclusion. It does not claim exact native dome geometry.
+
+The integrated checkpoint (including final ascending-seam fixes) passes
+**1,132 tests, zero failed/ignored, across 109 suites**, with original assets,
+GPU and digitally silent audio. Strict workspace lint, client build, all-target
+no-default and final formatting/diff checks pass. Logs:
+`/tmp/openeq-native-sky-sampling-*`; the final formatting log is `fmt-final.log`.
+
+Executed host lighting transfer is recorded in `NATIVE_HOST_DIRECTIONAL_LIGHT.md`
+and `NATIVE_HOST_AMBIENT.md`. Original sun/moon angle writers, native trig
+tables, vision floors and two distinct ambient outputs are recovered, while
+character scalar geometry, full caller cadence and point-light membership
+remain separate. Root reran the sky and ambient witnesses; independent review
+reproduced the directional witness. No unproven live lighting is enabled.
+
+Next active integration is a server-synchronized local day clock and background
+minute-based sky refresh, so colors advance between TimeOfDay packets without
+decoding textures on the event loop. It is outside this checkpoint until tested.
