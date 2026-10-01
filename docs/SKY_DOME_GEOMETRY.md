@@ -240,3 +240,38 @@ transpose, camera translation, primitive counts and native cull transition.
 | Initial emitted vertex bytes (`<fffI`) | `365421c1ef1875397ecb000cc5ef05355d53f30ff0ac24ccf9d156abb15cd6c5` |
 | Emitted index bytes (little-endian u16) | `fdf35e7dbae8b7ddcc8b636d20175aae514267d1d2224952b7b62afc7dde3ae4` |
 | Source-color index bytes (little-endian u32) | `5ded250ddc5504d8dc2ebdc41837ddedb39858bc357c8825232041a3ae13a6bf` |
+
+
+## Opt-in CPU geometry diagnostic
+
+`openeq_assets::environment::dome::NativeSkyDome::build` now exposes the proven
+mesh in original EQ Z-up coordinates, with supplied positive finite radius,
+exact triangle/source-index order and packed AARRGGBB diffuse words. It accepts
+only an intact `OriginalDome` 32-by-32 table. It applies no celestial transform,
+scene-axis conversion, camera translation or rendering. The live sky remains
+unchanged pending its complete draw/color-transfer contract.
+
+Seven tests compare independent native CRCs for every triangle index, every
+source index and the synthetic diffuse witness. They preserve the irregular
+seam/cap geometry, near-pole colors and alpha bits, reject malformed inputs,
+and compare 17 sparse original position snapshots within 0.000062 units at
+radius 800. The implementation uses original stored f32 angle constants with
+f64 trigonometry and final f32 stores, explicitly without promising x87 bit
+identity across platforms.
+
+A standalone cross-check compares all 962 positions and both complete index
+streams to the frozen original JSON. On this Apple M4 run all positions are
+bit-identical, and the source/index SHA-256 values match the table above.
+Four original PoK sampled tables additionally verify 3,848 packed color copies.
+The local probe is `/tmp/openeq-sky-dome-port-check.rs`, SHA-256
+`9c054d595ce9b92a331403d4030ffff42ed2b83b8a12e63d7ebe61cee43712fe`;
+its log is `/tmp/openeq-sky-dome-port-check.log`. No source asset bytes are
+repository fixtures.
+
+All **374 assets tests pass**, zero failed/ignored, including original assets.
+Strict workspace Clippy, formatting and diff checks pass. A test-expression
+precedence lint was corrected without changing the expression's value, and
+all seven dome tests passed again. Logs:
+`/tmp/openeq-sky-dome-port-{assets,tests-final,clippy-final}.log`.
+This is an assets-only follow-up to the 1,148-test complete workspace checkpoint;
+it adds no GPU or live-sky parity claim.

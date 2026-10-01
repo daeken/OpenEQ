@@ -11,6 +11,8 @@ mod color_map;
 pub use color_map::{SkyColorMapInputs, SkyColorMapProvenance, SkyColorMapSource, SkyLightColors};
 #[cfg(test)]
 mod color_map_tests;
+/// Opt-in CPU reconstruction of the native dome; not used by the live renderer.
+pub mod dome;
 
 /// Identifies usable sky colors without discarding the original source pixels.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -21,7 +23,8 @@ pub enum SkyColorMapLayout {
     /// Native EQ 32x32 vertex-color table. The dome uses columns 0..=30 and
     /// rows 0..=29, with the two poles reading column zero of rows 0 and 29.
     /// Column 31 and rows 30/31 contain other colors and must not be sampled
-    /// as sky. This describes the data domain, not its celestial orientation.
+    /// as sky. This is an outer bound, not a rectangular native lookup: see
+    /// [`dome`] for exact per-vertex addressing and near-pole ring behavior.
     OriginalDome,
 }
 
