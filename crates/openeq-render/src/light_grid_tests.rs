@@ -96,6 +96,7 @@ fn grid_matches_every_pixel_across_cell_edges_and_outside_for_opaque_and_soft_al
                 radius: [28., 63.9, 96.][(i + j) % 3],
                 color: [0.08 + i as f32 * 0.025, 0.07 + j as f32 * 0.04, 0.19],
                 attenuation: 0.8,
+                eqg_source: None,
             });
         }
     }
@@ -106,6 +107,7 @@ fn grid_matches_every_pixel_across_cell_edges_and_outside_for_opaque_and_soft_al
         radius: 30.,
         color: [2., 0., 0.],
         attenuation: 1.,
+        eqg_source: None,
     });
     let world = upload(&renderer, &source);
     source.lights.clear();

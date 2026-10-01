@@ -146,6 +146,9 @@ pub struct Placeable {
 #[derive(Debug, Clone)]
 pub struct ZonLight {
     pub name: String,
+    /// Native ordinary-terrain candidate gate: third original name byte B/b.
+    /// This does not imply spatial membership or selection into a shader slot.
+    pub terrain_eligible: bool,
     pub position: [f32; 3],
     pub color: [f32; 3],
     pub radius: f32,
@@ -184,11 +187,8 @@ impl ZoneFile {
         let unknown_count = reader.bounded_count()?;
         let light_count = reader.bounded_count()?;
 
-        let strings: String = reader
-            .take(string_size)?
-            .iter()
-            .map(|b| *b as char)
-            .collect();
+        let string_bytes = reader.take(string_size)?;
+        let strings: String = string_bytes.iter().map(|b| *b as char).collect();
 
         let mut objects = Vec::with_capacity(object_count);
         for _ in 0..object_count {
@@ -230,7 +230,17 @@ impl ZoneFile {
 
         let mut lights = Vec::with_capacity(light_count);
         for _ in 0..light_count {
-            let name = string_at(&strings, reader.i32()? as usize);
+            // Source offsets and the native name[2] test refer to bytes, before
+            // the byte-preserving U+00xx decoding expands high bytes to UTF-8.
+            let offset = reader.i32()? as usize;
+            let name_bytes = string_bytes
+                .get(offset..)
+                .unwrap_or_default()
+                .split(|byte| *byte == 0)
+                .next()
+                .unwrap_or_default();
+            let terrain_eligible = matches!(name_bytes.get(2), Some(b'B' | b'b'));
+            let name = name_bytes.iter().map(|byte| char::from(*byte)).collect();
             let raw = reader.vec3()?;
             // Positions are stored as (y, x, z) and then y is negated.
             let position = [raw[1], -raw[0], raw[2]];
@@ -238,6 +248,7 @@ impl ZoneFile {
             let radius = reader.f32()?;
             lights.push(ZonLight {
                 name,
+                terrain_eligible,
                 position,
                 color,
                 radius,

@@ -150,6 +150,7 @@ fn fractional_surfaces_share_opaque_lighting_emission_and_fog() {
         color: [0.6, 0.1, 0.05],
         radius: 24.,
         attenuation: 1.,
+        eqg_source: None,
     });
     let world = upload(&renderer, &background);
     let opaque = actor(&renderer, [128, 128, 128, 255], 2., false);

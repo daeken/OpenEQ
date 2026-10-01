@@ -239,6 +239,7 @@ fn shared_texture_keeps_opaque_and_additive_draws_distinct_and_additive_uses_zon
         color: [0.8, 0.1, 0.0],
         radius: 24.,
         attenuation: 1.,
+        eqg_source: None,
     });
     let lit = upload(&renderer, &source);
     let lit_pixel = center(&mut renderer, &lit, &[&glass]);

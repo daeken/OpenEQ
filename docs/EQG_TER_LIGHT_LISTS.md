@@ -1,8 +1,9 @@
 # Executed ordinary-terrain point-light membership and ordering
 
-2026-10-01, research only. This extends
+2026-10-01, native research and source-metadata preservation. This extends
 [the SPL light binder](EQG_TER_LIGHT_BINDING.md) upstream through the actual
-three-light selector. It does not change asset loading or rendering.
+three-light selector. Asset loading now retains its authored candidate gate;
+renderer light selection and rendering remain unchanged.
 
 The native ordinary-terrain path selects eligible lights from the active
 DPVS influence list, ranks them by radius, RGB brightness, distance to the
@@ -10,7 +11,7 @@ region center, and two priority flags, then stores three pointers. It does
 not simply select the nearest three archive lights. Most importantly,
 ordinary terrain excludes unflagged authored lights from this list.
 Runtime-created lights are eligible; EQG-authored lights whose **third name
-character is `B` or `b`** are also eligible.
+byte is `B` or `b`** are also eligible.
 
 ## Binary and execution boundary
 
@@ -115,11 +116,19 @@ Anguish `.zon` light enters these slots through the ordinary name path;
 runtime lights remain possible. Unflagged lights should not be added again
 to this terrain path merely because they exist in the zone archive.
 
-`ZonLight` currently retains the name, but `loader.rs` converts it to
-`Scene::Light` without preserving the name or eligibility. A native terrain
-lighting implementation needs that source distinction retained separately
-from general-purpose light data. It also needs region membership rather
-than one zone-wide selected set.
+`ZonLight` now retains the name and byte-derived eligibility. `loader.rs`
+carries both into `Light::eqg_source` together with the original record ordinal
+and selected declaration provenance (archive path/member or loose path).
+Each original name byte maps to the corresponding U+00xx character, so high
+bytes are preserved without changing the source-byte eligibility test or
+subsequent name offsets. The metadata follows each light when cloned or
+removed. WLD, heightmap and programmatically constructed lights use `None`;
+they make no binary-ZON eligibility claim.
+
+Every light remains loaded in the original order with unchanged numeric
+values. No renderer consumes the new metadata or filters lights by it.
+Native terrain integration still needs region membership and event order
+rather than one zone-wide selected set.
 
 ## Weight, priority, cap, and exact ordering
 
@@ -178,6 +187,15 @@ separate finite-input calculation. Zero-distance, nonfinite data, other x87
 precision modes, and exact DPVS event ordering are not expanded claims.
 
 ## Reproduction and remaining boundary
+
+The source-metadata implementation is covered by four focused CPU tests in
+`crates/openeq-assets/src/loader/eqg_light_source_tests.rs`. Two synthetic
+tests cover both binary ZON versions, exact names including high bytes,
+duplicate names/ordinals, and exact-archive > loose > unambiguous-alias
+declaration precedence. Two opt-in original-asset tests check every numeric
+light record and the four zone counts above, plus absence of binary-ZON
+metadata on Gfaydark WLD and Nektulos heightmap lights. All four pass with
+`CARGO_INCREMENTAL=0 cargo test -p openeq-assets --lib eqg_light_source_tests -- --include-ignored`.
 
 Run `PYTHONPATH=/tmp/openeq-re-tools python3 /tmp/openeq-ter-light-list.py`.
 The script needs `pefile`, Unicorn, the installed DLL and four original

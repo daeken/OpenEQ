@@ -44,6 +44,30 @@ pub struct Light {
     pub color: [f32; 3],
     pub radius: f32,
     pub attenuation: f32,
+    /// Authored binary-ZON metadata. Absence makes no native terrain-light
+    /// eligibility claim for WLD, heightmap or programmatically created lights.
+    pub eqg_source: Option<BinaryEqgLightSource>,
+}
+
+/// The declaration actually selected by the normal EQG loading precedence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EqgDeclarationSource {
+    Archive { path: PathBuf, member: String },
+    Loose { path: PathBuf },
+}
+
+/// Original source identity and the native ordinary-terrain candidate gate.
+/// Eligibility alone does not establish DPVS membership, selection or slot order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BinaryEqgLightSource {
+    pub declaration: EqgDeclarationSource,
+    /// Zero-based record ordinal in the selected ZON, not a priority or slot.
+    pub ordinal: usize,
+    /// Exact name with each source byte represented by its U+00xx character.
+    pub name: String,
+    /// The original third source byte is ASCII B/b. Applies only to the
+    /// researched ordinary-terrain light list; no renderer consumes this yet.
+    pub terrain_eligible: bool,
 }
 
 /// A named group of meshes that instances can refer to.
@@ -504,6 +528,7 @@ fn load_wld(base: &Path, name: &str, primary: &Path) -> Result<Scene> {
                 color,
                 radius: light.radius,
                 attenuation,
+                eqg_source: None,
             });
         }
     }
@@ -516,7 +541,7 @@ fn load_eqg(base: &Path, name: &str, path: &Path) -> Result<Scene> {
 }
 
 fn load_eqg_archive(base: &Path, name: &str, archive: Archive) -> Result<Scene> {
-    let zon_data = read_eqg_declaration(base, name, &archive)?;
+    let (zon_data, declaration) = read_eqg_declaration_with_source(base, name, &archive)?;
 
     if zon_data.trim_ascii_start().starts_with(b"EQTZP") {
         return load_heightmap(base, name, archive, &zon_data);
@@ -600,12 +625,18 @@ fn load_eqg_archive(base: &Path, name: &str, archive: Archive) -> Result<Scene> 
         });
     }
 
-    for light in &zone.lights {
+    for (ordinal, light) in zone.lights.iter().enumerate() {
         scene.lights.push(Light {
             position: light.position,
             color: light.color,
             radius: light.radius,
             attenuation: 200.0,
+            eqg_source: Some(BinaryEqgLightSource {
+                declaration: declaration.clone(),
+                ordinal,
+                name: light.name.clone(),
+                terrain_eligible: light.terrain_eligible,
+            }),
         });
     }
 
@@ -616,18 +647,37 @@ fn load_eqg_archive(base: &Path, name: &str, archive: Archive) -> Result<Scene> 
 /// archives use an older internal name (feerrott2 -> feerrott, chambersb ->
 /// chambersa). Accept only an unambiguous declaration with archived dependencies.
 pub(crate) fn read_eqg_declaration(base: &Path, name: &str, archive: &Archive) -> Result<Vec<u8>> {
+    read_eqg_declaration_with_source(base, name, archive).map(|(data, _)| data)
+}
+
+fn read_eqg_declaration_with_source(
+    base: &Path,
+    name: &str,
+    archive: &Archive,
+) -> Result<(Vec<u8>, EqgDeclarationSource)> {
+    let archived_source = |member: &str| EqgDeclarationSource::Archive {
+        path: archive.path().to_owned(),
+        // Lookup is case-insensitive and later duplicate keys replace earlier
+        // ones. Preserve the spelling of the member whose bytes were read.
+        member: archive
+            .names()
+            .iter()
+            .rfind(|candidate| candidate.eq_ignore_ascii_case(member))
+            .expect("archive contains the selected declaration")
+            .clone(),
+    };
     let zon_name = format!("{name}.zon");
     if archive.contains(&zon_name) {
-        return archive.read(&zon_name);
+        return Ok((archive.read(&zon_name)?, archived_source(&zon_name)));
     }
     let fallback = case_insensitive_file(base, &zon_name);
     match std::fs::read(&fallback) {
-        Ok(data) => Ok(data),
+        Ok(data) => Ok((data, EqgDeclarationSource::Loose { path: fallback })),
         Err(source) => {
             if source.kind() == std::io::ErrorKind::NotFound
-                && let Some(data) = unique_zone_declaration(archive)?
+                && let Some((data, member)) = unique_zone_declaration(archive)?
             {
-                return Ok(data);
+                return Ok((data, archived_source(&member)));
             }
             Err(Error::Io {
                 path: fallback,
@@ -637,8 +687,9 @@ pub(crate) fn read_eqg_declaration(base: &Path, name: &str, archive: &Archive) -
     }
 }
 
-fn unique_zone_declaration(archive: &Archive) -> Result<Option<Vec<u8>>> {
-    let mut selected = unique_heightmap_declaration(archive)?.map(|(data, _)| data);
+fn unique_zone_declaration(archive: &Archive) -> Result<Option<(Vec<u8>, String)>> {
+    let mut selected =
+        unique_heightmap_declaration_with_member(archive)?.map(|(data, _, member)| (data, member));
     let mut seen_binary = Vec::new();
     let mut unresolved = Vec::new();
     for filename in archive
@@ -668,14 +719,14 @@ fn unique_zone_declaration(archive: &Archive) -> Result<Option<Vec<u8>>> {
             ));
             continue;
         }
-        if let Some(previous) = &selected {
+        if let Some((previous, _)) = &selected {
             if previous != &data {
                 return Err(Error::Format(
                     "multiple distinct archived zone declarations name available geometry".into(),
                 ));
             }
         } else {
-            selected = Some(data);
+            selected = Some((data, filename.clone()));
         }
     }
     if selected.is_none() {
@@ -704,7 +755,16 @@ fn unique_zone_declaration(archive: &Archive) -> Result<Option<Vec<u8>>> {
 fn unique_heightmap_declaration(
     archive: &Archive,
 ) -> Result<Option<(Vec<u8>, terrain::TerrainOptions)>> {
-    let mut selected: Option<(Vec<u8>, terrain::TerrainOptions)> = None;
+    Ok(
+        unique_heightmap_declaration_with_member(archive)?
+            .map(|(data, options, _)| (data, options)),
+    )
+}
+
+fn unique_heightmap_declaration_with_member(
+    archive: &Archive,
+) -> Result<Option<(Vec<u8>, terrain::TerrainOptions, String)>> {
+    let mut selected: Option<(Vec<u8>, terrain::TerrainOptions, String)> = None;
     for filename in archive
         .names()
         .iter()
@@ -719,7 +779,7 @@ fn unique_heightmap_declaration(
         if !archive.contains(&format!("{}.dat", options.name)) {
             continue;
         }
-        if let Some((previous, _)) = &selected {
+        if let Some((previous, _, _)) = &selected {
             if previous != &data {
                 return Err(Error::Format(
                     "multiple distinct archived heightmap declarations name available terrain data"
@@ -727,7 +787,7 @@ fn unique_heightmap_declaration(
                 ));
             }
         } else {
-            selected = Some((data, options));
+            selected = Some((data, options, filename.clone()));
         }
     }
     Ok(selected)
@@ -1182,6 +1242,7 @@ fn load_heightmap(base: &Path, name: &str, archive: Archive, zon: &[u8]) -> Resu
             color,
             radius: light.radius,
             attenuation: 200.0,
+            eqg_source: None,
         });
     }
     if let Ok(data) = scene.archives[0].read("water.dat") {
@@ -1251,6 +1312,9 @@ fn load_heightmap(base: &Path, name: &str, archive: Archive, zon: &[u8]) -> Resu
 
 #[cfg(test)]
 mod declaration_tests;
+
+#[cfg(test)]
+mod eqg_light_source_tests;
 
 #[cfg(test)]
 mod deferred_terrain_tests;
